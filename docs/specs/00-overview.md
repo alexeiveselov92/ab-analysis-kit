@@ -1,6 +1,6 @@
 # ab-analysis-kit — specs index
 
-`ab-analysis-kit` (pip `ab-analysis-kit`, CLI `abkit`, docs `abkit.pipelab.dev`) is
+`ab-analysis-kit` (pip `ab-analysis-kit`, import package `abkit`, CLI `abk`, docs `abkit.pipelab.dev`) is
 an open-source, **declarative** (dbt / detectkit-style: YAML + SQL), **db-agnostic**
 (ClickHouse-first; PostgreSQL / MySQL supported), **numpy-first** Python library
 for **A/B experiment analysis**. It is the sibling of
@@ -20,8 +20,8 @@ these specs are agreed.
 | [cumulative-intervals.md](cumulative-intervals.md) | The cumulative expanding-window contract; the incremental-vs-recompute investigation & decision |
 | [declarative-config.md](declarative-config.md) | The YAML+SQL model (experiment / metric / method), Jinja built-ins, validation, `method_config_id` |
 | [data-contract-and-reporting.md](data-contract-and-reporting.md) | The clean **greenfield** results contract, the decision logic, reporting & explore |
-| [aa-false-positive-matrix.md](aa-false-positive-matrix.md) | `abkit validate` — empirical FPR/power (incl. honest peeking FPR) and its UX |
-| [cli-and-dx.md](cli-and-dx.md) | The `abkit` CLI, the explore cockpit, `init-claude`, developer docs |
+| [aa-false-positive-matrix.md](aa-false-positive-matrix.md) | `abk validate` — empirical FPR/power (incl. honest peeking FPR) and its UX |
+| [cli-and-dx.md](cli-and-dx.md) | The `abk` CLI, the explore cockpit, `init-claude`, developer docs |
 | [quorum-review.md](quorum-review.md) | The adversarial-review must-fix gate (blocking before/during development) |
 | [../reference/legacy-method-catalogue.md](../reference/legacy-method-catalogue.md) | Full per-method extraction of the legacy engine (reference) |
 
@@ -41,7 +41,7 @@ The master, plain-language synthesis (in Russian) lives at
    with a documented, A/A-validated process — never a silent number change.
 3. **Fixed-horizon by default, honest about peeking.** The daily cumulative chart
    inherently peeks; the default keeps the legacy fixed-horizon CI, the readout
-   refuses a pre-horizon WIN/LOSE, `abkit validate` measures the **real**
+   refuses a pre-horizon WIN/LOSE, `abk validate` measures the **real**
    cumulative-peeking FPR, and always-valid (sequential) CIs are one toggle away.
 4. **ClickHouse-first**, PostgreSQL/MySQL correct & supported (same contract,
    recompute path).

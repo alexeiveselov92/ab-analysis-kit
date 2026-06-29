@@ -1,4 +1,4 @@
-# A/A false-positive matrix (`abkit validate`)
+# A/A false-positive matrix (`abk validate`)
 
 > The A/B analog of detectkit's autotune scoring. detectkit scores a detector by
 > recall/FDR against **labeled** incidents; abkit scores a method by **empirical
@@ -64,7 +64,7 @@ Analysts pick the highest-power row and ignore an inflated FPR. So the matrix is
 3. **A plain-language per-method verdict** — e.g. *"z-test on this metric:
    well-calibrated, FPR 5.1%"* / *"naive t-test on this ratio metric: FPR inflated
    to 11%, do not use."*
-4. **`abkit validate --report`** is the canonical artifact; **explore links to it**
+4. **`abk validate --report`** is the canonical artifact; **explore links to it**
    and shows the live calibration chip.
 
 ## 5. Calibration is always visible in explore (must-fix)

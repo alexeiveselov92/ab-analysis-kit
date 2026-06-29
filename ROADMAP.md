@@ -32,15 +32,15 @@ definition-of-done includes the relevant
   `_ab_exposures`, `_ab_results`, `_ab_tasks`); `core/period_planner` (expanding
   grid, anti-join, explicit completeness boundary).
 - `pipeline`: discover → plan → load (cohort once) → SRM gate → compute → enrich →
-  persist. `abkit run`, `abkit run --steps validate` (config-lint), `unlock`,
+  persist. `abk run`, `abk run --steps validate` (config-lint), `unlock`,
   `clean`. Read-only exposures.
-- **DoD:** `abkit init && abkit run --select example` produces real results on a
+- **DoD:** `abk init && abk run --select example` produces real results on a
   fresh machine against a seed dataset; idempotent re-run is byte-stable; atomic
   lock; strictly-monotonic `created_at`; one-row-per-unit guard. *(Must-fixes:
   macro, alpha inspectability, completeness boundary, lock, SRM-in-CLI.)*
 
 ## M3 — The explore cockpit (PRIORITY) + reporting
-- Port the detectkit `tune` package → `abkit explore`: localhost server, live
+- Port the detectkit `tune` package → `abk explore`: localhost server, live
   `from_suffstats` recompute, stabilization chart, Basic/Advanced knobs,
   `.history` write-back, orphan detection.
 - Port `reporting` → self-contained HTML readout; `readout.py` decision logic
@@ -48,7 +48,7 @@ definition-of-done includes the relevant
 - **DoD:** Apply gated when uncalibrated; calibration chip wired (depends on M4).
   *(Must-fixes: calibration-in-explore, SRM surfacing.)*
 
-## M4 — A/A false-positive matrix (`abkit validate`)
+## M4 — A/A false-positive matrix (`abk validate`)
 - Port the autotune scaffolding → placebo A/A splits, FPR + power + achieved-MDE +
   coverage, **honest cumulative-peeking FPR** over the day-grid; `_ab_aa_runs`;
   recommendation; the matrix UX (color vs budget, Recommended row, plain verdicts).
@@ -58,11 +58,11 @@ definition-of-done includes the relevant
 
 ## M5 — Sequential analysis + planner + corrections
 - `sequential/` (mSPRT always-valid + alpha-spending), opt-in; `ci_kind`/`is_horizon`
-  in the contract. `abkit plan` (pre-launch power/sizing). Benjamini-Hochberg
+  in the contract. `abk plan` (pre-launch power/sizing). Benjamini-Hochberg
   read-time; composed-FDR empirical validation.
 
 ## M6 — DX, docs, orchestration, release
-- `abkit init-claude` + packaged `.claude` assets (rules + 7 skills);
+- `abk init-claude` + packaged `.claude` assets (rules + 7 skills);
   single-source docs site (`abkit.pipelab.dev`, Astro + sync-docs); Prefect
   flow/deployment scaffolding; BI reference queries/dashboards (Grafana, Lightdash,
   Metabase, Superset) + optional SRM panel; `test-report` channels.
@@ -71,7 +71,7 @@ definition-of-done includes the relevant
 
 ## v2 (deferred, profiling-gated)
 - Python incremental accumulator + array-cache + quantile sketches +
-  `incremental_backend`; `abkit verify-incremental` gate (whole-series reconciliation);
+  `incremental_backend`; `abk verify-incremental` gate (whole-series reconciliation);
   `run --profile` observability to trigger it on a concrete cost threshold.
 - Cross-fitted CUPED/CUPAC, Student-t (Welch–Satterthwaite), BCa bootstrap,
   Mann-Whitney, cluster-robust SE; full PG/MySQL incremental parity (if needed);

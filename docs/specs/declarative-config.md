@@ -128,7 +128,7 @@ for the rest (`alpha / (C(groups,2) × metrics)`). abkit makes this **declared a
 inspectable**:
 
 - `alpha` + `correction` are declared at experiment (or project) level.
-- `abkit run` / `validate` / the HTML report **echo the effective per-comparison
+- `abk run` / `validate` / the HTML report **echo the effective per-comparison
   alpha** and the `C(groups,2) × metrics` divisor in the `StageLogRenderer`.
 - A golden test reproduces the exact two-tier scheme keyed off `is_main_metric`.
 - Benjamini-Hochberg (`correction: benjamini_hochberg`) is applied **read-time**
@@ -151,8 +151,8 @@ method_config_id = sha256( method_name              # registry name (NOT class n
   stay byte-stable via a deterministic per-row seed derived from
   `(exp, metric, name_1, name_2, end_date, n_samples)` — see
   [statistics-changes.md](statistics-changes.md).
-- Editing any identity-bearing param orphans the prior series (new id); `abkit
-  clean` GCs it, and `run`/`explore` warn when an experiment has >1 `method_config_id`
+- Editing any identity-bearing param orphans the prior series (new id);
+  `abk clean` GCs it, and `run`/`explore` warn when an experiment has >1 `method_config_id`
   for a metric ("the dashboard will show two stabilization lines — clean to resolve").
 
 ## 8. Validation matrix (`config/validator.py`)
@@ -170,6 +170,6 @@ Tested, fail-fast, two-level:
 - assignment SQL selects `unit_key`, `variant`, `exposure_ts`;
 - `expected_split` variants ⊆ `assignment.variants`.
 
-A `abkit run --steps validate` (config-lint) runs the full parse + reference
+A `abk run --steps validate` (config-lint) runs the full parse + reference
 resolution + SQL render-smoke-test under StrictUndefined **without touching the DB**
 — runnable in CI before any compute (the legacy `ExpMetricQueriesCheckingPipeline`).

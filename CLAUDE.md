@@ -1,6 +1,6 @@
 # ab-analysis-kit — contributor & AI-assistant guide
 
-**ab-analysis-kit** (`abkit`) is a Python library + CLI for **A/B experiment
+**ab-analysis-kit** (CLI `abk`; Python import package `abkit`) is a Python library + CLI for **A/B experiment
 analysis**: declarative YAML + SQL run through a `load → compute → readout`
 pipeline. It is detectkit's sibling — same DNA (numpy-first, db-agnostic
 [ClickHouse-first; PostgreSQL/MySQL], CLI-first, AI-native onboarding, self-contained
@@ -8,7 +8,7 @@ reports, a chart-first cockpit), with the `detect` stage replaced by a statistic
 `compute` stage and the primary entity flipped from *metric* to *experiment*.
 
 > **Using abkit, not hacking on it?** (Once shipped:) see the README and
-> `abkit init-claude`, which sets up assistant context inside *your own* project.
+> `abk init-claude`, which sets up assistant context inside *your own* project.
 
 ## Status: pre-development
 
@@ -23,7 +23,7 @@ The repo currently holds the **project-initiation contract**. The source of trut
 | Cumulative windows, compute strategy, incremental v2 | [docs/specs/cumulative-intervals.md](docs/specs/cumulative-intervals.md) |
 | YAML/SQL config, the assignment macro, `method_config_id`, validation | [docs/specs/declarative-config.md](docs/specs/declarative-config.md) |
 | The results contract, decision logic, reporting, explore, BI | [docs/specs/data-contract-and-reporting.md](docs/specs/data-contract-and-reporting.md) |
-| The A/A FPR matrix (`abkit validate`) | [docs/specs/aa-false-positive-matrix.md](docs/specs/aa-false-positive-matrix.md) |
+| The A/A FPR matrix (`abk validate`) | [docs/specs/aa-false-positive-matrix.md](docs/specs/aa-false-positive-matrix.md) |
 | CLI, explore cockpit, init-claude, Prefect, docs | [docs/specs/cli-and-dx.md](docs/specs/cli-and-dx.md) |
 | **What must be true before/after each milestone** | [docs/specs/quorum-review.md](docs/specs/quorum-review.md) (the must-fix gate) |
 

@@ -2,7 +2,7 @@
 
 **A/B experiment analysis as declarative YAML + SQL — with a chart-first cockpit.**
 
-`ab-analysis-kit` (CLI `abkit`) is an open-source, declarative
+`ab-analysis-kit` (CLI `abk`) is an open-source, declarative
 (dbt / [detectkit](https://dtk.pipelab.dev)-style), database-agnostic, numpy-first
 Python library for analyzing A/B experiments. You define an **experiment** and its
 **metrics** in YAML + SQL; abkit computes per-method effect + confidence interval +
@@ -26,14 +26,14 @@ actually calibrated.
   correction. Ported from a battle-tested legacy engine and improved deliberately.
 - **The cumulative stabilization chart** — effect + CI per day from experiment
   start, so you see the estimate converge and call a winner only once it stabilizes.
-- **`abkit explore`** — a local, chart-first cockpit to turn method knobs (CUPED,
+- **`abk explore`** — a local, chart-first cockpit to turn method knobs (CUPED,
   stratification, alpha…) and watch the result recompute live, with A/A calibration
   always in view. *The priority interface.*
-- **`abkit validate`** — an A/A false-positive + power matrix that measures your
+- **`abk validate`** — an A/A false-positive + power matrix that measures your
   method's **real** α (including the honest cumulative-peeking FPR), not the nominal.
 - **BI-agnostic** — results land in one clean table; connect Grafana, Lightdash,
   Metabase, or Superset. Orchestrate with **Prefect**.
-- **AI-native** — `abkit init-claude` sets up assistant context + skills so an
+- **AI-native** — `abk init-claude` sets up assistant context + skills so an
   assistant can scaffold and tune experiments with (or for) you.
 
 ## Design at a glance

@@ -17,7 +17,7 @@ stays coherent as it grows and as multiple authors (human and AI) contribute.
    stable, documented warehouse table that any BI (Grafana, Lightdash, Metabase,
    Superset) can read. Orchestration is via Prefect (the CLI is the unit of
    automation).
-4. **AI-native onboarding.** `abkit init-claude` ships assistant context + skills so
+4. **AI-native onboarding.** `abk init-claude` ships assistant context + skills so
    an assistant can scaffold and tune experiments *for* the analyst — the same
    crown-jewel mechanism as detectkit.
 5. **App-seed-shaped.** Keep the renderer/payload split framework-free, `abkit.stats`

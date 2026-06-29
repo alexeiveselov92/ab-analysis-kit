@@ -82,7 +82,7 @@ The daily cumulative chart inherently peeks. The contract makes this **visible**
   visual treatment.
 - `is_horizon` lets the readout/BI refuse a WIN/LOSE before the planned horizon
   under fixed-horizon mode.
-- `abkit validate` measures the **real cumulative-peeking FPR** (running A/A through
+- `abk validate` measures the **real cumulative-peeking FPR** (running A/A through
   the full day-grid and the readout rule) and surfaces it next to the chart — so an
   analyst sees the true error rate of watching daily, not just nominal α.
   ([aa-false-positive-matrix.md](aa-false-positive-matrix.md))
@@ -93,7 +93,7 @@ Two surfaces, both **web-first and framework-free** (baked payload + self-contai
 JS renderer, the detectkit `report.js`/`tune.js` pattern) so they can later be
 embedded in a full app.
 
-### `abkit explore` — the chart-first cockpit (PRIORITY)
+### `abk explore` — the chart-first cockpit (PRIORITY)
 
 The detectkit-`tune` port and the **first thing we build**. A localhost cockpit
 where the analyst runs the pipeline and **plays with method params live**:
@@ -117,7 +117,7 @@ where the analyst runs the pipeline and **plays with method params live**:
   `experiments/.history/<exp>/`, writes `method_params` back. `--no-serve` emits a
   static read-only HTML.
 
-### `abkit run --report` — the self-contained readout
+### `abk run --report` — the self-contained readout
 
 A single offline HTML per experiment (inline JS + baked payload): variant
 means/lift, the stabilization chart, MDE/power, p-value-vs-alpha, the SRM panel,

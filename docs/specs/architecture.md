@@ -55,18 +55,18 @@ here independently.
 
 ## 4. Module map
 
-> Reused-from-detectkit components are marked ⟲ (port near-verbatim, rename `dtk`→`abkit`).
+> Reused-from-detectkit components are marked ⟲ (port near-verbatim; rename CLI `dtk`→`abk`, package `detectkit`→`abkit`).
 > Greenfield storage: the `_ab_*` tables are **our own clean contract**, not a copy
 > of the legacy `marts.*` layout.
 
 ```
 abkit/
   __init__.py                  # __version__ (single source); top-level re-exports
-  cli/                         # ⟲ Click CLI "abkit"
+  cli/                         # ⟲ Click CLI "abk"
     main.py                    # ⟲ lazy-import command group
     _output.py                 # ⟲ echo_tree / StageLogRenderer (verbatim)
     commands/
-      init.py                  # ⟲ scaffolder (ab_kit_project.yml, profiles.yml, experiments/, metrics/, sql/)
+      init.py                  # ⟲ scaffolder (abkit_project.yml, profiles.yml, experiments/, metrics/, sql/)
       init_claude.py           # ⟲ managed CLAUDE.md block + .claude/rules + skills
       run.py                   # project-root discovery + selector + per-experiment driver; --report
       explore.py               # ⟲(tune) localhost cockpit: live method_params recompute + .history write-back
@@ -123,7 +123,7 @@ abkit/
 docs/  tests/  pyproject.toml  README.md  CHANGELOG.md  website/
 ```
 
-## 5. The pipeline (`abkit run --select <exp>`)
+## 5. The pipeline (`abk run --select <exp>`)
 
 `--steps` defaults to all; each stage is idempotent (last-writer-wins, not a
 resumed cursor — an experiment is a finite, re-runnable recomputation).
@@ -167,7 +167,7 @@ resumed cursor — an experiment is a finite, re-runnable recomputation).
    self-contained HTML readout (effect+CI stabilization chart, MDE/power,
    p-value-vs-alpha, SRM, A/A matrix).
 
-**A. validate** *(out-of-band)* — `abkit validate` is **not** in the hot path: it
+**A. validate** *(out-of-band)* — `abk validate` is **not** in the hot path: it
 draws placebo A/A splits, scores empirical FPR vs nominal alpha (incl. the honest
 **cumulative-peeking** FPR over the full day-grid) and power via injected effects.
 ([aa-false-positive-matrix.md](aa-false-positive-matrix.md))
@@ -190,7 +190,7 @@ backend-specific incremental-aggregate DDL.
 
 Idempotency: every row carries `method_config_id = hash(method_name + sorted
 non-default params + ALGORITHM_VERSION)`; editing params orphans old rows, GC'd by
-`abkit clean`. ClickHouse reads use FINAL/argMax dedup; `created_at` is a
+`abk clean`. ClickHouse reads use FINAL/argMax dedup; `created_at` is a
 strictly-monotonic distinct version (reliability must-fix).
 
 ## 7. Key decisions (with rationale)
@@ -241,7 +241,7 @@ strictly-monotonic distinct version (reliability must-fix).
 abkit targets analysts who want a **declarative dbt/detectkit-style** workflow with
 a **convenient interface**. Three usage surfaces, in priority order:
 
-1. **Local explore cockpit (`abkit explore`) — the PRIORITY interface.** A
+1. **Local explore cockpit (`abk explore`) — the PRIORITY interface.** A
    localhost, chart-first cockpit (the detectkit-`tune` port) where the analyst
    runs the pipeline and *plays with* method params live — turning CUPED on,
    changing alpha, stratifying — and watches the cumulative effect+CI stabilization
@@ -251,7 +251,7 @@ a **convenient interface**. Three usage surfaces, in priority order:
    JS renderer, exactly like detectkit's `report.js`/`tune.js`) so the same core
    can later be embedded in a larger app.
 2. **Orchestrated runs via Prefect.** abkit is orchestration-friendly by design:
-   an analyst schedules a **Prefect** deployment that calls `abkit run`
+   an analyst schedules a **Prefect** deployment that calls `abk run`
    (the legacy system already ran on Prefect). The CLI is the unit of automation;
    `init` scaffolds a runnable Prefect flow + deployment example. Results land in
    the warehouse on a cadence with no human in the loop.

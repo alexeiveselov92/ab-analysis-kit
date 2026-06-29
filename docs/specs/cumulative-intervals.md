@@ -80,14 +80,14 @@ general rule.
   legacy crutch's proven behavior (recompute from arrays every run).
 - **v2 (deferred, gated): the Python incremental accumulator + array-cache
   re-resampling + quantile sketches**, enabled per metric only after profiling
-  proves the bottleneck, behind `abkit verify-incremental` (reconciles the
+  proves the bottleneck, behind `abk verify-incremental` (reconciles the
   incremental backend against recompute to a relative tolerance across the
   **whole** cumulative series, not just the latest cutoff). The Python delta store
   owns a real correctness surface — per-unit memory growing for the experiment
   lifetime, late/backfill events, stratum-membership changes, covariate updates,
   reproducible seeds — so it is premature before the win is proven.
 
-`abkit run --profile` emits rows-scanned / bytes-read / wall-time per stage so the
+`abk run --profile` emits rows-scanned / bytes-read / wall-time per stage so the
 v2 trigger is **data-driven** (a concrete p95 cost/latency threshold over E·M·D),
 not guessed.
 
@@ -139,6 +139,6 @@ window — **not** a resumed timestamp cursor. Idempotency is last-writer-wins o
 `(experiment, metric, variant-pair, method_config_id, end_date)` via a
 strictly-monotonic `created_at` version. The planner's `is_calculated` anti-join
 skips computed day-cutoffs; editing `method_params` changes `method_config_id`,
-orphaning old rows that `abkit clean` GCs. Bootstrap seeds are derived
+orphaning old rows that `abk clean` GCs. Bootstrap seeds are derived
 deterministically per-row (see [statistics-changes.md](statistics-changes.md)) so
 re-runs are byte-stable.
