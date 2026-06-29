@@ -1,0 +1,3069 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": 958,
+  "links": [],
+  "panels": [
+    {
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 59,
+      "panels": [
+        {
+          "datasource": {
+            "type": "vertamedia-clickhouse-datasource",
+            "uid": "-GaPdInGk"
+          },
+          "description": "* we show in table ONLY one comparison with smalles pvalue!!!\n* REJECT, EFFECT AND BOUNDS - values from last calculated comparison with smallest pvalue\n",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "custom": {
+                "align": "auto",
+                "cellOptions": {
+                  "type": "auto"
+                },
+                "filterable": true,
+                "inspect": true
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green"
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "METRIC TYPE"
+                },
+                "properties": [
+                  {
+                    "id": "mappings",
+                    "value": [
+                      {
+                        "options": {
+                          "0": {
+                            "color": "text",
+                            "index": 1,
+                            "text": "ADDITIONAL"
+                          },
+                          "1": {
+                            "color": "yellow",
+                            "index": 0,
+                            "text": "MAIN"
+                          }
+                        },
+                        "type": "value"
+                      }
+                    ]
+                  },
+                  {
+                    "id": "custom.cellOptions",
+                    "value": {
+                      "type": "color-text"
+                    }
+                  },
+                  {
+                    "id": "custom.width",
+                    "value": 130
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "METRIC NAME"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 348
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "fixedColor": "#2b6ca34d",
+                      "mode": "fixed"
+                    }
+                  },
+                  {
+                    "id": "custom.cellOptions",
+                    "value": {
+                      "type": "color-background"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": "/date/"
+                },
+                "properties": [
+                  {
+                    "id": "custom.cellOptions",
+                    "value": {
+                      "type": "color-background"
+                    }
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "fixedColor": "#2fa36a4d",
+                      "mode": "fixed"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "FIRST CALCULATION (date)"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 227
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "LAST CALCULATION (date)"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 221
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "REJECT"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 90
+                  },
+                  {
+                    "id": "mappings",
+                    "value": [
+                      {
+                        "options": {
+                          "0": {
+                            "color": "#353333cc",
+                            "index": 1,
+                            "text": "NO"
+                          },
+                          "1": {
+                            "color": "dark-red",
+                            "index": 0,
+                            "text": "YES"
+                          }
+                        },
+                        "type": "value"
+                      }
+                    ]
+                  },
+                  {
+                    "id": "custom.cellOptions",
+                    "value": {
+                      "type": "color-background"
+                    }
+                  },
+                  {
+                    "id": "unit",
+                    "value": "percentunit"
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": "/BOUND|EFFECT/"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "percentunit"
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "LEFT BOUND"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 124
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "RIGHT BOUND"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 134
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "EXP_ID"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 277
+                  },
+                  {
+                    "id": "custom.cellOptions",
+                    "value": {
+                      "type": "color-background"
+                    }
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "fixedColor": "#2b6ca34d",
+                      "mode": "fixed"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "groups_compared"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 176
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "GROUPS COMPARED"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 199
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "OBSERVED EFFECT"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 195
+                  }
+                ]
+              }
+            ]
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 1
+          },
+          "id": 58,
+          "options": {
+            "cellHeight": "sm",
+            "footer": {
+              "countRows": false,
+              "fields": [
+                "REJECT"
+              ],
+              "reducer": [
+                "mean"
+              ],
+              "show": true
+            },
+            "showHeader": true,
+            "sortBy": []
+          },
+          "pluginVersion": "11.6.0",
+          "targets": [
+            {
+              "database": "marts",
+              "datasource": {
+                "type": "vertamedia-clickhouse-datasource",
+                "uid": "-GaPdInGk"
+              },
+              "dateColDataType": "",
+              "dateLoading": false,
+              "dateTimeColDataType": "created_at",
+              "dateTimeType": "DATETIME",
+              "datetimeLoading": false,
+              "extrapolate": true,
+              "format": "table",
+              "formattedQuery": "SELECT $timeSeries as t, count() FROM $table WHERE $timeFilter GROUP BY t ORDER BY t",
+              "intervalFactor": 1,
+              "query": "\n\nSELECT\n    exp_id AS EXP_ID,\n    metric_name AS `METRIC NAME`,\n    min(end_date) AS `FIRST CALCULATION (date)`,\n    max(end_date) AS `LAST CALCULATION (date)`,\n    ---concat(name_1,' vs ',name_2) AS `GROUPS COMPARED`,\n    argMax(is_main_metric, created_at) AS `METRIC TYPE`,\n    argMax(reject, created_at) AS `REJECT`,\n    argMax(left_bound, created_at) AS `LEFT BOUND`,\n    argMax(effect, created_at) AS `OBSERVED EFFECT`,\n    argMax(right_bound, created_at) AS `RIGHT BOUND`,\n    metric_description AS `METRIC DESCRIPTION`\nFROM (\n\n    SELECT *\n    FROM marts.exp_comparison_results AS l GLOBAL ALL LEFT JOIN (\n    \n        SELECT \n            name AS metric_name,\n            description AS metric_description\n        FROM marts.exp_metrics_state\n        ORDER BY event_date DESC, event_time DESC\n        LIMIT 1 BY metric_name\n    \n    ) AS r USING metric_name\n    WHERE end_date BETWEEN toDate($from) AND toDate($to)\n    ORDER BY exp_id, metric_name, end_date DESC, pvalue\n    LIMIT 1 BY exp_id, metric_name\n\n) AS sq \nGROUP BY `METRIC NAME`, metric_description, exp_id---, `GROUPS COMPARED`\nORDER BY EXP_ID, `METRIC TYPE` DESC, `METRIC NAME`\n    \n    ",
+              "rawQuery": "SELECT\n    exp_id AS EXP_ID,\n    metric_name AS `METRIC NAME`,\n    min(end_date) AS `FIRST CALCULATION (date)`,\n    max(end_date) AS `LAST CALCULATION (date)`,\n    \n    argMax(is_main_metric, created_at) AS `METRIC TYPE`,\n    argMax(reject, created_at) AS `REJECT`,\n    argMax(left_bound, created_at) AS `LEFT BOUND`,\n    argMax(effect, created_at) AS `OBSERVED EFFECT`,\n    argMax(right_bound, created_at) AS `RIGHT BOUND`,\n    metric_description AS `METRIC DESCRIPTION`\nFROM (\n\n    SELECT *\n    FROM marts.exp_comparison_results AS l GLOBAL ALL LEFT JOIN (\n    \n        SELECT \n            name AS metric_name,\n            description AS metric_description\n        FROM marts.exp_metrics_state\n        ORDER BY event_date DESC, event_time DESC\n        LIMIT 1 BY metric_name\n    \n    ) AS r USING metric_name\n    WHERE end_date BETWEEN toDate(1699693860) AND toDate(1731316260)\n    ORDER BY exp_id, metric_name, end_date DESC, pvalue\n    LIMIT 1 BY exp_id, metric_name\n\n) AS sq \nGROUP BY `METRIC NAME`, metric_description, exp_id\nORDER BY EXP_ID, `METRIC TYPE` DESC, `METRIC NAME`",
+              "refId": "A",
+              "round": "0s",
+              "skip_comments": true,
+              "table": "exp_comparison_results",
+              "tableLoading": false
+            }
+          ],
+          "title": " ",
+          "transparent": true,
+          "type": "table"
+        }
+      ],
+      "title": "experiments (only with calculated results)",
+      "type": "row"
+    },
+    {
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 1
+      },
+      "id": 53,
+      "panels": [
+        {
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 2,
+            "w": 24,
+            "x": 0,
+            "y": 2
+          },
+          "id": 17,
+          "options": {
+            "code": {
+              "language": "plaintext",
+              "showLineNumbers": false,
+              "showMiniMap": false
+            },
+            "content": "<div style=\"background-color: rgba(43, 108, 163, 0.3); padding: 10px; font-size: 18px; color: white;\">\nEXPERIMENT: <span style=\"color: yellow;\">${exp_id}</span>\n</div>\n",
+            "mode": "html"
+          },
+          "pluginVersion": "11.6.0",
+          "title": "",
+          "transparent": true,
+          "type": "text"
+        },
+        {
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 93
+          },
+          "id": 29,
+          "options": {
+            "code": {
+              "language": "plaintext",
+              "showLineNumbers": false,
+              "showMiniMap": false
+            },
+            "content": "<hr style=\"width: 100%; border: none; height: 1px; background-color: yellow; margin: 10px 0;\" />",
+            "mode": "html"
+          },
+          "pluginVersion": "11.6.0",
+          "title": "",
+          "transparent": true,
+          "type": "text"
+        },
+        {
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 2,
+            "w": 24,
+            "x": 0,
+            "y": 94
+          },
+          "id": 21,
+          "options": {
+            "code": {
+              "language": "plaintext",
+              "showLineNumbers": false,
+              "showMiniMap": false
+            },
+            "content": "<div style=\"background-color: rgba(43, 108, 163, 0.3); padding: 10px; color: white;\">\nGROUPS\n</div>\n",
+            "mode": "html"
+          },
+          "pluginVersion": "11.6.0",
+          "title": "",
+          "transparent": true,
+          "type": "text"
+        },
+        {
+          "datasource": {
+            "type": "vertamedia-clickhouse-datasource",
+            "uid": "-GaPdInGk"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "align": "auto",
+                "cellOptions": {
+                  "type": "auto"
+                },
+                "filterable": false,
+                "inspect": false
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green"
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": "/date/"
+                },
+                "properties": [
+                  {
+                    "id": "custom.cellOptions",
+                    "value": {
+                      "mode": "gradient",
+                      "type": "color-background"
+                    }
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "fixedColor": "#2fa36a4d",
+                      "mode": "fixed"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "GROUP"
+                },
+                "properties": [
+                  {
+                    "id": "custom.cellOptions",
+                    "value": {
+                      "type": "color-background"
+                    }
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "fixedColor": "#2b6ca34d",
+                      "mode": "fixed"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": "/pct/"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "percentunit"
+                  },
+                  {
+                    "id": "min",
+                    "value": 0
+                  },
+                  {
+                    "id": "max",
+                    "value": 1
+                  },
+                  {
+                    "id": "custom.cellOptions",
+                    "value": {
+                      "type": "gauge"
+                    }
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "continuous-RdYlGr"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "gridPos": {
+            "h": 6,
+            "w": 24,
+            "x": 0,
+            "y": 96
+          },
+          "id": 19,
+          "maxDataPoints": 100,
+          "options": {
+            "cellHeight": "sm",
+            "footer": {
+              "countRows": false,
+              "fields": "",
+              "reducer": [
+                "sum"
+              ],
+              "show": false
+            },
+            "showHeader": true
+          },
+          "pluginVersion": "11.6.0",
+          "targets": [
+            {
+              "database": "log",
+              "datasource": {
+                "type": "vertamedia-clickhouse-datasource",
+                "uid": "-GaPdInGk"
+              },
+              "dateColDataType": "event_date",
+              "dateLoading": false,
+              "dateTimeColDataType": "event_time",
+              "dateTimeType": "DATETIME",
+              "datetimeLoading": false,
+              "extrapolate": false,
+              "format": "table",
+              "formattedQuery": "SELECT $timeSeries as t, count() FROM $table WHERE $timeFilter GROUP BY t ORDER BY t",
+              "hide": false,
+              "intervalFactor": 1,
+              "query": "    SELECT\n        group AS GROUP,\n        min(event_date) AS `FIRST ADDED (date)`,\n        max(event_date) AS `LAST ADDED (date)`,\n        sum(users_added_in_group) AS users_added,\n        sum(men_added_in_group) AS men_added,\n        men_added / users_added AS men_added_pct,\n        sum(women_added_in_group) AS women_added,\n        women_added / users_added AS women_added_pct\n    FROM marts.experiments_agg_daily_wo_curr_day\n    WHERE exp_id = '$exp_id'\n    GROUP BY exp_id, group\n    ORDER BY group",
+              "rawQuery": "SELECT\n        group AS GROUP,\n        min(event_date) AS `FIRST ADDED (date)`,\n        max(event_date) AS `LAST ADDED (date)`,\n        sum(users_added_in_group) AS users_added,\n        sum(men_added_in_group) AS men_added,\n        men_added / users_added AS men_added_pct,\n        sum(women_added_in_group) AS women_added,\n        women_added / users_added AS women_added_pct\n    FROM marts.experiments_agg_daily_wo_curr_day\n    WHERE exp_id = 'chat_quiz_v2'\n    GROUP BY exp_id, group\n    ORDER BY group",
+              "refId": "A",
+              "round": "0s",
+              "skip_comments": true,
+              "table": "kiss",
+              "tableLoading": false
+            }
+          ],
+          "title": "",
+          "transparent": true,
+          "type": "table"
+        },
+        {
+          "datasource": {
+            "type": "vertamedia-clickhouse-datasource",
+            "uid": "-GaPdInGk"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisGridShow": false,
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "barWidthFactor": 0.6,
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "auto",
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green"
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": "/date/"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "fixedColor": "#2fa36a4d",
+                      "mode": "fixed"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "GROUP"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "fixedColor": "#2b6ca34d",
+                      "mode": "fixed"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 0,
+            "y": 102
+          },
+          "id": 22,
+          "maxDataPoints": 100,
+          "options": {
+            "legend": {
+              "calcs": [
+                "sum"
+              ],
+              "displayMode": "table",
+              "placement": "right",
+              "showLegend": true
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "multi",
+              "sort": "none"
+            }
+          },
+          "pluginVersion": "11.6.0",
+          "targets": [
+            {
+              "database": "log",
+              "datasource": {
+                "type": "vertamedia-clickhouse-datasource",
+                "uid": "-GaPdInGk"
+              },
+              "dateColDataType": "event_date",
+              "dateLoading": false,
+              "dateTimeColDataType": "event_time",
+              "dateTimeType": "DATETIME",
+              "datetimeLoading": false,
+              "extrapolate": false,
+              "format": "time_series",
+              "formattedQuery": "SELECT $timeSeries as t, count() FROM $table WHERE $timeFilter GROUP BY t ORDER BY t",
+              "hide": false,
+              "intervalFactor": 1,
+              "query": "SELECT \n    event_date,\n    groupArray((group, users_added))\nFROM (\n\n    SELECT\n        event_date,\n        group,\n        sum(users_added_in_group) AS users_added,\n        sum(men_added_in_group) AS men_added,\n        sum(women_added_in_group) AS women_added\n    FROM marts.experiments_agg_daily_wo_curr_day\n    WHERE exp_id = '$exp_id'\n    GROUP BY event_date, group\n    ORDER BY event_date, group \n    \n) AS sq \nGROUP BY event_date  \nORDER BY event_date",
+              "rawQuery": "SELECT \n    event_date,\n    groupArray((group, users_added))\nFROM (\n\n    SELECT\n        event_date,\n        group,\n        sum(users_added_in_group) AS users_added,\n        sum(men_added_in_group) AS men_added,\n        sum(women_added_in_group) AS women_added\n    FROM marts.experiments_agg_daily_wo_curr_day\n    WHERE exp_id = 'sellers_price'\n    GROUP BY event_date, group\n    ORDER BY event_date, group \n    \n) AS sq \nGROUP BY event_date  \nORDER BY event_date",
+              "refId": "A",
+              "round": "0s",
+              "skip_comments": true,
+              "table": "kiss",
+              "tableLoading": false
+            }
+          ],
+          "title": "",
+          "transparent": true,
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "vertamedia-clickhouse-datasource",
+            "uid": "-GaPdInGk"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisGridShow": false,
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "barWidthFactor": 0.6,
+                "drawStyle": "bars",
+                "fillOpacity": 30,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "auto",
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "percent"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green"
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": "/date/"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "fixedColor": "#2fa36a4d",
+                      "mode": "fixed"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "GROUP"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "fixedColor": "#2b6ca34d",
+                      "mode": "fixed"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 12,
+            "y": 102
+          },
+          "id": 60,
+          "maxDataPoints": 100,
+          "options": {
+            "legend": {
+              "calcs": [
+                "sum"
+              ],
+              "displayMode": "table",
+              "placement": "right",
+              "showLegend": true
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "multi",
+              "sort": "none"
+            }
+          },
+          "pluginVersion": "11.6.0",
+          "targets": [
+            {
+              "database": "log",
+              "datasource": {
+                "type": "vertamedia-clickhouse-datasource",
+                "uid": "-GaPdInGk"
+              },
+              "dateColDataType": "event_date",
+              "dateLoading": false,
+              "dateTimeColDataType": "event_time",
+              "dateTimeType": "DATETIME",
+              "datetimeLoading": false,
+              "extrapolate": false,
+              "format": "time_series",
+              "formattedQuery": "SELECT $timeSeries as t, count() FROM $table WHERE $timeFilter GROUP BY t ORDER BY t",
+              "hide": false,
+              "intervalFactor": 1,
+              "query": "SELECT \n    event_date,\n    groupArray((group, users_added))\nFROM (\n\n    SELECT\n        event_date,\n        group,\n        sum(users_added_in_group) AS users_added,\n        sum(men_added_in_group) AS men_added,\n        sum(women_added_in_group) AS women_added\n    FROM marts.experiments_agg_daily_wo_curr_day\n    WHERE exp_id = '$exp_id'\n    GROUP BY event_date, group\n    ORDER BY event_date, group \n    \n) AS sq \nGROUP BY event_date  \nORDER BY event_date",
+              "rawQuery": "SELECT \n    event_date,\n    groupArray((group, users_added))\nFROM (\n\n    SELECT\n        event_date,\n        group,\n        sum(users_added_in_group) AS users_added,\n        sum(men_added_in_group) AS men_added,\n        sum(women_added_in_group) AS women_added\n    FROM marts.experiments_agg_daily_wo_curr_day\n    WHERE exp_id = 'sellers_price'\n    GROUP BY event_date, group\n    ORDER BY event_date, group \n    \n) AS sq \nGROUP BY event_date  \nORDER BY event_date",
+              "refId": "A",
+              "round": "0s",
+              "skip_comments": true,
+              "table": "kiss",
+              "tableLoading": false
+            }
+          ],
+          "title": "",
+          "transparent": true,
+          "type": "timeseries"
+        }
+      ],
+      "title": "experiment: $exp_id (users)",
+      "type": "row"
+    },
+    {
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 2
+      },
+      "id": 54,
+      "panels": [
+        {
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 110
+          },
+          "id": 50,
+          "options": {
+            "code": {
+              "language": "plaintext",
+              "showLineNumbers": false,
+              "showMiniMap": false
+            },
+            "content": "<hr style=\"width: 100%; border: none; height: 1px; background-color: yellow; margin: 10px 0;\" />",
+            "mode": "html"
+          },
+          "pluginVersion": "11.6.0",
+          "title": "",
+          "transparent": true,
+          "type": "text"
+        },
+        {
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 3,
+            "w": 24,
+            "x": 0,
+            "y": 111
+          },
+          "id": 20,
+          "options": {
+            "code": {
+              "language": "plaintext",
+              "showLineNumbers": false,
+              "showMiniMap": false
+            },
+            "content": "<div style=\"background-color: rgba(43, 108, 163, 0.3); padding: 10px; color: white;\">\nMETRICS\n</div>\n<span style=\"font-size: 12px\">** REJECT AND BOUNDS - values from last calculated point</span>",
+            "mode": "html"
+          },
+          "pluginVersion": "11.6.0",
+          "title": "",
+          "transparent": true,
+          "type": "text"
+        },
+        {
+          "datasource": {
+            "type": "vertamedia-clickhouse-datasource",
+            "uid": "-GaPdInGk"
+          },
+          "description": "* REJECT AND BOUNDS - values from last calculated point and smalles ci_length",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "custom": {
+                "align": "auto",
+                "cellOptions": {
+                  "type": "auto"
+                },
+                "filterable": true,
+                "inspect": true
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green"
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "METRIC TYPE"
+                },
+                "properties": [
+                  {
+                    "id": "mappings",
+                    "value": [
+                      {
+                        "options": {
+                          "0": {
+                            "color": "text",
+                            "index": 1,
+                            "text": "ADDITIONAL"
+                          },
+                          "1": {
+                            "color": "yellow",
+                            "index": 0,
+                            "text": "MAIN"
+                          }
+                        },
+                        "type": "value"
+                      }
+                    ]
+                  },
+                  {
+                    "id": "custom.cellOptions",
+                    "value": {
+                      "type": "color-text"
+                    }
+                  },
+                  {
+                    "id": "custom.width",
+                    "value": 130
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "METRIC NAME"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 390
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "fixedColor": "#2b6ca34d",
+                      "mode": "fixed"
+                    }
+                  },
+                  {
+                    "id": "custom.cellOptions",
+                    "value": {
+                      "type": "color-background"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": "/date/"
+                },
+                "properties": [
+                  {
+                    "id": "custom.cellOptions",
+                    "value": {
+                      "type": "color-background"
+                    }
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "fixedColor": "#2fa36a4d",
+                      "mode": "fixed"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "FIRST CALCULATION (date)"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 229
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "LAST CALCULATION (date)"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 223
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "REJECT"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 90
+                  },
+                  {
+                    "id": "mappings",
+                    "value": [
+                      {
+                        "options": {
+                          "0": {
+                            "color": "#353333cc",
+                            "index": 1,
+                            "text": "NO"
+                          },
+                          "1": {
+                            "color": "dark-red",
+                            "index": 0,
+                            "text": "YES"
+                          }
+                        },
+                        "type": "value"
+                      }
+                    ]
+                  },
+                  {
+                    "id": "custom.cellOptions",
+                    "value": {
+                      "type": "color-background"
+                    }
+                  },
+                  {
+                    "id": "unit",
+                    "value": "percentunit"
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": "/BOUND|OBSERVED/"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "percentunit"
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "LEFT BOUND"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 122
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "RIGHT BOUND"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 131
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "groups_compared"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 182
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "OBSERVED EFFECT"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 169
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "GROUPS COMPARED"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 182
+                  }
+                ]
+              }
+            ]
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 114
+          },
+          "id": 16,
+          "options": {
+            "cellHeight": "sm",
+            "footer": {
+              "countRows": false,
+              "fields": [
+                "REJECT"
+              ],
+              "reducer": [
+                "mean"
+              ],
+              "show": true
+            },
+            "showHeader": true,
+            "sortBy": []
+          },
+          "pluginVersion": "11.6.0",
+          "targets": [
+            {
+              "database": "marts",
+              "datasource": {
+                "type": "vertamedia-clickhouse-datasource",
+                "uid": "-GaPdInGk"
+              },
+              "dateColDataType": "",
+              "dateLoading": false,
+              "dateTimeColDataType": "created_at",
+              "dateTimeType": "DATETIME",
+              "datetimeLoading": false,
+              "extrapolate": true,
+              "format": "table",
+              "formattedQuery": "SELECT $timeSeries as t, count() FROM $table WHERE $timeFilter GROUP BY t ORDER BY t",
+              "intervalFactor": 1,
+              "query": "\n\nSELECT\n    metric_name AS `METRIC NAME`,\n    min(end_date) AS `FIRST CALCULATION (date)`,\n    max(end_date) AS `LAST CALCULATION (date)`,\n    groups_compared  AS `GROUPS COMPARED`,\n    argMin(is_main_metric, pvalue) AS `METRIC TYPE`,\n    argMin(reject, pvalue) AS `REJECT`,\n    argMin(left_bound, pvalue) AS `LEFT BOUND`,\n    argMin(effect, pvalue) AS `OBSERVED EFFECT`,\n    argMin(right_bound, pvalue) AS `RIGHT BOUND`,\n    metric_description AS `METRIC DESCRIPTION`\nFROM (\n    \n    SELECT \n        *,\n        concat(name_1,' vs ',name_2) AS groups_compared\n    FROM marts.exp_comparison_results AS l GLOBAL ALL LEFT JOIN (\n    \n        SELECT \n            name AS metric_name,\n            description AS metric_description\n        FROM marts.exp_metrics_state\n        ORDER BY event_date DESC, event_time DESC\n        LIMIT 1 BY metric_name\n    \n    ) AS r USING metric_name\n    WHERE exp_id = '$exp_id'\n        AND end_date BETWEEN toDate($from) AND toDate($to)\n    ORDER BY metric_name, end_date DESC, ci_length\n    LIMIT 1 BY metric_name, groups_compared\n\n) AS sq \nGROUP BY metric_name, metric_description, groups_compared\nORDER BY `METRIC TYPE` DESC, groups_compared, metric_name",
+              "rawQuery": "SELECT\n    metric_name AS `METRIC NAME`,\n    min(end_date) AS `FIRST CALCULATION (date)`,\n    max(end_date) AS `LAST CALCULATION (date)`,\n    groups_compared  AS `GROUPS COMPARED`,\n    argMin(is_main_metric, pvalue) AS `METRIC TYPE`,\n    argMin(reject, pvalue) AS `REJECT`,\n    argMin(left_bound, pvalue) AS `LEFT BOUND`,\n    argMin(effect, pvalue) AS `OBSERVED EFFECT`,\n    argMin(right_bound, pvalue) AS `RIGHT BOUND`,\n    metric_description AS `METRIC DESCRIPTION`\nFROM (\n    \n    SELECT \n        *,\n        concat(name_1,' vs ',name_2) AS groups_compared\n    FROM marts.exp_comparison_results AS l GLOBAL ALL LEFT JOIN (\n    \n        SELECT \n            name AS metric_name,\n            description AS metric_description\n        FROM marts.exp_metrics_state\n        ORDER BY event_date DESC, event_time DESC\n        LIMIT 1 BY metric_name\n    \n    ) AS r USING metric_name\n    WHERE exp_id = 'dating_goals_old'\n        AND end_date BETWEEN toDate(1735187614) AND toDate(1737321416)\n    ORDER BY metric_name, end_date DESC, ci_length\n    LIMIT 1 BY metric_name, groups_compared\n\n) AS sq \nGROUP BY metric_name, metric_description, groups_compared\nORDER BY `METRIC TYPE` DESC, groups_compared, metric_name",
+              "refId": "A",
+              "round": "0s",
+              "skip_comments": true,
+              "table": "exp_comparison_results",
+              "tableLoading": false
+            }
+          ],
+          "title": " ",
+          "transparent": true,
+          "type": "table"
+        }
+      ],
+      "title": "experiment: $exp_id (metrics)",
+      "type": "row"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 3
+      },
+      "id": 55,
+      "panels": [],
+      "title": "experiment: $exp_id (metric comparisons: $metric_name)",
+      "type": "row"
+    },
+    {
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 4
+      },
+      "id": 51,
+      "options": {
+        "code": {
+          "language": "plaintext",
+          "showLineNumbers": false,
+          "showMiniMap": false
+        },
+        "content": "<hr style=\"width: 100%; border: none; height: 1px; background-color: yellow; margin: 10px 0;\" />",
+        "mode": "html"
+      },
+      "pluginVersion": "11.6.0",
+      "title": "",
+      "transparent": true,
+      "type": "text"
+    },
+    {
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 2,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
+      "id": 23,
+      "options": {
+        "code": {
+          "language": "plaintext",
+          "showLineNumbers": false,
+          "showMiniMap": false
+        },
+        "content": "<div style=\"background-color: rgba(43, 108, 163, 0.3); padding: 10px; color: white;\">\nCHOOSED METRIC COMPARISONS: <span style=\"color: yellow;text-transform: uppercase;\">${metric_name}</span>\n</div>\n",
+        "mode": "html"
+      },
+      "pluginVersion": "11.6.0",
+      "title": "",
+      "transparent": true,
+      "type": "text"
+    },
+    {
+      "datasource": {
+        "type": "vertamedia-clickhouse-datasource",
+        "uid": "-GaPdInGk"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/IS CHOOSED/"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "0": {
+                        "color": "text",
+                        "index": 1,
+                        "text": "NO"
+                      },
+                      "1": {
+                        "color": "yellow",
+                        "index": 0,
+                        "text": "YES"
+                      }
+                    },
+                    "type": "value"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "METHOD NAME"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#2b6ca34d",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.width",
+                "value": 262
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "METHOD PARAMS"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#2b6ca34d",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "IS CHOOSED"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 157
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 7
+      },
+      "id": 15,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": []
+      },
+      "pluginVersion": "11.6.0",
+      "targets": [
+        {
+          "database": "marts",
+          "datasource": {
+            "type": "vertamedia-clickhouse-datasource",
+            "uid": "-GaPdInGk"
+          },
+          "dateColDataType": "",
+          "dateLoading": false,
+          "dateTimeColDataType": "created_at",
+          "dateTimeType": "DATETIME",
+          "datetimeLoading": false,
+          "extrapolate": true,
+          "format": "table",
+          "formattedQuery": "SELECT $timeSeries as t, count() FROM $table WHERE $timeFilter GROUP BY t ORDER BY t",
+          "intervalFactor": 1,
+          "query": "\n\n    SELECT\n        DISTINCT\n        if(method_name = '$method_name' AND method_params = '$method_params', 1, 0) AS `IS CHOOSED`,\n        method_name AS `METHOD NAME`,\n        method_params AS `METHOD PARAMS`\n    FROM marts.exp_comparison_results \n    WHERE exp_id = '$exp_id'\n        AND end_date BETWEEN toDate($from) AND toDate($to)\n        AND metric_name = '$metric_name'",
+          "rawQuery": "SELECT\n        DISTINCT\n        if(method_name = 't-test' AND method_params = '{\"alpha\": 0.05, \"test_type\": \"relative\", \"calculate_mde\": true, \"power\": 0.8, \"calculate_power\": true, \"mde\": 0.1}', 1, 0) AS `IS CHOOSED`,\n        method_name AS `METHOD NAME`,\n        method_params AS `METHOD PARAMS`\n    FROM marts.exp_comparison_results \n    WHERE exp_id = 'vip_level_eight'\n        AND end_date BETWEEN toDate(1698423927) AND toDate(1730049927)\n        AND metric_name = 'arpu'",
+          "refId": "A",
+          "round": "0s",
+          "skip_comments": true,
+          "table": "exp_comparison_results",
+          "tableLoading": false
+        }
+      ],
+      "title": "",
+      "transparent": true,
+      "type": "table"
+    },
+    {
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 2,
+        "w": 4,
+        "x": 0,
+        "y": 13
+      },
+      "id": 41,
+      "options": {
+        "code": {
+          "language": "plaintext",
+          "showLineNumbers": false,
+          "showMiniMap": false
+        },
+        "content": "<div style=\"background-color: rgba(43, 108, 163, 0.3); padding: 10px; color: white;\">\nGROUPS COMPARED\n</div>\n",
+        "mode": "html"
+      },
+      "pluginVersion": "11.6.0",
+      "title": "",
+      "transparent": true,
+      "type": "text"
+    },
+    {
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 2,
+        "w": 5,
+        "x": 4,
+        "y": 13
+      },
+      "id": 26,
+      "options": {
+        "code": {
+          "language": "plaintext",
+          "showLineNumbers": false,
+          "showMiniMap": false
+        },
+        "content": "<div style=\"background-color: rgba(43, 108, 163, 0.3); padding: 10px; color: white;\">\nVALUES\n</div>\n",
+        "mode": "html"
+      },
+      "pluginVersion": "11.6.0",
+      "title": "",
+      "transparent": true,
+      "type": "text"
+    },
+    {
+      "description": "* OBSERVED EFFECT != REAL EFFECT",
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 2,
+        "w": 5,
+        "x": 9,
+        "y": 13
+      },
+      "id": 27,
+      "options": {
+        "code": {
+          "language": "plaintext",
+          "showLineNumbers": false,
+          "showMiniMap": false
+        },
+        "content": "<div style=\"background-color: rgba(43, 108, 163, 0.3); padding: 10px; color: white;\">\nOBSERVED EFFECT\n</div>\n",
+        "mode": "html"
+      },
+      "pluginVersion": "11.6.0",
+      "title": "",
+      "transparent": true,
+      "type": "text"
+    },
+    {
+      "description": "*  MDE считается не для всех критериев, а только  для тех где это можно сделать простой формулой",
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 2,
+        "w": 5,
+        "x": 14,
+        "y": 13
+      },
+      "id": 56,
+      "options": {
+        "code": {
+          "language": "plaintext",
+          "showLineNumbers": false,
+          "showMiniMap": false
+        },
+        "content": "<div style=\"background-color: rgba(43, 108, 163, 0.3); padding: 10px; color: white;\">\nMDE (not for all tests)\n</div>\n",
+        "mode": "html"
+      },
+      "pluginVersion": "11.6.0",
+      "title": "",
+      "transparent": true,
+      "type": "text"
+    },
+    {
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 2,
+        "w": 5,
+        "x": 19,
+        "y": 13
+      },
+      "id": 28,
+      "options": {
+        "code": {
+          "language": "plaintext",
+          "showLineNumbers": false,
+          "showMiniMap": false
+        },
+        "content": "<div style=\"background-color: rgba(43, 108, 163, 0.3); padding: 10px; color: white;\">\nPVALUES\n</div>\n",
+        "mode": "html"
+      },
+      "pluginVersion": "11.6.0",
+      "title": "",
+      "transparent": true,
+      "type": "text"
+    },
+    {
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 4,
+        "x": 0,
+        "y": 15
+      },
+      "id": 25,
+      "options": {
+        "code": {
+          "language": "plaintext",
+          "showLineNumbers": false,
+          "showMiniMap": false
+        },
+        "content": "<div style=\"\n  background-color: rgba(43, 108, 163, 0.3);\n  display: flex;\n  flex-direction: column;\n  justify-content: center;\n  align-items: center;\n  padding: 10px;\n  color: white;\n  width: 100%;\n  height: 100%;\n  text-align: center;\n\">\n  <span style=\"text-transform: uppercase; font-size:18px;\">${groups_comparison}</span>\n  <span style=\"font-size:11px; margin-top: 3px;\">${method_name}, ${method_params}</span>\n</div>",
+        "mode": "html"
+      },
+      "pluginVersion": "10.0.3",
+      "repeat": "groups_comparison",
+      "repeatDirection": "v",
+      "title": "",
+      "transparent": true,
+      "type": "text"
+    },
+    {
+      "datasource": {
+        "type": "vertamedia-clickhouse-datasource",
+        "uid": "-GaPdInGk"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/std/"
+            },
+            "properties": [
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          },
+          {
+            "__systemRef": "hideSeriesFrom",
+            "matcher": {
+              "id": "byNames",
+              "options": {
+                "mode": "exclude",
+                "names": [
+                  "value_1",
+                  "value_2",
+                  "std_1",
+                  "std_2"
+                ],
+                "prefix": "All except:",
+                "readOnly": true
+              }
+            },
+            "properties": [
+              {
+                "id": "custom.hideFrom",
+                "value": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": true
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 5,
+        "x": 4,
+        "y": 15
+      },
+      "id": 14,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "11.6.0",
+      "repeat": "groups_comparison",
+      "repeatDirection": "v",
+      "targets": [
+        {
+          "adHocFilters": [],
+          "adHocValuesQuery": "",
+          "add_metadata": true,
+          "contextWindowSize": "10",
+          "database": "marts",
+          "datasource": {
+            "type": "vertamedia-clickhouse-datasource",
+            "uid": "-GaPdInGk"
+          },
+          "dateColDataType": "",
+          "dateLoading": false,
+          "dateTimeColDataType": "created_at",
+          "dateTimeType": "DATETIME",
+          "datetimeLoading": false,
+          "editorMode": "sql",
+          "extrapolate": true,
+          "format": "time_series",
+          "formattedQuery": "SELECT $timeSeries as t, count() FROM $table WHERE $timeFilter GROUP BY t ORDER BY t",
+          "interval": "",
+          "intervalFactor": 1,
+          "query": "SELECT \n    end_date,\n    value_1,\n    value_2,\n    std_1,\n    std_2,\n    cov_value_1,\n    cov_value_2\nFROM (\n\n    SELECT\n        end_date,\n        effect,\n        pvalue,\n        value_1,\n        value_2,\n        std_1,\n        std_2,\n        cov_value_1,\n        cov_value_2\n    FROM marts.exp_comparison_results\n    WHERE exp_id = '$exp_id'\n        AND end_date BETWEEN toDate($from) AND toDate($to)\n        AND metric_name = '$metric_name'\n        AND concat(name_1,' vs ',name_2) = '$groups_comparison'\n        AND method_name = '$method_name'\n        AND method_params = '$method_params'\n\n) AS sq \nORDER BY end_date",
+          "rawQuery": "/* grafana dashboard=Experiment Performance, user=109 */\nSELECT \n    end_date,\n    value_1,\n    value_2,\n    std_1,\n    std_2,\n    cov_value_1,\n    cov_value_2\nFROM (\n\n    SELECT\n        end_date,\n        effect,\n        pvalue,\n        value_1,\n        value_2,\n        std_1,\n        std_2,\n        cov_value_1,\n        cov_value_2\n    FROM marts.exp_comparison_results\n    WHERE exp_id = 'dating_goals_extended_levels'\n        AND end_date BETWEEN toDate(1738229881) AND toDate(1746005881)\n        AND metric_name = 'avg_room_time_per_visitor_reg_before_exp_start_not_novice'\n        AND concat(name_1,' vs ',name_2) = ''control vs target_1'\n        AND method_name = 't-test'\n        AND method_params = '{\"alpha\": 0.05, \"test_type\": \"relative\", \"calculate_mde\": true, \"power\": 0.8}'\n\n) AS sq \nORDER BY end_date",
+          "refId": "A",
+          "round": "0s",
+          "skip_comments": true,
+          "table": "exp_comparison_results",
+          "tableLoading": false,
+          "useWindowFuncForMacros": true
+        }
+      ],
+      "title": "",
+      "transparent": true,
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "vertamedia-clickhouse-datasource",
+        "uid": "-GaPdInGk"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisGridShow": true,
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "percentunit"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "right_bound"
+            },
+            "properties": [
+              {
+                "id": "custom.fillBelowTo",
+                "value": "left_bound"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [
+                    10,
+                    2
+                  ],
+                  "fill": "dash"
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 25
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "left_bound"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [
+                    10,
+                    2
+                  ],
+                  "fill": "dash"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "effect"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "dark-green",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 2
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "zero_effect"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [
+                    0,
+                    5
+                  ],
+                  "fill": "dot"
+                }
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "custom.hideFrom",
+                "value": {
+                  "legend": true,
+                  "tooltip": false,
+                  "viz": false
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 2
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "avg_group_size"
+            },
+            "properties": [
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "light-yellow",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [
+                    10,
+                    5
+                  ],
+                  "fill": "dash"
+                }
+              },
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "custom.hideFrom",
+                "value": {
+                  "legend": true,
+                  "tooltip": false,
+                  "viz": false
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 0.8
+              }
+            ]
+          },
+          {
+            "__systemRef": "hideSeriesFrom",
+            "matcher": {
+              "id": "byNames",
+              "options": {
+                "mode": "exclude",
+                "names": [
+                  "right_bound",
+                  "zero_effect",
+                  "avg_group_size",
+                  "left_bound"
+                ],
+                "prefix": "All except:",
+                "readOnly": true
+              }
+            },
+            "properties": [
+              {
+                "id": "custom.hideFrom",
+                "value": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": true
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 5,
+        "x": 9,
+        "y": 15
+      },
+      "id": 9,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "sortBy": "Last *",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "11.6.0",
+      "repeat": "groups_comparison",
+      "repeatDirection": "v",
+      "targets": [
+        {
+          "adHocFilters": [],
+          "adHocValuesQuery": "",
+          "add_metadata": true,
+          "contextWindowSize": "10",
+          "database": "marts",
+          "datasource": {
+            "type": "vertamedia-clickhouse-datasource",
+            "uid": "-GaPdInGk"
+          },
+          "dateColDataType": "",
+          "dateLoading": false,
+          "dateTimeColDataType": "created_at",
+          "dateTimeType": "DATETIME",
+          "datetimeLoading": false,
+          "editorMode": "sql",
+          "extrapolate": true,
+          "format": "time_series",
+          "formattedQuery": "SELECT $timeSeries as t, count() FROM $table WHERE $timeFilter GROUP BY t ORDER BY t",
+          "interval": "",
+          "intervalFactor": 1,
+          "query": "\nSELECT \n    end_date,\n    left_bound,\n    effect,\n    right_bound,\n    avg_group_size\nFROM (\n\n    SELECT\n        end_date, \n        effect,\n        pvalue,\n        left_bound, right_bound,\n        day,\n        (size_1 + size_2) / 2 AS avg_group_size,\n        mde_1,\n        mde_2\n    FROM marts.exp_comparison_results\n    WHERE exp_id = '$exp_id'\n        AND end_date BETWEEN toDate($from) AND toDate($to)\n        AND metric_name = '$metric_name'\n        AND concat(name_1,' vs ',name_2) = '$groups_comparison'\n        AND method_name = '$method_name'\n        AND method_params = '$method_params'\n        \n) AS sq\nORDER BY end_date",
+          "rawQuery": "/* grafana dashboard=Experiment Performance, user=109 */\nSELECT \n    end_date,\n    left_bound,\n    effect,\n    right_bound,\n    avg_group_size\nFROM (\n\n    SELECT\n        end_date, \n        effect,\n        pvalue,\n        left_bound, right_bound,\n        day,\n        (size_1 + size_2) / 2 AS avg_group_size,\n        mde_1,\n        mde_2\n    FROM marts.exp_comparison_results\n    WHERE exp_id = 'dating_goals_extended_levels'\n        AND end_date BETWEEN toDate(1745314740) AND toDate(1746005940)\n        AND metric_name = 'avg_room_time_per_visitor_reg_before_exp_start_not_novice'\n        AND concat(name_1,' vs ',name_2) = 'control vs target_1\n        AND method_name = 't-test'\n        AND method_params = '{\"alpha\": 0.05, \"test_type\": \"relative\", \"calculate_mde\": true, \"power\": 0.8}'\n        \n) AS sq\nORDER BY end_date",
+          "refId": "A",
+          "round": "0s",
+          "skip_comments": true,
+          "table": "exp_comparison_results",
+          "tableLoading": false,
+          "useWindowFuncForMacros": true
+        },
+        {
+          "adHocFilters": [],
+          "adHocValuesQuery": "",
+          "add_metadata": true,
+          "contextWindowSize": "10",
+          "database": "marts",
+          "datasource": {
+            "type": "vertamedia-clickhouse-datasource",
+            "uid": "-GaPdInGk"
+          },
+          "dateColDataType": "",
+          "dateLoading": false,
+          "dateTimeColDataType": "created_at",
+          "dateTimeType": "DATETIME",
+          "datetimeLoading": false,
+          "editorMode": "sql",
+          "extrapolate": true,
+          "format": "time_series",
+          "formattedQuery": "SELECT $timeSeries as t, count() FROM $table WHERE $timeFilter GROUP BY t ORDER BY t",
+          "hide": false,
+          "interval": "",
+          "intervalFactor": 1,
+          "query": "\n\n    SELECT\n        DISTINCT\n        end_date,\n        0 AS zero_effect\n    FROM marts.exp_comparison_results\n    WHERE exp_id = '$exp_id'\n        AND end_date BETWEEN toDate($from) AND toDate($to)\n        AND metric_name = '$metric_name'\n    ORDER BY end_date\n",
+          "rawQuery": "/* grafana dashboard=Experiment Performance, user=109 */\nSELECT\n        DISTINCT\n        end_date,\n        0 AS zero_effect\n    FROM marts.exp_comparison_results\n    WHERE exp_id = 'dating_goals_extended_levels'\n        AND end_date BETWEEN toDate(1745314740) AND toDate(1746005940)\n        AND metric_name = 'avg_room_time_per_visitor_reg_before_exp_start_not_novice'\n    ORDER BY end_date",
+          "refId": "B",
+          "round": "0s",
+          "skip_comments": true,
+          "table": "exp_comparison_results",
+          "tableLoading": false,
+          "useWindowFuncForMacros": true
+        }
+      ],
+      "title": "",
+      "transparent": true,
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "vertamedia-clickhouse-datasource",
+        "uid": "-GaPdInGk"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "group_size"
+            },
+            "properties": [
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [
+                    10,
+                    5
+                  ],
+                  "fill": "dash"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "light-yellow",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "mde_2"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/mde/"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/size/"
+            },
+            "properties": [
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [
+                    10,
+                    5
+                  ],
+                  "fill": "dash"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "light-yellow",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 0.8
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 5,
+        "x": 14,
+        "y": 15
+      },
+      "id": 57,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "11.6.0",
+      "repeat": "groups_comparison",
+      "repeatDirection": "v",
+      "targets": [
+        {
+          "adHocFilters": [],
+          "adHocValuesQuery": "",
+          "add_metadata": true,
+          "contextWindowSize": "10",
+          "database": "marts",
+          "datasource": {
+            "type": "vertamedia-clickhouse-datasource",
+            "uid": "-GaPdInGk"
+          },
+          "dateColDataType": "",
+          "dateLoading": false,
+          "dateTimeColDataType": "created_at",
+          "dateTimeType": "DATETIME",
+          "datetimeLoading": false,
+          "editorMode": "sql",
+          "extrapolate": true,
+          "format": "time_series",
+          "formattedQuery": "SELECT $timeSeries as t, count() FROM $table WHERE $timeFilter GROUP BY t ORDER BY t",
+          "interval": "",
+          "intervalFactor": 1,
+          "query": "\nSELECT \n    end_date,\n    mde_1,\n    mde_2,\n    size_1 AS group_size_1,\n    size_2 AS group_size_2\nFROM (\n\n    SELECT\n        end_date, \n        effect,\n        pvalue,\n        left_bound, right_bound,\n        day,\n        size_1,\n        size_2,\n        mde_1,\n        mde_2\n    FROM marts.exp_comparison_results\n    WHERE exp_id = '$exp_id'\n        AND end_date BETWEEN toDate($from) AND toDate($to)\n        AND metric_name = '$metric_name'\n        AND concat(name_1,' vs ',name_2) = '$groups_comparison'\n        AND method_name = '$method_name'\n        AND method_params = '$method_params'\n        \n) AS sq\nORDER BY end_date",
+          "rawQuery": "/* grafana dashboard=Experiment Performance, user=109 */\nSELECT \n    end_date,\n    mde_1,\n    mde_2,\n    size_1 AS group_size_1,\n    size_2 AS group_size_2\nFROM (\n\n    SELECT\n        end_date, \n        effect,\n        pvalue,\n        left_bound, right_bound,\n        day,\n        size_1,\n        size_2,\n        mde_1,\n        mde_2\n    FROM marts.exp_comparison_results\n    WHERE exp_id = 'dating_goals_extended_levels'\n        AND end_date BETWEEN toDate(1745314740) AND toDate(1746005940)\n        AND metric_name = 'avg_room_time_per_visitor_reg_before_exp_start_not_novice'\n        AND concat(name_1,' vs ',name_2) = 'control vs target_1\n        AND method_name = 't-test'\n        AND method_params = '{\"alpha\": 0.05, \"test_type\": \"relative\", \"calculate_mde\": true, \"power\": 0.8}'\n        \n) AS sq\nORDER BY end_date",
+          "refId": "A",
+          "round": "0s",
+          "skip_comments": true,
+          "table": "exp_comparison_results",
+          "tableLoading": false,
+          "useWindowFuncForMacros": true
+        }
+      ],
+      "title": "",
+      "transparent": true,
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "vertamedia-clickhouse-datasource",
+        "uid": "-GaPdInGk"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "alpha"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [
+                    0,
+                    5
+                  ],
+                  "fill": "dot"
+                }
+              },
+              {
+                "id": "custom.hideFrom",
+                "value": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                }
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 2
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "avg_group_size"
+            },
+            "properties": [
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [
+                    10,
+                    5
+                  ],
+                  "fill": "dash"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "light-yellow",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 0.8
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "pvalue"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "dark-green",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 5,
+        "x": 19,
+        "y": 15
+      },
+      "id": 3,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "11.6.0",
+      "repeat": "groups_comparison",
+      "repeatDirection": "v",
+      "targets": [
+        {
+          "adHocFilters": [],
+          "adHocValuesQuery": "",
+          "add_metadata": true,
+          "contextWindowSize": "10",
+          "database": "marts",
+          "datasource": {
+            "type": "vertamedia-clickhouse-datasource",
+            "uid": "-GaPdInGk"
+          },
+          "dateColDataType": "",
+          "dateLoading": false,
+          "dateTimeColDataType": "created_at",
+          "dateTimeType": "DATETIME",
+          "datetimeLoading": false,
+          "editorMode": "sql",
+          "extrapolate": true,
+          "format": "time_series",
+          "formattedQuery": "SELECT $timeSeries as t, count() FROM $table WHERE $timeFilter GROUP BY t ORDER BY t",
+          "interval": "",
+          "intervalFactor": 1,
+          "query": "SELECT \n    end_date,\n    pvalue,\n    (size_1 + size_2) / 2 AS avg_group_size\nFROM (\n\n    SELECT\n        end_date,\n        effect,\n        pvalue,\n        size_1,\n        size_2\n    FROM marts.exp_comparison_results\n    WHERE exp_id = '$exp_id'\n        AND end_date BETWEEN toDate($from) AND toDate($to)\n        AND metric_name = '$metric_name'\n        AND concat(name_1,' vs ',name_2) = '$groups_comparison'\n        AND method_name = '$method_name'\n        AND method_params = '$method_params'\n\n) AS sq \nORDER BY end_date",
+          "rawQuery": "/* grafana dashboard=Experiment Performance, user=109 */\nSELECT \n    end_date,\n    pvalue,\n    (size_1 + size_2) / 2 AS avg_group_size\nFROM (\n\n    SELECT\n        end_date,\n        effect,\n        pvalue,\n        size_1,\n        size_2\n    FROM marts.exp_comparison_results\n    WHERE exp_id = 'dating_goals_extended_levels'\n        AND end_date BETWEEN toDate(1745314740) AND toDate(1746005940)\n        AND metric_name = 'avg_room_time_per_visitor_reg_before_exp_start_not_novice'\n        AND concat(name_1,' vs ',name_2) = ''control vs target_1'\n        AND method_name = 't-test'\n        AND method_params = '{\"alpha\": 0.05, \"test_type\": \"relative\", \"calculate_mde\": true, \"power\": 0.8}'\n\n) AS sq \nORDER BY end_date",
+          "refId": "A",
+          "round": "0s",
+          "skip_comments": true,
+          "table": "exp_comparison_results",
+          "tableLoading": false,
+          "useWindowFuncForMacros": true
+        },
+        {
+          "adHocFilters": [],
+          "adHocValuesQuery": "",
+          "add_metadata": true,
+          "contextWindowSize": "10",
+          "database": "marts",
+          "datasource": {
+            "type": "vertamedia-clickhouse-datasource",
+            "uid": "-GaPdInGk"
+          },
+          "dateColDataType": "",
+          "dateLoading": false,
+          "dateTimeColDataType": "created_at",
+          "dateTimeType": "DATETIME",
+          "datetimeLoading": false,
+          "editorMode": "sql",
+          "extrapolate": true,
+          "format": "time_series",
+          "formattedQuery": "SELECT $timeSeries as t, count() FROM $table WHERE $timeFilter GROUP BY t ORDER BY t",
+          "hide": false,
+          "interval": "",
+          "intervalFactor": 1,
+          "query": "\n\n    SELECT\n        end_date,\n        any(alpha) AS alpha\n    FROM marts.exp_comparison_results\n    WHERE exp_id = '$exp_id'\n        AND end_date BETWEEN toDate($from) AND toDate($to)\n        AND metric_name = '$metric_name'\n    GROUP BY end_date\n    ORDER BY end_date\n",
+          "rawQuery": "/* grafana dashboard=Experiment Performance, user=109 */\nSELECT\n        end_date,\n        any(alpha) AS alpha\n    FROM marts.exp_comparison_results\n    WHERE exp_id = 'dating_goals_extended_levels'\n        AND end_date BETWEEN toDate(1745314740) AND toDate(1746005940)\n        AND metric_name = 'avg_room_time_per_visitor_reg_before_exp_start_not_novice'\n    GROUP BY end_date\n    ORDER BY end_date",
+          "refId": "B",
+          "round": "0s",
+          "skip_comments": true,
+          "table": "exp_comparison_results",
+          "tableLoading": false,
+          "useWindowFuncForMacros": true
+        }
+      ],
+      "title": "",
+      "transparent": true,
+      "type": "timeseries"
+    },
+    {
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 24
+      },
+      "id": 52,
+      "options": {
+        "code": {
+          "language": "plaintext",
+          "showLineNumbers": false,
+          "showMiniMap": false
+        },
+        "content": "<hr style=\"width: 100%; border: none; height: 1px; background-color: yellow; margin: 10px 0;\" />",
+        "mode": "html"
+      },
+      "pluginVersion": "11.6.0",
+      "title": "",
+      "transparent": true,
+      "type": "text"
+    },
+    {
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 25
+      },
+      "id": 71,
+      "panels": [
+        {
+          "datasource": {
+            "type": "vertamedia-clickhouse-datasource",
+            "uid": "-GaPdInGk"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "custom": {
+                "align": "auto",
+                "cellOptions": {
+                  "type": "auto"
+                },
+                "filterable": true,
+                "inspect": true
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green"
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "start_date"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 105
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "end_date"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 105
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "day"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 59
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "value_1"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 95
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "value_2"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 101
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "std_1"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 79
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "std_2"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 80
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "size_1"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 81
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "size_2"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 85
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "alpha"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 87
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "pvalue"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 102
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "effect"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 102
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "left_bound"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 120
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "right_bound"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 120
+                  }
+                ]
+              }
+            ]
+          },
+          "gridPos": {
+            "h": 13,
+            "w": 24,
+            "x": 0,
+            "y": 60
+          },
+          "id": 82,
+          "options": {
+            "cellHeight": "sm",
+            "footer": {
+              "countRows": false,
+              "fields": "",
+              "reducer": [
+                "sum"
+              ],
+              "show": false
+            },
+            "showHeader": true,
+            "sortBy": []
+          },
+          "pluginVersion": "11.6.0",
+          "targets": [
+            {
+              "database": "log",
+              "datasource": {
+                "type": "vertamedia-clickhouse-datasource",
+                "uid": "-GaPdInGk"
+              },
+              "dateColDataType": "event_date",
+              "dateLoading": false,
+              "dateTimeColDataType": "event_time",
+              "dateTimeType": "DATETIME",
+              "datetimeLoading": false,
+              "extrapolate": true,
+              "format": "table",
+              "formattedQuery": "SELECT $timeSeries as t, count() FROM $table WHERE $timeFilter GROUP BY t ORDER BY t",
+              "intervalFactor": 1,
+              "query": "\n\n    SELECT\n        start_date, \n        end_date, \n        day, \n        \n        metric_query, \n        metric_rendered_query, \n        \n        concat(name_1, ' vs ', name_2) AS comparison, \n        value_1, \n        value_2, \n        std_1, \n        std_2, \n        size_1, \n        size_2, \n        \n        alpha, \n        pvalue, \n        effect, \n        left_bound, \n        right_bound, \n        reject\n    FROM marts.exp_comparison_results\n    WHERE exp_id = '$exp_id'\n        AND end_date BETWEEN toDate($from) AND toDate($to)\n        AND metric_name = '$metric_name'\n        AND method_name = '$method_name'\n        AND method_params = '$method_params'\n    ORDER BY start_date, end_date\n",
+              "rawQuery": "SELECT\n        start_date, \n        end_date, \n        day, \n        \n        metric_query, \n        metric_rendered_query, \n        \n        concat(name_1, ' vs ', name_2) AS comparison, \n        value_1, \n        value_2, \n        std_1, \n        std_2, \n        size_1, \n        size_2, \n        \n        alpha, \n        pvalue, \n        effect, \n        left_bound, \n        right_bound, \n        reject\n    FROM marts.exp_comparison_results\n    WHERE exp_id = 'dating_real_photo'\n        AND end_date BETWEEN toDate(1724756027) AND toDate(1732535627)\n        AND metric_name = 'r3'\n        AND method_name = 'z-test'\n        AND method_params = '{\"alpha\": 0.05, \"test_type\": \"relative\", \"calculate_mde\": true, \"power\": 0.8}'\n    ORDER BY start_date, end_date",
+              "refId": "A",
+              "round": "0s",
+              "skip_comments": true,
+              "table": "kiss_server",
+              "tableLoading": false
+            }
+          ],
+          "title": "Results Table ",
+          "transparent": true,
+          "type": "table"
+        }
+      ],
+      "title": "experiment: $exp_id (metric comparisons: $metric_name - results table)",
+      "type": "row"
+    }
+  ],
+  "preload": false,
+  "refresh": false,
+  "schemaVersion": 41,
+  "tags": [],
+  "templating": {
+    "list": [
+      {
+        "current": {
+          "text": "global_status",
+          "value": "global_status"
+        },
+        "datasource": {
+          "type": "vertamedia-clickhouse-datasource",
+          "uid": "-GaPdInGk"
+        },
+        "definition": "SELECT DISTINCT exp_id \nFROM marts.experiments_agg_daily \nWHERE event_date BETWEEN toDate($from) - 30 AND toDate($to) \nAND exp_id GLOBAL IN (\n    SELECT DISTINCT exp_id \n    FROM marts.exp_comparison_results \n    WHERE end_date BETWEEN toDate($from) - 30 AND toDate($to)\n)\nGROUP BY exp_id ORDER BY exp_id",
+        "description": "Only experiments with calculated metrics",
+        "includeAll": false,
+        "name": "exp_id",
+        "options": [],
+        "query": "SELECT DISTINCT exp_id \nFROM marts.experiments_agg_daily \nWHERE event_date BETWEEN toDate($from) - 30 AND toDate($to) \nAND exp_id GLOBAL IN (\n    SELECT DISTINCT exp_id \n    FROM marts.exp_comparison_results \n    WHERE end_date BETWEEN toDate($from) - 30 AND toDate($to)\n)\nGROUP BY exp_id ORDER BY exp_id",
+        "refresh": 2,
+        "regex": "",
+        "type": "query"
+      },
+      {
+        "current": {
+          "text": "arpu",
+          "value": "arpu"
+        },
+        "datasource": {
+          "type": "vertamedia-clickhouse-datasource",
+          "uid": "-GaPdInGk"
+        },
+        "definition": "SELECT\n    DISTINCT metric_name\nFROM marts.exp_comparison_results\nWHERE exp_id = '$exp_id'\nORDER BY is_main_metric DESC, metric_name",
+        "includeAll": false,
+        "name": "metric_name",
+        "options": [],
+        "query": "SELECT\n    DISTINCT metric_name\nFROM marts.exp_comparison_results\nWHERE exp_id = '$exp_id'\nORDER BY is_main_metric DESC, metric_name",
+        "refresh": 1,
+        "regex": "",
+        "type": "query"
+      },
+      {
+        "current": {
+          "text": "All",
+          "value": [
+            "$__all"
+          ]
+        },
+        "datasource": {
+          "type": "vertamedia-clickhouse-datasource",
+          "uid": "-GaPdInGk"
+        },
+        "definition": "SELECT\n    DISTINCT concat(name_1,' vs ',name_2) AS comparison_name\nFROM marts.exp_comparison_results\nWHERE exp_id = '$exp_id'\nAND metric_name = '$metric_name'\nORDER BY comparison_name",
+        "includeAll": true,
+        "multi": true,
+        "name": "groups_comparison",
+        "options": [],
+        "query": "SELECT\n    DISTINCT concat(name_1,' vs ',name_2) AS comparison_name\nFROM marts.exp_comparison_results\nWHERE exp_id = '$exp_id'\nAND metric_name = '$metric_name'\nORDER BY comparison_name",
+        "refresh": 1,
+        "regex": "",
+        "type": "query"
+      },
+      {
+        "current": {
+          "text": "cuped-t-test",
+          "value": "cuped-t-test"
+        },
+        "datasource": {
+          "type": "vertamedia-clickhouse-datasource",
+          "uid": "-GaPdInGk"
+        },
+        "definition": "SELECT\n    method_name\nFROM marts.exp_comparison_results\nWHERE exp_id = '$exp_id' \nAND metric_name = '$metric_name'\nORDER BY created_at",
+        "includeAll": false,
+        "name": "method_name",
+        "options": [],
+        "query": "SELECT\n    method_name\nFROM marts.exp_comparison_results\nWHERE exp_id = '$exp_id' \nAND metric_name = '$metric_name'\nORDER BY created_at",
+        "refresh": 1,
+        "regex": "",
+        "type": "query"
+      },
+      {
+        "current": {
+          "text": "{\"alpha\": 0.05, \"test_type\": \"relative\", \"calculate_mde\": true, \"power\": 0.8}",
+          "value": "{\"alpha\": 0.05, \"test_type\": \"relative\", \"calculate_mde\": true, \"power\": 0.8}"
+        },
+        "datasource": {
+          "type": "vertamedia-clickhouse-datasource",
+          "uid": "-GaPdInGk"
+        },
+        "definition": "SELECT\n    method_params\nFROM marts.exp_comparison_results\nWHERE exp_id = '$exp_id' \nAND metric_name = '$metric_name'\nAND method_name = '$method_name'\nORDER BY created_at",
+        "includeAll": false,
+        "name": "method_params",
+        "options": [],
+        "query": "SELECT\n    method_params\nFROM marts.exp_comparison_results\nWHERE exp_id = '$exp_id' \nAND metric_name = '$metric_name'\nAND method_name = '$method_name'\nORDER BY created_at",
+        "refresh": 1,
+        "regex": "",
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "2026-06-10T12:40:26.559Z",
+    "to": "2026-06-28T07:21:50.934Z"
+  },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Experiment Performance",
+  "uid": "a2d6f446-3760-4a69-b3f3-b43f735032fc",
+  "version": 241
+}
