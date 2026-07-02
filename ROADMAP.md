@@ -18,18 +18,32 @@ definition-of-done includes the relevant
 - **Next:** flesh out the package layout from
   [architecture.md §4](docs/specs/architecture.md) starting with M1.
 
-## M1 — Pure statistical core (`abkit.stats`)
+## M1 — Pure statistical core (`abkit.stats`) ✅
 - `BaseMethod` ABC + registry + factory; `Sample`/`Fraction`/`SufficientStats`
   (mixed-ddof aware); `effects.py` (delta-method linearisation); `TestResult`.
 - Parametric: `ttest`, `paired_ttest`, `ztest`, `cuped_ttest`, `paired_cuped_ttest`,
   `ratio_delta`. Bootstrap: vectorised engine (mean fast-path + Poisson matmul),
   `bootstrap`, `paired_bootstrap`, `poisson_bootstrap`, `post_normed_bootstrap`,
-  percentile CI + `(#extreme+1)/(n+1)` p-value. Power/MDE; Bonferroni.
+  percentile CI + `(#extreme+1)/(n+1)` p-value (opt-in `pvalue_kind`; the default
+  stays the baseline sign p-value per statistics-changes §2). Power/MDE; Bonferroni.
 - `rng.py` (`default_rng`, deterministic per-row seeds). Dual entry
   (`from_suffstats` ≡ `from_samples`).
-- **DoD:** golden tests vs the legacy engine at rel-1e-9 (incl. θ); known-answer
-  tests; canonical `method_config_id` byte test; quarantine policy for broken
-  ratio methods. *(Must-fixes: ddof, tolerance, seed policy, hash, quarantine.)*
+- **DoD (met):** golden tests vs an independent legacy transcription at rel-1e-9
+  (incl. θ; see statistics-changes §0 note on transcription provenance);
+  known-answer tests; canonical `method_config_id` byte test; quarantine policy
+  for broken ratio methods; 8-angle adversarial review applied (30 verified
+  findings fixed or recorded). *(Must-fixes: ddof, tolerance, seed policy, hash,
+  quarantine — all done.)*
+- **Deferred M1 cleanups (tracked, non-blocking):** shared NormalTest→TestResult
+  builder for the 5 parametric methods; `_finalize_from_boots` epilogue helper
+  for the 4 bootstrap methods (also dedupes the double `stat_point`); route
+  `ratio_delta._arm_linearisation` through `effects.relative_delta_effect`;
+  `JointMoments.corr(i, j)` accessor replacing `paired_cuped_ttest._corr`;
+  declarative introspectable quarantined-branch map (schema-visible, replacing
+  imperative `_validate_params` raises); unify warn-vs-record warning channels;
+  unify golden-bootstrap tolerance helper with `tests/golden/conftest.py`;
+  z-test could route through `effects.normal_test` (kept as a verbatim legacy
+  transcription deliberately).
 
 ## M2 — Declarative config + DB layer + the pipeline (recompute)
 - pydantic Experiment/Metric/Method configs + two-level validator; Jinja templating

@@ -1,8 +1,11 @@
 """Bootstrap CI and p-value helpers (baseline §4; hygiene H4/H8).
 
 The percentile CI and the sign p-value reproduce the legacy verbatim (golden
-parity). H4 (docs/specs/statistics-changes.md §2) adds the plug-in p-value
-``(#extreme + 1)/(n + 1)`` as the default — bounded away from an exact 0.
+parity) and the sign p-value is the DEFAULT — statistics-changes.md §2/§6:
+defaults stay baseline-faithful until the A/A matrix (M4) proves a fix helps.
+H4's plug-in p-value ``(#extreme + 1)/(n + 1)`` — bounded away from an exact 0 —
+ships as the opt-in, identity-bearing ``pvalue_kind: plugin``; promoting it to
+the default is an ALGORITHM_VERSION bump arbitrated by the §0 process.
 
 Tie convention (documented, conservative): replicates at exactly 0 count as
 extreme on BOTH sides — they enter both the ``>= 0`` and the ``<= 0`` counts of
@@ -26,13 +29,13 @@ from abkit.stats.samples import FloatArray
 PVALUE_KIND_PARAM = ParamSpec(
     name="pvalue_kind",
     types=(str,),
-    default="plugin",
+    default="sign",
     identity=True,
     choices=("plugin", "sign"),
     description=(
-        "Bootstrap p-value estimator: 'plugin' = (#extreme+1)/(n+1) smoothing (H4, default; "
-        "ties at 0 count as extreme on both sides); 'sign' = legacy "
-        "2*min(P(boot>0), P(boot<0)) for golden parity."
+        "Bootstrap p-value estimator: 'sign' = legacy 2*min(P(boot>0), P(boot<0)) "
+        "(baseline-faithful default); 'plugin' = (#extreme+1)/(n+1) smoothing (H4, opt-in; "
+        "ties at 0 count as extreme on both sides)."
     ),
 )
 

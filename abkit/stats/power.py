@@ -16,11 +16,44 @@ under ``relative`` yields ±inf, never an exception).
 
 from __future__ import annotations
 
+from functools import lru_cache
+
 import numpy as np
 from statsmodels.stats.power import NormalIndPower, TTestIndPower
 from statsmodels.stats.proportion import proportion_effectsize
 
 from abkit.stats.exceptions import MethodParamError
+
+
+@lru_cache(maxsize=4096)
+def _ttest_effect_size_at_power(size: int, alpha: float, power: float, ratio: float) -> float:
+    """Cached MDE-side solve: the effect size depends only on (n, α, power, ratio),
+    so cumulative runs (same sizes every day, many metrics) hit the cache instead
+    of re-running the brentq root-solve per call (review finding)."""
+    return float(
+        TTestIndPower().solve_power(
+            effect_size=None,
+            nobs1=size,
+            alpha=alpha,
+            power=power,
+            ratio=ratio,
+            alternative="two-sided",
+        )
+    )
+
+
+@lru_cache(maxsize=4096)
+def _normal_effect_size_at_power(size: int, alpha: float, power: float, ratio: float) -> float:
+    return float(
+        NormalIndPower().solve_power(
+            effect_size=None,
+            nobs1=size,
+            alpha=alpha,
+            power=power,
+            ratio=ratio,
+            alternative="two-sided",
+        )
+    )
 
 
 def _check_test_type(test_type: str) -> None:
@@ -48,10 +81,8 @@ def get_ttest_mde(
     _check_test_type(test_type)
     if size <= 1 or std == 0:
         return float("inf")
-    effect_size = TTestIndPower().solve_power(
-        effect_size=None, nobs1=size, alpha=alpha, power=power, ratio=ratio, alternative="two-sided"
-    )
-    mean_adjusted = mean + float(effect_size) * std
+    effect_size = _ttest_effect_size_at_power(int(size), float(alpha), float(power), float(ratio))
+    mean_adjusted = mean + effect_size * std
     with np.errstate(divide="ignore", invalid="ignore"):
         if test_type == "relative":
             mde = float(np.float64(mean_adjusted - mean) / np.float64(mean))
@@ -177,10 +208,8 @@ def get_fraction_mde(
 ) -> float:
     """MDE for a proportion via the inverse arcsine (Cohen's h) back-transform."""
     _check_test_type(test_type)
-    effect_size = NormalIndPower().solve_power(
-        effect_size=None, nobs1=size, alpha=alpha, power=power, ratio=ratio, alternative="two-sided"
-    )
-    mde_absolute = float(np.sin(np.arcsin(np.sqrt(prop)) + float(effect_size) / 2.0) ** 2 - prop)
+    effect_size = _normal_effect_size_at_power(int(size), float(alpha), float(power), float(ratio))
+    mde_absolute = float(np.sin(np.arcsin(np.sqrt(prop)) + effect_size / 2.0) ** 2 - prop)
     with np.errstate(divide="ignore", invalid="ignore"):
         if test_type == "relative":
             return float(np.float64(mde_absolute) / np.float64(prop))

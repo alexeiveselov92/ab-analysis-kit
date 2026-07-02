@@ -170,9 +170,20 @@ def test_choices_enforced() -> None:
 
 
 def test_float_param_accepts_int() -> None:
-    method = TTest(alpha=0.05, power=1)
-    assert method.params["power"] == 1.0
-    assert isinstance(method.params["power"], float)
+    spec = ParamSpec(name="x", types=(float,), default=0.5)
+    value = spec.validate(1, "test-method")
+    assert value == 1.0
+    assert isinstance(value, float)
+
+
+def test_float_param_range_and_finiteness_enforced() -> None:
+    # power is bounded to (0, 1) exclusive; NaN/inf are never valid param values.
+    with pytest.raises(MethodParamError, match="within \\(0.0, 1.0\\)"):
+        TTest(alpha=0.05, power=1.5)
+    with pytest.raises(MethodParamError, match="within"):
+        TTest(alpha=0.05, power=1)
+    with pytest.raises(MethodParamError, match="finite"):
+        TTest(alpha=0.05, power=float("nan"))
 
 
 def test_wrong_type_rejected() -> None:

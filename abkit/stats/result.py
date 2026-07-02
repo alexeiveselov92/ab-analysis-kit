@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import Any, ClassVar
 
 
@@ -53,35 +53,28 @@ class TestResult:
     diagnostics: dict[str, float] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        """JSON-safe flat dict (drops ``effect_distribution``; NaN/inf → None)."""
+        """JSON-safe flat dict (drops ``effect_distribution``; NaN/inf → None).
+
+        Derived from ``dataclasses.fields`` so a future field cannot be silently
+        forgotten in serialisation (review finding).
+        """
 
         def _clean(value: Any) -> Any:
             if isinstance(value, float) and not math.isfinite(value):
                 return None
             return value
 
-        return {
-            "name_1": self.name_1,
-            "name_2": self.name_2,
-            "value_1": _clean(self.value_1),
-            "value_2": _clean(self.value_2),
-            "std_1": _clean(self.std_1),
-            "std_2": _clean(self.std_2),
-            "cov_value_1": _clean(self.cov_value_1),
-            "cov_value_2": _clean(self.cov_value_2),
-            "size_1": self.size_1,
-            "size_2": self.size_2,
-            "mde_1": _clean(self.mde_1),
-            "mde_2": _clean(self.mde_2),
-            "method_name": self.method_name,
-            "method_params": self.method_params,
-            "alpha": self.alpha,
-            "pvalue": _clean(self.pvalue),
-            "effect": _clean(self.effect),
-            "ci_length": _clean(self.ci_length),
-            "left_bound": _clean(self.left_bound),
-            "right_bound": _clean(self.right_bound),
-            "reject": bool(self.reject),
-            "warnings": list(self.warnings),
-            "diagnostics": {key: _clean(value) for key, value in self.diagnostics.items()},
-        }
+        result: dict[str, Any] = {}
+        for spec in fields(self):
+            if spec.name == "effect_distribution":
+                continue
+            value = getattr(self, spec.name)
+            if spec.name == "reject":
+                result[spec.name] = bool(value)
+            elif spec.name == "warnings":
+                result[spec.name] = list(value)
+            elif isinstance(value, dict) and spec.name == "diagnostics":
+                result[spec.name] = {key: _clean(entry) for key, entry in value.items()}
+            else:
+                result[spec.name] = _clean(value)
+        return result

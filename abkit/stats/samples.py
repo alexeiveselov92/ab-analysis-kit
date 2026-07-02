@@ -293,13 +293,14 @@ class SufficientStats:
         n = sample.sample_size
         if sample.cov_array is None:
             return cls(n=n, mean=sample.mean, m2=float(np.var(sample.array) * n), name=sample.name)
+        cov_mean = float(np.mean(sample.cov_array))
         centered_y = sample.array - sample.mean
-        centered_x = sample.cov_array - float(np.mean(sample.cov_array))
+        centered_x = sample.cov_array - cov_mean
         return cls(
             n=n,
             mean=sample.mean,
             m2=float(np.dot(centered_y, centered_y)),
-            cov_mean=float(np.mean(sample.cov_array)),
+            cov_mean=cov_mean,
             cov_m2=float(np.dot(centered_x, centered_x)),
             cross_c=float(np.dot(centered_y, centered_x)),
             name=sample.name,

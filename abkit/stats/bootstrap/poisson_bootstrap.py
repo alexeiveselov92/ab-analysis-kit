@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from abkit.stats.base import require_pair_type
 from abkit.stats.bootstrap.applier import stat_point
-from abkit.stats.bootstrap.bootstrap import BaseBootstrapMethod
+from abkit.stats.bootstrap.bootstrap import BOOTSTRAP_PARAM_SPECS, BaseBootstrapMethod
 from abkit.stats.bootstrap.engine import (
     poisson_bootstrap_means,
     poisson_unit_scale,
@@ -28,12 +28,17 @@ from abkit.stats.registry import register
 from abkit.stats.result import TestResult
 from abkit.stats.samples import Sample
 
+#: Poisson stratification uses the 1/count unit scale, never ``weight_method`` —
+#: accepting it would let a no-op value fork ``method_config_id`` (review finding).
+POISSON_PARAM_SPECS = tuple(spec for spec in BOOTSTRAP_PARAM_SPECS if spec.name != "weight_method")
+
 
 @register
 class PoissonBootstrapTest(BaseBootstrapMethod):
     """Independent Poisson-weighted bootstrap of the mean (baseline §4.4)."""
 
     name = "poisson-bootstrap"
+    param_specs = POISSON_PARAM_SPECS
 
     def _validate_params(self) -> None:
         super()._validate_params()

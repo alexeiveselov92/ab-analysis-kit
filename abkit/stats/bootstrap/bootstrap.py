@@ -22,9 +22,10 @@ from abkit.stats.base import (
     TEST_TYPE_PARAM,
     WEIGHT_METHOD_PARAM,
     BaseMethod,
+    ParamSpec,
     require_pair_type,
 )
-from abkit.stats.bootstrap.applier import stat_point
+from abkit.stats.bootstrap.applier import STAT_FUNCS, stat_point
 from abkit.stats.bootstrap.ci import PVALUE_KIND_PARAM, bootstrap_pvalue, percentile_ci
 from abkit.stats.bootstrap.engine import (
     ResamplePlan,
@@ -39,8 +40,8 @@ from abkit.stats.result import TestResult
 from abkit.stats.rng import make_rng
 from abkit.stats.samples import FloatArray, Sample
 
-#: The shared bootstrap-family schema — identical for every bootstrap method.
-BOOTSTRAP_PARAM_SPECS = (
+#: The shared bootstrap-family schema (Poisson methods narrow it — no weight_method).
+BOOTSTRAP_PARAM_SPECS: tuple[ParamSpec, ...] = (
     TEST_TYPE_PARAM,
     N_SAMPLES_PARAM,
     STRATIFY_PARAM,
@@ -72,14 +73,21 @@ class BaseBootstrapMethod(BaseMethod):
     param_specs = BOOTSTRAP_PARAM_SPECS
 
     def _validate_params(self) -> None:
-        if int(self.params["n_samples"]) < 1:
+        # n_samples/max_block_bytes ranges are enforced by their ParamSpec bounds.
+        if self._stat not in STAT_FUNCS:
             raise MethodParamError(
-                f"{self.name}: n_samples must be >= 1, got {self.params['n_samples']}"
+                f"{self.name}: unknown stat {self.params['stat']!r}; known stats: "
+                f"{sorted(STAT_FUNCS)} (extend via abkit.stats.bootstrap.register_stat)"
             )
-        max_block_bytes = self.params["max_block_bytes"]
-        if max_block_bytes is not None and int(max_block_bytes) < 1:
+        spec_names = {spec.name for spec in self.param_specs}
+        if (
+            "weight_method" in spec_names
+            and self.params["weight_method"] != WEIGHT_METHOD_PARAM.default
+            and not bool(self.params["stratify"])
+        ):
             raise MethodParamError(
-                f"{self.name}: max_block_bytes must be >= 1, got {max_block_bytes}"
+                f"{self.name}: weight_method has no effect without stratify=true — a "
+                "non-default value would fork method_config_id while changing no number"
             )
 
     def from_suffstats(self, stats_1: object, stats_2: object) -> TestResult:

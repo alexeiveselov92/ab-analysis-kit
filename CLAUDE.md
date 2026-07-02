@@ -38,6 +38,8 @@ Reference material (legacy dashboard JSON, results chart, method catalogue):
 ## Invariants (do not violate)
 
 - **`abkit.stats` is pure** — numpy/scipy/statsmodels only; never config/DB/Jinja/click.
+  (Sole intra-package dependency: the stdlib-only `abkit.utils.json_utils`
+  canonical-hash path; enforced by `tests/stats/test_purity.py`.)
 - **Never change a number silently** — every deviation from the baseline is an
   `ALGORITHM_VERSION` bump + a `statistics-changes.md` entry + A/A validation.
 - **Methods are plugins** — a new estimator is one `BaseMethod` class + registry

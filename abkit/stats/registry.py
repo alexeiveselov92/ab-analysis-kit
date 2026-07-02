@@ -31,6 +31,11 @@ def normalize_method_name(name: str) -> str:
     return name.strip().lower().replace("_", "-")
 
 
+def _same_class(a: type, b: type) -> bool:
+    """Same class re-created by a module re-import (importlib.reload / %autoreload)."""
+    return a.__module__ == b.__module__ and a.__qualname__ == b.__qualname__
+
+
 @overload
 def register(cls: type[BaseMethod]) -> type[BaseMethod]: ...
 
@@ -51,8 +56,17 @@ def register(
         canonical = normalize_method_name(name)
         if canonical != name:
             raise ValueError(f"registry name must be canonical kebab-case, got {name!r}")
+        if canonical in _ALIASES:
+            raise ValueError(
+                f"method name {canonical!r} collides with an alias of {_ALIASES[canonical]!r} "
+                "(aliases are resolved before registry lookup, so this class would be unreachable)"
+            )
         existing = _REGISTRY.get(canonical)
-        if existing is not None and existing is not method_cls:
+        if (
+            existing is not None
+            and existing is not method_cls
+            and not _same_class(existing, method_cls)
+        ):
             raise ValueError(f"method name {canonical!r} already registered by {existing.__name__}")
         if canonical in QUARANTINED_METHODS:
             raise ValueError(f"method name {canonical!r} is quarantined and cannot be registered")

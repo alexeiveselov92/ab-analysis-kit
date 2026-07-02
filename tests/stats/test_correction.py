@@ -101,3 +101,14 @@ def test_bh_input_validation() -> None:
         benjamini_hochberg(np.array([0.1, -0.2]))
     with pytest.raises(MethodParamError, match="finite"):
         benjamini_hochberg(np.array([0.1, float("nan")]))
+
+
+def test_two_tier_alphas_main_metric_only() -> None:
+    tiers = two_tier_alphas(0.05, groups_count=2, metrics_count=0)
+    assert tiers.main == 0.05
+    assert tiers.secondary is None
+
+
+def test_two_tier_alphas_negative_metrics_count_raises() -> None:
+    with pytest.raises(MethodParamError, match="metrics_count"):
+        two_tier_alphas(0.05, groups_count=2, metrics_count=-1)

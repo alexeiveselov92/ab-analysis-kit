@@ -71,11 +71,13 @@ def test_seed_and_max_block_bytes_excluded_from_identity(name: str) -> None:
     assert "max_block_bytes" not in reseeded.identity_params
 
 
-def test_pvalue_kind_is_identity_bearing() -> None:
-    plugin = create_method("bootstrap")
-    sign = create_method("bootstrap", params={"pvalue_kind": "sign"})
-    assert plugin.method_config_id != sign.method_config_id
-    assert sign.identity_params == {"pvalue_kind": "sign"}
+def test_pvalue_kind_is_identity_bearing_and_defaults_to_baseline_sign() -> None:
+    default = create_method("bootstrap")
+    plugin = create_method("bootstrap", params={"pvalue_kind": "plugin"})
+    # Baseline-faithful default (statistics-changes.md §2/§6): sign p-value.
+    assert default.params["pvalue_kind"] == "sign"
+    assert default.method_config_id != plugin.method_config_id
+    assert plugin.identity_params == {"pvalue_kind": "plugin"}
 
 
 def test_numpy_integer_seed_accepted() -> None:
@@ -281,3 +283,38 @@ def test_bootstrap_aa_calibration_smoke() -> None:
         rejections += int(result.reject)
     fpr = rejections / iterations
     assert 0.01 <= fpr <= 0.10, f"A/A false-positive rate {fpr:.3f} out of [0.01, 0.10]"
+
+
+def test_weight_method_without_stratify_rejected() -> None:
+    with pytest.raises(MethodParamError, match="weight_method"):
+        create_method("bootstrap", params={"weight_method": "mean"})
+
+
+def test_poisson_methods_do_not_accept_weight_method() -> None:
+    for name in ("poisson-bootstrap", "paired-poisson-bootstrap"):
+        with pytest.raises(MethodParamError, match="weight_method"):
+            create_method(name, params={"weight_method": "mean", "stratify": True})
+
+
+def test_custom_registered_stat_end_to_end() -> None:
+    from abkit.stats.bootstrap.applier import STAT_FUNCS, register_stat
+
+    def p90(array: np.ndarray) -> float:
+        return float(np.quantile(array, 0.9))
+
+    register_stat("p90-test", p90)
+    try:
+        method = create_method("bootstrap", params={"stat": "p90-test", "n_samples": 50, "seed": 1})
+        assert method.identity_params["stat"] == "p90-test"
+        control, treatment = _samples()
+        result = method.compare_pair(control, treatment)
+        expected = p90(treatment.array) / p90(control.array) - 1.0
+        assert result.effect == pytest.approx(expected, rel=1e-12)
+        # Rebinding an existing name to a DIFFERENT function is refused (identity safety).
+        with pytest.raises(MethodParamError, match="already registered"):
+            register_stat("p90-test", lambda a: 0.0)
+        # Unknown stat is rejected at construction.
+        with pytest.raises(MethodParamError, match="unknown stat"):
+            create_method("bootstrap", params={"stat": "p99"})
+    finally:
+        STAT_FUNCS.pop("p90-test", None)

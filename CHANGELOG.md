@@ -40,11 +40,25 @@ number change).
 ### Changed
 - Engine-hygiene fixes H1–H10 applied per
   [`statistics-changes.md` §7](docs/specs/statistics-changes.md) (M1
-  implementation record): Generator-based RNG, plug-in bootstrap p-value by
-  default (`pvalue_kind: sign` keeps baseline parity), Hamilton stratum
-  apportionment, Poisson mean-only guard, H5 zero-denominator NaN+warning
-  policy, H9 point-estimate effect convention; broken legacy ratio methods
-  quarantined (never silently substituted).
+  implementation record): Generator-based RNG + deterministic per-row seeds,
+  baseline-faithful sign p-value default with the H4 plug-in as opt-in
+  `pvalue_kind: plugin`, Hamilton stratum apportionment (quorum-mandated),
+  Poisson mean-only guard, H5 zero-denominator NaN+warning policy, H9
+  point-estimate effect convention, named-stat registry (`register_stat`)
+  replacing raw `stat_func` callables; broken legacy ratio methods quarantined
+  (never silently substituted).
+- Adversarial post-M1 review (8 finder angles → 30 verified findings) applied:
+  registry alias-shadowing guard + reload-safe re-registration; param range /
+  finiteness validation at construction (`power`, `n_samples`,
+  `max_block_bytes`); `weight_method` removed from Poisson schemas and rejected
+  without `stratify` (a no-op value could fork `method_config_id`);
+  two-tier Bonferroni supports main-metric-only experiments; paired methods
+  drive through the uniform `compare()` (a sequence of `PairedSufficientStats`
+  is a list of ready comparisons); bootstrap memory cap accounts for index
+  matrices + fancy-indexing temporaries; Poisson engine reuses one float64
+  weight buffer; stratified planning is a single `np.unique` pass; power/MDE
+  effect-size solves are LRU-cached; `TestResult.to_dict` derives from dataclass
+  fields; purity of `abkit.stats` enforced by test.
 - **Project initiation contract.** Architecture synthesized from the legacy
   `ab_testing` engine (statistical baseline) and detectkit (architecture / DX),
   validated by a 5-lens adversarial subagent quorum (all approve-with-changes).

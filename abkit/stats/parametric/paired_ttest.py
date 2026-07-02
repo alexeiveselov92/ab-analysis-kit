@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import math
 from abc import abstractmethod
+from collections.abc import Sequence
 from typing import Any
 
 from abkit.stats.base import TEST_TYPE_PARAM, BaseMethod, require_pair_type
@@ -34,6 +35,15 @@ class BasePairedMethod(BaseMethod):
     ``group_1`` with ``group_2=None`` (the joint moments already describe both
     arms, so there is no second group to pass).
     """
+
+    def compare(self, groups: Sequence[Any]) -> list[TestResult]:
+        """Paired suffstats entry: a sequence of PairedSufficientStats is a list of
+        ready comparisons (each joint object IS one variant pair), so the generic
+        pairwise combination step is skipped — the pipeline can drive paired
+        methods through the same ``compare()`` call as every other method."""
+        if groups and all(isinstance(group, PairedSufficientStats) for group in groups):
+            return [self.from_suffstats(joint) for joint in groups]
+        return super().compare(groups)
 
     def compare_pair(self, group_1: Any, group_2: Any | None = None) -> TestResult:
         if group_2 is None or isinstance(group_1, PairedSufficientStats):

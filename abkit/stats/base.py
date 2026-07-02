@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import itertools
+import math
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -37,6 +38,10 @@ class ParamSpec:
 
     ``identity=False`` marks the parameter as excluded from ``method_config_id``
     (it never changes the statistical series identity — e.g. ``seed``).
+    Numeric params are validated for finiteness always (a NaN/inf param value can
+    never be a valid identity — ``json_dumps_sorted`` forbids it) and against the
+    optional ``minimum``/``maximum`` bounds — validation fails at construction
+    with :class:`MethodParamError`, never downstream in scipy/statsmodels.
     """
 
     name: str
@@ -44,6 +49,9 @@ class ParamSpec:
     default: Any
     identity: bool = True
     choices: tuple[Any, ...] | None = None
+    minimum: float | None = None
+    maximum: float | None = None
+    exclusive_bounds: bool = False
     description: str = ""
 
     def validate(self, value: Any, method_name: str) -> Any:
@@ -71,6 +79,25 @@ class ParamSpec:
             raise MethodParamError(
                 f"{method_name}: param {self.name!r} must be one of {list(self.choices)}, got {value!r}"
             )
+        if isinstance(value, float) and not math.isfinite(value):
+            raise MethodParamError(
+                f"{method_name}: param {self.name!r} must be finite, got {value!r}"
+            )
+        if isinstance(value, (int, float)):
+            below = self.minimum is not None and (
+                value < self.minimum or (self.exclusive_bounds and value == self.minimum)
+            )
+            above = self.maximum is not None and (
+                value > self.maximum or (self.exclusive_bounds and value == self.maximum)
+            )
+            if below or above:
+                left, right = ("(", ")") if self.exclusive_bounds else ("[", "]")
+                low = "-inf" if self.minimum is None else self.minimum
+                high = "+inf" if self.maximum is None else self.maximum
+                raise MethodParamError(
+                    f"{method_name}: param {self.name!r} must be within "
+                    f"{left}{low}, {high}{right}, got {value!r}"
+                )
         return value
 
     def _type_names(self) -> str:
@@ -96,12 +123,16 @@ POWER_PARAM = ParamSpec(
     name="power",
     types=(float,),
     default=0.8,
+    minimum=0.0,
+    maximum=1.0,
+    exclusive_bounds=True,
     description="Target power for the MDE solve.",
 )
 N_SAMPLES_PARAM = ParamSpec(
     name="n_samples",
     types=(int,),
     default=1000,
+    minimum=1,
     description="Number of bootstrap resamples.",
 )
 STRATIFY_PARAM = ParamSpec(
@@ -121,8 +152,12 @@ STAT_PARAM = ParamSpec(
     name="stat",
     types=(str,),
     default="mean",
-    choices=("mean", "median"),
-    description="Statistic bootstrapped per resample (Poisson engine is mean-only, H7).",
+    description=(
+        "Named statistic bootstrapped per resample — a key of "
+        "abkit.stats.bootstrap.applier.STAT_FUNCS ('mean'/'median' built in; extend via "
+        "register_stat — names, not callables, so identity stays hashable). "
+        "The Poisson engine is mean-only (H7)."
+    ),
 )
 SEED_PARAM = ParamSpec(
     name="seed",
@@ -139,6 +174,7 @@ MAX_BLOCK_BYTES_PARAM = ParamSpec(
     types=(int,),
     default=None,
     identity=False,
+    minimum=1,
     description=(
         "Memory cap for the resample matrix; replicates stream in blocks under it "
         "(H10). Never changes results — block boundaries are stream-invariant."

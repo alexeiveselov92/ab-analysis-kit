@@ -34,13 +34,17 @@ def adjust_alpha(alpha: float, groups_count: int, metrics_count: int = 1) -> flo
 
 @dataclass(frozen=True)
 class TwoTierAlphas:
-    """Effective per-comparison alphas, echoed by run/validate/report (inspectable)."""
+    """Effective per-comparison alphas, echoed by run/validate/report (inspectable).
+
+    ``secondary`` is ``None`` for a main-metric-only experiment (``metrics_count=0``)
+    — there is no secondary tier to divide the budget over.
+    """
 
     alpha: float
     groups_count: int
     metrics_count: int
     main: float
-    secondary: float
+    secondary: float | None
 
 
 def two_tier_alphas(alpha: float, groups_count: int, metrics_count: int) -> TwoTierAlphas:
@@ -48,14 +52,19 @@ def two_tier_alphas(alpha: float, groups_count: int, metrics_count: int) -> TwoT
 
     Main metric: ``adjust_alpha(alpha, groups, 1)``; every other metric:
     ``adjust_alpha(alpha, groups, metrics_count)`` where ``metrics_count`` counts
-    the non-main metrics sharing the secondary budget.
+    the non-main metrics sharing the secondary budget (``0`` is valid — an
+    experiment may have only its main metric).
     """
+    if metrics_count < 0:
+        raise MethodParamError(f"metrics_count must be >= 0, got {metrics_count}")
     return TwoTierAlphas(
         alpha=alpha,
         groups_count=groups_count,
         metrics_count=metrics_count,
         main=adjust_alpha(alpha, groups_count, 1),
-        secondary=adjust_alpha(alpha, groups_count, metrics_count),
+        secondary=(
+            None if metrics_count == 0 else adjust_alpha(alpha, groups_count, metrics_count)
+        ),
     )
 
 

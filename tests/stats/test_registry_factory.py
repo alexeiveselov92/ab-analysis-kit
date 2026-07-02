@@ -137,3 +137,20 @@ def test_create_method_defaults() -> None:
 def test_create_method_none_params() -> None:
     method: Any = create_method("t-test", alpha=0.1, params=None)
     assert method.alpha == 0.1
+
+
+def test_register_name_colliding_with_alias_raises() -> None:
+    class Shadowing(TTest):
+        name = "ttest"  # 'ttest' is an alias of 't-test'
+
+    with pytest.raises(ValueError, match="collides with an alias"):
+        register(Shadowing)
+
+
+def test_reload_reregistration_is_idempotent() -> None:
+    import importlib
+
+    import abkit.stats.parametric.ttest as ttest_module
+
+    reloaded = importlib.reload(ttest_module)  # must not raise (notebook %autoreload)
+    assert get_method_class("t-test") is reloaded.TTest

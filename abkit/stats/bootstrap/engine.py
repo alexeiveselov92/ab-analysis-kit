@@ -226,9 +226,26 @@ def unstratified_plan(n_units: int) -> ResamplePlan:
 def stratified_plan(
     categories_array: CategoryArray, categories: CategoryArray, shares: FloatArray
 ) -> ResamplePlan:
-    """Build one variant's plan from pooled shares (Hamilton-apportioned to its ``n``)."""
+    """Build one variant's plan from pooled shares (Hamilton-apportioned to its ``n``).
+
+    Positions come from one ``np.unique(return_inverse)`` pass + a stable argsort
+    split — O(n log n) once, instead of one O(n) equality scan per category
+    (review finding). Per-stratum position order stays ascending, identical to the
+    former ``np.flatnonzero`` output, so resample draws are unchanged.
+    """
     counts = hamilton_apportion(shares, int(categories_array.size))
-    positions = tuple(np.flatnonzero(categories_array == category) for category in categories)
+    unique_categories, inverse, stratum_sizes = np.unique(
+        categories_array, return_inverse=True, return_counts=True
+    )
+    if unique_categories.shape != categories.shape or not np.array_equal(
+        unique_categories, categories
+    ):
+        raise SampleValidationError(
+            f"stratified_plan: categories {list(categories)} do not match the array's "
+            f"strata {list(unique_categories)}"
+        )
+    order = np.argsort(inverse, kind="stable").astype(np.int64)
+    positions = tuple(np.split(order, np.cumsum(stratum_sizes)[:-1]))
     return ResamplePlan(
         strata_positions=positions,
         resample_counts=tuple(int(count) for count in counts),
@@ -269,7 +286,11 @@ def iter_resample_blocks(
         tuple(channel[positions] for channel in channels) for positions in plan.strata_positions
     ]
     width = plan.total_width
-    bytes_per_quantum = BLOCK_QUANTUM * width * _ITEM_BYTES * len(channels)
+    # Working set per quantum: the value block(s) PLUS the int64 index matrix (same
+    # shape as one block) and the fancy-indexing temporary — omitting those made the
+    # cap ~3x optimistic (review finding). One quantum is the hard floor regardless
+    # of the cap; the M2 pre-flight estimate refuses/downgrades instead of OOMing.
+    bytes_per_quantum = BLOCK_QUANTUM * width * _ITEM_BYTES * (len(channels) + 2)
     cap = DEFAULT_MAX_BLOCK_BYTES if max_block_bytes is None else int(max_block_bytes)
     quanta_per_block = max(1, cap // max(1, bytes_per_quantum))
 
@@ -341,11 +362,19 @@ def poisson_bootstrap_means(
         raise SampleValidationError("unit_scale must be aligned to the arrays")
 
     outputs = tuple(np.empty(n_samples, dtype=np.float64) for _ in arrays)
+    # One reused float64 buffer: the int64 weights are converted (and scaled) into
+    # it in place, so the peak is one weights matrix + one buffer per quantum and
+    # the matmul stays on the BLAS float64 path (review finding).
+    buffer = np.empty((min(BLOCK_QUANTUM, n_samples), n_units), dtype=np.float64)
     produced = 0
     while produced < n_samples:
         quantum_rows = min(BLOCK_QUANTUM, n_samples - produced)
         weights = rng.poisson(1.0, size=(quantum_rows, n_units))
-        weights_scaled = weights if unit_scale is None else weights * unit_scale
+        weights_scaled = buffer[:quantum_rows]
+        if unit_scale is None:
+            np.copyto(weights_scaled, weights)
+        else:
+            np.multiply(weights, unit_scale, out=weights_scaled)
         weight_sums = weights_scaled.sum(axis=1)
         with np.errstate(divide="ignore", invalid="ignore"):
             for output, array in zip(outputs, arrays, strict=True):
