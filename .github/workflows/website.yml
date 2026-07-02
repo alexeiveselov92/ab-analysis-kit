@@ -1,0 +1,68 @@
+name: website
+
+# The docs/landing site (Astro) lands in M6 — see ROADMAP.md and
+# docs/specs/branding-and-site.md. Until website/ exists this workflow is scoped
+# to website/** + manual dispatch so it never fires on docs-only commits.
+# When the site is built, widen `paths` to include docs/**, .claude/rules/** and
+# CHANGELOG.md (mirroring detectkit) so the published site rebuilds on content edits.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'website/**'
+      - '.github/workflows/website.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: website-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/alexeiveselov92/ab-analysis-kit-web
+          tags: |
+            type=raw,value=latest
+            type=sha
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: website/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # Tell the deploy infra repo a fresh image is on GHCR so it redeploys
+  # abkit.pipelab.dev. Requires the PIPELAB_DISPATCH_TOKEN secret (a PAT with
+  # `repo` scope) on this repo.
+  notify-pipelab:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger pipelab deploy
+        run: |
+          curl -fsS -X POST \
+            -H "Authorization: Bearer ${{ secrets.PIPELAB_DISPATCH_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/alexeiveselov92/pipelab/dispatches \
+            -d '{"event_type":"ab-analysis-kit-updated","client_payload":{"sha":"${{ github.sha }}"}}'

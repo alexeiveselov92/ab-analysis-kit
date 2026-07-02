@@ -22,6 +22,7 @@ these specs are agreed.
 | [data-contract-and-reporting.md](data-contract-and-reporting.md) | The clean **greenfield** results contract, the decision logic, reporting & explore |
 | [aa-false-positive-matrix.md](aa-false-positive-matrix.md) | `abk validate` — empirical FPR/power (incl. honest peeking FPR) and its UX |
 | [cli-and-dx.md](cli-and-dx.md) | The `abk` CLI, the explore cockpit, `init-claude`, developer docs |
+| [branding-and-site.md](branding-and-site.md) | The docs/landing site (detectkit-analogous), own palette/logo/landing, themeable interfaces |
 | [quorum-review.md](quorum-review.md) | The adversarial-review must-fix gate (blocking before/during development) |
 | [../reference/legacy-method-catalogue.md](../reference/legacy-method-catalogue.md) | Full per-method extraction of the legacy engine (reference) |
 

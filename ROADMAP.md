@@ -9,8 +9,14 @@ definition-of-done includes the relevant
 - References analyzed; architecture synthesized & quorum-validated.
 - Specs written ([docs/specs/](docs/specs/)); statistics baseline + legacy catalogue
   captured; founding decisions locked.
-- **Next:** repo skeleton (`pyproject.toml`, package layout from
-  [architecture.md §4](docs/specs/architecture.md), CI, pre-commit).
+- **Repo infra laid (detectkit-style):** packaging (`pyproject.toml` → `pip install
+  ab-analysis-kit`, `abk` entry point; `setup.py`, `MANIFEST.in`, `requirements.txt`),
+  `.gitignore`, `.pre-commit-config.yaml`, GitHub workflows (CI, publish-to-PyPI on
+  tags, website), `CHANGELOG.md` (Keep a Changelog), a minimal importable `abkit`
+  package + `abk --version`, and smoke tests (CI green from day one). Pushed to
+  `github.com/alexeiveselov92/ab-analysis-kit` (`main`).
+- **Next:** flesh out the package layout from
+  [architecture.md §4](docs/specs/architecture.md) starting with M1.
 
 ## M1 — Pure statistical core (`abkit.stats`)
 - `BaseMethod` ABC + registry + factory; `Sample`/`Fraction`/`SufficientStats`
@@ -63,9 +69,12 @@ definition-of-done includes the relevant
 
 ## M6 — DX, docs, orchestration, release
 - `abk init-claude` + packaged `.claude` assets (rules + 7 skills);
-  single-source docs site (`abkit.pipelab.dev`, Astro + sync-docs); Prefect
-  flow/deployment scaffolding; BI reference queries/dashboards (Grafana, Lightdash,
-  Metabase, Superset) + optional SRM panel; `test-report` channels.
+  single-source docs site (`abkit.pipelab.dev`, Astro + sync-docs) — **detectkit-
+  analogous machinery with our own palette, logo, and landing page** (design
+  finalized in Claude design; interfaces stay on a themeable brand-token layer) per
+  [branding-and-site.md](docs/specs/branding-and-site.md); Prefect flow/deployment
+  scaffolding; BI reference queries/dashboards (Grafana, Lightdash, Metabase,
+  Superset) + optional SRM panel; `test-report` channels.
 - **DoD:** PyPI release `pip install ab-analysis-kit`; `CHANGELOG.md` authoritative;
   contributor `CLAUDE.md` + `.claude/rules` in sync.
 

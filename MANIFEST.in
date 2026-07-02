@@ -1,0 +1,10 @@
+include README.md
+include LICENSE
+include requirements.txt
+recursive-include abkit *.py
+recursive-include abkit/cli/assets *.md
+recursive-include abkit/reporting/assets *.js
+recursive-include abkit/tuning/assets *.js
+recursive-exclude tests *
+recursive-exclude * __pycache__
+recursive-exclude * *.pyc
