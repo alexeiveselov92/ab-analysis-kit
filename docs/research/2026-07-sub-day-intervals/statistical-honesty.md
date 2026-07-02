@@ -1,0 +1,93 @@
+All required specs read; web research done (searches succeeded; several direct page fetches returned 403 via the proxy — noted where that limits verification). Report follows.
+
+---
+
+# Sub-day cadences in abkit: statistical honesty review & recommendation
+
+**Scope note on evidence:** WebSearch worked; direct WebFetch of several primary sources (Evan Miller, Johari et al. arXiv PDF, SAS SEQDESIGN table) returned HTTP 403 through the proxy, so some classic numbers below are quoted from search-result snippets or from memory and are flagged as such.
+
+## TL;DR — the opinionated recommendation
+
+1. **Make `cadence` a true duration with NO principled statistical floor in the engine, but a hard *operational* floor of `1m`** (parser/planner protection). `core/interval.py` already parses seconds, so this is representable today. There is no n below which the math is *undefined* — the dishonesty risks are peeking, diurnal slice, small-n approximation, and data completeness, and each gets its own explicit gate rather than a hidden floor.
+2. **Default stays `1d`.** Sub-day is opt-in per experiment.
+3. **`cadence < 1d` + `sequential.enabled: false` is allowed but demoted to "monitoring mode":** rows are written with `ci_kind: fixed`, the readout continues to refuse pre-horizon WIN/LOSE (decision Q2 already gives you this), config-lint emits a loud warning quoting the *look count* and the measured/estimated peeking FPR, and `abk validate` runs the A/A over the real sub-day grid. **`cadence < 1d` + wanting early decisions ⇒ auto-recommend `sequential: {enabled: true, scheme: always_valid}` (mSPRT/confidence-sequence), not alpha-spending.**
+4. **Default warm-up (`first_cutoff_after: 24h`, configurable) for sub-day cadences** — the first cutoff lands after one full diurnal cycle, then the grid steps at `cadence`. This kills most of the incremental peeking risk (which is concentrated in the earliest looks — see §1) and the worst diurnal-slice unrepresentativeness at near-zero cost to impatience.
+5. **Contract additions:** `end_ts` (DateTime cutoff), `look_index` + `n_looks_planned`, `low_n_flag`, `cadence` echoed per row; `data_complete_through` becomes a timestamp with a per-source `completeness_lag`. `ci_kind` already carries the key honesty bit.
+6. **Reframe the honest value of hourly grids in fixed-horizon mode as *operational*, not inferential:** hour-grain SRM (via an anytime-valid sequential SRM test), guardrail crash detection, data-flow sanity — where catching a bug in 3 hours instead of 3 days is the genuine win ([Lindon & Malek, Anytime-Valid Inference for Multinomial Count Data, NeurIPS 2022](https://papers.neurips.cc/paper_files/paper/2022/file/12f3bd5d2b7d93eadc1bf508a0872dc2-Paper-Conference.pdf); [Lindon, A Better Way to Test for SRMs](https://medium.com/@michael.s.lindon/a-better-way-to-test-for-sample-ratio-mismatches-srms-and-validate-experiment-implementations-6da7c0d64552)).
+
+---
+
+## 1. Peeking: how FPR scales with looks — and why the floor question is really a *first-look* question
+
+**Theory.** Under H0 the standardized cumulative statistic fluctuates like `√(log log n / n)` (law of the iterated logarithm); any fixed z-boundary is crossed with probability → 1 under continuous monitoring as horizon → ∞. Alex Deng et al. state this directly: continuous monitoring inflates Type I error to 100% as N→∞; any boundary not growing at least O(√(log log n)) is breached w.p. 1 ([Continuous Monitoring of A/B Tests without Pain, arXiv:1602.05549](https://arxiv.org/pdf/1602.05549); [Balsubramani & Ramdas, Sequential Nonparametric Testing with the LIL, arXiv:1506.03486](https://arxiv.org/abs/1506.03486)).
+
+**Classic finite-look numbers** (Armitage/McPherson/Rowe 1969, "[Repeated Significance Tests on Accumulating Data](https://rss.onlinelibrary.wiley.com/doi/abs/10.2307/2343787)"; **exact values below quoted from memory — the paper's existence and qualitative claim verified, the table itself I could not fetch (403)**): at nominal two-sided α=0.05 with K equally-information-spaced looks, cumulative FPR ≈ K=1: 5.0%, K=2: 8.3%, K=5: 14.2%, K=10: 19.3%, K=20: 24.6%, K=50: ~32%, K→∞: →100%.
+
+**Empirical A/B numbers:** Johari et al.'s simulations show continuous monitoring inflating Type I error to ~5× nominal, and peeking every 100 observations giving ~30% FPR ([Johari, Koomen, Pekelis, Walsh, KDD 2017 "Peeking at A/B Tests"](http://library.usc.edu.ph/ACM/KKD%202017/pdfs/p1517.pdf); [Always Valid Inference, Operations Research 2022 / arXiv:1512.04922](https://arxiv.org/pdf/1512.04922); secondary summaries: [iO tech hub](https://techhub.iodigital.com/articles/peaking-at-ab-testing), [Atticus Li](https://atticusli.com/blog/posts/peeking-ab-test-results-inflates-false-positive-rate/)).
+
+**The crucial scaling structure (first-principles, flagged as derived, consistent with boundary-crossing asymptotics for Brownian motion):** adjacent looks share almost all their data, so what matters is not raw look count but the number of *information doublings* between first look t₀ and horizon T — the sup-crossing probability grows roughly with **log(T/t₀)**, with look density saturating toward the continuous limit. Concretely for a 28-day experiment:
+
+| Grid | Looks | log₂(T/t₀) "doublings" | Ballpark any-look FPR at α=.05 |
+|---|---|---|---|
+| daily | 28 | ~4.8 | ~25–27% (interpolated from Armitage K=20/50) |
+| hourly | 672 | ~9.4 | ~35–45% (**estimate — no published number found**) |
+| minutely | 40,320 | ~15.3 | ~50%+ (**estimate**) |
+
+Three consequences:
+
+- **Hourly is meaningfully worse than daily, but nowhere near 24× worse** — FPR grows ~logarithmically in grid resolution. So a hard floor at 1h vs 1m buys you surprisingly little honesty (one extra log(60)≈4 doublings). **The floor is the wrong control knob.**
+- **Almost all the incremental damage of a finer grid comes from adding *earlier* looks**, where n is tiny and the statistic is wildest. A 24h warm-up before the first cutoff removes the segment [1h, 24h] — 4.6 of hourly's 9.4 doublings — recovering roughly daily-grid peeking exposure while still giving hourly resolution afterwards. This is why recommendation #4 is the single highest-leverage honesty guard.
+- **For high-frequency, open-ended look schedules, always-valid inference (mSPRT / confidence sequences) is the correct tool, not group-sequential alpha-spending.** GST/alpha-spending assumes a planned max-information and a modest K (designed for K≈2–10 clinical interims); K=672 with possible unplanned extension breaks its design assumptions, while mSPRT's guarantee holds at *any* data-dependent stopping time by construction ([Johari et al.](https://arxiv.org/pdf/1512.04922)). So in `sequential/`, gate `scheme: alpha_spending` to `cadence >= 1d` with a fixed horizon, and make `always_valid` the auto-recommended scheme whenever `cadence < 1d`. Cost to disclose: always-valid CIs are wider / need more samples for the same power than a fixed-horizon test at the horizon (qualitatively well-established; I found no single authoritative inflation factor to cite — **do not print a number; measure it in the A/A matrix's power column instead**).
+
+**Is the A/A matrix's measured peeking-FPR sufficient honesty?** It is the right artifact and *necessary* — it measures the composed real-world error of the actual grid × actual readout rule, which no formula does. But at sub-day cadence it needs three upgrades to stay sufficient:
+1. **It must run over the actual sub-day grid**, which multiplies A/A cost by the look count — for closed-form methods make this near-free by computing per-interval sufficient statistics once per placebo split and prefix-summing across the grid (the `accumulate.py` merge primitive already planned).
+2. **Add "effect exaggeration at stop" (winner's-curse magnitude) as a matrix column.** Any-look stopping doesn't just inflate FPR; conditional on stopping early, the effect estimate is biased away from zero. At 672 looks this is the analyst's biggest practical trap, and FPR alone doesn't show it. (First-principles; the phenomenon is standard sequential-analysis lore, no specific source fetched.)
+3. **It cannot capture treatment-induced data-latency asymmetry** (§3) — document that limit.
+
+## 2. Time-of-day / day-of-week: not bias under H0, but unrepresentativeness under H1
+
+**The test is not invalidated.** Randomization means both arms sample the identical diurnal user mix at every instant, so under H0 the difference statistic is mean-zero regardless of how weird the 2 a.m. population is — for means, proportions, and delta-method ratio metrics alike. The A/A harness (built on real historical data with real diurnal structure) directly verifies this. Early-hours estimates are **noisy and unrepresentative, not biased** in the type-I sense.
+
+**What sub-day cumulative estimates actually estimate** is the treatment effect *on the population exposed so far* — first-hours cohorts over-represent one timezone slice, night-owls, and (systematically) heavy/frequent users who trigger exposure fastest, and are maximally contaminated by novelty/primacy effects, which decay over weeks ([LogRocket on novelty effects](https://blog.logrocket.com/product-management/novelty-effect-ab-testing); [Kameleoon on stopping too early](https://www.kameleoon.com/blog/stopping-ab-tests-too-early)). Kohavi et al.'s standard guidance — run at least one full week to cover the weekly cycle — is about exactly this external-validity gap ([Trustworthy Online Controlled Experiments](https://www.cambridge.org/core/books/trustworthy-online-controlled-experiments/D97B26382EB0EB2DC2019A7A7B518F59); summary confirming the weekly-cycle rationale: [howtoes.blog](https://howtoes.blog/2025/06/11/trustworthy-online-controlled-experiments-complete-book-summary-all-key-ideas/)). **Implication:** even a peeking-honest sequential WIN at hour 30 is a claim about a non-steady-state population. The readout should therefore keep a *separate* representativeness note: WIN/LOSE called before `min(7d, horizon)` gets a "covers X% of a weekly cycle" caveat chip even in sequential mode. That's a display honesty rule, not a stats change.
+
+**CUPED at sub-day cadence:** an hour-scale covariate lookback is doubly bad — diurnally confounded (yesterday-same-hours ≠ this-hours behavior) and weakly correlated with the outcome, so variance reduction collapses while θ estimation noise at tiny n adds instability. This is a strong argument to resolve cumulative-intervals §5.1 toward **(b) fixed lookback**, specified in *whole days* (e.g. `14d`) and *independent of cadence* — the legacy growing-window semantics (`agg_dates_count = end−start+1`) becomes literally incoherent when the window is 3 hours. Config-lint: error on `covariate_lookback < 1d`; warn `< 7d` ("lookback shorter than one weekly cycle — diurnal/weekday confounding reduces CUPED benefit").
+
+**SRM cadence:** checking SRM by χ² at every hourly cutoff is itself 672 peeks at the SRM test — the false-SRM-alarm rate inflates identically. Since SRM is a hard gate, false alarms are expensive. Use the anytime-valid sequential multinomial test for SRM at sub-day cadence ([Lindon & Malek, NeurIPS 2022](https://papers.neurips.cc/paper_files/paper/2022/file/12f3bd5d2b7d93eadc1bf508a0872dc2-Paper-Conference.pdf) — deployed at Netflix, adopted by Optimizely per [Lindon's writeup](https://medium.com/@michael.s.lindon/a-better-way-to-test-for-sample-ratio-mismatches-srms-and-validate-experiment-implementations-6da7c0d64552)). This also delivers sub-day cadence's best genuine payoff: catching assignment bugs within hours.
+
+## 3. Small-n estimator honesty (the first intervals)
+
+- **Normal-approx tests:** at hourly cohorts of tens of units, the z-test and Welch-t normal approximations degrade; for proportions the standard rule of thumb (≥5–10 successes *and* failures per arm) frequently fails in hour 1. Guard: a `low_n_flag` written per row when `min(size_1, size_2) < n_min` (default 100 for sample/ratio; success/failure-count rule for fractions), rendered as a greyed segment in the stabilization chart. Do not suppress the row — write it, flag it.
+- **Ratio/delta-method metrics** need larger n for the linearization to be trustworthy — apply a stricter `n_min` (**first-principles; no specific citation**).
+- **Bootstrap:** percentile intervals systematically under-cover at small n — measured coverage of a nominal 95% CI is 81–83% at n=5 and still optimistic at n=20 ([R-doodles simulation study](https://rdoodles.rbind.io/2020/06/bootstrap-confidence-intervals-when-sample-size-is-really-small/); [Hesterberg, What Teachers Should Know about the Bootstrap, arXiv:1411.5279](https://arxiv.org/pdf/1411.5279) — "percentile interval too narrow for small samples"). Guard: refuse (or flag) bootstrap CIs below `n_min_bootstrap` (e.g. 100/arm); additionally lint the *cost*: bootstrap × 672 cutoffs is the expensive corner (mirrors aa-false-positive-matrix §6 — recommend closed-form until horizon).
+- **MDE/power solves** at tiny n return enormous MDEs — that is itself honest output; just ensure the readout's INCONCLUSIVE logic treats "MDE ≫ meaningful effect" at early cutoffs as expected, not alarming.
+- **SRM χ²** needs expected counts ≥5 per cell — another reason the sequential SRM test replaces χ² at fine grids.
+
+## 4. Operational honesty: late data and completeness (unique to sub-day; do not skip)
+
+The current contract pins `data_complete_through` as a *date* from the `*_wo_curr_day` convention. Sub-day cadence needs: (a) `data_complete_through` as a **timestamp**, (b) a declared per-source `completeness_lag` (e.g. `3h`) that the planner subtracts. The deeper issue: a late-arrival tail that is negligible on a 14-day window materially under-counts a 1-hour tail window, so the most recent cutoffs are systematically depressed — *symmetric across arms if latency is treatment-independent, hence FPR-safe, but treatment can change event latency* (client batching, retries), producing genuinely biased early effects that neither the A/A matrix nor randomization protects against (**first-principles; flagged unverified**). Mitigation: the `completeness_lag` default should be conservative, and the docs must name this failure mode. Also note the assignment macro filters `event_date BETWEEN …` — sub-day windows need `event_time` predicates, and ClickHouse date-partitioned tables won't partition-prune below a day, so hourly cutoffs re-scan the whole day partition (cost, not correctness).
+
+**Cost:** naive recompute is O(D²) in intervals — hourly over 28 days is 672 cutoffs ≈ **576× the row-touches of daily** (24² scaling); minutely is ~2M×. Even the v1 agg-state seam pays ≥24× more cumulative range-reads plus ×24 `_ab_unit_state`/`_ab_results` rows. **Sub-day cadence therefore makes the warehouse agg-state seam mandatory (not optional) from day one, and is itself a likely v2-trigger.** `abk plan` should print the projected interval count and cost before accepting `cadence < 1d`.
+
+## 5. Concrete spec deltas
+
+**Config (`declarative-config.md`):** `cadence` accepts any duration ≥ `1m` (hard parser floor, documented as operational); `first_cutoff_after` (default `24h` when `cadence < 1d`, else `0`); optionally later a tapered grid (`1h` for first 3 days, then `1d` — near-log-spaced looks ≈ equal information doublings ≈ the peeking-optimal grid for fixed cost; defer to v1.x). Jinja gains `ab_start_ts`/`ab_end_ts`.
+
+**Config-lint gates:** `cadence < 1h` → warning "no additional decision value below hourly; N× cost" (not an error — no principled floor); `cadence < 1d ∧ ¬sequential.enabled` → warning naming look count + "fixed-horizon CIs are not peeking-valid; readout will refuse pre-horizon WIN/LOSE; enable `sequential.always_valid` to decide early"; `cadence < 1d ∧ scheme: alpha_spending` → error (wrong tool for unbounded frequent looks); `covariate_lookback < 1d` → error, `< 7d` → warn; bootstrap ∧ `cadence < 1d` → cost warning + `n_min_bootstrap` gate.
+
+**`_ab_results` contract:** add `end_ts` (keep `end_date` for BI back-compat), `look_index`, `n_looks_planned`, `low_n_flag`, echo `cadence`; `day` becomes fractional (or derived). `ci_kind`/`is_horizon` unchanged — they already carry the core honesty semantics; BI reference queries grey out `low_n_flag` segments and render `ci_kind='fixed'` sub-day series with the existing "not peeking-valid" treatment.
+
+**A/A matrix (`aa-false-positive-matrix.md`):** peeking-FPR must run on the experiment's *actual* grid (prefix-summed suffstats to keep it tractable); add an exaggeration-at-stop column; report sequential-mode power/CI-width side-by-side so the always-valid cost is *measured*, never asserted.
+
+**Readout:** pre-horizon refusal stays; add the weekly-cycle representativeness caveat for any decision before 7d even under sequential; SRM switches to the anytime-valid multinomial test when `cadence < 1d`.
+
+## Unverified-claims register
+
+1. Armitage/McPherson/Rowe exact FPR-per-K values — from memory; paper verified to exist, table not fetched (403).
+2. Hourly ≈ 35–45% / minutely ≈ 50%+ any-look FPR — my log-scaling extrapolation, no published source found.
+3. "FPR grows ~log(T/t₀)" continuous-boundary-crossing scaling — standard sequential-analysis asymptotics, stated from first principles; not re-verified against a fetched text.
+4. Always-valid CI width/power penalty magnitude — qualitative only; no citable factor found.
+5. Treatment-induced event-latency asymmetry biasing short windows — first-principles; no source.
+6. Eppo daily-refresh vs Optimizely real-time cadence claims — only found via a competitor's comparison page ([Optimizely blog](https://www.optimizely.com/insights/blog/optimizely-analytics-versus-amplitude-statsig-and-eppo/)); treat as weak evidence. Microsoft ExP "near-real-time only for guardrails" — recalled, not verified; omitted from recommendations.
+7. Winner's-curse exaggeration under optional stopping — standard result, no specific source fetched.
+
+Key spec files this decision touches: `/home/user/ab-analysis-kit/docs/specs/cumulative-intervals.md` (§5.1 covariate window — resolve to fixed-lookback, §5.6 completeness → timestamp), `/home/user/ab-analysis-kit/docs/specs/declarative-config.md` (§2 cadence, §5 Jinja), `/home/user/ab-analysis-kit/docs/specs/data-contract-and-reporting.md` (§2 contract, §4 honesty), `/home/user/ab-analysis-kit/docs/specs/aa-false-positive-matrix.md` (§3), `/home/user/ab-analysis-kit/ROADMAP.md` (M2 planner timestamps; M5 scheme gating; agg-state seam becomes mandatory for sub-day).

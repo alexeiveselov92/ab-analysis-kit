@@ -72,6 +72,23 @@ number change).
   (CI, publish-to-PyPI on tags, website), a minimal importable `abkit` package with
   a working `abk` CLI entry point (`abk --version`), and smoke tests.
 
+### Decisions
+- **Sub-day cumulative intervals (abk-intervals, 2026-07).** `cadence` is a true
+  duration with schedule support (dense-early grids first-class); NO hard time
+  floor — the hard gate is `max_looks` (look count is the dangerous variable,
+  not the time unit); `data_lag` completeness watermark required below `1d`;
+  window contract keyed on exclusive UTC `end_ts` with derived `end_date`
+  (daily parity byte-clean); fixed-horizon sub-day = monitoring mode (readout
+  still refuses pre-horizon WIN/LOSE), `sequential: always_valid` is the
+  sanctioned early-decision path; early rows demoted via `insufficient_data`,
+  never hidden; anytime-valid sequential SRM below `1d`; A/A peeking-FPR runs
+  the actual cadence grid + gains an exaggeration-at-stop column; unit-state
+  stays day-grained (sub-day reads = closed-day state + current-day tail).
+  Full record: `docs/specs/cumulative-intervals.md` §6.
+- **CUPED covariate window resolved to fixed lookback** (whole days, cadence-
+  independent) — the legacy growing window is incoherent at sub-day grain.
+  Record: `docs/specs/statistics-changes.md` §5.
+
 ### Locked decisions
 - Greenfield storage (legacy dashboard is reference only); statistical math
   preserved as a baseline then improved deliberately.

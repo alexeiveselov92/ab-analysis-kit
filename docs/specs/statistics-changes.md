@@ -124,14 +124,27 @@ Defaults stay baseline-faithful; these are additive.
 - **BCa bootstrap**, **Mann-Whitney**, **cluster-robust SE** (analysis-unit ≠
   randomization-unit) — candidate methods, each one `BaseMethod` class.
 
-## 5. CUPED covariate window (decision pending — see cumulative-intervals §5.1)
+## 5. CUPED covariate window — DECIDED: fixed lookback (2026-07)
 
-The legacy CUPED covariate uses a **growing** symmetric pre-window. We must pick and
-golden-test ONE of: (a) reproduce the growing window (baseline-faithful), or (b) a
-**fixed** lookback (e.g. `14d`) as a documented version-bumped deviation — arguably
-*more* correct (a stationary covariate across the daily series). This is the one
-place baseline fidelity and correctness genuinely conflict; the choice is recorded
-here once made, and the scaffolded example metric must match it.
+The legacy CUPED covariate uses a **growing** symmetric pre-window. The choice was
+(a) reproduce the growing window (baseline-faithful) vs (b) a **fixed** lookback
+(e.g. `14d`) as a documented deviation — arguably *more* correct (a stationary
+covariate across the series).
+
+**Resolution: (b) — `covariate_lookback` is a fixed duration in whole days,
+independent of cadence.** The tiebreaker was sub-day cadence support
+(cumulative-intervals.md §6): the growing rule `agg_dates_count = end − start + 1`
+is incoherent below a day (fractional lookbacks; a diurnally-confounded,
+hour-jittering covariate; θ instability at small n destroys the variance
+reduction CUPED exists for). Consequences:
+- the default config path will NOT reproduce the legacy CUPED number over the
+  daily series — this is the documented, version-recorded deviation;
+- an (a)-mode growing-window reproduction exists only inside legacy-parity golden
+  fixtures, never as user config;
+- config-lint: `covariate_lookback < 1d` → error; `< 7d` → warning (shorter than
+  one weekly cycle — diurnal/weekday confounding erodes the covariate
+  correlation);
+- the scaffolded example metric uses the fixed lookback (no silent mismatch).
 
 ## 6. What stays exactly as the baseline (the "do not drift" defaults, v1)
 

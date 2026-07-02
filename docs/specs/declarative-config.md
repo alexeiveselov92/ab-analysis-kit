@@ -26,7 +26,17 @@ is_actual: true                  # scheduled (Prefect) runs pick it up
 start_date: 2024-07-31           # PINNED left edge of every cumulative window
 end_date:   2024-08-27           # planner horizon (also drives the power plan)
 unit_key: user_id                # randomization + default analysis unit
-cadence: 1d                      # cumulative recompute granularity (expanding-window step)
+cadence: 1d                      # cumulative cutoff step — any duration ("1h", "30m", "1d");
+                                 # or a coarsening schedule (dense-early, the sanctioned
+                                 # impatience path — see cumulative-intervals.md §6):
+                                 #   cadence:
+                                 #     - {every: 1h, until: 48h}
+                                 #     - {every: 1d}
+data_lag: 0                      # completeness watermark: data assumed complete through
+                                 # now() - data_lag. REQUIRED when cadence < 1d (declare your
+                                 # ingestion SLA); default 0 reproduces *_wo_curr_day at 1d
+timezone: UTC                    # interprets date-typed fields & daily midnight snapping;
+                                 # storage/comparison is always UTC
 
 assignment:                      # READ-ONLY exposure source (abkit does not randomize)
   query_file: sql/assignment.sql # must SELECT unit_key, variant, exposure_ts [, stratum]
@@ -111,8 +121,9 @@ against the scaffolded example so docs & examples cannot drift.
 | Variable | Meaning |
 |---|---|
 | `ab_experiment_id` | experiment name |
-| `ab_start_date` | **pinned** experiment start → cumulative left edge |
-| `ab_end_date` | the **moving** daily cutoff |
+| `ab_start_date` | **pinned** experiment start → cumulative left edge (date part) |
+| `ab_end_date` | the **moving** cutoff (date part; partition-pruning predicate) |
+| `ab_start_ts` / `ab_end_ts` | the precise UTC window bounds; `ab_end_ts` is **exclusive** (`event_time >= ab_start_ts AND event_time < ab_end_ts`) — the canonical filter at sub-day cadence |
 | `ab_cov_start` / `ab_cov_end` | covariate window bounds (per the chosen lookback) |
 | `ab_variants` | the variant list |
 | `ab_unit_key` | the unit/randomization key |
@@ -168,7 +179,16 @@ Tested, fail-fast, two-level:
   covariate; Poisson bootstrap is mean-only; paired requires aligned sizes);
 - `is_main_metric` / `is_guardrail` not both true; at least one main metric;
 - assignment SQL selects `unit_key`, `variant`, `exposure_ts`;
-- `expected_split` variants ⊆ `assignment.variants`.
+- `expected_split` variants ⊆ `assignment.variants`;
+- **cadence & looks** (cumulative-intervals.md §6): cadence parses to whole
+  seconds ≥ 1s; schedule segments strictly coarsening with increasing `until`;
+  planned looks > `max_looks` (project default 5000) → **error** (the only hard
+  gate — there is deliberately NO time floor); looks > `warn_looks` (default
+  100) without `sequential.enabled` → peeking warning quoting the look count and
+  the measured A/A FPR for this grid; `cadence < 1d` requires `data_lag`;
+  `cadence < 1d` with `scheme: alpha_spending` → error (mSPRT/always_valid is
+  the sub-day path); `24h % cadence != 0` → drift warning; `cadence > horizon`
+  → error; `covariate_lookback < 1d` → error, `< 7d` → warning.
 
 A `abk run --steps validate` (config-lint) runs the full parse + reference
 resolution + SQL render-smoke-test under StrictUndefined **without touching the DB**

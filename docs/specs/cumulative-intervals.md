@@ -93,15 +93,19 @@ not guessed.
 
 ## 5. Compute must-fixes (from the quorum — blocking)
 
-1. **Covariate-window semantics (decide & pin).** The legacy CUPED covariate uses
-   a **growing** lookback. Choose, document, and golden-test ONE of:
-   - **(a) reproduce the growing window** bit-for-baseline (covariate moments
-     re-derived each interval; the state seam only helps the current-window Y side); or
-   - **(b) fixed lookback** (e.g. `covariate_lookback: 14d`) as an
-     `ALGORITHM_VERSION`-bumped, documented deviation — arguably *more* correct (a
-     stationary covariate across the daily series) but it will **not** match the
-     legacy CUPED number. Record the choice in [statistics-changes.md](statistics-changes.md).
-   The scaffolded example metric must use whichever is chosen (no silent mismatch).
+1. **Covariate-window semantics — DECIDED: (b) fixed lookback.** The legacy CUPED
+   covariate used a **growing** lookback; the choice was between:
+   - (a) reproduce the growing window bit-for-baseline; or
+   - **(b) fixed lookback** (e.g. `covariate_lookback: 14d`) as a documented,
+     version-recorded deviation — a stationary covariate across the series, which
+     will **not** match the legacy CUPED number.
+   **Resolution (2026-07, recorded in [statistics-changes.md §5](statistics-changes.md)):
+   (b), fixed lookback in whole days, independent of cadence.** Sub-day cadences
+   (§6) tipped it: the growing-window rule (`agg_dates_count = end − start + 1`)
+   is incoherent below a day — fractional lookbacks, diurnally-confounded
+   covariates, θ jittering per hour. The scaffolded example metric uses the fixed
+   lookback; an (a)-mode reproduction is available only for legacy-parity golden
+   runs, never as config.
 2. **`_ab_unit_state` idempotency per (exp, day).** A `SummingMergeTree` re-inserted
    on re-run/backfill/lost-lock **double-counts** with no dedup. Use a `day`/version
    dimension with replace-not-sum (`ReplacingMergeTree(version)` keyed by
@@ -119,9 +123,12 @@ not guessed.
    `_ab_exposures` (loaded once per experiment) instead of re-rendering the visitor
    sub-query every interval, so the session-table cohort scan is paid O(1), not O(D).
 6. **Deterministic completeness boundary.** Pin an explicit, single-source
-   `data_complete_through` date (from the `*_wo_curr_day` convention) instead of
-   `today()`, and normalise date/timezone comparison across backends, so "which
-   day-cutoffs are pending" is deterministic and backend-consistent.
+   completeness boundary instead of `today()`, and normalise date/timezone
+   comparison across backends, so "which cutoffs are pending" is deterministic
+   and backend-consistent. **Superseded/sharpened by §6.2:** the boundary is the
+   timestamp watermark `now_utc − data_lag`, computed once per run in Python;
+   with `data_lag: 0` and half-open windows it reproduces `*_wo_curr_day`
+   exactly at daily cadence.
 7. **Concurrency model.** Lock at `(experiment)` (or `(experiment, metric)`) grain
    so independent series run concurrently; add a worker-pool driver (the
    `default_rng` change makes the stats core process-safe). State this in `compute.md`.
@@ -132,13 +139,151 @@ not guessed.
    `plan`/`run` that downgrades or refuses rather than OOMing. (See
    [statistics-changes.md](statistics-changes.md) §engine-hygiene.)
 
-## 6. Idempotency model
+## 6. Sub-day cadences (DECIDED 2026-07 — first-class, no time floor)
+
+> User requirement: sub-day intervals must be a built-in option from the start —
+> for the most impatient experimenters — with HONEST computation at small
+> intervals. Synthesized from a three-angle research pass (statistical honesty,
+> warehouse engineering, config/DX + competitor scan). Every guard below is a
+> named mechanism, never folklore.
+
+### 6.1 The decision
+
+1. **`cadence` is a true duration** (whole seconds ≥ 1s, `core/interval.py`
+   grammar `N{s,m,h,d,w}`), default `1d`. **No hard time floor** — the dangerous
+   variable is the *look count*, not the time unit (30m cadence on a 4-hour ops
+   experiment is 8 pristine looks; 1d on a two-year experiment is 730 bad ones).
+   The hard gate is **`max_looks`** (project-level, default 5000 → config
+   error); `warn_looks` (default 100) without `sequential.enabled` → loud
+   warning quoting the look count and the measured peeking FPR.
+2. **Schedule-typed cadence is first-class in v1** (dense-early — the entire
+   impatient-experimenter value at ~1.1× daily cost, vs 23× for uniform hourly;
+   the shape Statsig ships as hourly-first-24h-then-daily):
+   ```yaml
+   cadence: 1d                      # scalar — unchanged, friction-free default
+   # or a coarsening schedule:
+   cadence:
+     - {every: 1h, until: 48h}      # dense while impatient
+     - {every: 1d}                  # then daily to horizon
+   ```
+   Grid rules: dense segments anchor at `start_ts`; daily segments snap to
+   experiment-timezone midnights (point-for-point comparable with pure-daily
+   series); segments non-overlapping and coarsening; the horizon point is always
+   appended and carries `is_horizon=1` even when cadence does not divide the
+   duration.
+3. **Honesty posture (extends decision Q2).** `cadence < 1d` with
+   `sequential.enabled: false` is allowed but is **monitoring mode**: rows carry
+   `ci_kind: fixed`, the readout still refuses pre-horizon WIN/LOSE, and the
+   fixed-CI band renders de-emphasized ("not peeking-valid"). The sanctioned
+   early-decision path is `sequential: {enabled: true, scheme: always_valid}`
+   (mSPRT holds at ANY data-dependent look schedule); `scheme: alpha_spending`
+   with `cadence < 1d` is a config ERROR (group-sequential assumes a small
+   pre-committed look grid). The warning copy sells sequential as *the thing
+   that lets you decide earlier* — that framing is true and is what works.
+4. **Early looks are demoted, not hidden** (the Amplitude/Statsig pattern):
+   below `min_units_per_arm` (project default ~100) the row is written with an
+   `insufficient_data` flag and NULLed test columns — counts and SRM stay
+   visible (hour-grain SRM/logging-bug detection is the genuine sub-day payoff),
+   inference is withheld. Bootstrap methods get a stricter floor + a cost
+   warning on sub-day grids.
+5. **Rejected alternative (recorded):** a `first_cutoff_after: 24h` warm-up
+   before the first cutoff. It would cheaply remove most incremental peeking
+   exposure (the damage concentrates in the earliest looks — FPR grows roughly
+   with log(T/t₀)), but it also removes the monitoring value (SRM at hour 3),
+   which demotion preserves. The dense-early schedule + demotion + the
+   pre-horizon refusal cover the same risk without a new knob.
+
+### 6.2 Completeness: `data_lag` watermark replaces `*_wo_curr_day`
+
+`data_complete_through` becomes a **timestamp**, computed ONCE per run in
+Python (never `now()`/`today()` in SQL):
+
+```
+watermark_ts        = now_utc − data_lag
+cutoff is plannable ⇔ end_ts ≤ watermark_ts     # planner anti-join as before
+```
+
+- `data_lag` is **required config when `cadence < 1d`** (lint error) — declaring
+  the ingestion SLA *is* what "honest at small intervals" means; a silent
+  default would recreate the `*_wo_curr_day` folklore at hourly grain. For
+  `cadence ≥ 1d` it defaults to `0`, which with half-open `end_ts` reproduces
+  the legacy convention exactly.
+- Late data: recompute self-heals prospectively (every later cutoff re-scans the
+  full window), so `data_lag` bounds how wrong FROZEN points can be, not the
+  ongoing series; frozen rows are re-opened by `abk run --full-refresh
+  --from/--to`. Named failure mode: treatment-changed event latency (client
+  batching/retries) biases short tail windows in ways neither randomization nor
+  the A/A matrix detects — conservative `data_lag` is the mitigation.
+- Each row stores the `watermark_ts` in force when computed (provenance).
+- v2 (deferred): probe-based watermark from per-source freshness.
+
+### 6.3 Window contract (timestamps canonical, dates derived)
+
+One row per `(experiment, metric, pair, method_config_id, end_ts)`:
+`start_ts`/`end_ts` are UTC DateTimes, `end_ts` **exclusive** (half-open windows
+partition event time exactly; daily parity is byte-clean); `end_date` stays as a
+derived stored Date (legacy-identical for `cadence: 1d` — daily users never see
+a timestamp); plus `window_seconds` and fractional `elapsed_days` (the chart
+x-axis; day 0.5 = hour 12). An ordinal `look_index` is deliberately NOT stored —
+it breaks under schedule grids and cadence edits; ordinality is `ORDER BY
+end_ts`. **Cadence is NOT part of `method_config_id`** — it is a sampling
+schedule of the same series, so changing it mid-experiment is purely additive
+(new grid points appear; nothing is orphaned). Experiments gain an optional
+`timezone:` (default project tz → UTC) used to interpret date-typed YAML and
+snap daily grid points; storage/comparison is always UTC.
+
+### 6.4 Compute strategy (state stays day-grained)
+
+`_ab_unit_state` remains **day-bucketed**; a sub-day cutoff reads (closed-day
+state through the last midnight) + (fact-scan of the current-day tail) — each
+sub-day look costs at most one day of fact rows regardless of experiment age,
+and the state stage advances **only at day close**, so the §5.2 idempotency
+invariant, replace-not-sum design and twice-run test carry over unchanged.
+Interval-keyed state is rejected (×24 rows/inserts, wrong the moment cadence
+changes, ClickHouse part churn). The packaged macro emits BOTH the coarse
+`event_date` predicate (Date partition pruning) and the precise
+`event_time >= ab_start_ts AND event_time < ab_end_ts` filter — metric SQL
+authors change nothing. The §5.5 cohort-persist must-fix becomes ~24× more
+valuable at hourly grain. `abk plan`/config-lint echo the projected look count
+and cost before accepting a sub-day grid; `run` warns when
+`watermark_ts − max(computed end_ts)` exceeds a few cadence steps (backlog).
+
+### 6.5 Statistics at sub-day grain (details in the companion specs)
+
+- **A/A matrix:** peeking-FPR runs over the experiment's ACTUAL cadence grid
+  (prefix-summed sufficient statistics keep it tractable; the grid may be
+  subsampled to ~100 points, denser early, and must say so); a new
+  **effect-exaggeration-at-stop** (winner's curse) column lands next to FPR;
+  sequential power/CI-width is measured side-by-side, never asserted.
+  → aa-false-positive-matrix.md §3/§6.
+- **SRM:** χ² at every sub-day cutoff is itself peeking on the SRM test (false
+  alarms on a hard gate); at `cadence < 1d` the SRM gate uses the anytime-valid
+  sequential multinomial test (Lindon & Malek, NeurIPS 2022 — the Netflix/
+  Optimizely approach). → data-contract-and-reporting.md §6.
+- **CUPED:** sub-day cadence resolves the §5.1 pending decision to **(b) fixed
+  lookback in whole days** — the legacy growing window is incoherent below a
+  day (fractional `agg_dates_count`, θ jittering hourly). Lint: error on
+  `covariate_lookback < 1d`, warn `< 7d` (diurnal/weekday confounding).
+  → statistics-changes.md §5.
+- **Representativeness (display honesty, not a stats change):** any WIN/LOSE
+  called before `min(7d, horizon)` — even under sequential — carries a
+  "covers X% of a weekly cycle" caveat chip: early cumulative estimates
+  describe the population exposed so far (heavy users, one timezone slice,
+  novelty effects), not steady state. Under H0 randomization keeps both arms
+  identically mixed, so the test itself is not invalidated — early points are
+  noisy and unrepresentative, not biased.
+- **Grid alignment:** warn when `24h % cadence != 0` (the grid drifts across
+  midnight; diurnal composition oscillates across looks and daily BI rollups
+  misalign).
+
+## 7. Idempotency model
 
 An experiment is a **finite, re-runnable full recomputation** over the accrued
 window — **not** a resumed timestamp cursor. Idempotency is last-writer-wins on
-`(experiment, metric, variant-pair, method_config_id, end_date)` via a
-strictly-monotonic `created_at` version. The planner's `is_calculated` anti-join
-skips computed day-cutoffs; editing `method_params` changes `method_config_id`,
-orphaning old rows that `abk clean` GCs. Bootstrap seeds are derived
-deterministically per-row (see [statistics-changes.md](statistics-changes.md)) so
-re-runs are byte-stable.
+`(experiment, metric, variant-pair, method_config_id, end_ts)` (§6.3; for daily
+cadence `end_ts` maps 1:1 onto the legacy `end_date`) via a strictly-monotonic
+`created_at` version. The planner's `is_calculated` anti-join skips computed
+cutoffs; editing `method_params` changes `method_config_id`, orphaning old rows
+that `abk clean` GCs. Bootstrap seeds are derived deterministically per-row
+(from the row identity including `end_ts` — see
+[statistics-changes.md](statistics-changes.md)) so re-runs are byte-stable.

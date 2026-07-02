@@ -37,12 +37,21 @@ maximizing power** (the analog of detectkit's MCC/F-β selection).
 
 ## 3. Honest peeking FPR (decision Q2 — first-class)
 
-Because the product *is* the daily cumulative chart, the matrix MUST report the
+Because the product *is* the cumulative chart, the matrix MUST report the
 **real cumulative-peeking FPR**, not a single-look FPR:
 
-- Run each A/A placebo through the **full day-grid** and the **actual readout
+- Run each A/A placebo through the **full cadence grid** (the experiment's actual
+  grid, daily or sub-day — cumulative-intervals.md §6) and the **actual readout
   decision rule** ("CI excludes zero and stabilized"), and record whether it *ever*
-  falsely calls a winner across the experiment lifetime.
+  falsely calls a winner across the experiment lifetime. For closed-form methods
+  this is near-free: per-interval sufficient statistics are computed once per
+  placebo split and prefix-summed across the grid (the `accumulate.py` merge
+  primitive). Very dense grids may be subsampled (cap ~100 points, denser early
+  where the FPR accrues fastest) — the matrix must state when it did.
+- Report **effect exaggeration at stop** (winner's curse) as a first-class column
+  beside FPR: conditional on stopping early, the effect estimate is biased away
+  from zero — at hundreds of looks this is the analyst's biggest practical trap
+  and FPR alone does not show it.
 - Surface this as a **headline number** beside the nominal α — e.g. "nominal α 5%,
   **real peeking FPR 14%**" — in the matrix, the HTML report, and the explore chip.
 - Show the **same metric with `sequential.enabled`** side-by-side so the analyst

@@ -39,12 +39,12 @@ names/types are ours to choose; this is the proposed v1 contract):
 | Group | Columns |
 |---|---|
 | identity | `experiment`, `metric`, `is_main_metric`, `is_guardrail`, `method_name`, `method_params` (canonical JSON), `method_config_id`, `name_1`, `name_2` |
-| window | `start_date` (pinned), `end_date` (cutoff), `day` (cutoff length / experiment age) |
+| window | `start_ts`/`end_ts` (UTC DateTimes; `end_ts` **exclusive** — the canonical cutoff key), `start_date`/`end_date` (derived Dates — legacy-identical at `cadence: 1d`), `window_seconds`, `elapsed_days` (fractional; the chart x-axis) — see cumulative-intervals.md §6.3 |
 | per-arm | `value_1/2`, `std_1/2`, `cov_value_1/2`, `size_1/2` |
 | test | `alpha` (effective, post-correction), `pvalue`, `effect`, `left_bound`, `right_bound`, `ci_length`, `reject`, `mde_1/2` |
-| integrity | `srm_flag`, `srm_pvalue`, `decision_blocked` |
+| integrity | `srm_flag`, `srm_pvalue`, `decision_blocked`, `insufficient_data` (small-n demotion: row written, inference withheld) |
 | sequence | `ci_kind` (`fixed` \| `always_valid`), `is_horizon` (this cutoff == planned horizon) |
-| provenance | `metric_query`, `metric_rendered_query`, `created_at` (strictly-monotonic LWW version) |
+| provenance | `metric_query`, `metric_rendered_query`, `watermark_ts` (completeness boundary in force), `created_at` (strictly-monotonic LWW version) |
 
 Notes:
 - `avg_group_size = (size_1 + size_2)/2` and the `zero_effect = 0` reference line
@@ -83,9 +83,18 @@ The daily cumulative chart inherently peeks. The contract makes this **visible**
 - `is_horizon` lets the readout/BI refuse a WIN/LOSE before the planned horizon
   under fixed-horizon mode.
 - `abk validate` measures the **real cumulative-peeking FPR** (running A/A through
-  the full day-grid and the readout rule) and surfaces it next to the chart — so an
-  analyst sees the true error rate of watching daily, not just nominal α.
+  the experiment's ACTUAL cadence grid and the readout rule) and surfaces it next
+  to the chart — so an analyst sees the true error rate of watching at their
+  chosen frequency, not just nominal α.
   ([aa-false-positive-matrix.md](aa-false-positive-matrix.md))
+- **Sub-day grids** (cumulative-intervals.md §6): the explore cockpit adds a
+  pinned look counter ("look 37 / ~336 planned") next to the calibration chip;
+  pre-horizon fixed CIs render dashed/de-emphasized (at hourly density a solid
+  band crossing zero 40 times *looks like* information); `insufficient_data`
+  segments are greyed with counts+SRM only; a WIN/LOSE called before
+  `min(7d, horizon)` — even under sequential — carries a "covers X% of a weekly
+  cycle" representativeness caveat; stabilization is judged over *elapsed time*,
+  never look count (or hourly grids would "stabilize" in 6 hours).
 
 ## 5. Reporting — the priority local interface
 
@@ -133,6 +142,12 @@ SRM is the safest A/B guardrail and must be **loud** where analysts actually loo
 - **HTML report & explore:** a red SRM gate chip; `decision_blocked` set.
 - **BI:** ship an optional panel; document that a plain dashboard won't show
   `srm_flag` and that the CLI/HTML report is the canonical gate surface.
+- **Sub-day cadence:** checking χ² at every cutoff is itself peeking on the SRM
+  test (false alarms on a hard gate are expensive), so at `cadence < 1d` the
+  gate switches to the **anytime-valid sequential multinomial test**
+  (Lindon & Malek, NeurIPS 2022) — valid at every look by construction. This is
+  also sub-day cadence's headline genuine payoff: catching assignment bugs
+  within hours instead of days.
 
 ## 7. Trajectory to a full app
 

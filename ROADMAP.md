@@ -51,6 +51,12 @@ definition-of-done includes the relevant
 - Generic DB manager (CH/PG/MySQL) + internal tables (`_ab_experiments`,
   `_ab_exposures`, `_ab_results`, `_ab_tasks`); `core/period_planner` (expanding
   grid, anti-join, explicit completeness boundary).
+- **Sub-day cadence first-class** (decision: cumulative-intervals.md §6):
+  duration/schedule-typed `cadence` (dense-early grids), UTC `end_ts` window
+  contract with derived `end_date`, `data_lag` watermark planner rule,
+  `max_looks`/`warn_looks` gates, day-grained unit-state + current-day tail
+  reads, `ab_start_ts`/`ab_end_ts` Jinja built-ins, `insufficient_data`
+  small-n row flag; CUPED covariate = fixed lookback (statistics-changes §5).
 - `pipeline`: discover → plan → load (cohort once) → SRM gate → compute → enrich →
   persist. `abk run`, `abk run --steps validate` (config-lint), `unlock`,
   `clean`. Read-only exposures.
@@ -80,6 +86,10 @@ definition-of-done includes the relevant
 - `sequential/` (mSPRT always-valid + alpha-spending), opt-in; `ci_kind`/`is_horizon`
   in the contract. `abk plan` (pre-launch power/sizing). Benjamini-Hochberg
   read-time; composed-FDR empirical validation.
+- Sub-day cadence constraints (cumulative-intervals.md §6): `always_valid` is the
+  auto-recommended scheme below `1d`; `alpha_spending` requires a pre-committed
+  small look grid and is a config error at sub-day cadence; anytime-valid
+  sequential multinomial SRM (Lindon & Malek) replaces per-cutoff χ² below `1d`.
 
 ## M6 — DX, docs, orchestration, release
 - `abk init-claude` + packaged `.claude` assets (rules + 7 skills);
