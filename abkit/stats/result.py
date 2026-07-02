@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ClassVar
 
 
 @dataclass
@@ -22,6 +22,10 @@ class TestResult:
     (docs/specs/declarative-config.md §7), so BI series filters and identity can
     never disagree.
     """
+
+    # The class name matches pytest's Test* collection pattern; it is a result
+    # record, not a test case.
+    __test__: ClassVar[bool] = False
 
     name_1: str | None
     name_2: str | None

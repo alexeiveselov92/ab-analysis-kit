@@ -130,3 +130,43 @@ dividing by the original control mean; percentile bootstrap CI; sign-based boots
 p-value; effect computed on real data; config-time two-tier Bonferroni; the mixed
 per-term ddof. These are golden-tested against the legacy engine and only change via
 the §0 process.
+
+## 7. M1 implementation record (`abkit.stats` v0.1, ALGORITHM_VERSION=1)
+
+The M1 engine reproduces the baseline at rel-1e-9 (golden-tested against an
+independent transcription of the legacy formulas written from the catalogue only)
+with these documented, deliberate exceptions — each per the sections above:
+
+1. **H1/H2 applied.** All randomness flows from one injected
+   `np.random.default_rng` Generator; bootstrap re-runs are byte-stable given a
+   seed; `seed`/`max_block_bytes` are identity-excluded for all bootstrap methods.
+   Distributionally equivalent to the baseline (which re-seeded per run).
+2. **H4 applied as the default p-value.** Bootstrap methods default to the
+   `(#extreme+1)/(n+1)` plug-in p-value (ties at 0 counted as extreme on both
+   sides, capped at 1); the baseline sign-based p-value remains available as
+   `pvalue_kind: sign` (identity-bearing param) and is what golden tests use.
+3. **H3/H10 applied (numbers unchanged).** Mean/median fast paths; replicates are
+   drawn in fixed 128-replicate quanta so the memory cap can never change results.
+4. **H5 applied.** Zero/near-zero control denominators yield NaN + a recorded
+   warning (never a raise, never silent ±inf). One genuine corner deviation: the
+   legacy z-test relative branch with `prop_1 == 0` produced a finite pooled-z
+   p-value alongside an infinite effect; the M1 engine NaN-voids all outputs of
+   that comparison for consistency with the engine-wide H5 convention.
+5. **H6 applied.** Stratified resample counts use largest-remainder (Hamilton)
+   apportionment (with a min-1 floor bump), replacing the legacy
+   `max(1, int(...))` truncation drift. Golden-tested on strata where both agree.
+6. **H7 applied.** Poisson bootstrap methods reject `stat != "mean"` at
+   construction.
+7. **H8 applied.** The uncalibrated per-comparison KS normality warning is
+   dropped.
+8. **H9 applied.** `effect` is the real-data point estimate everywhere;
+   `diagnostics["boot_mean"]` carries the bootstrap mean as a bias diagnostic.
+   Sole exception: `paired-post-normed-bootstrap` (absolute) has no real-data
+   analog of its standardized estimand, so it keeps `effect = mean(boot_data)`
+   with a warning recommending `post-normed-bootstrap` / `ratio-delta`.
+9. **§3 quarantine enforced.** `poisson-post-normed-bootstrap` is blocked at the
+   registry; `post-normed-bootstrap` `test_type=absolute` and
+   `paired-post-normed-bootstrap` `test_type=relative` raise
+   `QuarantinedMethodError` at construction. `ratio-delta` ships as the
+   principled alternative (ddof=0 uniformly; known-answer: reduces exactly to
+   `t-test` when the denominator ≡ 1).

@@ -8,6 +8,7 @@ raise a hard, explanatory error and are never silently substituted.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
+from typing import overload
 
 from abkit.stats.base import BaseMethod
 from abkit.stats.exceptions import QuarantinedMethodError, UnknownMethodError
@@ -30,6 +31,14 @@ def normalize_method_name(name: str) -> str:
     return name.strip().lower().replace("_", "-")
 
 
+@overload
+def register(cls: type[BaseMethod]) -> type[BaseMethod]: ...
+
+
+@overload
+def register(*, aliases: Iterable[str] = ()) -> Callable[[type[BaseMethod]], type[BaseMethod]]: ...
+
+
 def register(
     cls: type[BaseMethod] | None = None, *, aliases: Iterable[str] = ()
 ) -> type[BaseMethod] | Callable[[type[BaseMethod]], type[BaseMethod]]:
@@ -49,7 +58,16 @@ def register(
             raise ValueError(f"method name {canonical!r} is quarantined and cannot be registered")
         _REGISTRY[canonical] = method_cls
         for alias in aliases:
-            _ALIASES[normalize_method_name(alias)] = canonical
+            alias_canonical = normalize_method_name(alias)
+            if alias_canonical in QUARANTINED_METHODS:
+                raise ValueError(f"alias {alias_canonical!r} is quarantined and cannot be reused")
+            if alias_canonical in _REGISTRY:
+                raise ValueError(f"alias {alias_canonical!r} collides with a registered method")
+            if _ALIASES.get(alias_canonical, canonical) != canonical:
+                raise ValueError(
+                    f"alias {alias_canonical!r} already points to {_ALIASES[alias_canonical]!r}"
+                )
+            _ALIASES[alias_canonical] = canonical
         return method_cls
 
     if cls is not None:
@@ -59,11 +77,14 @@ def register(
 
 def get_method_class(name: str) -> type[BaseMethod]:
     canonical = normalize_method_name(name)
+    # Quarantine is checked BEFORE and after alias resolution so no alias can
+    # ever route around it.
+    for candidate in (canonical, _ALIASES.get(canonical, canonical)):
+        if candidate in QUARANTINED_METHODS:
+            raise QuarantinedMethodError(
+                f"method {name!r} is quarantined: {QUARANTINED_METHODS[candidate]}"
+            )
     canonical = _ALIASES.get(canonical, canonical)
-    if canonical in QUARANTINED_METHODS:
-        raise QuarantinedMethodError(
-            f"method {name!r} is quarantined: {QUARANTINED_METHODS[canonical]}"
-        )
     try:
         return _REGISTRY[canonical]
     except KeyError:

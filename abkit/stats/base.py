@@ -23,6 +23,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
+import numpy as np
+
 from abkit.stats.exceptions import MethodParamError, SampleValidationError
 from abkit.stats.result import TestResult
 from abkit.stats.samples import RatioSample, Sample
@@ -45,6 +47,14 @@ class ParamSpec:
     description: str = ""
 
     def validate(self, value: Any, method_name: str) -> Any:
+        # Normalise numpy scalars (e.g. an np.int64 seed from the pipeline) to
+        # plain Python types before type-checking.
+        if isinstance(value, np.bool_):
+            value = bool(value)
+        elif isinstance(value, np.integer):
+            value = int(value)
+        elif isinstance(value, np.floating):
+            value = float(value)
         if bool not in self.types and isinstance(value, bool):
             raise MethodParamError(
                 f"{method_name}: param {self.name!r} must be {self._type_names()}, got bool"

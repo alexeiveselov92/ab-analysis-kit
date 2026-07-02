@@ -103,6 +103,15 @@ def normal_test(estimate: EffectEstimate, alpha: float) -> NormalTest:
             result_warnings.append(
                 "effect variance is zero (degenerate samples); returning NaN test outputs"
             )
+        elif math.isfinite(estimate.var) and estimate.var < 0.0:
+            result_warnings.append(
+                "effect variance is negative (anomalous covariance term — possible with the "
+                "mixed-ddof convention on adversarial data); returning NaN test outputs"
+            )
+        elif not result_warnings:
+            result_warnings.append(
+                "effect or its variance is non-finite; returning NaN test outputs"
+            )
         nan = float("nan")
         return NormalTest(
             effect=estimate.effect,

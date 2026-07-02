@@ -142,7 +142,7 @@ class Fraction:
         self.name = name
         self.prop = self.count / self.nobs
         self.std = float(np.sqrt(self.prop * (1.0 - self.prop) / self.nobs))
-        self.sample_size = int(self.nobs)
+        self.sample_size = int(round(self.nobs))
 
     def __repr__(self) -> str:
         return f"Fraction(name={self.name!r}, count={self.count:g}, nobs={self.nobs:g}, prop={self.prop:.6g})"
@@ -194,10 +194,11 @@ class JointMoments:
     def from_arrays(cls, *arrays: FloatArray, labels: tuple[str, ...] = ()) -> JointMoments:
         if not arrays:
             raise SampleValidationError("JointMoments requires at least one array")
-        stacked = np.vstack([np.asarray(a, dtype=np.float64) for a in arrays])
-        n = stacked.shape[1]
-        if any(np.asarray(a).size != n for a in arrays):
+        converted = [_as_float_array(array, what="JointMoments array") for array in arrays]
+        n = converted[0].size
+        if any(array.size != n for array in converted[1:]):
             raise SampleValidationError("JointMoments arrays must be equal-length and aligned")
+        stacked = np.vstack(converted)
         mean = stacked.mean(axis=1)
         centered = stacked - mean[:, None]
         comoment = centered @ centered.T
@@ -212,7 +213,9 @@ class JointMoments:
         try:
             return self.labels.index(label)
         except ValueError:
-            raise KeyError(f"unknown series label {label!r}; have {self.labels}") from None
+            raise SampleValidationError(
+                f"unknown series label {label!r}; have {self.labels}"
+            ) from None
 
     def var0(self, i: int) -> float:
         """Population variance (``np.var`` parity, ddof=0) of series ``i``."""
