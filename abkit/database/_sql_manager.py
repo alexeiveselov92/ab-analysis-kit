@@ -95,7 +95,7 @@ class SQLDatabaseManager(BaseDatabaseManager):
         """Create the internal/data schema (PostgreSQL) or database (MySQL)."""
         raise NotImplementedError
 
-    def _string_type(self, in_primary_key: bool) -> str:
+    def _string_type(self, in_primary_key: bool, max_length: int | None = None) -> str:
         """Native type for an abstract ``String`` column."""
         return self._TYPE_MAP["string"]
 
@@ -157,10 +157,10 @@ class SQLDatabaseManager(BaseDatabaseManager):
             return "bool"
         raise ValueError(f"Cannot map column type to a SQL dialect: {ch_type!r}")
 
-    def _map_type(self, ch_type: str, in_primary_key: bool) -> str:
+    def _map_type(self, ch_type: str, in_primary_key: bool, max_length: int | None = None) -> str:
         kind = self._canonical_type(ch_type)
         if kind == "string":
-            return self._string_type(in_primary_key)
+            return self._string_type(in_primary_key, max_length)
         return self._TYPE_MAP[kind]
 
     @staticmethod
@@ -179,7 +179,7 @@ class SQLDatabaseManager(BaseDatabaseManager):
         return f" DEFAULT '{d}'"
 
     def _render_column(self, col: ColumnDefinition, in_primary_key: bool) -> str:
-        native = self._map_type(col.type, in_primary_key)
+        native = self._map_type(col.type, in_primary_key, col.max_length)
         # Primary-key columns are always NOT NULL; otherwise honor the model.
         nullable = self._is_nullable(col) and not in_primary_key
         null_sql = "" if nullable else " NOT NULL"

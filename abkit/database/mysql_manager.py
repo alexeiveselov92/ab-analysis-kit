@@ -101,8 +101,12 @@ class MySQLDatabaseManager(SQLDatabaseManager):
         for db in (self._internal_location, self._data_location):
             self.execute_query(f"CREATE DATABASE IF NOT EXISTS {db}")
 
-    def _string_type(self, in_primary_key: bool) -> str:
-        # TEXT cannot be part of a PRIMARY KEY without a prefix length.
+    def _string_type(self, in_primary_key: bool, max_length: int | None = None) -> str:
+        # TEXT cannot be part of a PRIMARY KEY without a prefix length; sized
+        # columns honor max_length so wide composite keys fit InnoDB's
+        # 3072-byte index cap (4 bytes/char under utf8mb4).
+        if max_length is not None:
+            return f"VARCHAR({max_length})"
         return "VARCHAR(255)" if in_primary_key else "TEXT"
 
     def _build_insert_sql(

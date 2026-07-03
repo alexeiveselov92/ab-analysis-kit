@@ -18,12 +18,18 @@ class ColumnDefinition:
         type: SQL type (database-specific)
         nullable: Whether column can be NULL
         default: Default value for column
+        max_length: Optional length bound for String columns. Dialects that
+            must size strings use it (MySQL renders ``VARCHAR(max_length)``);
+            others ignore it. Primary-key strings on MySQL count toward
+            InnoDB's 3072-byte composite-index cap (4 bytes/char under
+            utf8mb4), so wide composite keys MUST set this.
     """
 
     name: str
     type: str
     nullable: bool = False
     default: Any | None = None
+    max_length: int | None = None
 
     def __post_init__(self):
         """Validate column definition."""
@@ -31,6 +37,8 @@ class ColumnDefinition:
             raise ValueError("Column name cannot be empty")
         if not self.type:
             raise ValueError("Column type cannot be empty")
+        if self.max_length is not None and self.max_length <= 0:
+            raise ValueError(f"max_length must be positive, got {self.max_length}")
 
 
 @dataclass
