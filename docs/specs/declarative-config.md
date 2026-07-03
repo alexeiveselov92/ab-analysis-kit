@@ -48,9 +48,18 @@ alpha: 0.05                      # experiment-level significance (see §6 — in
 correction: bonferroni           # none | bonferroni (config-time, legacy) | benjamini_hochberg (read-time)
 sequential: {enabled: false, scheme: always_valid}   # opt-in peeking-correct CIs (default off = legacy)
 
+readout:                         # READ-TIME verdict knobs (M3, plan D5) — never enter method_config_id
+  stabilization_days: 7          # trailing elapsed-days window for "persistent significance"
+                                 # (judged over elapsed time, never look count; default 7 = one weekly cycle)
+  guardrail_policy: block        # block (default): a regressed guardrail caps WIN at INCONCLUSIVE;
+                                 # warn: WIN is kept with a mandatory loud caveat (owner-ratified)
+
 comparisons:                     # each binds a library metric to a method
   - metric: social_r1            # references metrics/social_r1.yml by name
     is_main_metric: true         # primary winner criterion (drives the two-tier Bonferroni)
+    min_effect: 0.01             # optional: the business-meaningful effect, in the units of this
+                                 # comparison's persisted effect (test_type-dependent); enables FLAT —
+                                 # without it flat cannot be distinguished from underpowered (D5(b))
     method: {name: z-test, params: {test_type: relative, calculate_mde: true, power: 0.8}}
   - metric: arpu
     method: {name: cuped-t-test, params: {test_type: relative, covariate: prev_gross_usd, covariate_lookback: 14d}}
@@ -58,6 +67,8 @@ comparisons:                     # each binds a library metric to a method
     method: {name: poisson-bootstrap, params: {test_type: relative, n_samples: 1000, stratify_by: [country]}}
   - metric: bottle_cr
     is_guardrail: true           # checked for regression, not for winning
+    desired_direction: increase  # which effect sign is GOOD for this metric (default increase);
+                                 # orients WIN/LOSE for mains and the regression check for guardrails
     method: {name: z-test, params: {test_type: relative}}
 ```
 
