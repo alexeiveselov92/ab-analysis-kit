@@ -48,10 +48,14 @@ class SyntheticWarehouse(FakeDatabaseManager):
         self.events: list[tuple[str, str, datetime, float]] = []
         # (unit, variant, exposure_ts)
         self.cohort: list[tuple[str, str, datetime]] = []
+        # flip to simulate a warehouse outage on fact-table queries
+        self.fail_user_queries = False
 
     def execute_query(self, query: str, params: dict[str, Any] | None = None):
         flat = " ".join(query.split())
         if "user_revenue" in flat:
+            if self.fail_user_queries:
+                raise RuntimeError("synthetic warehouse outage")
             match = _WINDOW_RE.search(flat)
             assert match, f"metric SQL lost its window filter: {flat}"
             w_start = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S")
