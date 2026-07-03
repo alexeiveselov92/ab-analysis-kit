@@ -3,6 +3,7 @@ include LICENSE
 include requirements.txt
 recursive-include abkit *.py
 recursive-include abkit/cli/assets *.md
+recursive-include abkit/loaders/templates *.jinja
 recursive-include abkit/reporting/assets *.js
 recursive-include abkit/tuning/assets *.js
 recursive-exclude tests *

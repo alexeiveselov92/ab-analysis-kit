@@ -94,6 +94,9 @@ exclude = ["tests*", "docs*", "website*"]
 [tool.setuptools.package-data]
 # Claude Code context shipped by `abk init-claude` (CLAUDE block, rules, skills).
 "abkit.cli" = ["assets/**/*.md"]
+# The packaged assignment macro (cohort join / window filter / dedup), imported
+# by every metric SQL via {% import 'abkit_assignment.jinja' as ab %}.
+"abkit.loaders" = ["templates/*.jinja"]
 # Pre-built self-contained HTML-report renderer bundle (shared with the website
 # landing demo), inlined by `abk run --report`.
 "abkit.reporting" = ["assets/*.js"]

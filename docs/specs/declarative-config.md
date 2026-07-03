@@ -84,30 +84,46 @@ sql: |
       {{ ab.variant_col() }}      AS group,        -- arm from the persisted cohort
       user_id,
       sum(gross_usd)              AS gross_usd,     -- ADDITIVE: one row per unit
-      {{ ab.covariate_window('prev_gross_usd', lookback='14d') }} AS prev_gross_usd,
       any(country)                AS country
   FROM {{ data_database }}.user_revenue
-  {{ ab.exposed_units() }}        -- JOIN persisted _ab_exposures + window filter + LIMIT 1 BY unit
+  {{ ab.exposed_units() }}        -- JOIN persisted _ab_exposures + window filter + dedup
   GROUP BY group, user_id         -- one row per unit; loader builds per-variant arrays / suffstats
 ```
 
 **Contract:** a metric query returns **one row per unit** with additive
 `sum`/`count` columns over `[ab_start_date, ab_end_date]`. The loader **guards**
-this: if a query returns more rows than distinct `unit_key`s, it warns loudly
+this: if a query returns more rows than distinct `unit_key`s, it errors loudly
 ("did you forget `GROUP BY unit_key`? metrics must be one row per unit").
+
+**CUPED covariate mechanics** *(amended in M2 WP5; supersedes the original
+`ab.covariate_window()` sketch, which would have required conditional
+aggregation — a plain `sum(gross_usd)` over an extended scan double-counts the
+pre-period)*: when a comparison's method declares `covariate_lookback`, the
+loader renders the **same metric SQL a second time** over the pre-period
+window `[start_ts − lookback, start_ts)` with the exposure filter dropped
+(`ab_apply_exposure_filter=false` — the pre-period precedes exposure by
+construction), and the pre-period **value** becomes the covariate keyed by
+unit (absent units → 0.0). This is exactly the legacy CUPED semantics — the
+covariate is the same metric over the pre-period — with zero extra authoring.
+An explicit `columns.covariate` role (a covariate column the author computes
+in their own SQL, e.g. a snapshot) takes precedence and skips the second
+render.
 
 ## 4. The packaged assignment macro (must-fix: no leaked boilerplate)
 
 The legacy system factored cohort/window/dedup into `exp_users_macros.jinja`. abkit
 **ships** an equivalent so a metric SQL describes *only* the metric aggregation:
 
-- `ab.exposed_units()` — `JOIN`s the persisted `_ab_exposures` cohort (loaded once
-  per experiment), applies the window filter (`event_date BETWEEN ab_start_date AND
-  ab_end_date`, `event_time >= exposure_ts`), and `LIMIT 1 BY unit_key` dedup.
-- `ab.variant_col()` — the arm label from the cohort.
-- `ab.covariate_window(col, lookback=…)` — the pre-period covariate aggregate with
-  the chosen lookback semantics (fixed or growing — see
-  [cumulative-intervals.md](cumulative-intervals.md) §5).
+- `ab.exposed_units(event_date_col='event_date', event_time_col='event_time')` —
+  `JOIN`s the persisted `_ab_exposures` cohort (loaded once per run), **deduped
+  per dialect** (`FINAL` on ClickHouse — a mid-merge ReplacingMergeTree must
+  never yield a unit twice; PG/MySQL enforce the PK), and applies BOTH the
+  coarse `event_date` predicate (Date partition pruning) and the precise
+  half-open `event_time >= ab_start_ts AND event_time < ab_end_ts` filter plus
+  `event_time >= exposure_ts` (dropped on the covariate pre-period render).
+- `ab.variant_col()` / `ab.stratum_col()` — arm/stratum labels from the cohort.
+- *(The `ab.covariate_window()` sketch is superseded by the two-render
+  covariate mechanics in §3 — M2 WP5.)*
 
 Validation asserts the rendered SQL is joined to `_ab_exposures`; a metric authored
 without the macro fails config-lint, so correctness-critical join/dedup logic is
@@ -129,7 +145,15 @@ against the scaffolded example so docs & examples cannot drift.
 | `ab_unit_key` | the unit/randomization key |
 | `ab_added_filters` | the experiment's optional SQL fragment |
 | `data_database` / `internal_database` | profile-resolved schemas |
-| `ab.*` (macro) | `exposed_units()`, `variant_col()`, `covariate_window()` |
+| `ab_exposures_table` | the fully-qualified persisted cohort table (used by the macro) |
+| `ab_dialect` | `clickhouse` \| `postgres` \| `mysql` (dialect-aware dedup in the macro) |
+| `ab_apply_exposure_filter` | internal: `false` only on the covariate pre-period render |
+| `ab.*` (macro) | `exposed_units()`, `variant_col()`, `stratum_col()` |
+
+Built-ins **win** over caller context: a context key shadowing an `ab_*`
+variable raises a render error (a silently shadowed `ab_end_ts` would change
+the analysis window) — a deliberate, recorded deviation from the detectkit
+donor's context-wins behaviour.
 
 ## 6. Alpha & multiple-testing (must-fix: inspectable, not hidden)
 
