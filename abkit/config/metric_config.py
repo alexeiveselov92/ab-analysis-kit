@@ -12,7 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from abkit.database.tables import MAX_METRIC_NAME_LENGTH
 
@@ -74,6 +74,8 @@ class MetricConfig(BaseModel):
         ```
     """
 
+    model_config = ConfigDict(populate_by_name=True)
+
     name: str = Field(..., description="Metric name (globally unique; DB key)")
     description: str | None = Field(default=None, description="Optional description")
     type: MetricType = Field(..., description="fraction | sample | ratio")
@@ -85,7 +87,12 @@ class MetricConfig(BaseModel):
         default=None, description="Optional tags for selection (tag: selectors)"
     )
     columns: MetricColumnsConfig = Field(..., description="Column-role mapping")
-    query: str | None = Field(default=None, description="Inline SQL query")
+    # the YAML spelling is `sql:` (declarative-config.md §3); `query` kept for symmetry
+    query: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("sql", "query"),
+        description="Inline SQL query",
+    )
     query_file: Path | None = Field(default=None, description="Path to SQL file")
 
     @field_validator("name")
