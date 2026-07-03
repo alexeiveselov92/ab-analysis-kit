@@ -18,18 +18,32 @@ definition-of-done includes the relevant
 - **Next:** flesh out the package layout from
   [architecture.md §4](docs/specs/architecture.md) starting with M1.
 
-## M1 — Pure statistical core (`abkit.stats`)
+## M1 — Pure statistical core (`abkit.stats`) ✅
 - `BaseMethod` ABC + registry + factory; `Sample`/`Fraction`/`SufficientStats`
   (mixed-ddof aware); `effects.py` (delta-method linearisation); `TestResult`.
 - Parametric: `ttest`, `paired_ttest`, `ztest`, `cuped_ttest`, `paired_cuped_ttest`,
   `ratio_delta`. Bootstrap: vectorised engine (mean fast-path + Poisson matmul),
   `bootstrap`, `paired_bootstrap`, `poisson_bootstrap`, `post_normed_bootstrap`,
-  percentile CI + `(#extreme+1)/(n+1)` p-value. Power/MDE; Bonferroni.
+  percentile CI + `(#extreme+1)/(n+1)` p-value (opt-in `pvalue_kind`; the default
+  stays the baseline sign p-value per statistics-changes §2). Power/MDE; Bonferroni.
 - `rng.py` (`default_rng`, deterministic per-row seeds). Dual entry
   (`from_suffstats` ≡ `from_samples`).
-- **DoD:** golden tests vs the legacy engine at rel-1e-9 (incl. θ); known-answer
-  tests; canonical `method_config_id` byte test; quarantine policy for broken
-  ratio methods. *(Must-fixes: ddof, tolerance, seed policy, hash, quarantine.)*
+- **DoD (met):** golden tests vs an independent legacy transcription at rel-1e-9
+  (incl. θ; see statistics-changes §0 note on transcription provenance);
+  known-answer tests; canonical `method_config_id` byte test; quarantine policy
+  for broken ratio methods; 8-angle adversarial review applied (30 verified
+  findings fixed or recorded). *(Must-fixes: ddof, tolerance, seed policy, hash,
+  quarantine — all done.)*
+- **Deferred M1 cleanups (tracked, non-blocking):** shared NormalTest→TestResult
+  builder for the 5 parametric methods; `_finalize_from_boots` epilogue helper
+  for the 4 bootstrap methods (also dedupes the double `stat_point`); route
+  `ratio_delta._arm_linearisation` through `effects.relative_delta_effect`;
+  `JointMoments.corr(i, j)` accessor replacing `paired_cuped_ttest._corr`;
+  declarative introspectable quarantined-branch map (schema-visible, replacing
+  imperative `_validate_params` raises); unify warn-vs-record warning channels;
+  unify golden-bootstrap tolerance helper with `tests/golden/conftest.py`;
+  z-test could route through `effects.normal_test` (kept as a verbatim legacy
+  transcription deliberately).
 
 ## M2 — Declarative config + DB layer + the pipeline (recompute)
 - pydantic Experiment/Metric/Method configs + two-level validator; Jinja templating
@@ -37,6 +51,12 @@ definition-of-done includes the relevant
 - Generic DB manager (CH/PG/MySQL) + internal tables (`_ab_experiments`,
   `_ab_exposures`, `_ab_results`, `_ab_tasks`); `core/period_planner` (expanding
   grid, anti-join, explicit completeness boundary).
+- **Sub-day cadence first-class** (decision: cumulative-intervals.md §6):
+  duration/schedule-typed `cadence` (dense-early grids), UTC `end_ts` window
+  contract with derived `end_date`, `data_lag` watermark planner rule,
+  `max_looks`/`warn_looks` gates, day-grained unit-state + current-day tail
+  reads, `ab_start_ts`/`ab_end_ts` Jinja built-ins, `insufficient_data`
+  small-n row flag; CUPED covariate = fixed lookback (statistics-changes §5).
 - `pipeline`: discover → plan → load (cohort once) → SRM gate → compute → enrich →
   persist. `abk run`, `abk run --steps validate` (config-lint), `unlock`,
   `clean`. Read-only exposures.
@@ -66,6 +86,10 @@ definition-of-done includes the relevant
 - `sequential/` (mSPRT always-valid + alpha-spending), opt-in; `ci_kind`/`is_horizon`
   in the contract. `abk plan` (pre-launch power/sizing). Benjamini-Hochberg
   read-time; composed-FDR empirical validation.
+- Sub-day cadence constraints (cumulative-intervals.md §6): `always_valid` is the
+  auto-recommended scheme below `1d`; `alpha_spending` requires a pre-committed
+  small look grid and is a config error at sub-day cadence; anytime-valid
+  sequential multinomial SRM (Lindon & Malek) replaces per-cutoff χ² below `1d`.
 
 ## M6 — DX, docs, orchestration, release
 - `abk init-claude` + packaged `.claude` assets (rules + 7 skills);

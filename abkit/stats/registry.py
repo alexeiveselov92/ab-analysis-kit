@@ -1,0 +1,111 @@
+"""Method registry: name → class, plus the quarantine list for broken legacy methods.
+
+The pipeline/DB/CLI never special-case a method name — everything routes through
+:func:`get_method_class`. Quarantined names (docs/specs/statistics-changes.md §3)
+raise a hard, explanatory error and are never silently substituted.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Iterable
+from typing import overload
+
+from abkit.stats.base import BaseMethod
+from abkit.stats.exceptions import QuarantinedMethodError, UnknownMethodError
+
+_REGISTRY: dict[str, type[BaseMethod]] = {}
+_ALIASES: dict[str, str] = {}
+
+#: Legacy methods verified broken — hard error, never a silent substitution
+#: (quorum must-fix "quarantine broken ratio methods").
+QUARANTINED_METHODS: dict[str, str] = {
+    "poisson-post-normed-bootstrap": (
+        "the legacy PoissonPostNormedBootstrapTest performs NO post-normalisation — it is a "
+        "verbatim copy of PoissonBootstrapTest. Use 'poisson-bootstrap' (identical behaviour) "
+        "or the principled 'ratio-delta' for ratio metrics. See statistics-changes.md §3."
+    ),
+}
+
+
+def normalize_method_name(name: str) -> str:
+    return name.strip().lower().replace("_", "-")
+
+
+def _same_class(a: type, b: type) -> bool:
+    """Same class re-created by a module re-import (importlib.reload / %autoreload)."""
+    return a.__module__ == b.__module__ and a.__qualname__ == b.__qualname__
+
+
+@overload
+def register(cls: type[BaseMethod]) -> type[BaseMethod]: ...
+
+
+@overload
+def register(*, aliases: Iterable[str] = ()) -> Callable[[type[BaseMethod]], type[BaseMethod]]: ...
+
+
+def register(
+    cls: type[BaseMethod] | None = None, *, aliases: Iterable[str] = ()
+) -> type[BaseMethod] | Callable[[type[BaseMethod]], type[BaseMethod]]:
+    """Class decorator: ``@register`` or ``@register(aliases=("ttest",))``."""
+
+    def _register(method_cls: type[BaseMethod]) -> type[BaseMethod]:
+        name = getattr(method_cls, "name", None)
+        if not name or not isinstance(name, str):
+            raise ValueError(f"{method_cls.__name__} must define a class-level registry `name`")
+        canonical = normalize_method_name(name)
+        if canonical != name:
+            raise ValueError(f"registry name must be canonical kebab-case, got {name!r}")
+        if canonical in _ALIASES:
+            raise ValueError(
+                f"method name {canonical!r} collides with an alias of {_ALIASES[canonical]!r} "
+                "(aliases are resolved before registry lookup, so this class would be unreachable)"
+            )
+        existing = _REGISTRY.get(canonical)
+        if (
+            existing is not None
+            and existing is not method_cls
+            and not _same_class(existing, method_cls)
+        ):
+            raise ValueError(f"method name {canonical!r} already registered by {existing.__name__}")
+        if canonical in QUARANTINED_METHODS:
+            raise ValueError(f"method name {canonical!r} is quarantined and cannot be registered")
+        _REGISTRY[canonical] = method_cls
+        for alias in aliases:
+            alias_canonical = normalize_method_name(alias)
+            if alias_canonical in QUARANTINED_METHODS:
+                raise ValueError(f"alias {alias_canonical!r} is quarantined and cannot be reused")
+            if alias_canonical in _REGISTRY:
+                raise ValueError(f"alias {alias_canonical!r} collides with a registered method")
+            if _ALIASES.get(alias_canonical, canonical) != canonical:
+                raise ValueError(
+                    f"alias {alias_canonical!r} already points to {_ALIASES[alias_canonical]!r}"
+                )
+            _ALIASES[alias_canonical] = canonical
+        return method_cls
+
+    if cls is not None:
+        return _register(cls)
+    return _register
+
+
+def get_method_class(name: str) -> type[BaseMethod]:
+    canonical = normalize_method_name(name)
+    # Quarantine is checked BEFORE and after alias resolution so no alias can
+    # ever route around it.
+    for candidate in (canonical, _ALIASES.get(canonical, canonical)):
+        if candidate in QUARANTINED_METHODS:
+            raise QuarantinedMethodError(
+                f"method {name!r} is quarantined: {QUARANTINED_METHODS[candidate]}"
+            )
+    canonical = _ALIASES.get(canonical, canonical)
+    try:
+        return _REGISTRY[canonical]
+    except KeyError:
+        raise UnknownMethodError(
+            f"unknown method {name!r}; available: {', '.join(available_methods())}"
+        ) from None
+
+
+def available_methods() -> tuple[str, ...]:
+    return tuple(sorted(_REGISTRY))

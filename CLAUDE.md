@@ -10,9 +10,24 @@ reports, a chart-first cockpit), with the `detect` stage replaced by a statistic
 > **Using abkit, not hacking on it?** (Once shipped:) see the README and
 > `abk init-claude`, which sets up assistant context inside *your own* project.
 
-## Status: pre-development
+## Status: M1 shipped; next up M2
 
-The repo currently holds the **project-initiation contract**. The source of truth is
+**Done — M1, the pure statistical core** (`abkit.stats`, importable standalone;
+see [ROADMAP.md](ROADMAP.md) for the deferred-cleanup list): data model with the
+legacy mixed-ddof convention, plugin registry + canonical `method_config_id`,
+6 closed-form + 6 bootstrap methods with dual entry, power/MDE, Bonferroni + BH,
+SRM gate, deterministic seeds; 520+ tests incl. golden tests vs an independent
+legacy transcription at rel-1e-9. Adversarially reviewed (8 angles, 30 verified
+findings fixed or recorded).
+
+**Decided** (recorded in the specs + CHANGELOG): sub-day cumulative intervals
+([cumulative-intervals.md §6](docs/specs/cumulative-intervals.md) — duration/
+schedule-typed `cadence`, no time floor, `max_looks` gate, `data_lag` watermark,
+`end_ts` contract); CUPED covariate window = fixed whole-day lookback
+([statistics-changes.md §5](docs/specs/statistics-changes.md)).
+
+**Next — M2** (declarative config + DB layer + recompute pipeline), including
+the sub-day cadence planner work listed in ROADMAP M2. The source of truth is
 [docs/specs/](docs/specs/). Read the relevant spec before writing code:
 
 | If you're working on… | Read |
@@ -38,6 +53,8 @@ Reference material (legacy dashboard JSON, results chart, method catalogue):
 ## Invariants (do not violate)
 
 - **`abkit.stats` is pure** — numpy/scipy/statsmodels only; never config/DB/Jinja/click.
+  (Sole intra-package dependency: the stdlib-only `abkit.utils.json_utils`
+  canonical-hash path; enforced by `tests/stats/test_purity.py`.)
 - **Never change a number silently** — every deviation from the baseline is an
   `ALGORITHM_VERSION` bump + a `statistics-changes.md` entry + A/A validation.
 - **Methods are plugins** — a new estimator is one `BaseMethod` class + registry
