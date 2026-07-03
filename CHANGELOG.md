@@ -14,6 +14,34 @@ number change).
 ## [Unreleased]
 
 ### Added
+- **M3 WP2 — the experiment-primary report payload** (per
+  [`docs/specs/m3-implementation-plan.md`](docs/specs/m3-implementation-plan.md) D6):
+  - `abkit.reporting.builder`: `build_report_payload(experiment, tables, ...)`
+    — one versioned JSON-serializable payload per experiment from persisted
+    `_ab_results` rows, the shared contract for the WP3 readout renderer and
+    the WP6/WP7 explore shell: WP1 verdict block, experiment-level SRM block
+    (driver-mirrored zero-filled exposure counts), M4-shaped
+    `calibration: null`, `look: {n, planned}` from the one-enumeration
+    planner grid, terse ms-epoch series points, NaN **and ±inf** → null,
+    provenance projection (rendered SQL never enters the payload; one
+    `metric_query` per metric), metric descriptions from the metric YAML,
+    caller-supplied `generated_at`, inclusive `start`/`end` window pinning
+    (historical readout replay), a global point budget with trailing-window
+    clipping + a loud payload warning, and the full-key empty-experiment
+    contract. Zero statistical numbers changed.
+  - `InternalTablesManager`: `results_table_exists()` /
+    `exposures_table_exists()` — the never-run-project guards for read-only
+    surfaces (reporting never creates schema) — and an `until=` bound on
+    `get_exposure_counts` (`exposure_ts < until`, half-open) so a replayed
+    report shows the as-of cohort, not today's.
+  - Review-driven consistency rules (adversarial review, 4 lenses): rows for
+    variant pairs outside the declared arms are excluded from every payload
+    surface with a loud warning (never silently mixed into look/period/BH);
+    the driver's orphaned-`method_config_id` scan is surfaced as a payload
+    warning on the read path too.
+  - Specs amended (data-contract-and-reporting.md §5: subsections numbered
+    5.1/5.2, the D2 explore data-source rewording, new §5.3 payload contract;
+    §2 metric-description sourcing note).
 - **M3 WP1 — the readout decision core** (per
   [`docs/specs/m3-implementation-plan.md`](docs/specs/m3-implementation-plan.md) D5):
   - `abkit.pipeline.readout`: pure read-time WIN/LOSE/FLAT/INCONCLUSIVE

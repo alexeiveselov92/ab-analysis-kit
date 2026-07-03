@@ -66,20 +66,35 @@ class _ExposuresMixin(_InternalTablesBase):
             )
         return written
 
-    def get_exposure_counts(self, experiment: str) -> dict[str, int]:
+    def exposures_table_exists(self) -> bool:
+        """True when ``_ab_exposures`` exists — a never-run project has none.
+
+        Read-only surfaces guard with this instead of ``ensure_tables()``;
+        mirrors :meth:`results_table_exists` (m3-implementation-plan.md WP2).
+        """
+        return self._manager.table_exists(TABLE_EXPOSURES, schema=self._manager.internal_location)
+
+    def get_exposure_counts(self, experiment: str, until: datetime | None = None) -> dict[str, int]:
         """Per-variant unit counts — the SRM gate's observed counts.
 
         Deduped (FINAL on ClickHouse) so a mid-merge ReplacingMergeTree never
         double-counts a unit (quorum "correctness under async merge").
+        ``until`` bounds the cohort as-of a cutoff (``exposure_ts < until``,
+        half-open like every window) so a replayed report shows the counts
+        that existed then, not today's.
         """
         full_table_name = self._manager.get_full_table_name(TABLE_EXPOSURES, use_internal=True)
+        until_filter = " AND exposure_ts < %(until)s" if until is not None else ""
         query = f"""
         SELECT variant, count(*) AS cnt
         FROM {full_table_name}{self._manager.final_modifier}
-        WHERE experiment = %(e)s
+        WHERE experiment = %(e)s{until_filter}
         GROUP BY variant
         """
-        rows = self._manager.execute_query(query, {"e": experiment})
+        params: dict[str, object] = {"e": experiment}
+        if until is not None:
+            params["until"] = until
+        rows = self._manager.execute_query(query, params)
         return {row["variant"]: int(row["cnt"]) for row in rows if row.get("variant")}
 
     def get_first_exposure_ts(self, experiment: str) -> datetime | None:

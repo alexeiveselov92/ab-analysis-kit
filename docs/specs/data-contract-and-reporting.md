@@ -86,6 +86,9 @@ Notes:
   BI filters never split a series.
 - `metric_description` is **not** stored in `_ab_results`; it lives in
   `_ab_experiments`/metric metadata and is joined by BI (one source of truth).
+  *(Amended with M3 WP2 — D6: the report payload sources metric descriptions
+  from the metric YAML configs, `MetricConfig.description` — `_ab_experiments`
+  stores only the experiment description; see §5.3.)*
 - New, non-legacy columns (`srm_flag`, `ci_kind`, `is_horizon`, `decision_blocked`)
   are first-class because we are not constrained by the old schema.
 
@@ -135,10 +138,20 @@ Two surfaces, both **web-first and framework-free** (baked payload + self-contai
 JS renderer, the detectkit `report.js`/`tune.js` pattern) so they can later be
 embedded in a full app.
 
-### `abk explore` — the chart-first cockpit (PRIORITY)
+### 5.1 `abk explore` — the chart-first cockpit (PRIORITY)
 
 The detectkit-`tune` port and the **first thing we build**. A localhost cockpit
-where the analyst runs the pipeline and **plays with method params live**:
+where the analyst **plays with method params live** over the experiment's
+persisted results.
+
+*Data source (amended with M3 WP2 — m3-implementation-plan.md D2): explore
+reads the **persisted** `_ab_results` series for the baseline chart (the
+donor's "what actually ran" stance) and performs exactly one read-only,
+lock-free warehouse load pass at session start to fill the recompute cache —
+it never runs the pipeline in-cockpit. A prior `abk run` is required; no rows
+⇒ a friendly "run `abk run --select <exp>` first" noop. Freshness is whatever
+the last run produced; the header shows the latest `end_ts`/watermark so
+staleness is visible.*
 
 - **Windshield:** the cumulative-effect + CI **stabilization chart** (effect with
   its shrinking CI as time accrues), with pinned live chips — estimated lift, CI
@@ -159,12 +172,97 @@ where the analyst runs the pipeline and **plays with method params live**:
   `experiments/.history/<exp>/`, writes `method_params` back. `--no-serve` emits a
   static read-only HTML.
 
-### `abk run --report` — the self-contained readout
+### 5.2 `abk run --report` — the self-contained readout
 
 A single offline HTML per experiment (inline JS + baked payload): variant
 means/lift, the stabilization chart, MDE/power, p-value-vs-alpha, the SRM panel,
 the A/A matrix, and the WIN/LOSE/FLAT/INCONCLUSIVE verdict with its rationale.
 Shareable with stakeholders without standing up BI.
+
+### 5.3 The baked payload contract (added with M3 WP2 — m3-implementation-plan.md D6)
+
+One versioned, JSON-serializable payload per **experiment** — produced by
+`abkit/reporting/builder.py` (`build_report_payload`), consumed by both the
+readout renderer and the explore shell. The Python builder and the renderer-side
+`web/src/shared/payload.ts` (M3 WP3) are kept in **documented lockstep** — same
+keys, same units (the donor's `payload.ts` discipline). Explore extends the
+payload with `param_specs`/tier-map/seed blocks; the report ignores unknown keys.
+
+Units and null discipline: timestamps are integer **ms-epoch (UTC)**; every
+nullable numeric maps NaN **and ±inf** to JSON `null` (H5 zero-denominator NaNs;
+`pair_mde`'s `math.inf` "configured but unavailable" — the rationale strings
+carry the explanation). The payload derives from **stored** rows (persisted
+`method_params`/`alpha`/`srm_flag`), never from re-evaluating the current YAML;
+header metadata comes from the experiment config (the truth) — `_ab_experiments`
+is informational only. `</` is escaped at HTML-bake time (WP3), not here.
+
+```
+{
+  v: 1,                        // schema version; bump on breaking key/unit changes
+  experiment, project|null, generated_at|null,   // generated_at: caller-supplied string
+  description|null,            // the experiment description (config)
+  period: {start, end, horizon},  // ms; end=0 = no persisted cutoffs (empty sentinel);
+                                  // start/horizon are grid facts, always real
+  cadence_seconds,             // min cadence step (sub-day detection: < 86400)
+  tz,                          // experiment timezone (IANA)
+  arms: [..],                  // variant names, config order; first = control
+  srm: {flag, pvalue|null,     // experiment-level, from the readout (flagged-row p)
+        observed: {arm: count},   // exposure counts, declared arms zero-filled;
+                                  // as-of the pinned end when replaying
+                                  // (exposure_ts < end, half-open)
+        expected: {arm: split}},
+  calibration: null,           // M3: always null. M4 shape (no v-bump): {fpr,
+                               // peeking_fpr, headline, matrix_rows, report_link}
+  verdicts: [{metric, pair:{c,t}, verdict, rationale:[..], caveats:[..],
+              significant, effect, pvalue, lo, hi, alpha, mde, min_effect,
+              end_ts|null, elapsed_days, is_horizon,
+              guardrails:[{metric, pair, regressed, effect, desired_direction}]}],
+                               // one per main-metric × control-vs-treatment pair,
+                               // the readout.evaluate output verbatim (JSON-safe)
+  metrics: [{name, description|null,   // description from the METRIC YAML (D6)
+             main, guardrail,
+             method: {name, params, id, alpha|null},  // params: parsed canonical
+                               // JSON from the latest stored row (config fallback);
+                               // alpha: latest stored row alpha — what actually ran
+             query|null,       // metric_query deduped to ONE entry per metric;
+                               // metric_rendered_query NEVER enters the payload
+             pairs: [{c, t,    // all combinations(arms, 2), config order, always
+                               // present (series may be empty)
+                      series: [{t, ed, e, lo, hi, p, rj, s1, s2, mde, hz, blk, ins}],
+                               // terse point keys: t ms-epoch; ed elapsed_days
+                               // (float, chart x-axis); e/lo/hi effect + CI;
+                               // p pvalue; rj reject 1/0/null (null = withheld);
+                               // s1/s2 sizes; mde = D5(b) pair MDE (stored wins,
+                               // read-time t/z fallback); hz/blk/ins 0/1 flags
+                               // (is_horizon / decision_blocked / insufficient_data)
+                      diag|null}],  // parsed diagnostics of the latest row
+             warnings: [..]}], // row warnings, parsed + deduped, order-preserving
+  look: {n, planned}|null,     // n = cutoffs with ≥1 non-demoted row (§4);
+                               // planned = the one-enumeration planner grid length
+  endpoints: {save_url, recompute_url, reload_url, validate_url},  // all null in a
+                               // baked report; the explore server injects at serve
+  warnings: [..]               // readout warnings + builder warnings (e.g. the
+                               // point-budget clip — no silent caps)
+}
+```
+
+`start`/`end` args bound the window on `end_ts` (inclusive); pinning `end`
+**replays** the readout as-of a historical cutoff (including the as-of
+`observed` exposure counts). A global point budget (`REPORT_POINT_BUDGET`,
+20 000 across metrics × pairs × cutoffs) clips every series to its trailing
+window **after** the verdict is evaluated on the full series, and appends a
+loud payload warning. The empty-experiment contract keeps every key present
+with the same shapes (empty series, zero-filled `observed`, `period.end = 0`)
+— the renderer never branches on key presence. On a never-run project (no
+`_ab_results` table) the builder skips all reads and returns the empty shape;
+reporting never creates schema.
+
+Consistency rules (no silent drops): rows for variant pairs outside the
+declared `arms` (a mid-flight rename) are excluded from **every** payload
+surface — series, verdict input, `look`, `period.end`, the latest-row method
+block — with a loud warning; orphaned `method_config_id` series detected by
+the driver's scan are surfaced as a payload warning too (`run \`abk clean\``),
+so a report over an edited method never shows a silently truncated history.
 
 ## 6. SRM surfacing (must-fix)
 
