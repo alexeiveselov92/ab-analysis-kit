@@ -22,7 +22,7 @@ The as-built condensation for contributors/assistants (detectkit-style):
 Design contracts for what is being *built next* stay in [docs/specs/](docs/specs/)
 (canonical for M2+ work — table below). Keep rules ↔ docs in sync per milestone.
 
-## Status: M1 shipped; next up M2
+## Status: M1 + M2 shipped; next up M3
 
 **Done — M1, the pure statistical core** (`abkit.stats`, importable standalone;
 see [ROADMAP.md](ROADMAP.md) for the deferred-cleanup list): data model with the
@@ -32,15 +32,26 @@ SRM gate, deterministic seeds; 520+ tests incl. golden tests vs an independent
 legacy transcription at rel-1e-9. Adversarially reviewed (8 angles, 30 verified
 findings fixed or recorded).
 
-**Decided** (recorded in the specs + CHANGELOG): sub-day cumulative intervals
-([cumulative-intervals.md §6](docs/specs/cumulative-intervals.md) — duration/
-schedule-typed `cadence`, no time floor, `max_looks` gate, `data_lag` watermark,
-`end_ts` contract); CUPED covariate window = fixed whole-day lookback
-([statistics-changes.md §5](docs/specs/statistics-changes.md)).
+**Done — M2, declarative config + DB layer + recompute pipeline** (see
+[ROADMAP.md](ROADMAP.md) M2 for the DoD and recorded deferrals, and
+[m2-implementation-plan.md](docs/specs/m2-implementation-plan.md) for the
+implementation record): pydantic configs + the §8 validation matrix, generic
+CH/PG/MySQL managers with the atomic lock, the greenfield `_ab_*` schema, the
+packaged assignment macro, the one-enumeration period planner
+(scalar/schedule cadence, `data_lag` watermark), the recompute pipeline
+(SRM gate, two-tier alphas, deterministic bootstrap seeds, demotion), and the
+`abk` CLI (`init` with a runnable seed example, `run`, `unlock`, `clean`);
+900+ tests incl. a first-run e2e gate.
 
-**Next — M2** (declarative config + DB layer + recompute pipeline), including
-the sub-day cadence planner work listed in ROADMAP M2. The source of truth is
-[docs/specs/](docs/specs/). Read the relevant spec before writing code:
+**Decided** (recorded in the specs + CHANGELOG): sub-day cumulative intervals
+([cumulative-intervals.md §6](docs/specs/cumulative-intervals.md)); CUPED
+covariate = fixed whole-day lookback implemented as the pre-period second
+render ([declarative-config.md §3](docs/specs/declarative-config.md)); Jinja
+built-ins win over context; CLI exits non-zero on failure.
+
+**Next — M3** (the explore cockpit + reporting — the PRIORITY interface). The
+source of truth is [docs/specs/](docs/specs/). Read the relevant spec before
+writing code:
 
 | If you're working on… | Read |
 |---|---|

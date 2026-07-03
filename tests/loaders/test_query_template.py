@@ -100,23 +100,38 @@ class TestPackagedMacro:
         assert "INNER JOIN" in sql
         assert "abkit_internal._ab_exposures FINAL" in sql  # CH dedup
         assert "WHERE experiment = 'signup_test'" in sql
-        assert "_abk_exposures.unit_id = user_id" in sql
+        # collision-proof aliases + a dialect cast of the fact-side key
+        assert "unit_id     AS _abk_unit_id" in sql
+        assert "_abk_exposures._abk_unit_id = toString(user_id)" in sql
         # BOTH the coarse date predicate and the precise half-open ts filter
         assert "event_date >= '2024-07-01'" in sql
         assert "event_date <= '2024-07-07'" in sql
         assert "event_time >= '2024-07-01 00:00:00'" in sql
         assert "event_time < '2024-07-08 00:00:00'" in sql
-        assert "event_time >= _abk_exposures.exposure_ts" in sql
-        assert "_abk_exposures.variant" in sql
+        assert "event_time >= _abk_exposures._abk_exposure_ts" in sql
+        assert "_abk_exposures._abk_variant" in sql
 
     def test_no_final_on_sql_backends(self):
         sql = QueryTemplate().render(MACRO_SQL, make_builtins(dialect="postgres"))
         assert "FINAL" not in sql
         assert "INNER JOIN" in sql
+        assert "CAST(user_id AS TEXT)" in sql  # PG cast of the fact-side key
 
-    def test_added_filters_appended(self):
+    def test_mysql_cast(self):
+        sql = QueryTemplate().render(MACRO_SQL, make_builtins(dialect="mysql"))
+        assert "CAST(user_id AS CHAR)" in sql
+
+    def test_added_filters_never_leaks_into_metric_scans(self):
+        """added_filters scopes the ASSIGNMENT query only — auto-injecting it
+        into every metric's fact WHERE would silently change numbers."""
         sql = QueryTemplate().render(MACRO_SQL, make_builtins(added_filters="AND country = 'US'"))
-        assert "AND country = 'US'" in sql
+        assert "country = 'US'" not in sql
+        # ...but the builtin stays available for assignment SQL
+        assignment = QueryTemplate().render(
+            "SELECT 1 FROM a WHERE 1=1 {{ ab_added_filters }}",
+            make_builtins(added_filters="AND country = 'US'"),
+        )
+        assert "AND country = 'US'" in assignment
 
     def test_covariate_render_drops_exposure_filter(self):
         """ab_apply_exposure_filter=False — the pre-period precedes exposure."""
@@ -138,4 +153,15 @@ SELECT {{ ab.variant_col() }} AS v, user_id FROM t {{ ab.exposed_units('dt', 'ts
 SELECT {{ ab.stratum_col() }} AS s FROM t {{ ab.exposed_units() }}""",
             make_builtins(),
         )
-        assert "_abk_exposures.stratum" in sql
+        assert "_abk_exposures._abk_stratum" in sql
+
+    def test_ab_cov_builtins_absent_without_cov_window(self):
+        """Referencing ab_cov_* without a covariate hard-fails (StrictUndefined)
+        instead of rendering the literal string 'None' into SQL."""
+        with pytest.raises(TemplateRenderError, match="ab_cov_start"):
+            QueryTemplate().render("SELECT '{{ ab_cov_start }}'", make_builtins())
+        builtins = make_builtins(
+            cov_window=RenderWindow(start_ts=datetime(2024, 6, 17), end_ts=datetime(2024, 7, 1))
+        )
+        sql = QueryTemplate().render("SELECT '{{ ab_cov_start }}', '{{ ab_cov_end }}'", builtins)
+        assert "2024-06-17" in sql and "2024-06-30" in sql

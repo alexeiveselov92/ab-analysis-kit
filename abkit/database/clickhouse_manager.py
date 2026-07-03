@@ -4,6 +4,7 @@ ClickHouse database manager implementation.
 Implements BaseDatabaseManager for ClickHouse using universal methods.
 """
 
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -235,9 +236,11 @@ class ClickHouseDatabaseManager(BaseDatabaseManager):
                     value = self._convert_numpy_datetime(value)
                 elif isinstance(value, np.ndarray):
                     value = value.tolist()
-                elif isinstance(value, (np.integer, np.floating)):
+                elif isinstance(value, (np.integer, np.floating, np.bool_)):
                     value = value.item()
-                elif value is None or (isinstance(value, float) and np.isnan(value)):
+                # NaN -> NULL must run AFTER the numpy unwrap (an np.float64 NaN
+                # previously slipped through and was stored as NaN, not NULL)
+                if isinstance(value, float) and np.isnan(value):
                     value = None
 
                 row.append(value)
@@ -375,18 +378,27 @@ class ClickHouseDatabaseManager(BaseDatabaseManager):
         heartbeat_column: str = "started_at",
         timeout_seconds: int = 3600,
         token_column: str | None = None,
+        settle_seconds: float = 0.25,
     ) -> bool:
         """
         ADVISORY lock claim — ClickHouse has no atomic upsert primitive.
 
-        Protocol: staleness check → synchronous DELETE (``mutations_sync = 1``)
-        → INSERT → read-back. Because two racers can both pass the staleness
-        check and insert, the read-back applies a deterministic winner rule —
-        the row with the smallest ``(heartbeat, token)`` wins. A later claimer
-        always carries a later heartbeat, so it cannot steal a claim that has
-        already been confirmed; ties within one millisecond are broken by the
-        token string. The loser's row is left behind and is swept by the
-        winner's release (``upsert_record`` deletes all rows for the key).
+        Protocol: staleness check → conditional synchronous DELETE
+        (``mutations_sync = 1``; only rows that are NOT a live running claim —
+        or our own — are removed, so a racer can never erase an
+        already-confirmed claim) → INSERT with the heartbeat re-stamped at
+        insert time (so heartbeat order tracks insert order, not row-assembly
+        order) → a short settle pause → read-back with a deterministic winner
+        rule — the row with the smallest ``(heartbeat, token)`` wins, ties
+        broken by the token string. A loser deletes its OWN row before
+        returning False so it never blocks later staleness checks.
+
+        Residual advisory limitations (documented, by design — the SQL
+        backends are the atomic ones): cross-host clock skew larger than the
+        settle window can invert heartbeat order between racers, and a racer
+        whose insert becomes visible only after the winner's read-back +
+        settle can still self-confirm. Keep NTP sane and prefer one scheduler
+        per project.
 
         ``token_column`` is REQUIRED (the read-back cannot tell two claimers
         apart without it).
@@ -419,12 +431,32 @@ class ClickHouseDatabaseManager(BaseDatabaseManager):
             if r["s"] == running_value and heartbeat is not None and heartbeat >= stale_before:
                 return False
 
-        # 2. Claim: clear stale/finished rows synchronously, insert ours.
-        self.delete_rows(table_name, where, dict(key_columns), sync=True)
-        insert_data = {col: np.array([value], dtype=object) for col, value in row.items()}
+        # 2. Claim: clear only CLAIMABLE rows (stale, finished, or our own) —
+        # never a rival's live running claim (a racer that passed step 1 before
+        # the winner confirmed must not erase the winner's row).
+        claim_params: dict[str, Any] = dict(key_columns)
+        claim_params["_abk_running"] = running_value
+        claim_params["_abk_stale_before"] = stale_before
+        claim_params["_abk_token"] = row[token_column]
+        self.delete_rows(
+            table_name,
+            f"{where} AND ({status_column} <> %(_abk_running)s "
+            f"OR {heartbeat_column} < %(_abk_stale_before)s "
+            f"OR {token_column} = %(_abk_token)s)",
+            claim_params,
+            sync=True,
+        )
+        # Re-stamp the heartbeat AT INSERT TIME: the winner rule below relies
+        # on heartbeat order tracking insert order (row assembly happens before
+        # the slow sync delete, which would invert it).
+        insert_row = dict(row)
+        insert_row[heartbeat_column] = now_utc_naive()
+        insert_data = {col: np.array([value], dtype=object) for col, value in insert_row.items()}
         self.insert_batch(table_name, insert_data, conflict_strategy="ignore")
 
-        # 3. Read-back: deterministic winner among racers.
+        # 3. Settle, then read back: deterministic winner among racers.
+        if settle_seconds > 0:
+            time.sleep(settle_seconds)
         rows_back = self.execute_query(
             f"SELECT {token_column} AS t, {heartbeat_column} AS hb "
             f"FROM {table_name} WHERE {where}",
@@ -436,7 +468,16 @@ class ClickHouseDatabaseManager(BaseDatabaseManager):
             rows_back,
             key=lambda r: (to_naive_utc(r["hb"]) or _EPOCH_NAIVE, str(r["t"])),
         )
-        return str(winner["t"]) == str(row[token_column])
+        if str(winner["t"]) == str(insert_row[token_column]):
+            return True
+        # Loser: remove our own row so it never blocks later staleness checks.
+        self.delete_rows(
+            table_name,
+            f"{where} AND {token_column} = %(_abk_token)s",
+            {**key_columns, "_abk_token": insert_row[token_column]},
+            sync=True,
+        )
+        return False
 
     @property
     def internal_location(self) -> str:

@@ -62,7 +62,7 @@ class Grid:
         return len(self.cutoffs)
 
 
-def _tz_midnight_utc(day: date, zone: ZoneInfo) -> datetime:
+def tz_midnight_utc(day: date, zone: ZoneInfo) -> datetime:
     """Local midnight of *day* in *zone*, as naive UTC."""
     local = datetime.combine(day, time.min).replace(tzinfo=zone)
     return local.astimezone(timezone.utc).replace(tzinfo=None)
@@ -95,8 +95,8 @@ def generate_grid(
     if end_date < start_date:
         raise ValueError(f"end_date ({end_date}) is before start_date ({start_date})")
     zone = ZoneInfo(tz)
-    start_ts = _tz_midnight_utc(start_date, zone)
-    horizon_ts = _tz_midnight_utc(end_date + timedelta(days=1), zone)
+    start_ts = tz_midnight_utc(start_date, zone)
+    horizon_ts = tz_midnight_utc(end_date + timedelta(days=1), zone)
 
     points: set[datetime] = set()
 
@@ -117,13 +117,29 @@ def generate_grid(
         if every % DAY_SECONDS == 0:
             # Day-or-coarser: snap to tz midnights, day-counted from start_date
             # so schedule tails stay point-for-point comparable with pure-daily.
+            # Whole-day segment bounds compare in DAY SPACE, not absolute
+            # seconds: across a DST fall-back a local midnight lands more than
+            # `until` seconds after start_ts and the boundary look would be
+            # silently dropped by a timestamp comparison.
             every_days = every // DAY_SECONDS
+            start_days = prev_until // DAY_SECONDS if prev_until % DAY_SECONDS == 0 else None
+            until_days = (
+                until // DAY_SECONDS if until is not None and until % DAY_SECONDS == 0 else None
+            )
             day_offset = every_days
             while True:
-                point = _tz_midnight_utc(start_date + timedelta(days=day_offset), zone)
-                if point > seg_end_ts:
+                point = tz_midnight_utc(start_date + timedelta(days=day_offset), zone)
+                if point > horizon_ts:
                     break
-                if point > seg_start_ts:
+                if until_days is not None:
+                    if day_offset > until_days:
+                        break
+                elif point > seg_end_ts:
+                    break
+                past_start = (
+                    day_offset > start_days if start_days is not None else point > seg_start_ts
+                )
+                if past_start:
                     add(point)
                 day_offset += every_days
         else:

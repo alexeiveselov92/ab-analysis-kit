@@ -69,9 +69,10 @@ class _TasksMixin(_InternalTablesBase):
             self._manager.upsert_record(
                 full_table_name, key_columns, self._row_arrays(row), sync=True
             )
+            self._owned_lock_tokens[(experiment, scope, process_type)] = row["locked_by"]
             return True
 
-        return self._manager.try_acquire_lock(
+        claimed = self._manager.try_acquire_lock(
             full_table_name,
             key_columns,
             row,
@@ -81,6 +82,9 @@ class _TasksMixin(_InternalTablesBase):
             timeout_seconds=timeout_seconds,
             token_column="locked_by",
         )
+        if claimed:
+            self._owned_lock_tokens[(experiment, scope, process_type)] = row["locked_by"]
+        return claimed
 
     def clear_lock(
         self,
@@ -99,7 +103,7 @@ class _TasksMixin(_InternalTablesBase):
         if existing is None:
             return False
 
-        self.release_lock(experiment, scope, process_type, status="completed")
+        self.release_lock(experiment, scope, process_type, status="completed", force=True)
         return True
 
     def release_lock(
@@ -109,23 +113,51 @@ class _TasksMixin(_InternalTablesBase):
         process_type: str,
         status: str,
         error_message: str | None = None,
-    ) -> None:
-        """Mark the task as ``completed`` or ``failed``.
+        force: bool = False,
+    ) -> bool:
+        """Mark the task as ``completed`` or ``failed``. Returns True if released.
 
-        Implemented as a synchronous full replace (delete by key + insert), so
-        on ClickHouse it also sweeps any loser rows a racing advisory claim
-        left behind.
+        OWNERSHIP-CHECKED by default: a run whose lock aged past its timeout
+        and was legitimately stolen by a newer run must NOT wipe the new
+        owner's live ``running`` row on exit — the release is skipped and
+        False is returned (the caller logs it). The check reads the current
+        row's ``locked_by`` against the token this instance recorded at
+        acquire time; ``force=True`` (``abk unlock``) skips it.
+
+        A successful release is a synchronous full replace (delete by key +
+        insert), so on ClickHouse it also sweeps any loser rows a racing
+        advisory claim left behind.
         """
+        key = (experiment, scope, process_type)
+        full_table_name = self._manager.get_full_table_name(TABLE_TASKS, use_internal=True)
+
+        if not force:
+            token = self._owned_lock_tokens.get(key)
+            if token is None:
+                return False  # never acquired by this instance — nothing to release
+            current = self._manager.execute_query(
+                f"SELECT locked_by FROM {full_table_name} "
+                "WHERE experiment = %(experiment)s AND scope = %(scope)s "
+                "AND process_type = %(process_type)s",
+                {"experiment": experiment, "scope": scope, "process_type": process_type},
+            )
+            owners = {str(r.get("locked_by")) for r in current}
+            if current and token not in owners:
+                # The lock was stolen (our row aged out); leave the new owner alone.
+                self._owned_lock_tokens.pop(key, None)
+                return False
+
         row = self._task_row(
             experiment, scope, process_type, status=status, error_message=error_message
         )
-        full_table_name = self._manager.get_full_table_name(TABLE_TASKS, use_internal=True)
         self._manager.upsert_record(
             full_table_name,
             {"experiment": experiment, "scope": scope, "process_type": process_type},
             self._row_arrays(row),
             sync=True,
         )
+        self._owned_lock_tokens.pop(key, None)
+        return True
 
     def check_lock(
         self,

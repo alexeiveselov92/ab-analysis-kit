@@ -139,7 +139,32 @@ class FakeDatabaseManager(BaseDatabaseManager):
             raise ValueError(f"FakeDatabaseManager cannot parse query: {normalized!r}")
 
         distinct = bool(match.group(1))
-        rows = [dict(r) for r in self._rows.get(self._bare(match.group("table")), [])]
+        table_bare = self._bare(match.group("table"))
+        rows = [dict(r) for r in self._rows.get(table_bare, [])]
+        model = self._models.get(table_bare)
+        if self._clickhouse_like and model is not None and model.version_column:
+            if match.group("final"):
+                collapsed: dict[tuple, dict] = {}
+                for r in rows:
+                    key = tuple(repr(r.get(c)) for c in model.primary_key)
+                    held = collapsed.get(key)
+                    if held is None or (
+                        r.get(model.version_column) is not None
+                        and (
+                            held.get(model.version_column) is None
+                            or r[model.version_column] >= held[model.version_column]
+                        )
+                    ):
+                        collapsed[key] = r
+                rows = list(collapsed.values())
+            else:
+                keys = [tuple(repr(r.get(c)) for c in model.primary_key) for r in rows]
+                if len(keys) != len(set(keys)):
+                    raise AssertionError(
+                        f"non-FINAL read of versioned table {table_bare} saw "
+                        "duplicate primary keys — a correctness-sensitive read "
+                        "is missing its dedup (quorum 'correctness under async merge')"
+                    )
         if match.group("where"):
             conditions = self._parse_where(match.group("where"), params)
             rows = [r for r in rows if self._matches(r, conditions)]
@@ -273,6 +298,12 @@ class FakeDatabaseManager(BaseDatabaseManager):
         inserted = 0
         for i in range(num_rows):
             row = {col: _coerce(data[col][i]) for col in data}
+            if self._clickhouse_like and version_col is not None:
+                # ReplacingMergeTree semantics: duplicates coexist until a
+                # merge; only FINAL reads collapse them (see execute_query).
+                store.append(row)
+                inserted += 1
+                continue
             if pk:
                 key = tuple(row.get(c) for c in pk)
                 existing = next((r for r in store if tuple(r.get(c) for c in pk) == key), None)

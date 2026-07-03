@@ -52,6 +52,18 @@ def mgr(monkeypatch):
 
 
 KEY = {"experiment": "signup", "scope": "pipeline", "process_type": "run"}
+#: column order of lock_row() rows as inserted (dict order is insertion order)
+KEY_COLUMNS = [
+    "experiment",
+    "scope",
+    "process_type",
+    "status",
+    "started_at",
+    "updated_at",
+    "locked_by",
+    "error_message",
+    "timeout_seconds",
+]
 
 
 def lock_row(token: str = "host:1:abc", started_at: datetime | None = None) -> dict:
@@ -77,12 +89,60 @@ class TestTryAcquireLockAdvisory:
             ([], []),  # staleness check: no row
             ([(row["locked_by"], row["started_at"])], [("t", "String"), ("hb", "DateTime")]),
         ]
-        assert manager.try_acquire_lock(self.TABLE, KEY, row, token_column="locked_by") is True
+        assert (
+            manager.try_acquire_lock(
+                self.TABLE, KEY, row, token_column="locked_by", settle_seconds=0
+            )
+            is True
+        )
         # protocol order: SELECT, sync DELETE, INSERT, SELECT
         kinds = [q.split()[0] for q in fake.sqls[2:]]  # skip the 2 ensure-database DDLs
         assert kinds == ["SELECT", "ALTER", "INSERT", "SELECT"]
         delete_sql = fake.sqls[3]
         assert "mutations_sync = 1" in delete_sql
+        # the claim DELETE is CONDITIONAL: it can clear stale/finished/own rows
+        # but never a rival's live running claim (review finding: an
+        # unconditional delete let a racer erase a confirmed claim)
+        assert "status <> %(_abk_running)s" in delete_sql
+        assert "started_at < %(_abk_stale_before)s" in delete_sql
+        assert "locked_by = %(_abk_token)s" in delete_sql
+
+    def test_heartbeat_is_stamped_at_insert_time(self, mgr):
+        """The winner rule relies on heartbeat order tracking INSERT order —
+        a row assembled before the slow sync delete must not carry its
+        assembly-time heartbeat into the race."""
+        manager, fake = mgr
+        stale_assembly = now_utc_naive() - timedelta(seconds=30)
+        row = lock_row(started_at=stale_assembly)
+        fake.select_responses = [
+            ([], []),
+            ([(row["locked_by"], now_utc_naive())], [("t", "String"), ("hb", "DateTime")]),
+        ]
+        manager.try_acquire_lock(self.TABLE, KEY, row, token_column="locked_by", settle_seconds=0)
+        insert_call = next(p for q, p in fake.executed if q.startswith("INSERT"))
+        inserted_hb = insert_call[0][KEY_COLUMNS.index("started_at")]
+        assert inserted_hb > stale_assembly
+
+    def test_loser_cleans_up_its_own_row(self, mgr):
+        manager, fake = mgr
+        mine = lock_row(token="zzz")
+        winner_hb = mine["started_at"] - timedelta(seconds=5)
+        fake.select_responses = [
+            ([], []),
+            (
+                [("aaa", winner_hb), ("zzz", now_utc_naive())],
+                [("t", "String"), ("hb", "DateTime")],
+            ),
+        ]
+        assert (
+            manager.try_acquire_lock(
+                self.TABLE, KEY, mine, token_column="locked_by", settle_seconds=0
+            )
+            is False
+        )
+        cleanup_sql = fake.sqls[-1]
+        assert cleanup_sql.startswith("ALTER TABLE")
+        assert "locked_by = %(_abk_token)s" in cleanup_sql
 
     def test_denied_by_live_running_row(self, mgr):
         manager, fake = mgr
@@ -91,7 +151,10 @@ class TestTryAcquireLockAdvisory:
             ([("running", fresh_hb)], [("s", "String"), ("hb", "DateTime")]),
         ]
         assert (
-            manager.try_acquire_lock(self.TABLE, KEY, lock_row(), token_column="locked_by") is False
+            manager.try_acquire_lock(
+                self.TABLE, KEY, lock_row(), token_column="locked_by", settle_seconds=0
+            )
+            is False
         )
         # nothing was deleted or inserted
         assert not any(q.startswith(("ALTER", "INSERT")) for q in fake.sqls[2:])
@@ -106,7 +169,12 @@ class TestTryAcquireLockAdvisory:
         ]
         assert (
             manager.try_acquire_lock(
-                self.TABLE, KEY, row, timeout_seconds=3600, token_column="locked_by"
+                self.TABLE,
+                KEY,
+                row,
+                timeout_seconds=3600,
+                token_column="locked_by",
+                settle_seconds=0,
             )
             is True
         )
@@ -118,7 +186,12 @@ class TestTryAcquireLockAdvisory:
             ([("completed", now_utc_naive())], [("s", "String"), ("hb", "DateTime")]),
             ([(row["locked_by"], row["started_at"])], [("t", "String"), ("hb", "DateTime")]),
         ]
-        assert manager.try_acquire_lock(self.TABLE, KEY, row, token_column="locked_by") is True
+        assert (
+            manager.try_acquire_lock(
+                self.TABLE, KEY, row, token_column="locked_by", settle_seconds=0
+            )
+            is True
+        )
 
     def test_race_earlier_heartbeat_wins(self, mgr):
         manager, fake = mgr
@@ -131,7 +204,12 @@ class TestTryAcquireLockAdvisory:
                 [("t", "String"), ("hb", "DateTime")],
             ),
         ]
-        assert manager.try_acquire_lock(self.TABLE, KEY, mine, token_column="locked_by") is False
+        assert (
+            manager.try_acquire_lock(
+                self.TABLE, KEY, mine, token_column="locked_by", settle_seconds=0
+            )
+            is False
+        )
 
     def test_race_tie_broken_by_token(self, mgr):
         manager, fake = mgr
@@ -143,7 +221,12 @@ class TestTryAcquireLockAdvisory:
                 [("t", "String"), ("hb", "DateTime")],
             ),
         ]
-        assert manager.try_acquire_lock(self.TABLE, KEY, mine, token_column="locked_by") is True
+        assert (
+            manager.try_acquire_lock(
+                self.TABLE, KEY, mine, token_column="locked_by", settle_seconds=0
+            )
+            is True
+        )
 
     def test_token_column_required(self, mgr):
         manager, _ = mgr
@@ -155,7 +238,9 @@ class TestTryAcquireLockAdvisory:
         row = lock_row()
         del row["locked_by"]
         with pytest.raises(ValueError, match="token column"):
-            manager.try_acquire_lock(self.TABLE, KEY, row, token_column="locked_by")
+            manager.try_acquire_lock(
+                self.TABLE, KEY, row, token_column="locked_by", settle_seconds=0
+            )
 
 
 class TestGetMaxTimestamp:

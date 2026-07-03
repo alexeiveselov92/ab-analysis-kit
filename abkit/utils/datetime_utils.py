@@ -40,7 +40,11 @@ def to_naive_utc(dt: datetime | None) -> datetime | None:
     """
     if dt is None:
         return None
-    return dt.replace(tzinfo=None) if dt.tzinfo is not None else dt
+    if dt.tzinfo is not None:
+        # CONVERT to UTC first: an aware non-UTC value (e.g. a tz-aware
+        # exposure_ts column) must not be re-labelled by stripping tzinfo.
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
 
 
 def to_aware_utc(dt: datetime | None) -> datetime | None:

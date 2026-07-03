@@ -307,3 +307,40 @@ Three parallel tracks after WP1: **Track A** WP2→WP3 (DB), **Track B** WP4 (co
 | Read-only exposures / cohort persisted once | exposure-loader idempotency test + macro-join lint | **WP5**, **WP6** |
 
 Exit gate: all WP test suites green on CI (unit + testcontainers integration for all three backends), the WP10 e2e green, CHANGELOG entries for the two deliberate behavior deviations (Jinja precedence flip, non-zero CLI exit codes), and data-contract-and-reporting.md §2 amended if R7's warnings/diagnostics columns are adopted.
+---
+
+## 5. Adversarial review record (M2 exit gate, 2026-07-03)
+
+Six finder lenses (locks/concurrency, time & grids, SQL rendering, statistical
+binding, storage contract & backend fidelity, DoD audit) → 27 findings, each
+adversarially verified by an independent refuter (0 refuted) → **all 27
+applied** in the review-fixes commit. The majors:
+
+1. **ClickHouse advisory claim hardened**: the step-2 DELETE is now conditional
+   (never erases a rival's live confirmed claim), the heartbeat is re-stamped
+   at INSERT time (winner order tracks insert order), a settle pause precedes
+   the read-back, and a loser deletes its own row. Residual advisory
+   limitations (cross-host clock skew, insert-visibility skew) are documented.
+2. **Ownership-checked release**: `release_lock` verifies the stored
+   `locked_by` token against the one recorded at acquire time — a run whose
+   lock aged out and was stolen no longer wipes the new owner's row
+   (`abk unlock` keeps its deliberate `force=True`). The driver surfaces a
+   lock-takeover warning.
+3. **Experiment-timezone dates**: `_ab_results.start_date`/`end_date` are now
+   experiment-tz calendar dates; the exposure-load window uses the grid's
+   tz-snapped bounds (was naive calendar midnights); the CUPED pre-period is
+   whole-day aligned in the experiment tz.
+4. **Macro hardened**: cohort subquery columns are `_abk_`-prefixed
+   (collision-proof against fact tables with `unit_id`/`variant`/... columns);
+   the fact-side unit key is cast to string per dialect; `added_filters` no
+   longer auto-injects into metric fact scans (assignment scope only).
+5. **`to_naive_utc` converts** aware non-UTC values to UTC (was re-labelling).
+6. **CI e2e gate**: the testcontainers ClickHouse first-run job added to CI;
+   the PG/MySQL integration suite is a recorded deferral (ROADMAP M2).
+
+Minors: SRM zero-arm flag-not-crash, CH NaN→NULL insert coercion, sync catalog
+upsert, table-override rejection guard, R8 capability lint at validate time,
+whole-day lookback lint, stratum-column typed error, `ab_cov_*` built-ins
+StrictUndefined-honest, DST fall-back day-space segment bounds, tail-cadence
+backlog threshold, pool DDL serialization, fake-backend FINAL honesty (the
+internal-tables suite now runs in both `sql-like` and `clickhouse-like` modes).

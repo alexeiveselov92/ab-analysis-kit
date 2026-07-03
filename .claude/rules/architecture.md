@@ -1,9 +1,9 @@
 # abkit architecture — as built
 
 > The contributor/assistant condensation of the system **as it exists in code**.
-> Reflects: **M1 shipped** (`__version__ = 0.0.1.dev0`), M2 in progress.
+> Reflects: **M1 + M2 shipped** (`__version__ = 0.0.1.dev0`).
 > Design contracts for what is being *built next* live in [docs/specs/](../../docs/specs/)
-> (canonical for M2+ work); this file must never claim unbuilt code exists.
+> (canonical for M3+ work); this file must never claim unbuilt code exists.
 > Keep in sync with `docs/` on every milestone (and with the `init-claude`
 > payload once it exists — M6).
 
@@ -27,18 +27,52 @@ Donor codebase: `/home/aleksei/wsl_analytics/detektkit` (import package
 
 ```
 abkit/
-  __init__.py          # __version__ (single source; numpy-free import path)
-  cli/main.py          # minimal Click group: `abk --version` only (M2 fleshes out)
-  stats/               # ✅ M1 — COMPLETE. The pure numpy core (details below)
-  utils/json_utils.py  # stdlib-only canonical JSON (json_dumps_sorted → sha256 hash path)
+  __init__.py            # __version__ (single source; numpy-free import path)
+  cli/                   # ✅ M2: main (lazy Click group), _output (tree style),
+    commands/            #   init (runnable example + seed), run, unlock, clean
+  core/                  # ✅ M2: interval (N{s,m,h,d,w}), models (TableModel +
+                         #   version_column LWW), period_planner (THE grid — one
+                         #   enumeration for validator gates AND the anti-join)
+  config/                # ✅ M2: project/profile/experiment/metric/method models,
+                         #   validator L1+L2 (§8 matrix), discovery/selector
+  database/              # ✅ M2: generic CH/PG/MySQL managers + try_acquire_lock
+    internal_tables/     #   + the greenfield _ab_* schema & mixins (see below)
+  loaders/               # ✅ M2: query_template (ab_* built-ins, StrictUndefined),
+    templates/           #   the packaged abkit_assignment.jinja macro,
+                         #   exposure_loader, metric_loader
+  compute/               # ✅ M2: recompute_backend (v1 full-window strategy)
+  pipeline/              # ✅ M2: driver (lock→load→SRM→plan→compute→persist),
+                         #   analyze, enrich, _types; worker pool
+  stats/                 # ✅ M1: the pure numpy core (details below)
+  utils/                 # stdlib-only: json_utils (canonical hash path),
+                         #   datetime_utils (naive-UTC), env_interpolation
 tests/
-  stats/               # unit tests for every stats module (incl. test_purity.py)
-  golden/              # golden tests vs an independent legacy transcription, rel-1e-9
+  stats/ golden/         # M1 (incl. test_purity.py; golden rel-1e-9)
+  core/ config/ database/ loaders/ pipeline/ cli/ e2e/   # M2
+  _helpers/fake_db.py    # in-memory manager with SQL-backend semantics
 ```
 
-Everything else in the [module map](../../docs/specs/architecture.md#4-module-map)
-(`config/`, `database/`, `loaders/`, `core/`, `pipeline/`, `compute/`,
-`validate/`, `reporting/`, `tuning/`) is **planned, not present** — M2+.
+Not yet present (M3+): `validate/` (A/A engine), `reporting/`, `tuning/`
+(explore cockpit), `stats/sequential/`, `compute/incremental_backend`.
+
+### M2 pipeline facts an assistant must know
+
+- **Anti-join, not a cursor:** a cutoff is pending iff `end_ts ≤ now_utc −
+  data_lag` (watermark computed ONCE per run in Python) and not in
+  `list_computed_cutoffs()` (a SET — holes re-plan).
+- **Locks:** `_ab_tasks` at `(experiment, "pipeline", "run")`; PG/MySQL claims
+  are single-statement atomic, ClickHouse is advisory (read-back tie-break);
+  failures are recorded on the lock row before propagating.
+- **SRM is blocking-but-non-dropping:** rows are always written with
+  `srm_flag`/`decision_blocked`; the CLI prints the red gate line.
+- **CUPED covariate = a second render** of the same metric SQL over the fixed
+  pre-period window with `ab_apply_exposure_filter=false` (declarative-config
+  §3 as amended); loaded once per run, absent units default to 0.
+- **Bootstrap rows are byte-stable:** per-row `seed =
+  derive_seed(exp, metric, name_1, name_2, end_ts, n_samples)`, identity-excluded.
+- **`ci_kind` is always `"fixed"` in M2** (sequential lands M5); the STATE
+  stage is deliberately not wired in v1 (recompute read path — see the driver
+  docstring); paired methods are notebook-only.
 
 ## The stats core (`abkit.stats`) — the implemented system
 
@@ -109,17 +143,16 @@ identity param orphans the prior results series.
 - Stratification uses Hamilton apportionment; Poisson bootstrap is mean-only
   (guarded); zero denominators → NaN + warning (H5), never an exception.
 
-## M2 target (being built — specs are canonical)
+## M3+ targets (being built next — specs are canonical)
 
-Declarative config + DB layer + recompute pipeline + CLI. Read before coding:
+Explore cockpit + reporting (M3), the A/A matrix (M4), sequential (M5). Read
+before coding:
 
-- YAML shapes, packaged assignment macro, Jinja built-ins, validation matrix →
-  [declarative-config.md](../../docs/specs/declarative-config.md)
-- Cumulative grid, sub-day `cadence`, `data_lag` watermark, `_ab_unit_state`
-  idempotency, compute strategy → [cumulative-intervals.md](../../docs/specs/cumulative-intervals.md)
-- `_ab_results` contract → [data-contract-and-reporting.md §2](../../docs/specs/data-contract-and-reporting.md)
-- Pipeline stages & storage → [architecture.md §5–6](../../docs/specs/architecture.md)
+- The cockpit & readout → [data-contract-and-reporting.md §5](../../docs/specs/data-contract-and-reporting.md),
+  [cli-and-dx.md §2](../../docs/specs/cli-and-dx.md)
+- The A/A FPR matrix → [aa-false-positive-matrix.md](../../docs/specs/aa-false-positive-matrix.md)
 - The blocking must-fix checklist → [quorum-review.md](../../docs/specs/quorum-review.md)
+- The M2 implementation record → [m2-implementation-plan.md](../../docs/specs/m2-implementation-plan.md)
 
 ## Invariants (do not violate)
 

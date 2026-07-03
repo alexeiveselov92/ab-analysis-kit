@@ -22,9 +22,9 @@ from abkit.database.tables import TABLE_RESULTS, TABLE_TASKS
 from abkit.utils.datetime_utils import now_utc_naive
 
 
-@pytest.fixture
-def backend():
-    return FakeDatabaseManager()
+@pytest.fixture(params=[False, True], ids=["sql-like", "clickhouse-like"])
+def backend(request):
+    return FakeDatabaseManager(clickhouse_like=request.param)
 
 
 @pytest.fixture
@@ -121,6 +121,34 @@ class TestTasksLock:
         assert tables.acquire_lock("exp1", force=True) is True
         # forced owner holds a running lock
         assert tables.check_lock("exp1") is not None
+
+    def test_release_is_ownership_checked(self, tables, backend):
+        """A run whose lock was legitimately stolen must NOT wipe the new
+        owner's live row on exit (review finding)."""
+        assert tables.acquire_lock("exp1", timeout_seconds=1) is True
+        # the second manager instance steals the stale lock
+        thief = InternalTablesManager(backend)
+        stale = backend._store(backend.get_full_table_name(TABLE_TASKS))
+        stale[-1]["started_at"] = now_utc_naive() - timedelta(hours=2)
+        assert thief.acquire_lock("exp1", timeout_seconds=3600) is True
+
+        # the original holder finishes: release must be refused
+        released = tables.release_lock("exp1", "pipeline", "run", status="completed")
+        assert released is False
+        rows = backend._store(backend.get_full_table_name(TABLE_TASKS))
+        assert rows[-1]["status"] == "running"  # the thief's row survives
+
+        # the rightful owner releases fine
+        assert thief.release_lock("exp1", "pipeline", "run", status="completed") is True
+
+    def test_release_without_acquire_is_a_noop(self, tables):
+        assert tables.release_lock("ghost", "pipeline", "run", status="completed") is False
+
+    def test_clear_lock_is_forced(self, tables, backend):
+        """abk unlock deliberately bypasses the ownership check."""
+        other = InternalTablesManager(backend)
+        other.acquire_lock("exp1")
+        assert tables.clear_lock("exp1") is True
 
     def test_release_failed_records_error(self, tables, backend):
         tables.acquire_lock("exp1")

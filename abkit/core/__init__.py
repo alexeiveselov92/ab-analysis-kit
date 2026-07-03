@@ -9,6 +9,7 @@ from abkit.core.period_planner import (
     backlog_seconds,
     generate_grid,
     pending_cutoffs,
+    tz_midnight_utc,
 )
 
 __all__ = [
@@ -21,4 +22,5 @@ __all__ = [
     "backlog_seconds",
     "generate_grid",
     "pending_cutoffs",
+    "tz_midnight_utc",
 ]

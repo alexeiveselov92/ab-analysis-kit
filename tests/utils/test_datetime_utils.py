@@ -52,6 +52,14 @@ class TestToNaiveUtc:
         assert result == dt
         assert result.tzinfo is None
 
+    def test_aware_non_utc_is_converted_not_relabelled(self):
+        """Review finding: a tz-aware non-UTC value (e.g. an exposure_ts read
+        from a tz-aware warehouse column) must be CONVERTED to UTC."""
+        from zoneinfo import ZoneInfo
+
+        moscow = datetime(2024, 1, 15, 12, 0, 0, tzinfo=ZoneInfo("Europe/Moscow"))
+        assert to_naive_utc(moscow) == datetime(2024, 1, 15, 9, 0, 0)
+
     def test_aware_utc_strips_tzinfo(self):
         dt = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         result = to_naive_utc(dt)

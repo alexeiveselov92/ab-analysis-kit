@@ -223,6 +223,25 @@ def validate_experiment_level2(
             report.errors.append(f"{label}: method '{comparison.method.name}': {exc}")
             continue
 
+        # capability lint (plan R8): the same declarative attributes analyze.py
+        # dispatches on must gate at VALIDATE time, not at run time
+        from abkit.stats import get_method_class
+
+        method_cls = get_method_class(comparison.method.name)
+        if method_cls.is_paired:
+            report.errors.append(
+                f"{label}: '{comparison.method.name}' is a paired design — "
+                "the v1 pipeline serves independent-arm experiments "
+                "(use the notebook API for paired data)"
+            )
+            continue
+        if method_cls.input_kind != metric.type:
+            report.errors.append(
+                f"{label}: method '{comparison.method.name}' expects a "
+                f"'{method_cls.input_kind}' metric, got '{metric.type}'"
+            )
+            continue
+
         # CUPED covariate rules (statistics-changes §5; cumulative-intervals §6.5)
         lookback = comparison.method.covariate_lookback
         is_cuped = "cuped" in comparison.method.name
@@ -250,6 +269,11 @@ def validate_experiment_level2(
                     report.errors.append(
                         f"{label}: covariate_lookback < 1d is an error (the fixed "
                         "lookback is whole days — statistics-changes §5)"
+                    )
+                elif lookback_seconds % DAY_SECONDS != 0:
+                    report.errors.append(
+                        f"{label}: covariate_lookback must be WHOLE days "
+                        "(statistics-changes §5), got a fractional-day duration"
                     )
                 elif lookback_seconds < 7 * DAY_SECONDS:
                     report.warnings.append(

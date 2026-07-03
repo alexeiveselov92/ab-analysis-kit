@@ -26,6 +26,9 @@ class _InternalTablesBase:
         self._manager = manager
         self._version_lock = threading.Lock()
         self._last_version_ts: datetime | None = None
+        # lock ownership: (experiment, scope, process_type) -> our claim token,
+        # recorded by acquire_lock and required by the ownership-checked release
+        self._owned_lock_tokens: dict[tuple[str, str, str], str] = {}
 
     @staticmethod
     def _normalize_max_timestamp(value: datetime | None) -> datetime | None:

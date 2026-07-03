@@ -7,7 +7,7 @@ Defines configuration structure for abkit_project.yml.
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class ProjectPathsConfig(BaseModel):
@@ -26,7 +26,13 @@ class ProjectPathsConfig(BaseModel):
 
 
 class ProjectTablesConfig(BaseModel):
-    """Default internal table names for the project (the six ``_ab_*`` tables)."""
+    """Internal table names (the six ``_ab_*`` tables).
+
+    Overrides are NOT supported yet: the internal-tables mixins are keyed by
+    the canonical constants, so a renamed table would split the read and
+    write paths. The block exists (and validates) so the config surface is
+    stable when renaming lands.
+    """
 
     experiments: str = Field(default="_ab_experiments")
     exposures: str = Field(default="_ab_exposures")
@@ -34,6 +40,16 @@ class ProjectTablesConfig(BaseModel):
     results: str = Field(default="_ab_results")
     aa_runs: str = Field(default="_ab_aa_runs")
     tasks: str = Field(default="_ab_tasks")
+
+    @model_validator(mode="after")
+    def reject_overrides(self) -> "ProjectTablesConfig":
+        for name, field in type(self).model_fields.items():
+            if getattr(self, name) != field.default:
+                raise ValueError(
+                    f"tables.{name}: internal table name overrides are not "
+                    "supported yet (the _ab_* names are canonical)"
+                )
+        return self
 
 
 class ProjectTimeoutsConfig(BaseModel):

@@ -13,6 +13,7 @@ from __future__ import annotations
 import math
 from datetime import datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import numpy as np
 
@@ -55,6 +56,13 @@ def rows_for_cutoff(
     window_seconds = int((cutoff.end_ts - grid.start_ts).total_seconds())
     method_config_id = comparison.method.method_config_id
     method_params_json = comparison.method.canonical_params_json
+    # Derived dates are EXPERIMENT-timezone dates (§6.3 'legacy-identical at
+    # daily cadence' — a Moscow daily experiment's end_date must be the Moscow
+    # date, not the UTC date of the naive timestamp).
+    zone = ZoneInfo(experiment.timezone)
+    utc = ZoneInfo("UTC")
+    start_date_local = grid.start_ts.replace(tzinfo=utc).astimezone(zone).date()
+    end_date_local = (cutoff.end_ts - _ONE_US).replace(tzinfo=utc).astimezone(zone).date()
 
     for outcome in outcomes:
         result = outcome.result
@@ -73,8 +81,8 @@ def rows_for_cutoff(
             # window (§6.3: end_ts exclusive; dates derived; fractional x-axis)
             "start_ts": grid.start_ts,
             "end_ts": cutoff.end_ts,
-            "start_date": grid.start_ts.date(),
-            "end_date": (cutoff.end_ts - _ONE_US).date(),
+            "start_date": start_date_local,
+            "end_date": end_date_local,
             "window_seconds": window_seconds,
             "elapsed_days": window_seconds / DAY_SECONDS,
             # per-arm

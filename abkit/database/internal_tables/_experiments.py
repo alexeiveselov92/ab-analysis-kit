@@ -61,7 +61,11 @@ class _ExperimentsMixin(_InternalTablesBase):
 
         full_table_name = self._manager.get_full_table_name(TABLE_EXPERIMENTS, use_internal=True)
         data = {col: np.array([value], dtype=object) for col, value in full_record.items()}
-        self._manager.upsert_record(full_table_name, {"experiment": record["experiment"]}, data)
+        # sync=True: an async ClickHouse delete would leave transient duplicate
+        # catalog rows that no reader dedups (once-per-run write; cost negligible)
+        self._manager.upsert_record(
+            full_table_name, {"experiment": record["experiment"]}, data, sync=True
+        )
 
     def get_experiment(self, experiment: str) -> dict | None:
         """Return the catalog row for *experiment*, or None."""

@@ -41,6 +41,7 @@ from abkit.config.project_config import ProjectConfig
 from abkit.core.period_planner import backlog_seconds, generate_grid, pending_cutoffs
 from abkit.database.internal_tables import InternalTablesManager
 from abkit.database.manager import BaseDatabaseManager
+from abkit.database.tables import TABLE_EXPOSURES
 from abkit.loaders.exposure_loader import load_exposures
 from abkit.loaders.query_template import RenderWindow, build_builtins
 from abkit.pipeline._types import STATUS_COMPLETED, STATUS_FAILED, PipelineStep, RunOutcome
@@ -106,22 +107,29 @@ def run_experiment(
             )
         )
 
+        # The grid is the single source of the experiment's window bounds —
+        # the exposure load below must use the SAME tz-snapped edges the
+        # analysis windows use, never naive calendar midnights.
+        grid = generate_grid(
+            experiment.start_date,
+            experiment.end_date,
+            experiment.cadence_segments(),
+            tz=experiment.timezone,
+            limit=project.limits.max_looks,
+        )
+
         # ── LOAD: the cohort, once per run (§5.5) ────────────────────────────
         log(f"LOAD  {experiment.name}: loading exposures")
         assignment_sql = experiment.assignment.get_query_text(project_root)
-        start_probe = RenderWindow(
-            start_ts=datetime.combine(experiment.start_date, datetime.min.time()),
-            end_ts=datetime.combine(experiment.end_date, datetime.min.time()) + timedelta(days=1),
-        )
         assignment_builtins = build_builtins(
             experiment_id=experiment.name,
             unit_key=experiment.unit_key,
             variants=experiment.assignment.variants,
             added_filters=experiment.assignment.added_filters,
-            window=start_probe,
+            window=RenderWindow(start_ts=grid.start_ts, end_ts=grid.horizon_ts),
             data_database=manager.data_location,
             internal_database=manager.internal_location,
-            exposures_table=project.tables.exposures,
+            exposures_table=TABLE_EXPOSURES,
             dialect=dialect_of(manager),
         )
         observed_counts = load_exposures(
@@ -130,6 +138,11 @@ def run_experiment(
         outcome.exposures_loaded = sum(observed_counts.values())
 
         # ── SRM gate: blocking-but-non-dropping (§5.4) ───────────────────────
+        # Zero-fill declared variants absent from the cohort: a missing arm is
+        # the worst SRM there is — it must FLAG, not crash the chi-square.
+        observed_counts = {
+            variant: observed_counts.get(variant, 0) for variant in experiment.assignment.variants
+        }
         srm = srm_check(observed_counts, experiment.assignment.expected_split)
         outcome.srm_flagged = srm.srm_flag
         if srm.srm_flag:
@@ -142,14 +155,7 @@ def run_experiment(
 
         # ── PLAN + COMPUTE per comparison ────────────────────────────────────
         watermark_ts = now - timedelta(seconds=experiment.data_lag_seconds())
-        grid = generate_grid(
-            experiment.start_date,
-            experiment.end_date,
-            experiment.cadence_segments(),
-            tz=experiment.timezone,
-            limit=project.limits.max_looks,
-        )
-        backend = RecomputeBackend(manager, experiment, exposures_table=project.tables.exposures)
+        backend = RecomputeBackend(manager, experiment, exposures_table=TABLE_EXPOSURES)
 
         for comparison in experiment.comparisons:
             metric = metrics_by_name[comparison.metric]
@@ -173,8 +179,11 @@ def run_experiment(
                 f"PLAN  {experiment.name}/{metric.name}: {len(pending)} pending "
                 f"of {len(grid)} looks (alpha={effective_alpha:.6g})"
             )
+            # threshold on the TAIL segment's cadence: a dense-early schedule
+            # that coarsened to daily must not warn forever on its 1h segment
             lag = backlog_seconds(computed, watermark_ts)
-            if lag is not None and lag > 3 * experiment.cadence_seconds_min():
+            tail_cadence = experiment.cadence_segments()[-1][0]
+            if lag is not None and lag > 3 * tail_cadence:
                 outcome.warnings.append(
                     f"{experiment.name}/{metric.name}: computed series trails the "
                     f"watermark by {lag / 3600.0:.1f}h (> 3 cadence steps) — backlog"
@@ -229,7 +238,12 @@ def run_experiment(
         outcome.error = f"{type(exc).__name__}: {exc}"
         return outcome
 
-    tables.release_lock(experiment.name, LOCK_SCOPE, LOCK_PROCESS, STATUS_COMPLETED)
+    if not tables.release_lock(experiment.name, LOCK_SCOPE, LOCK_PROCESS, STATUS_COMPLETED):
+        outcome.warnings.append(
+            f"{experiment.name}: the run outlived its lock timeout and the lock "
+            "was taken over — this run's tail may have interleaved with the new "
+            "owner (raise timeouts.compute)"
+        )
     return outcome
 
 
@@ -253,6 +267,16 @@ def run_experiments(
     watermark consistent within one invocation.
     """
     now = now_utc or now_utc_naive()
+
+    if max_workers > 1 and len(experiments) > 1:
+        # Serialize the first-run DDL: concurrent CREATE SCHEMA/TABLE IF NOT
+        # EXISTS intermittently races on PostgreSQL (unique-violation on the
+        # catalog); one up-front ensure_tables makes the pool's calls no-ops.
+        bootstrap = manager_factory()
+        try:
+            InternalTablesManager(bootstrap).ensure_tables()
+        finally:
+            bootstrap.close()
 
     def _run_one(item: tuple[Path, ExperimentConfig]) -> RunOutcome:
         path, experiment = item

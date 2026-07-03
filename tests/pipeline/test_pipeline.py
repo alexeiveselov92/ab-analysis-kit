@@ -312,6 +312,49 @@ class TestSrmGate:
         assert all(r["srm_pvalue"] is not None for r in rows)
 
 
+class TestTimezoneDates:
+    def test_stored_dates_are_experiment_tz_dates(self, warehouse, tables):
+        """Review finding: a Moscow daily experiment's end_date must be the
+        Moscow calendar date, not the UTC date of the naive end_ts."""
+        # re-anchor the synthetic events to Moscow midnights (21:00 UTC prev day)
+        warehouse.events = [
+            (unit, variant, ts - timedelta(hours=3), value)
+            for unit, variant, ts, value in warehouse.events
+        ]
+        warehouse.cohort = [
+            (unit, variant, ts - timedelta(hours=3)) for unit, variant, ts in warehouse.cohort
+        ]
+        experiment = make_experiment(timezone="Europe/Moscow")
+        outcome = run(warehouse, tables, experiment=experiment)
+        assert outcome.status == "completed", outcome.error
+        rows = tables.load_results("signup_test")
+        first = min(rows, key=lambda r: r["end_ts"])
+        # first cutoff: end_ts = 2024-06-30 21:00 UTC (Moscow midnight July 2...
+        # start_ts = 2024-06-30 21:00 UTC; first end_ts = 2024-07-01 21:00 UTC
+        assert first["end_ts"] == datetime(2024, 7, 1, 21, 0)
+        # ...whose MOSCOW date is July 1 (the UTC date would wrongly be July 1 21:00 -> July 1;
+        # the window covers Moscow July 1 in full)
+        assert str(first["start_date"]) == "2024-07-01"
+        assert str(first["end_date"]) == "2024-07-01"
+        last = max(rows, key=lambda r: r["end_ts"])
+        assert str(last["end_date"]) == "2024-07-05"
+
+
+class TestSrmZeroArm:
+    def test_missing_arm_flags_srm_instead_of_crashing(self, warehouse, tables):
+        """Review finding: a declared variant with ZERO exposures is the worst
+        SRM there is — it must flag loudly, never crash the chi-square."""
+        warehouse.cohort = [c for c in warehouse.cohort if c[1] == "control"]
+        warehouse.events = []
+        seed_events(warehouse)
+        outcome = run(warehouse, tables)
+        assert outcome.status == "completed", outcome.error
+        assert outcome.srm_flagged is True
+        rows = tables.load_results("signup_test")
+        assert rows and all(r["srm_flag"] for r in rows)
+        assert all(r["insufficient_data"] for r in rows)  # 0-unit arm demoted
+
+
 class TestDemotion:
     def test_insufficient_data_rows_written_with_nulled_inference(self, warehouse, tables):
         warehouse.cohort = warehouse.cohort[:40]  # 20 per arm < min_units_per_arm=100

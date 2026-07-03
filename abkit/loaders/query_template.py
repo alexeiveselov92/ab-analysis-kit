@@ -83,14 +83,18 @@ def build_builtins(
         "ab_end_date": window.end_date.strftime(_DATE_FORMAT),
         "ab_start_ts": window.start_ts.strftime(_TS_FORMAT),
         "ab_end_ts": window.end_ts.strftime(_TS_FORMAT),
-        "ab_cov_start": (cov_window.start_date.strftime(_DATE_FORMAT) if cov_window else None),
-        "ab_cov_end": cov_window.end_date.strftime(_DATE_FORMAT) if cov_window else None,
         "data_database": data_database,
         "internal_database": internal_database,
         "ab_exposures_table": f"{internal_database}.{exposures_table}",
         "ab_dialect": dialect,
         "ab_apply_exposure_filter": apply_exposure_filter,
     }
+    # Only present when a covariate window exists — otherwise a template
+    # referencing ab_cov_* hard-fails under StrictUndefined instead of
+    # silently rendering the string 'None' into SQL.
+    if cov_window is not None:
+        builtins["ab_cov_start"] = cov_window.start_date.strftime(_DATE_FORMAT)
+        builtins["ab_cov_end"] = cov_window.end_date.strftime(_DATE_FORMAT)
     return builtins
 
 

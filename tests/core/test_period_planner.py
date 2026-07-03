@@ -149,6 +149,20 @@ class TestTimezones:
         deltas = [(b - a).total_seconds() for a, b in zip(points, points[1:], strict=False)]
         assert 23 * 3600 in deltas
 
+    def test_dst_fall_back_keeps_the_daily_until_boundary_look(self):
+        """A whole-day `until` bound compares in DAY space: the 25h fall-back
+        day (2024-11-03 America/New_York) must not drop the boundary look."""
+        grid = generate_grid(
+            date(2024, 11, 1),
+            date(2024, 11, 6),
+            [(86400, 3 * 86400), (2 * 86400, None)],
+            tz="America/New_York",
+        )
+        points = [c.end_ts for c in grid.cutoffs]
+        # day-3 local midnight = 2024-11-04 05:00 UTC (EST after fall-back) —
+        # 73h after start_ts, beyond a naive seconds bound of 72h
+        assert datetime(2024, 11, 4, 5, 0) in points
+
     def test_sub_day_segments_are_absolute_durations(self):
         """Dense points anchor at start_ts in absolute time (no local snapping)."""
         grid = generate_grid(

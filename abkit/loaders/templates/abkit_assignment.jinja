@@ -18,28 +18,45 @@ cohort join, window filter and dedup live here, once:
   construction).
 - ab.variant_col() / ab.stratum_col() — arm/stratum labels from the cohort.
 
+Collision-proofing: the cohort subquery projects its columns under _abk_-
+prefixed aliases, so a fact table with columns named unit_id/variant/
+exposure_ts/stratum can never be captured by the join. The fact-side unit
+key is cast to a string per dialect (the persisted cohort stores unit ids
+as strings).
+
+assignment.added_filters is deliberately NOT injected here: it filters the
+ASSIGNMENT (cohort) query only — silently narrowing every metric's fact
+scan would change numbers invisibly.
+
 Validation asserts the rendered SQL joins _ab_exposures; a metric authored
 without this macro fails config-lint.
 -#}
 
+{%- macro _unit_key_str() -%}
+{%- if ab_dialect == 'clickhouse' -%}toString({{ ab_unit_key }})
+{%- elif ab_dialect == 'postgres' -%}CAST({{ ab_unit_key }} AS TEXT)
+{%- else -%}CAST({{ ab_unit_key }} AS CHAR){%- endif -%}
+{%- endmacro -%}
+
 {%- macro exposed_units(event_date_col='event_date', event_time_col='event_time') -%}
 INNER JOIN (
-    SELECT unit_id, variant, exposure_ts, stratum
+    SELECT
+        unit_id     AS _abk_unit_id,
+        variant     AS _abk_variant,
+        exposure_ts AS _abk_exposure_ts,
+        stratum     AS _abk_stratum
     FROM {{ ab_exposures_table }}{% if ab_dialect == 'clickhouse' %} FINAL{% endif %}
     WHERE experiment = '{{ ab_experiment_id }}'
-) AS _abk_exposures ON _abk_exposures.unit_id = {{ ab_unit_key }}
+) AS _abk_exposures ON _abk_exposures._abk_unit_id = {{ _unit_key_str() }}
 WHERE {{ event_date_col }} >= '{{ ab_start_date }}'
   AND {{ event_date_col }} <= '{{ ab_end_date }}'
   AND {{ event_time_col }} >= '{{ ab_start_ts }}'
   AND {{ event_time_col }} < '{{ ab_end_ts }}'
 {%- if ab_apply_exposure_filter %}
-  AND {{ event_time_col }} >= _abk_exposures.exposure_ts
-{%- endif %}
-{%- if ab_added_filters %}
-  {{ ab_added_filters }}
+  AND {{ event_time_col }} >= _abk_exposures._abk_exposure_ts
 {%- endif %}
 {%- endmacro -%}
 
-{%- macro variant_col() -%}_abk_exposures.variant{%- endmacro -%}
+{%- macro variant_col() -%}_abk_exposures._abk_variant{%- endmacro -%}
 
-{%- macro stratum_col() -%}_abk_exposures.stratum{%- endmacro -%}
+{%- macro stratum_col() -%}_abk_exposures._abk_stratum{%- endmacro -%}

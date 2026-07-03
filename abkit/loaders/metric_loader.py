@@ -134,9 +134,9 @@ def load_metric(
 
     if rows:
         present = rows[0].keys()
-        needed = {unit_col: "unit"} | {
-            col: role for role, col in role_map.items() if role != "stratum"
-        }
+        # every declared role — INCLUDING stratum — must be present in the
+        # result set (a missing stratum column was a raw KeyError before)
+        needed = {unit_col: "unit"} | {col: role for role, col in role_map.items()}
         missing = [col for col in needed if col not in present]
         if missing:
             raise MetricLoadError(

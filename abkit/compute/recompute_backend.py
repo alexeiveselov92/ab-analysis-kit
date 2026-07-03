@@ -17,11 +17,12 @@ from __future__ import annotations
 
 from datetime import timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from abkit.config.experiment_config import ComparisonConfig, ExperimentConfig
 from abkit.config.metric_config import MetricConfig
 from abkit.core.interval import Interval
-from abkit.core.period_planner import Cutoff, Grid
+from abkit.core.period_planner import Cutoff, Grid, tz_midnight_utc
 from abkit.database.manager import BaseDatabaseManager
 from abkit.loaders.metric_loader import (
     MetricLoadResult,
@@ -58,7 +59,12 @@ class RecomputeBackend:
         self._template = QueryTemplate()
         self._covariate_cache: dict[str, dict[str, float]] = {}
 
-    def _builtins(self, window: RenderWindow, apply_exposure_filter: bool = True) -> dict[str, Any]:
+    def _builtins(
+        self,
+        window: RenderWindow,
+        apply_exposure_filter: bool = True,
+        cov_window: RenderWindow | None = None,
+    ) -> dict[str, Any]:
         experiment = self._experiment
         return build_builtins(
             experiment_id=experiment.name,
@@ -71,7 +77,23 @@ class RecomputeBackend:
             exposures_table=self._exposures_table,
             dialect=dialect_of(self._manager),
             apply_exposure_filter=apply_exposure_filter,
+            cov_window=cov_window,
         )
+
+    def _preperiod_window(self, lookback: str | int, grid: Grid) -> RenderWindow:
+        """The fixed pre-period, WHOLE-DAY aligned in the experiment timezone.
+
+        ``[tz-midnight(start_date − lookback_days), start_ts)`` — day
+        arithmetic in the experiment tz (a UTC-seconds subtraction would
+        misalign local days across a DST transition inside the lookback;
+        statistics-changes.md §5 defines the lookback in whole days).
+        """
+        lookback_days = Interval(lookback).seconds // 86400
+        zone = ZoneInfo(self._experiment.timezone)
+        pre_start = tz_midnight_utc(
+            self._experiment.start_date - timedelta(days=lookback_days), zone
+        )
+        return RenderWindow(start_ts=pre_start, end_ts=grid.start_ts)
 
     def render(self, metric_sql: str, window: RenderWindow) -> str:
         """The provenance copy of the executed SQL."""
@@ -87,29 +109,29 @@ class RecomputeBackend:
     ) -> MetricLoadResult:
         """Load one (comparison, cutoff): full window + cached covariate."""
         window = RenderWindow(start_ts=grid.start_ts, end_ts=cutoff.end_ts)
+        lookback = comparison.method.covariate_lookback
+        pre_window = (
+            self._preperiod_window(lookback, grid)
+            if lookback is not None and metric.columns.covariate is None
+            else None
+        )
         loaded = load_metric(
             self._manager,
             metric,
             metric_sql,
-            self._builtins(window),
+            self._builtins(window, cov_window=pre_window),
             declared_variants=self._experiment.assignment.variants,
             template=self._template,
         )
 
-        lookback = comparison.method.covariate_lookback
-        if lookback is not None and metric.columns.covariate is None:
+        if pre_window is not None:
             covariate = self._covariate_cache.get(metric.name)
             if covariate is None:
-                lookback_seconds = Interval(lookback).seconds
-                pre_window = RenderWindow(
-                    start_ts=grid.start_ts - timedelta(seconds=lookback_seconds),
-                    end_ts=grid.start_ts,
-                )
                 covariate = load_covariate_from_preperiod(
                     self._manager,
                     metric,
                     metric_sql,
-                    self._builtins(pre_window, apply_exposure_filter=False),
+                    self._builtins(pre_window, apply_exposure_filter=False, cov_window=pre_window),
                     declared_variants=self._experiment.assignment.variants,
                     template=self._template,
                 )

@@ -158,6 +158,10 @@ class TestCupedRules:
         report = run_l2(self._cuped_exp({"covariate_lookback": "12h"}), [make_metric()])
         assert any("covariate_lookback < 1d" in e for e in report.errors)
 
+    def test_fractional_day_lookback_is_an_error(self):
+        report = run_l2(self._cuped_exp({"covariate_lookback": "36h"}), [make_metric()])
+        assert any("WHOLE days" in e for e in report.errors)
+
     def test_lookback_under_week_warns(self):
         report = run_l2(self._cuped_exp({"covariate_lookback": "3d"}), [make_metric()])
         assert report.ok
@@ -180,6 +184,35 @@ class TestCupedRules:
         )
         report = run_l2(exp, [make_metric()])
         assert any("covariate_lookback" in e for e in report.errors)
+
+
+class TestCapabilityLint:
+    """Plan R8: metric.type × input_kind / is_paired gate at VALIDATE time."""
+
+    def test_input_kind_mismatch(self):
+        fraction_metric = MetricConfig.model_validate(
+            {
+                "name": "arpu",
+                "type": "fraction",
+                "columns": {"variant": "variant", "count": "c", "nobs": "n"},
+                "query": MACRO_QUERY,
+            }
+        )
+        report = run_l2(make_experiment(), [fraction_metric])  # t-test on fraction
+        assert any("expects a 'sample' metric" in e for e in report.errors)
+
+    def test_paired_method_rejected(self):
+        exp = make_experiment(
+            comparisons=[
+                {
+                    "metric": "arpu",
+                    "is_main_metric": True,
+                    "method": {"name": "paired-t-test", "params": {}},
+                }
+            ]
+        )
+        report = run_l2(exp, [make_metric()])
+        assert any("paired design" in e for e in report.errors)
 
 
 class TestLooksGates:

@@ -228,6 +228,25 @@ class TestMetricLoader:
         with pytest.raises(MetricLoadError, match="missing columns"):
             load_metric(backend, ARPU_METRIC, ARPU_METRIC.query, make_builtins(), VARIANTS)
 
+    def test_missing_declared_stratum_is_a_typed_error(self, backend):
+        """Review finding: a declared stratum column absent from the result
+        set must raise MetricLoadError, not a raw KeyError."""
+        stratified = MetricConfig.model_validate(
+            {
+                "name": "arpu",
+                "type": "sample",
+                "columns": {
+                    "variant": "variant",
+                    "value": "gross_usd",
+                    "stratum": "country",
+                },
+                "query": ARPU_METRIC.query,
+            }
+        )
+        backend.scripted_rows = [metric_row("u1", "control", 1.0)]  # no country col
+        with pytest.raises(MetricLoadError, match="country"):
+            load_metric(backend, stratified, stratified.query, make_builtins(), VARIANTS)
+
     def test_null_values_become_nan_with_warning(self, backend):
         backend.scripted_rows = [
             metric_row("u1", "control", None),
