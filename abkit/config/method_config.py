@@ -60,6 +60,12 @@ class MethodConfig(BaseModel):
         return self._bound_probe.method_config_id
 
     @property
+    def covariate_lookback(self) -> str | int | None:
+        """The CUPED pre-period lookback param (pipeline-consumed; see the
+        stats-core ``COVARIATE_LOOKBACK_PARAM`` — identity-bearing there)."""
+        return self.params.get("covariate_lookback")
+
+    @property
     def canonical_params_json(self) -> str:
         """The canonical ``method_params`` JSON string persisted to ``_ab_results``.
 

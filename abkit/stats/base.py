@@ -128,6 +128,19 @@ POWER_PARAM = ParamSpec(
     exclusive_bounds=True,
     description="Target power for the MDE solve.",
 )
+COVARIATE_LOOKBACK_PARAM = ParamSpec(
+    name="covariate_lookback",
+    types=(str, int),
+    default=None,
+    description=(
+        "Pre-period covariate window (fixed whole-day lookback, e.g. '14d' — "
+        "statistics-changes.md §5). IDENTITY-BEARING: a different lookback is a "
+        "different covariate, hence a different series. The math here never "
+        "reads it — the pipeline's loader materialises the covariate values; "
+        "the duration grammar is validated by the config layer (the pure core "
+        "does not parse durations)."
+    ),
+)
 N_SAMPLES_PARAM = ParamSpec(
     name="n_samples",
     types=(int,),
