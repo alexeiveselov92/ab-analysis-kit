@@ -10,6 +10,18 @@ reports, a chart-first cockpit), with the `detect` stage replaced by a statistic
 > **Using abkit, not hacking on it?** (Once shipped:) see the README and
 > `abk init-claude`, which sets up assistant context inside *your own* project.
 
+## Working context lives in `.claude/rules/`
+
+The as-built condensation for contributors/assistants (detectkit-style):
+
+| If you're… | Read |
+|---|---|
+| Touching code — the system **as it exists** (stats-core API, gotchas, layout) | [.claude/rules/architecture.md](.claude/rules/architecture.md) |
+| Setting up, testing, adding a method, changing a number, porting from detectkit, releasing | [.claude/rules/contributing.md](.claude/rules/contributing.md) |
+
+Design contracts for what is being *built next* stay in [docs/specs/](docs/specs/)
+(canonical for M2+ work — table below). Keep rules ↔ docs in sync per milestone.
+
 ## Status: M1 shipped; next up M2
 
 **Done — M1, the pure statistical core** (`abkit.stats`, importable standalone;
@@ -46,9 +58,10 @@ The master plan in Russian: [docs/ru/project-initiation-spec.md](docs/ru/project
 Reference material (legacy dashboard JSON, results chart, method catalogue):
 [docs/reference/](docs/reference/).
 
-> Once development starts, the per-version assistant-facing condensation moves to
-> `.claude/rules/` (the `init-claude` payload, rendered on the docs site) — keep it
-> and `docs/` in sync, detectkit-style. Until then, `docs/specs/` is canonical.
+> The contributor condensation now lives in `.claude/rules/` (see the routing
+> table above); `docs/specs/` stays canonical for design contracts. The
+> *user-facing* `init-claude` payload + docs site render arrive in M6 — keep all
+> three in sync from then on, detectkit-style.
 
 ## Invariants (do not violate)
 
