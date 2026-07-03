@@ -241,6 +241,13 @@ class BaseMethod(ABC):
     ALGORITHM_VERSION: ClassVar[int] = 1
     #: The method's parameter schema.
     param_specs: ClassVar[tuple[ParamSpec, ...]] = ()
+    #: Declarative capability attributes (plan R8) — the pipeline dispatches on
+    #: these instead of isinstance checks against concrete classes. Purely
+    #: descriptive: no numeric behaviour depends on them (no version bump).
+    #: Which container family ``from_samples`` expects: sample | fraction | ratio.
+    input_kind: ClassVar[str] = "sample"
+    #: Paired designs need unit-aligned arms (not served by the v1 pipeline).
+    is_paired: ClassVar[bool] = False
 
     def __init__(self, alpha: float = 0.05, **params: Any) -> None:
         if not 0.0 < alpha < 1.0:

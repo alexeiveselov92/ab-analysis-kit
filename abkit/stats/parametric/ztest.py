@@ -40,6 +40,7 @@ from abkit.stats.samples import Fraction
 @register(aliases=("ztest",))
 class ZTest(BaseMethod):
     name = "z-test"
+    input_kind = "fraction"
     param_specs = (TEST_TYPE_PARAM, CALCULATE_MDE_PARAM, POWER_PARAM)
 
     def from_samples(self, sample_1: Fraction, sample_2: Fraction) -> TestResult:

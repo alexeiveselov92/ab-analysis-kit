@@ -41,6 +41,7 @@ def _corr(moments: JointMoments, value_label: str, cov_label: str) -> float:
 @register
 class PairedCupedTTest(BasePairedMethod):
     name = "paired-cuped-t-test"
+    is_paired = True
     param_specs = (TEST_TYPE_PARAM, COVARIATE_LOOKBACK_PARAM)
 
     def from_suffstats(self, stats_1: PairedSufficientStats, stats_2: None = None) -> TestResult:
