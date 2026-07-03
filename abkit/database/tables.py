@@ -50,8 +50,8 @@ def get_experiments_table_model() -> TableModel:
             ColumnDefinition("timezone", "String"),
             ColumnDefinition("variants", "String"),  # canonical JSON array, order = config
             ColumnDefinition("expected_split", "String"),  # canonical JSON object
-            ColumnDefinition("alpha", "Float64"),
-            ColumnDefinition("correction", "String"),
+            ColumnDefinition("alpha", "Nullable(Float64)", nullable=True),
+            ColumnDefinition("correction", "Nullable(String)", nullable=True),
             ColumnDefinition("sequential_enabled", "Bool"),
             ColumnDefinition("sequential_scheme", "String"),
             ColumnDefinition("comparisons", "String"),  # canonical JSON summary
