@@ -14,6 +14,24 @@ number change).
 ## [Unreleased]
 
 ### Added
+- **M3 WP8 — `abk explore`** (per
+  [`docs/specs/m3-implementation-plan.md`](docs/specs/m3-implementation-plan.md)
+  WP8; cli-and-dx §1): the cockpit shell —
+  `abk explore --select <exp> [--metric <m>] [--no-serve] [--no-open]
+  [--profile]`. Registered per the house pattern (eager stanza, lazy command
+  body — `abk --version` stays instant). Resolves exactly ONE experiment
+  (selection errors name the namespace), guards a never-run project with the
+  friendly "run `abk run` first" noop (D2), prints the startup orphan warning
+  (the same `list_method_config_ids` scan the driver and `abk clean` use),
+  streams the session load through the house `StageLogRenderer`, then serves
+  the WP6 cockpit — or, with `--no-serve`, atomically writes the static
+  `reports/<experiment>__explore.html` snapshot (null endpoints — the
+  preview badge, Apply disabled). `--metric` narrows the opened comparison
+  (default: the main metric). The Apply epilogue echoes the archive path,
+  updated/preserved comparisons, the orphan warning + `abk clean` hint, and
+  the "re-run `abk run --select <exp>`" reminder; Ctrl-C cancels with the
+  experiment unchanged. All failures exit non-zero (the house rule).
+
 - **M3 WP6 — the explore localhost server + page + payload** (per
   [`docs/specs/m3-implementation-plan.md`](docs/specs/m3-implementation-plan.md)
   WP6/D1/D3):

@@ -6,9 +6,9 @@ driver is required until a command actually needs one. Failures exit NON-ZERO
 — the CLI is the Prefect unit of automation (a deliberate, recorded deviation
 from the detectkit donor's swallow-and-return-0 behaviour).
 
-M2 surface: ``init``, ``run``, ``unlock``, ``clean``. The remaining commands
-(``explore``, ``validate``, ``plan``, ``init-claude``, ``test-report``) land
-per ROADMAP.md M3–M6.
+Surface: ``init``, ``run``, ``unlock``, ``clean`` (M2) + ``explore`` (M3).
+The remaining commands (``validate``, ``plan``, ``init-claude``,
+``test-report``) land per ROADMAP.md M4–M6.
 """
 
 from __future__ import annotations
@@ -128,6 +128,40 @@ def run(
         workers,
         report_path,
     )
+
+
+@cli.command()
+@click.option(
+    "--select",
+    "-s",
+    multiple=True,
+    help="Experiment selector — must match exactly ONE experiment",
+)
+@click.option("--metric", help="Open the cockpit on this comparison (default: the main metric)")
+@click.option("--profile", help="Profile name (default: profiles.yml default_profile)")
+@click.option(
+    "--no-serve",
+    is_flag=True,
+    help="Write a static snapshot to reports/<experiment>__explore.html instead of serving",
+)
+@click.option("--no-open", is_flag=True, help="Do not launch a browser (the URL still prints)")
+def explore(
+    select: tuple[str, ...],
+    metric: str | None,
+    profile: str | None,
+    no_serve: bool,
+    no_open: bool,
+) -> None:
+    """Serve the interactive explore cockpit for one experiment.
+
+    Reads the persisted results (run `abk run` first), lets you tune method
+    knobs live against a localhost page, and — only on an explicit Apply —
+    writes the tuned config back to the experiment YAML (the previous file is
+    archived under experiments/.history/).
+    """
+    from abkit.cli.commands.explore import run_explore
+
+    run_explore(select, metric, profile, no_serve, no_open)
 
 
 @cli.command()
