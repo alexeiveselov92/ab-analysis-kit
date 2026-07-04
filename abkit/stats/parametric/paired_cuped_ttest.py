@@ -41,6 +41,7 @@ def _corr(moments: JointMoments, value_label: str, cov_label: str) -> float:
 @register
 class PairedCupedTTest(BasePairedMethod):
     name = "paired-cuped-t-test"
+    requires_covariate = True
     is_paired = True
     param_specs = (TEST_TYPE_PARAM, COVARIATE_LOOKBACK_PARAM)
 

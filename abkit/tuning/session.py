@@ -193,6 +193,8 @@ def load_session(
     for metric_name, end_ts in latest_loads:
         session.cache_values += _load_one(metric_name, end_ts)
         log(f"CACHE {experiment.name}/{metric_name}: latest cutoff {end_ts}")
+        if session.cache_values > budget:
+            break  # degrading anyway — bound the transient peak too
 
     if session.cache_values > budget:
         # Even the latest cutoffs bust the budget: degrade honestly to

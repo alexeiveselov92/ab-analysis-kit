@@ -65,6 +65,7 @@ def correlation_warning(method_name: str, arm_name: str, corr_coef: float) -> st
 @register(aliases=("cuped-ttest",))
 class CupedTTest(BaseMethod):
     name = "cuped-t-test"
+    requires_covariate = True
     param_specs = (
         TEST_TYPE_PARAM,
         CALCULATE_MDE_PARAM,

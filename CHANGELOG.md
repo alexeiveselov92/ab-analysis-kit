@@ -53,6 +53,42 @@ number change).
     never-validated project. Sidedness + winsorization stay OFF the knob
     surface (D12) — deferred to M4 under change control (ROADMAP note).
 
+### Fixed
+- **M3 WP4 review-closure** (adversarial review, 4 lenses / 15 findings, the
+  blocker empirically reproduced by an independent verifier):
+  - `RecomputeEngine.recompute` gained the `analyze_cutoff`-parity gate: a
+    paired or cross-kind knob state (e.g. `t-test` on a fraction series, whose
+    persisted `std_i` is the SE, not a sample std) now raises
+    `MethodParamError` instead of returning a silently ~nobs-fold-collapsed CI
+    labeled `tier="exact"` (the confirmed major).
+  - Tier E now refuses rows whose per-arm columns don't carry mean/std
+    semantics: a resampling series with a non-mean `stat` (e.g. median
+    bootstrap) persists the bootstrapped statistic in `value_i` — such rows
+    recompute only through the Tier-S cache (correct) or stay gaps, never
+    "exact" numbers off the median. Unknown/quarantined legacy row methods are
+    likewise never reconstructed.
+  - New declarative `BaseMethod.requires_covariate` capability flag (CUPED +
+    post-normed families): the Tier-S cache gate reads it instead of guessing
+    from param names, so `post-normed-bootstrap` — which needs `cov_array` but
+    has no `covariate_lookback` param — yields an honest gap on a
+    covariate-less cache instead of an unhandled `SampleValidationError`.
+  - Demoted (`insufficient_data`) and NULLed (H5) rows now pass through the
+    reply untouched as flagged `baseline` points (NULL test columns, real
+    sizes) instead of vanishing; the windshield chips read the latest point
+    *with inference*, so a demoted latest cutoff no longer blanks or shifts
+    them silently.
+  - Point `size_i` keeps the persisted unit-count semantics across every tier
+    (a fraction result's `round(nobs)` no longer makes sizes jump between
+    tiers of one series; the method sizes stay on the raw `result`); the
+    fraction power chip solves on trial counts (`nobs`) from the
+    reconstruction, falling back to SE-inversion.
+  - The session load clamps the cache during the latest-cutoffs pass, bounding
+    the transient peak near the budget in the exact scenario the clamp exists
+    for; `knob_surface` additionally exposes `needs_covariate` per method, the
+    `correction_tier` (correction resolves to the effective alpha upstream —
+    the WP4 DoD's experiment-level-knob classification), and the cache's
+    `covariate_cutoffs` (the WP7 ↻-badge substrate).
+
 ### Changed
 - **D11 — canonical unit order in `load_metric`** (M3 WP4; recorded in
   [`statistics-changes.md §8`](docs/specs/statistics-changes.md); a

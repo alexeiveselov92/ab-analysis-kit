@@ -40,6 +40,7 @@ class PostNormedBootstrapTest(BaseBootstrapMethod):
     """Covariate-ratio post-normalised bootstrap (relative branch only)."""
 
     name = "post-normed-bootstrap"
+    requires_covariate = True
 
     def _validate_params(self) -> None:
         super()._validate_params()

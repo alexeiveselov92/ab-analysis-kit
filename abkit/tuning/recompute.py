@@ -73,6 +73,7 @@ from abkit.stats import (
 from abkit.stats.base import BaseMethod, ParamSpec
 from abkit.stats.power import get_cuped_ttest_power, get_fraction_power, get_ttest_power
 from abkit.tuning.session import ComparisonSeries, ExploreSession
+from abkit.utils.json_utils import json_loads
 
 Tier = Literal["exact", "approx", "baseline"]
 
@@ -184,6 +185,7 @@ class ExplorePoint:
     std_2: float | None
     size_1: int | None
     size_2: int | None
+    insufficient: bool = False
     warnings: list[str] = field(default_factory=list)
     result: TestResult | None = field(default=None, repr=False, compare=False)
 
@@ -343,10 +345,46 @@ def _invert_fraction(prop: float, std: float, name: str | None) -> Fraction | No
     return Fraction(count=prop * nobs, nobs=nobs, name=name)
 
 
+def _parse_params(value: Any) -> dict[str, Any]:
+    """The row's canonical ``method_params`` JSON cell as a dict; never raises."""
+    if isinstance(value, dict):
+        return value
+    if not value:
+        return {}
+    try:
+        parsed = json_loads(value)
+    except (TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _row_serves_suffstats(row: dict) -> bool:
+    """Whether this row's per-arm columns carry MEAN/std semantics.
+
+    Rows written by a resampling method with a non-mean ``stat`` persist the
+    bootstrapped statistic (e.g. the median) in ``value_i`` — reconstructing
+    mean-based suffstats from them would be silently wrong, never "exact".
+    Unknown/quarantined legacy row methods are never reconstructed.
+    """
+    method_name = row.get("method_name")
+    if not method_name:
+        return False
+    try:
+        row_cls = get_method_class(method_name)
+    except Exception:
+        return False
+    if any(spec.name == "stat" for spec in row_cls.param_specs):
+        if _parse_params(row.get("method_params")).get("stat", "mean") != "mean":
+            return False
+    return True
+
+
 def _exact_suffstats(method_cls: type[BaseMethod], row: dict) -> tuple[Any, Any] | None:
     """Tier E: both arms' suffstats containers from one persisted row, or
     ``None`` when this family/row is not exactly reconstructable."""
-    if _needs_seed(method_cls) or _needs_covariate(method_cls):
+    if _needs_seed(method_cls) or method_cls.requires_covariate or _needs_covariate(method_cls):
+        return None
+    if not _row_serves_suffstats(row):
         return None
     value_1, value_2 = _row_float(row, "value_1"), _row_float(row, "value_2")
     std_1, std_2 = _row_float(row, "std_1"), _row_float(row, "std_2")
@@ -461,7 +499,14 @@ class RecomputeEngine:
                 {
                     "name": name,
                     "seeded": _needs_seed(method_cls),
+                    # the ↻ badge substrate: WP7 marks the method Tier R when
+                    # this is true and the cache holds no covariate cutoffs
+                    "needs_covariate": method_cls.requires_covariate,
                     "alpha_tier": alpha_knob_tier(method_cls),
+                    # correction resolves to the effective per-comparison alpha
+                    # upstream (analyze.effective_alphas), so it recomputes
+                    # through the same tier the alpha knob does (WP4 DoD)
+                    "correction_tier": alpha_knob_tier(method_cls),
                     "params": [_spec_payload(spec) for spec in method_cls.param_specs],
                     "tiers": {
                         spec.name: classify_knob(method_cls, spec.name)
@@ -469,6 +514,13 @@ class RecomputeEngine:
                     },
                 }
             )
+        cached = self._session.cached_cutoffs(metric)
+        covariate_cutoffs = []
+        for ts in cached:
+            loaded = self._session.loaded(metric, ts)
+            if loaded is not None and loaded.roles_by_variant:
+                if all("covariate" in roles for roles in loaded.roles_by_variant.values()):
+                    covariate_cutoffs.append(ts)
         return {
             "metric": metric,
             "metric_type": series.metric.type,
@@ -480,7 +532,8 @@ class RecomputeEngine:
             },
             "methods": methods,
             "cache": {
-                "cutoffs": self._session.cached_cutoffs(metric),
+                "cutoffs": cached,
+                "covariate_cutoffs": covariate_cutoffs,
                 "disabled_reason": self._session.cache_disabled_reason,
             },
         }
@@ -512,6 +565,22 @@ class RecomputeEngine:
         method_config = MethodConfig(name=knobs.method_name, params=params)
         probe = method_config.bind(alpha=knobs.alpha)
         method_cls = type(probe)
+
+        # The analyze_cutoff-parity gate (analyze.py): without it a cross-kind
+        # knob state would reconstruct nonsense suffstats (a fraction row's
+        # std_i is the SE, not a sample std) and label it tier="exact".
+        if method_cls.is_paired:
+            raise MethodParamError(
+                f"method '{knobs.method_name}' is a paired design — explore serves "
+                "independent-arm experiments (use the notebook API for paired data)"
+            )
+        if method_cls.input_kind != series.metric.type:
+            raise MethodParamError(
+                f"method '{knobs.method_name}' expects a '{method_cls.input_kind}' "
+                f"metric, got '{series.metric.type}' — pick a method from the knob "
+                "surface's method list"
+            )
+
         live_id = probe.method_config_id
         identity_changed = live_id != series.comparison.method.method_config_id
 
@@ -568,7 +637,10 @@ class RecomputeEngine:
     ) -> ExplorePoint | None:
         """One row → the best-tier point, or ``None`` (a baseline-only gap)."""
         if row.get("insufficient_data"):
-            return None  # demoted: NULL test columns, real sizes — a gap
+            # Demoted rows pass through UNTOUCHED (WP4: NULL test columns,
+            # real sizes) — the client greys them; they are method-independent
+            # facts, so they ride along under every knob state.
+            return self._baseline_point(row)
 
         # Tier E — exact reconstruction, whole grid.
         containers = _exact_suffstats(method_cls, row)
@@ -628,6 +700,10 @@ class RecomputeEngine:
                     size_1=_row_int(row, "size_1"),
                     size_2=_row_int(row, "size_2"),
                 )
+        if _row_float(row, "effect") is None:
+            # NULLed rows (H5 NaN outputs) pass through untouched under any
+            # same-identity knob state — there is no number to mislabel.
+            return self._baseline_point(row)
         return None
 
     def _baseline_point(self, row: dict) -> ExplorePoint:
@@ -649,11 +725,16 @@ class RecomputeEngine:
             std_2=_row_float(row, "std_2"),
             size_1=_row_int(row, "size_1"),
             size_2=_row_int(row, "size_2"),
+            insufficient=bool(row.get("insufficient_data")),
         )
 
     def _point_from_result(
         self, row: dict, result: TestResult, caught: list[str], tier: Tier
     ) -> ExplorePoint:
+        # Point sizes keep the ROW's persisted unit-count semantics across
+        # every tier (a fraction result's size_i is round(nobs) — exposing it
+        # here would make sizes jump between tiers of one series); the raw
+        # ``result`` rides along for consumers that need method sizes.
         return ExplorePoint(
             end_ts=row["end_ts"],
             elapsed_days=_row_float(row, "elapsed_days"),
@@ -669,8 +750,8 @@ class RecomputeEngine:
             value_2=_clean(result.value_2),
             std_1=_clean(result.std_1),
             std_2=_clean(result.std_2),
-            size_1=int(result.size_1),
-            size_2=int(result.size_2),
+            size_1=_row_int(row, "size_1"),
+            size_2=_row_int(row, "size_2"),
             warnings=[*caught, *result.warnings],
             result=result,
         )
@@ -694,7 +775,9 @@ class RecomputeEngine:
             roles = loaded.roles_by_variant.get(variant, {})
             if any(role not in roles for role in needed_roles):
                 return False
-            if _needs_covariate(method_cls) and "covariate" not in roles:
+            # declared capability, not param-name guessing: post-normed
+            # bootstrap needs cov_array yet has no covariate_lookback param
+            if method_cls.requires_covariate and "covariate" not in roles:
                 return False
             if resolved_params.get("stratify") and loaded.strata_by_variant.get(variant) is None:
                 return False
@@ -716,8 +799,11 @@ class RecomputeEngine:
         knobs: KnobState,
         name_1: str,
     ) -> dict[str, Any]:
-        """The windshield chips off the latest computed point (§5.1)."""
-        if not points:
+        """The windshield chips off the latest point WITH inference (§5.1) —
+        a demoted/NULLed latest cutoff must not blank the chips when an older
+        cutoff still carries numbers (it is flagged, not hidden)."""
+        latest = next((point for point in reversed(points) if point.effect is not None), None)
+        if latest is None:
             return {
                 "lift": None,
                 "ci_half": None,
@@ -727,7 +813,6 @@ class RecomputeEngine:
                 "latest_end_ts": None,
                 "tier": None,
             }
-        latest = points[-1]
         ci_half = None
         if latest.left_bound is not None and latest.right_bound is not None:
             ci_half = (latest.right_bound - latest.left_bound) / 2.0
@@ -772,13 +857,23 @@ class RecomputeEngine:
         ratio = latest.size_2 / latest.size_1
         try:
             if method_cls.input_kind == "fraction":
+                # the proportion solve runs on TRIAL counts (nobs), which the
+                # point's persisted unit-count sizes deliberately are not
+                if latest.result is not None:
+                    nobs_1, nobs_2 = latest.result.size_1, latest.result.size_2
+                else:
+                    inv_1 = _invert_fraction(latest.value_1, latest.std_1, None)
+                    inv_2 = _invert_fraction(latest.value_2, latest.std_2, None)
+                    if inv_1 is None or inv_2 is None:
+                        return None, "trial counts unavailable at the latest cutoff"
+                    nobs_1, nobs_2 = inv_1.sample_size, inv_2.sample_size
                 power = get_fraction_power(
                     latest.value_1,
-                    latest.size_1,
+                    nobs_1,
                     min_effect,
                     test_type=test_type,
                     alpha=knobs.alpha,
-                    ratio=ratio,
+                    ratio=nobs_2 / nobs_1,
                 )
             elif _needs_covariate(method_cls):
                 corr = self._control_corr(series, latest.end_ts, name_1)

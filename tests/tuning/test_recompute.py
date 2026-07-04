@@ -307,9 +307,12 @@ class TestTierERoundTrip:
                 assert_close(getattr(point, key), row[key], f"{key}@{point.end_ts}")
             # THE blocker regression: per-unit trials > 1, so the z-test ran on
             # summed nobs — recoverable ONLY from the SE, never from size_i
-            # (the one-row-per-unit count persisted on the row).
-            assert point.size_1 > row["size_1"]
-            assert point.size_2 > row["size_2"]
+            # (the one-row-per-unit count persisted on the row). The POINT
+            # keeps unit-count sizes (tier-consistent); the reconstructed
+            # method sizes live on the raw result.
+            assert point.size_1 == row["size_1"]
+            assert point.result.size_1 > row["size_1"]
+            assert point.result.size_2 > row["size_2"]
 
     def test_ratio_delta_surrogate_reproduces_persisted_rows(self, warehouse, tables):
         experiment = make_experiment(
@@ -464,6 +467,21 @@ class TestCupedRouting:
         assert result.identity_changed
         assert result.pairs[0].points == []  # nothing servable — /reload's job
         assert classify_knob(get_method_class("cuped-t-test"), "covariate_lookback") == "R"
+        surface = engine.knob_surface("arpu")
+        cuped_entry = next(m for m in surface["methods"] if m["name"] == "cuped-t-test")
+        assert cuped_entry["needs_covariate"] is True  # WP7's ↻ badge substrate
+        assert surface["cache"]["covariate_cutoffs"] == []
+
+    def test_post_normed_bootstrap_without_covariate_is_a_gap_not_a_crash(self, warehouse, tables):
+        """post-normed-bootstrap requires cov_array yet has no lookback param —
+        the cache gate must use the declared capability, never param names."""
+        plain = make_experiment(
+            "exp_pn", "arpu", {"name": "t-test", "params": {"test_type": "relative"}}
+        )
+        run_pipeline(warehouse, tables, plain)
+        engine = build_engine(warehouse, tables, plain)
+        result = engine.recompute("arpu", KnobState("post-normed-bootstrap", {"n_samples": 100}))
+        assert result.pairs[0].points == []  # no covariate in the cache — a gap
 
     def test_cuped_param_edit_serves_cached_cutoffs_only(self, warehouse, tables):
         method = {
@@ -911,12 +929,60 @@ class TestValidationSurface:
         with pytest.raises(KeyError, match="not a configured comparison"):
             engine.recompute("nope", KnobState("t-test", {}))
 
+    def test_cross_kind_method_is_gated_not_silently_wrong(self, warehouse, tables):
+        """The analyze-parity gate (review finding, empirically reproduced):
+        t-test on a fraction series would misread the persisted SE as a sample
+        std and collapse the CI ~nobs-fold under a tier='exact' label."""
+        experiment = make_experiment("exp_gate", "conversion", {"name": "z-test", "params": {}})
+        run_pipeline(warehouse, tables, experiment)
+        engine = build_engine(warehouse, tables, experiment, with_cache=False)
+        with pytest.raises(MethodParamError, match="expects a 'sample' metric"):
+            engine.recompute("conversion", KnobState("t-test", {}))
+
+    def test_paired_method_is_gated(self, engine):
+        with pytest.raises(MethodParamError, match="paired design"):
+            engine.recompute("arpu", KnobState("paired-t-test", {}))
+
+    def test_non_mean_stat_series_never_reconstructs_tier_e(self, warehouse, tables):
+        """A median-bootstrap series persists the MEDIAN in value_i — mean-based
+        suffstats reconstruction from those rows would be silently wrong. With
+        a cache the t-test knob recomputes from real arrays (correct); without
+        one it must yield gaps, never fake 'exact' numbers off the median."""
+        median_boot = make_experiment(
+            "exp_median",
+            "arpu",
+            {
+                "name": "bootstrap",
+                "params": {"test_type": "relative", "n_samples": 100, "stat": "median"},
+            },
+        )
+        plain = make_experiment(
+            "exp_median_ref", "arpu", {"name": "t-test", "params": {"test_type": "relative"}}
+        )
+        run_pipeline(warehouse, tables, median_boot)
+        run_pipeline(warehouse, tables, plain)
+
+        blind = build_engine(warehouse, tables, median_boot, with_cache=False)
+        assert blind.recompute("arpu", KnobState("t-test", {})).pairs[0].points == []
+
+        engine = build_engine(warehouse, tables, median_boot)  # full cache
+        result = engine.recompute("arpu", KnobState("t-test", {"test_type": "relative"}))
+        expected = persisted(tables, plain, "arpu")
+        points = result.pairs[0].points
+        assert len(points) == 4  # Tier S over real arrays serves every cutoff
+        for point in points:
+            row = expected[("control", "treatment", point.end_ts)]
+            for key in ("effect", "left_bound", "right_bound", "pvalue"):
+                assert_close(getattr(point, key), row[key], f"{key}@{point.end_ts}")
+
 
 # ── Demoted rows stay gaps ───────────────────────────────────────────────────
 
 
 class TestDemotedRows:
-    def test_demoted_rows_are_gaps_never_zeroes(self, warehouse, tables):
+    def test_demoted_rows_pass_through_untouched(self, warehouse, tables):
+        """Demoted rows ride along flagged (NULL test columns, real sizes) —
+        never dropped (the chart would lose the greyed segment), never faked."""
         strict = ProjectConfig.model_validate(
             {"name": "p", "default_profile": "dev", "limits": {"min_units_per_arm": 1000}}
         )
@@ -928,4 +994,12 @@ class TestDemotedRows:
         session = load_session(experiment, METRICS, strict, tables, loader=None)
         engine = RecomputeEngine(session)
         result = engine.recompute("arpu", engine.default_knobs("arpu"))
-        assert result.pairs[0].points == []
+        points = result.pairs[0].points
+        assert len(points) == len(rows)
+        assert all(point.tier == "baseline" for point in points)
+        assert all(point.insufficient for point in points)
+        assert all(point.effect is None and point.pvalue is None for point in points)
+        assert all(point.size_1 and point.size_1 > 0 for point in points)
+        # chips must not pretend an all-demoted series carries inference
+        assert result.pairs[0].chips["lift"] is None
+        assert "no recomputable" in result.pairs[0].chips["power_note"]
