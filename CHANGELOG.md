@@ -63,9 +63,10 @@ number change).
     contract. Zero statistical numbers changed.
   - `InternalTablesManager`: `results_table_exists()` /
     `exposures_table_exists()` — the never-run-project guards for read-only
-    surfaces (reporting never creates schema) — and an `until=` bound on
-    `get_exposure_counts` (`exposure_ts < until`, half-open) so a replayed
-    report shows the as-of cohort, not today's.
+    surfaces (reporting never creates schema). *(A short-lived `until=` bound
+    on `get_exposure_counts` was added here and then removed in the review
+    passes below — the SRM block is whole-cohort/window-independent; see the
+    Fixed entries.)*
   - Review-driven consistency rules (adversarial review, 4 lenses): rows for
     variant pairs outside the declared arms are excluded from every payload
     surface with a loud warning (never silently mixed into look/period/BH);
