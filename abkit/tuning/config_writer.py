@@ -171,7 +171,9 @@ def _header(
     if orphan_warning:
         lines.append(f"# ⚠ {orphan_warning}")
     lines += [f"# Reproduce: abk explore --select {experiment}", _RULE]
-    return "\n".join(lines)
+    # every line must stay ONE comment line — a newline smuggled through a
+    # name would inject uncommented text into the emitted YAML
+    return "\n".join(line.replace("\n", " ").replace("\r", " ") for line in lines)
 
 
 def _merge_comparison(

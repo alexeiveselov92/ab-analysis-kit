@@ -22,7 +22,7 @@ from fake_db import FakeDatabaseManager
 from abkit.config import ExperimentConfig, MetricConfig, ProjectConfig
 from abkit.config.validator import discover_config_files
 from abkit.database.internal_tables import InternalTablesManager
-from abkit.pipeline.analyze import effective_alphas
+from abkit.pipeline.analyze import comparison_alpha, effective_alphas
 from abkit.stats import MethodParamError, QuarantinedMethodError
 from abkit.tuning import TunedComparison, apply_tuned_config
 
@@ -195,16 +195,32 @@ class TestApplyHappyPath:
         assert saved.alpha == 0.01
         assert saved.correction == "none"
 
-    def test_review_role_flip_is_orphan_free_but_shifts_alphas(self, project):
-        root, path = project
+    def test_review_role_flip_is_orphan_free_but_shifts_alphas(self, tmp_path):
+        """The plan's cross-check (b): a role flip is orphan-free but moves the
+        flipped comparison between the two Bonferroni tiers — with THREE
+        comparisons the secondary tier is alpha/2, so the shift is a real
+        number, not a structural artifact."""
+        raw = yaml.safe_load(EXPERIMENT_YAML)
+        raw["comparisons"].append(
+            {
+                "metric": "conversion",
+                "method": {"name": "z-test", "params": {"test_type": "relative"}},
+            }
+        )
+        experiments = tmp_path / "experiments"
+        experiments.mkdir()
+        path = experiments / "exp_apply.yml"
+        path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+
         before = ExperimentConfig.from_yaml_file(path)
         project_cfg = ProjectConfig.model_validate({"name": "p", "default_profile": "dev"})
         alphas_before = effective_alphas(before, project_cfg)
+        arpu_alpha_before = comparison_alpha(before.comparisons[0], alphas_before)
 
         tables = seeded_tables("exp_apply", "arpu", before.comparisons[0].method.method_config_id)
         # re-mark: the main-metric role moves from arpu to ctr in one Apply
         result = apply(
-            root=root,
+            root=tmp_path,
             path=path,
             comparisons=[
                 TunedComparison("arpu", is_main_metric=False, is_guardrail=True),
@@ -217,10 +233,11 @@ class TestApplyHappyPath:
         assert after.comparisons[0].is_main_metric is False
         assert after.comparisons[1].is_main_metric is True
         alphas_after = effective_alphas(after, project_cfg)
-        assert alphas_before == alphas_after  # 2 comparisons, 1 main — same tiers
-        # the per-comparison assignment still moved: the main tier now belongs
-        # to ctr, so arpu verdicts read the secondary alpha
-        assert before.comparisons[0].is_main_metric is True
+        arpu_alpha_after = comparison_alpha(after.comparisons[0], alphas_after)
+        # arpu fell from the main tier (alpha) to the shared secondary tier
+        # (alpha / #non-main) — the effective per-comparison alpha moved
+        assert arpu_alpha_before == pytest.approx(0.05)
+        assert arpu_alpha_after == pytest.approx(0.025)
 
     def test_nested_experiment_form(self, tmp_path):
         raw = {"experiment": yaml.safe_load(EXPERIMENT_YAML)}

@@ -155,7 +155,12 @@ class _Handler(BaseHTTPRequestHandler):
         if parse_qs(parsed.query).get("token", [""])[0] != srv.token:
             self._reply_error(403, "bad token")
             return
-        length = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            length = int(self.headers.get("Content-Length", "0") or "0")
+        except ValueError:
+            # a malformed header must be a clean 400, never a dead thread
+            self._reply_error(400, "bad Content-Length header")
+            return
         if length <= 0 or length > _MAX_BODY:
             # Drain a bounded amount before replying so the client can read
             # the 413 instead of hitting a broken pipe mid-upload.
@@ -262,57 +267,80 @@ class _Handler(BaseHTTPRequestHandler):
         self._reply_json(_result_json(result, request_id))
 
     def _handle_apply(self, srv: _ExploreServer, body: bytes) -> None:
-        """The only terminal action: gate → WP5 seam → reply → self-shutdown."""
+        """The only terminal action: gate → WP5 seam → reply → self-shutdown.
+
+        Serialized under the request lock: two tabs' Applies must not race the
+        archive/rewrite seam or the shared CLI-thread DB manager, and a second
+        Apply after a successful one is refused (the server is already going
+        down). Every request-shaped failure is a clean 400/409 — a handler
+        thread must never die replyless on malformed input.
+        """
         try:
             request = json.loads(body.decode("utf-8"))
             comparisons = _parse_tuned_comparisons(request)
             alpha = request.get("alpha")
+            alpha = None if alpha is None else float(alpha)
             correction = request.get("correction")
+            correction = None if correction is None else str(correction)
         except Exception as exc:
             self._reply_error(400, f"invalid apply request: {exc}")
             return
 
-        # The calibration gate (D3, server-side half): while the applied knob
-        # state has no green D3 lookup, Apply needs the explicit
-        # confirm_uncalibrated — a visible cost, never a hard block.
-        uncalibrated = _uncalibrated_keys(srv, comparisons, alpha)
-        if uncalibrated and not bool(request.get("confirm_uncalibrated")):
-            self._reply_error(
-                409,
-                "these params have never passed `abk validate` — the real FPR is "
-                "unknown and the nominal α may understate it. Re-send with "
-                f"confirm_uncalibrated: true to apply anyway. ({'; '.join(uncalibrated)})",
-            )
-            return
+        with srv.request_lock:
+            if srv.applied is not None:
+                self._reply_error(409, "already applied — the server is shutting down")
+                return
+
+            # The calibration gate (D3, server-side half): while the applied
+            # knob state has no green D3 lookup, Apply needs the explicit
+            # confirm_uncalibrated — a visible cost, never a hard block.
+            try:
+                uncalibrated = _uncalibrated_keys(srv, comparisons, alpha, correction)
+            except Exception as exc:
+                self._reply_error(400, f"invalid apply request: {exc}")
+                return
+            if uncalibrated and not bool(request.get("confirm_uncalibrated")):
+                self._reply_error(
+                    409,
+                    "these params have never passed `abk validate` — the real FPR is "
+                    "unknown and the nominal α may understate it. Re-send with "
+                    f"confirm_uncalibrated: true to apply anyway. ({'; '.join(uncalibrated)})",
+                )
+                return
+
+            try:
+                applied = apply_tuned_config(
+                    original_path=srv.original_path,
+                    project_root=srv.project_root,
+                    comparisons=comparisons,
+                    alpha=alpha,
+                    correction=correction,
+                    tables=srv.tables,
+                    metrics_by_name=srv.metrics_by_name,
+                )
+            except Exception as exc:
+                # Keep serving so the user can fix the knobs and retry.
+                self._reply_error(400, f"invalid config: {exc}")
+                return
+            srv.applied = applied
 
         try:
-            applied = apply_tuned_config(
-                original_path=srv.original_path,
-                project_root=srv.project_root,
-                comparisons=comparisons,
-                alpha=None if alpha is None else float(alpha),
-                correction=None if correction is None else str(correction),
-                tables=srv.tables,
-                metrics_by_name=srv.metrics_by_name,
+            self._reply_json(
+                {
+                    "saved": str(applied.saved),
+                    "archived": str(applied.archived),
+                    "updated": list(applied.updated),
+                    "preserved": list(applied.preserved),
+                    "experiment_fields": list(applied.experiment_fields),
+                    "orphaned": [asdict(o) for o in applied.orphaned],
+                    "orphan_warning": applied.orphan_warning,
+                }
             )
-        except Exception as exc:
-            # Keep serving so the user can fix the knobs and retry.
-            self._reply_error(400, f"invalid config: {exc}")
-            return
-        srv.applied = applied
-        self._reply_json(
-            {
-                "saved": str(applied.saved),
-                "archived": str(applied.archived),
-                "updated": list(applied.updated),
-                "preserved": list(applied.preserved),
-                "experiment_fields": list(applied.experiment_fields),
-                "orphaned": [asdict(o) for o in applied.orphaned],
-                "orphan_warning": applied.orphan_warning,
-            }
-        )
-        # stop serving (from this worker thread) so the command can continue
-        threading.Thread(target=srv.shutdown, daemon=True).start()
+        finally:
+            # The YAML is written: shut down EVEN IF the reply write failed
+            # (a vanished client must not leave the server alive — Ctrl-C
+            # would then report "unchanged" after a successful write).
+            threading.Thread(target=srv.shutdown, daemon=True).start()
 
 
 def _parse_knob_request(request: dict[str, Any]) -> tuple[str, KnobState, int | None]:
@@ -336,13 +364,18 @@ def _parse_tuned_comparisons(request: dict[str, Any]) -> list[TunedComparison]:
         if not isinstance(entry, dict):
             continue
         method = entry.get("method")
+        # an ABSENT params key stays None — the writer's "a method switch must
+        # carry the full param set" guard must see the absence, not a fake {}
+        params = None
+        if isinstance(method, dict) and "params" in method:
+            params = dict(method.get("params") or {})
         out.append(
             TunedComparison(
                 metric=str(entry.get("metric", "")),
                 method_name=(
                     str(method["name"]) if isinstance(method, dict) and method.get("name") else None
                 ),
-                params=(dict(method.get("params") or {}) if isinstance(method, dict) else None),
+                params=params,
                 is_main_metric=entry.get("is_main_metric"),
                 is_guardrail=entry.get("is_guardrail"),
             )
@@ -351,17 +384,44 @@ def _parse_tuned_comparisons(request: dict[str, Any]) -> list[TunedComparison]:
 
 
 def _uncalibrated_keys(
-    srv: _ExploreServer, comparisons: list[TunedComparison], alpha: Any
+    srv: _ExploreServer,
+    comparisons: list[TunedComparison],
+    alpha: float | None,
+    correction: str | None,
 ) -> list[str]:
     """The (metric, id, alpha) keys this Apply would run at that are NOT green.
 
-    With ``_ab_aa_runs`` empty until M4 every Apply takes the confirm path —
-    the mechanically testable M3 DoD. Without a session (a bare server) the
-    gate stays conservative: everything is uncalibrated.
+    D3 keys calibration by the EFFECTIVE post-correction per-comparison alpha
+    — an alpha or correction edit re-keys every comparison, and role flips
+    move comparisons between the two Bonferroni tiers, so ALL of those gate
+    conservatively (with ``_ab_aa_runs`` empty until M4, every Apply takes
+    the confirm path — the mechanically testable M3 DoD). Without a session
+    (a bare server) everything is uncalibrated.
     """
     session = srv.session
     if session is None:
         return ["no session — calibration unknown"]
+
+    from abkit.pipeline.analyze import comparison_alpha, effective_alphas
+
+    prospective = session.experiment
+    if alpha is not None or correction is not None:
+        updates: dict[str, Any] = {}
+        if alpha is not None:
+            updates["alpha"] = alpha
+        if correction is not None:
+            updates["correction"] = correction
+        prospective = session.experiment.model_copy(update=updates)
+    try:
+        alphas = effective_alphas(prospective, session.project)
+    except Exception:
+        alphas = None  # apply_tuned_config will produce the real error
+
+    def _effective(series: Any) -> float:
+        if alphas is None:
+            return series.configured_alpha
+        return comparison_alpha(series.comparison, alphas)
+
     findings: list[str] = []
 
     def _check(metric: str, method_config_id: str, effective_alpha: float) -> None:
@@ -378,19 +438,34 @@ def _uncalibrated_keys(
             continue
         series = session.series_by_metric[tuned.metric]
         name = tuned.method_name or series.comparison.method.name
+        # the writer strips a riding "name" key — the gate must key identically
+        params = {k: v for k, v in dict(tuned.params).items() if k != "name"}
         try:
-            new_id = MethodConfig(name=name, params=dict(tuned.params)).method_config_id
+            new_id = MethodConfig(name=name, params=params).method_config_id
         except Exception:
-            continue  # apply_tuned_config will reject it with the real error
-        effective = float(alpha) if alpha is not None else series.configured_alpha
-        _check(tuned.metric, new_id, effective)
+            # unbindable params gate conservatively; the writer then rejects
+            # them with the real error message
+            findings.append(f"{tuned.metric}: method params not bindable — treated as uncalibrated")
+            checked.add(tuned.metric)
+            continue
+        _check(tuned.metric, new_id, _effective(series))
         checked.add(tuned.metric)
 
-    if alpha is not None:
-        # an experiment-level alpha change re-keys EVERY untouched comparison
+    rekeys_everything = (
+        alpha is not None
+        or correction is not None
+        or any(
+            tuned.is_main_metric is not None or tuned.is_guardrail is not None
+            for tuned in comparisons
+        )
+    )
+    if rekeys_everything:
+        # experiment-level alpha/correction edits re-key EVERY comparison at
+        # its prospective effective alpha; role flips move comparisons across
+        # the two Bonferroni tiers — both gate conservatively (D3)
         for metric, series in session.series_by_metric.items():
             if metric not in checked:
-                _check(metric, series.comparison.method.method_config_id, float(alpha))
+                _check(metric, series.comparison.method.method_config_id, _effective(series))
     return findings
 
 
@@ -415,9 +490,16 @@ def _run_reload(srv: _ExploreServer, metric: str, knobs: KnobState) -> Recompute
     method_config.bind(alpha=knobs.alpha)  # validate BEFORE any warehouse work
     comparison = series.comparison.model_copy(update={"method": method_config})
 
+    if session.cache_disabled_reason is not None:
+        # a budget-degraded session must not grow a shadow cache the replies
+        # would keep contradicting with the "suffstats-only" warning
+        raise ValueError(f"reload disabled: {session.cache_disabled_reason}")
+
     cutoffs = session.cached_cutoffs(metric) or series.cutoffs[-1:]
     if not cutoffs:
         raise ValueError(f"metric '{metric}' has no computed cutoffs to reload")
+
+    from abkit.tuning.session import loaded_value_count
 
     experiment = session.experiment.name
     srv.echo(
@@ -432,8 +514,12 @@ def _run_reload(srv: _ExploreServer, metric: str, knobs: KnobState) -> Recompute
             loaded = backend.load_cutoff(
                 comparison, series.metric, sql_by_name[metric], session.grid, Cutoff(end_ts=end_ts)
             )
+            previous = session.cache.get((metric, end_ts))
+            if previous is not None:
+                session.cache_values -= loaded_value_count(previous)
             session.cache[(metric, end_ts)] = loaded
             session.cache_lookback[(metric, end_ts)] = method_config.covariate_lookback
+            session.cache_values += loaded_value_count(loaded)
             srv.echo(f"LOAD  {experiment}/{metric}: cutoff {end_ts} reloaded")
     finally:
         manager.close()

@@ -13,6 +13,37 @@ number change).
 
 ## [Unreleased]
 
+### Fixed
+- **M3 WP5/WP6/WP8 review-closure** (adversarial review, 4 lenses / 25 raw
+  findings; the verify fleet was limit-truncated, findings triaged inline —
+  7 real after dedup):
+  - The D3 calibration gate lost its side doors: **correction-only** and
+    **role-flip-only** Applies now gate too (a correction edit re-keys every
+    comparison; a role flip moves comparisons across the two Bonferroni
+    tiers), and the gate keys by the **prospective EFFECTIVE per-comparison
+    alpha** (`effective_alphas` over the applied alpha/correction), not the
+    raw body alpha — restoring the mechanically testable "every Apply takes
+    the confirm path" DoD. Params carrying a riding `"name"` key are keyed
+    exactly as the writer strips them; unbindable params gate conservatively
+    instead of silently skipping the check.
+  - Handler-thread hardening: a malformed `Content-Length` header and a
+    non-numeric `alpha` in the `/apply` body are clean 400s (previously a
+    dead thread with no HTTP reply); `/apply` is **serialized** under the
+    request lock (two tabs cannot race the archive/rewrite seam or the shared
+    CLI-thread DB manager) and a second Apply after a successful one is a 409;
+    the self-shutdown thread now spawns in a `finally`, so a client that
+    vanishes mid-reply can no longer leave the server alive with the YAML
+    already rewritten (Ctrl-C would then have lied "experiment unchanged").
+  - `/reload` refuses on a budget-degraded (suffstats-only) session instead
+    of silently growing a shadow cache the replies keep contradicting, and
+    keeps `session.cache_values` accounting exact when replacing entries.
+  - The HTTP `comparisons` parser preserves an ABSENT `params` key as `None`
+    (the writer's "a method switch must carry the full param set" guard was
+    bypassable with a fake `{}`); the provenance header sanitizes newlines
+    (no comment-escape injection into the emitted YAML); the WP5 role-flip
+    test now proves the promised per-comparison alpha shift on a
+    three-comparison fixture (`0.05 → 0.025`), not a structural equality.
+
 ### Added
 - **M3 WP8 — `abk explore`** (per
   [`docs/specs/m3-implementation-plan.md`](docs/specs/m3-implementation-plan.md)

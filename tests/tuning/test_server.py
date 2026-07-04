@@ -332,6 +332,117 @@ class TestApply:
         assert status == 200
 
 
+class TestApplyGateClosure:
+    """WP5/WP6 review-closure regressions: the D3 gate has no side doors."""
+
+    def test_correction_only_apply_still_gates(self, explore):
+        status, detail = http(explore.endpoint("apply"), {"correction": "none"})
+        assert status == 409
+        assert "abk validate" in detail
+        assert explore.thread.is_alive()
+
+    def test_role_flip_only_apply_still_gates(self, explore):
+        status, detail = http(
+            explore.endpoint("apply"),
+            {"comparisons": [{"metric": "arpu", "is_guardrail": False}]},
+        )
+        assert status == 409
+        assert "abk validate" in detail
+
+    def test_params_with_a_riding_name_key_still_gate(self, explore):
+        status, detail = http(
+            explore.endpoint("apply"),
+            {
+                "comparisons": [
+                    {
+                        "metric": "arpu",
+                        "method": {
+                            "name": "t-test",
+                            "params": {"name": "t-test", "test_type": "absolute"},
+                        },
+                    }
+                ]
+            },
+        )
+        assert status == 409  # gated — never silently skipped past the gate
+
+    def test_method_switch_without_params_is_refused_over_http(self, explore):
+        status, detail = http(
+            explore.endpoint("apply"),
+            {
+                "comparisons": [{"metric": "arpu", "method": {"name": "bootstrap"}}],
+                "confirm_uncalibrated": True,
+            },
+        )
+        assert status == 400
+        assert "full param set" in detail
+
+    def test_non_numeric_alpha_is_a_clean_400(self, explore):
+        status, detail = http(
+            explore.endpoint("apply"), {"alpha": "bogus", "confirm_uncalibrated": True}
+        )
+        assert status == 400
+        assert "invalid apply request" in detail
+        assert explore.thread.is_alive()
+
+    def test_malformed_content_length_is_a_clean_400(self, explore):
+        import http.client
+        from urllib.parse import urlparse
+
+        parsed = urlparse(explore.endpoint("recompute"))
+        conn = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=10)
+        try:
+            conn.putrequest("POST", f"{parsed.path}?{parsed.query}")
+            conn.putheader("Content-Length", "abc")
+            conn.endheaders()
+            response = conn.getresponse()
+            assert response.status == 400
+            assert b"Content-Length" in response.read()
+        finally:
+            conn.close()
+        assert explore.thread.is_alive()
+
+    def test_second_apply_after_success_is_refused(self, explore):
+        status, _ = http(
+            explore.endpoint("apply"), {**TestApply.APPLY, "confirm_uncalibrated": True}
+        )
+        assert status == 200
+        # the server may already be down; a second Apply must never double-write
+        try:
+            status_two, detail = http(
+                explore.endpoint("apply"), {**TestApply.APPLY, "confirm_uncalibrated": True}
+            )
+            assert status_two in (409, 400)
+        except OSError:
+            pass  # connection refused after shutdown — equally safe
+        history = list((explore.path.parent / ".history").rglob("*.yml"))
+        assert len(history) == 1  # exactly ONE archive: no racing double Apply
+
+    def test_concurrent_recomputes_all_answer(self, explore):
+        results: list[int] = []
+
+        def worker(i: int) -> None:
+            status, _ = http(explore.endpoint("recompute"), recompute_request())
+            results.append(status)
+
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(5)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=15)
+        assert results == [200] * 5
+
+    def test_reload_refused_on_a_degraded_session(self, explore):
+        explore.session.cache.clear()
+        explore.session.cache_lookback.clear()
+        explore.session.cache_values = 0
+        explore.session.cache_disabled_reason = "session cache over budget: suffstats-only"
+        status, detail = http(explore.endpoint("reload"), recompute_request())
+        assert status == 400
+        assert "reload disabled" in detail
+        assert explore.session.cache == {}  # no shadow cache grew back
+
+
 class TestServeExplore:
     def test_serve_returns_applied_and_prints_url(self, tmp_path):
         explore = Explore(tmp_path)
