@@ -91,6 +91,11 @@ class ExploreSession:
     series_by_metric: dict[str, ComparisonSeries]
     aa_rows: list[dict] = field(default_factory=list)
     cache: dict[tuple[str, datetime], MetricLoadResult] = field(default_factory=dict)
+    #: the covariate_lookback each cached entry was RENDERED with — a Tier-R
+    #: /reload may re-render a cutoff under a different lookback, and the
+    #: cache gate must compare against what is actually in the entry, not the
+    #: configured method (recompute._cache_serves)
+    cache_lookback: dict[tuple[str, datetime], str | int | None] = field(default_factory=dict)
     cache_values: int = 0
     cache_disabled_reason: str | None = None
     warnings: list[str] = field(default_factory=list)
@@ -188,6 +193,7 @@ def load_session(
         series = session.series_by_metric[metric_name]
         loaded = loader(series.comparison, series.metric, grid, Cutoff(end_ts=end_ts))
         session.cache[(metric_name, end_ts)] = loaded
+        session.cache_lookback[(metric_name, end_ts)] = series.comparison.method.covariate_lookback
         return loaded_value_count(loaded)
 
     for metric_name, end_ts in latest_loads:
@@ -200,6 +206,7 @@ def load_session(
         # Even the latest cutoffs bust the budget: degrade honestly to
         # suffstats-only — a partial cache would misreport bootstrap as live.
         session.cache.clear()
+        session.cache_lookback.clear()
         session.cache_disabled_reason = (
             f"session cache over budget: the latest cutoffs alone hold "
             f"{session.cache_values} values (> {budget}) — suffstats-only "
@@ -220,6 +227,7 @@ def load_session(
             )
             break
         session.cache[(metric_name, end_ts)] = loaded
+        session.cache_lookback[(metric_name, end_ts)] = series.comparison.method.covariate_lookback
         session.cache_values += count
 
     return session

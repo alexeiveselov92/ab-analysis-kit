@@ -14,6 +14,41 @@ number change).
 ## [Unreleased]
 
 ### Added
+- **M3 WP6 — the explore localhost server + page + payload** (per
+  [`docs/specs/m3-implementation-plan.md`](docs/specs/m3-implementation-plan.md)
+  WP6/D1/D3):
+  - `abkit.tuning.server`: `build_explore_server` / `serve_explore` — the
+    donor's exact interaction contract on `127.0.0.1:0` with a one-shot
+    token: GET serves ONE pre-rendered page on any path (the token gates only
+    POSTs); `POST /recompute` answers knob states from the in-memory session —
+    repeatable, advisory, lock-serialized, **stale-dropping** (outdated
+    `request_id`s get `409 {stale}` before AND after the compute lock —
+    debounced knob drags never queue behind an in-flight bootstrap) and
+    silent; `POST /reload` executes the confirmed Tier-R actions with its OWN
+    manager inside the serialized handler (re-rendering cached cutoffs under
+    the requested lookback — the session tracks per-entry render lookbacks so
+    the refreshed cache serves subsequent `/recompute`s) and streams a
+    run-log through `server.echo`; `POST /validate` is the reserved M4 slot
+    (501); `POST /apply` is the only terminal action — the **server-side
+    calibration gate** (D3: `confirm_uncalibrated` required while the applied
+    `(metric, method_config_id, alpha)` keys are not green — with
+    `_ab_aa_runs` empty until M4 every Apply takes the confirm path), the WP5
+    seam, the `orphaned` block + warning echoed in the reply, then
+    self-shutdown from a daemon thread. Invalid configs return 400 and KEEP
+    serving; error detail travels in the UTF-8 body (never the latin-1 status
+    line); oversized bodies drain-then-413; no pipeline lock is ever taken.
+  - `abkit.tuning.html`: `render_explore_html` — the WP3-hardened template
+    mechanics verbatim (one-pass regex substitution, every `<` in the baked
+    JSON escaped, no webfonts, `abk-explore` mount, `__ABK_EXPLORE__`
+    global). Ships with a committed placeholder `assets/explore.js` (honest
+    pending note) until the WP7 cockpit bundle replaces it — the wheel
+    packaging contract was pre-wired in WP3.
+  - `abkit.tuning.payload`: `build_explore_payload` — the WP2 report payload
+    riding verbatim + the `explore` block (knob surfaces from `param_specs`,
+    per-metric initial calibration chip state keyed by the configured
+    `(method_config_id, alpha)`, session-cache facts, ms-epoch cutoffs) and
+    the four endpoint slots (`None` = the static `--no-serve` preview badge).
+
 - **M3 WP5 — Apply, `.history`, orphan detection** (per
   [`docs/specs/m3-implementation-plan.md`](docs/specs/m3-implementation-plan.md)
   WP5/D4/D9):

@@ -650,8 +650,15 @@ class RecomputeEngine:
 
         # Tier S — the session cache (from_samples), cached cutoffs only.
         loaded = self._session.loaded(series.metric.name, row["end_ts"])
+        entry_lookback = self._session.cache_lookback.get((series.metric.name, row["end_ts"]))
         if loaded is not None and self._cache_serves(
-            series, method_cls, resolved_params, loaded, row["name_1"], row["name_2"]
+            series,
+            method_cls,
+            resolved_params,
+            loaded,
+            row["name_1"],
+            row["name_2"],
+            entry_lookback,
         ):
             group_1 = build_container(method_cls.input_kind, row["name_1"], loaded)
             group_2 = build_container(method_cls.input_kind, row["name_2"], loaded)
@@ -764,8 +771,13 @@ class RecomputeEngine:
         loaded: MetricLoadResult,
         name_1: str,
         name_2: str,
+        entry_lookback: str | int | None = None,
     ) -> bool:
-        """Whether this cached cutoff can feed ``method_cls`` for this pair."""
+        """Whether this cached cutoff can feed ``method_cls`` for this pair.
+
+        ``entry_lookback`` is the ``covariate_lookback`` the cache entry was
+        RENDERED with (a Tier-R reload may differ from the configured method).
+        """
         needed_roles = _KIND_ROLES.get(method_cls.input_kind)
         if needed_roles is None:
             return False
@@ -782,11 +794,10 @@ class RecomputeEngine:
             if resolved_params.get("stratify") and loaded.strata_by_variant.get(variant) is None:
                 return False
         if _needs_covariate(method_cls) and series.metric.columns.covariate is None:
-            # The cached covariate was rendered over the CONFIGURED lookback;
-            # a different lookback is a new pre-period render — Tier R.
-            configured = _lookback_seconds(series.comparison.method.covariate_lookback)
+            # The cached covariate was rendered over the ENTRY's lookback; a
+            # different lookback is a new pre-period render — Tier R.
             requested = _lookback_seconds(resolved_params.get("covariate_lookback"))
-            if requested != configured:
+            if requested != _lookback_seconds(entry_lookback):
                 return False
         return True
 

@@ -13,6 +13,8 @@ from abkit.tuning.config_writer import (
     TunedComparison,
     apply_tuned_config,
 )
+from abkit.tuning.html import render_explore_html
+from abkit.tuning.payload import build_explore_payload
 from abkit.tuning.recompute import (
     CalibrationStatus,
     ExplorePoint,
@@ -23,6 +25,7 @@ from abkit.tuning.recompute import (
     find_calibration,
     resolve_fpr_budget,
 )
+from abkit.tuning.server import build_explore_server, serve_explore
 from abkit.tuning.session import (
     EXPLORE_CACHE_BUDGET,
     ComparisonSeries,
@@ -46,7 +49,11 @@ __all__ = [
     "TunedComparison",
     "apply_tuned_config",
     "backend_cutoff_loader",
+    "build_explore_payload",
+    "build_explore_server",
     "find_calibration",
     "load_session",
+    "render_explore_html",
     "resolve_fpr_budget",
+    "serve_explore",
 ]
