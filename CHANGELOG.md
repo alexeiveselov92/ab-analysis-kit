@@ -26,6 +26,15 @@ number change).
   per point — the read-time D5(b) fallback stays verdict-level (one solve per
   pair on the latest cutoff). A worst-case sub-day payload dropped from
   ~40–100 s (and a hard crash) to milliseconds; data-contract §5.3 amended.
+- **Payload consistency** (M3 WP2 sweep-closure, second review pass):
+  - per-point `mde` now honours the D5(b) **both-present guard** — a
+    half-present stored pair (one arm's MDE solved to inf and was NULLed by
+    enrich) shows null, never the finite arm alone (which would fake adequate
+    power and contradict the verdict on the same cutoff; review finding).
+  - `srm.observed` is the **whole-cohort** count even under a pinned-`end`
+    replay, so it stays coherent with the whole-run `srm.flag`/`pvalue` the
+    driver computes once and broadcasts (the `until=` pin is dropped;
+    per-cutoff SRM lands with M5 sequential). §5.3 amended.
 
 ### Added
 - **M3 WP2 — the experiment-primary report payload** (per

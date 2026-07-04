@@ -83,7 +83,7 @@ Conventions: `⟲` = port near-verbatim, `A` = adapt, `RW` = rewrite on donor sk
 
 **Tests:** rewrite donor `test_report.py` payload cases against `tests/_helpers/fake_db.py` — payload shape/keys vs a seeded fake `_ab_results`; per-series grouping by `method_config_id`; NaN→null; demoted-row null pass-through; empty-experiment contract; provenance dedupe + projection (assert rendered SQL absent from payload); verdict block equals WP1 output; the `look` block at a sub-day-cadence fixture; multi-metric/multi-pair ordering stable (`json_dumps_sorted` determinism).
 
-**DoD:** `build_report_payload(experiment_config, tables, *, generated_at, start=None, end=None) -> dict` matches the D6 schema doc byte-stably on the fake manager.
+**DoD:** `build_report_payload(experiment, tables, *, project=None, metric_configs=None, generated_at=None, start=None, end=None, max_points=REPORT_POINT_BUDGET) -> dict` matches the D6 schema doc byte-stably on the fake manager. *(As-built signature — `project` resolves the readout correction + names the payload, `metric_configs` supplies metric descriptions per D6, `max_points` bounds the point budget; all keyword-only with sane defaults.)*
 
 **Must-fixes discharged:** none directly; it is the contract both must-fix surfaces render.
 

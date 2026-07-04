@@ -74,27 +74,24 @@ class _ExposuresMixin(_InternalTablesBase):
         """
         return self._manager.table_exists(TABLE_EXPOSURES, schema=self._manager.internal_location)
 
-    def get_exposure_counts(self, experiment: str, until: datetime | None = None) -> dict[str, int]:
+    def get_exposure_counts(self, experiment: str) -> dict[str, int]:
         """Per-variant unit counts — the SRM gate's observed counts.
 
         Deduped (FINAL on ClickHouse) so a mid-merge ReplacingMergeTree never
-        double-counts a unit (quorum "correctness under async merge").
-        ``until`` bounds the cohort as-of a cutoff (``exposure_ts < until``,
-        half-open like every window) so a replayed report shows the counts
-        that existed then, not today's.
+        double-counts a unit (quorum "correctness under async merge"). Whole
+        cohort by design: M2 SRM is a single whole-cohort check, so the report
+        pairs these counts with that whole-run flag/pvalue (an as-of subset
+        would mismatch it — review finding); per-cutoff SRM lands with
+        sequential (M5).
         """
         full_table_name = self._manager.get_full_table_name(TABLE_EXPOSURES, use_internal=True)
-        until_filter = " AND exposure_ts < %(until)s" if until is not None else ""
         query = f"""
         SELECT variant, count(*) AS cnt
         FROM {full_table_name}{self._manager.final_modifier}
-        WHERE experiment = %(e)s{until_filter}
+        WHERE experiment = %(e)s
         GROUP BY variant
         """
-        params: dict[str, object] = {"e": experiment}
-        if until is not None:
-            params["until"] = until
-        rows = self._manager.execute_query(query, params)
+        rows = self._manager.execute_query(query, {"e": experiment})
         return {row["variant"]: int(row["cnt"]) for row in rows if row.get("variant")}
 
     def get_first_exposure_ts(self, experiment: str) -> datetime | None:

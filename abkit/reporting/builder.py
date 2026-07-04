@@ -112,10 +112,17 @@ def _stored_pair_mde(row: dict) -> float | None:
     honestly shows *what actually ran*: MDE where the row computed it
     (``calculate_mde: true``), null otherwise. The read-time D5(b) fallback
     stays where the FLAT decision needs it — the **verdict**, one solve per
-    pair on the latest cutoff (readout ``pair_mde``)."""
+    pair on the latest cutoff (readout ``pair_mde``).
+
+    The **both-present guard** mirrors readout ``pair_mde``: enrich NULLs a
+    non-finite solve, so a half-present pair means one arm is undetectable —
+    taking the finite arm alone would fake adequate power (the exact trap the
+    verdict path guards; review finding). Half-present ⇒ null, never the
+    finite arm."""
     mde_1, mde_2 = _num_or_none(row.get("mde_1")), _num_or_none(row.get("mde_2"))
-    magnitudes = [abs(m) for m in (mde_1, mde_2) if m is not None]
-    return max(magnitudes) if magnitudes else None
+    if mde_1 is None or mde_2 is None:
+        return None
+    return max(abs(mde_1), abs(mde_2))
 
 
 def _point(row: dict) -> dict:
@@ -353,8 +360,13 @@ def build_report_payload(
 
     observed_counts: dict[str, int] = {}
     if ready and tables.exposures_table_exists():
-        # as-of the pinned end when replaying (exposure_ts < end, half-open)
-        observed_counts = tables.get_exposure_counts(experiment.name, until=end)
+        # WHOLE-cohort counts (not as-of the pinned end): M2 SRM is a single
+        # whole-cohort check (driver.py) whose flag/pvalue enrich broadcasts
+        # onto every row; the readout srm block below carries that same
+        # whole-run flag/pvalue, so the observed counts must match it — an
+        # as-of subset would pair a subset count with a whole-run p (review
+        # finding). Per-cutoff SRM lands with sequential (M5).
+        observed_counts = tables.get_exposure_counts(experiment.name)
     # zero-fill declared variants, mirroring the driver's SRM gate input
     observed = {variant: int(observed_counts.get(variant, 0)) for variant in variants}
 

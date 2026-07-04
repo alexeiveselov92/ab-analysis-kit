@@ -207,9 +207,10 @@ is informational only. `</` is escaped at HTML-bake time (WP3), not here.
   tz,                          // experiment timezone (IANA)
   arms: [..],                  // variant names, config order; first = control
   srm: {flag, pvalue|null,     // experiment-level, from the readout (flagged-row p)
-        observed: {arm: count},   // exposure counts, declared arms zero-filled;
-                                  // as-of the pinned end when replaying
-                                  // (exposure_ts < end, half-open)
+        observed: {arm: count},   // WHOLE-cohort exposure counts, declared arms
+                                  // zero-filled — coherent with the whole-run
+                                  // flag/pvalue (M2 SRM is one whole-cohort
+                                  // check; per-cutoff SRM = M5 sequential)
         expected: {arm: split}},
   calibration: null,           // M3: always null. M4 shape (no v-bump): {fpr,
                                // peeking_fpr, headline, matrix_rows, report_link}
@@ -250,8 +251,10 @@ is informational only. `</` is escaped at HTML-bake time (WP3), not here.
 ```
 
 `start`/`end` args bound the window on `end_ts` (inclusive); pinning `end`
-**replays** the readout as-of a historical cutoff (including the as-of
-`observed` exposure counts). A global point budget (`REPORT_POINT_BUDGET`,
+**replays** the readout as-of a historical cutoff. (`srm.observed` stays
+whole-cohort even under a pin — it must match the whole-run `srm.pvalue`/`flag`
+the driver computed once and broadcast onto every row.) A global point budget
+(`REPORT_POINT_BUDGET`,
 20 000 across metrics × pairs × cutoffs) clips every series to its trailing
 window **after** the verdict is evaluated on the full series, and appends a
 loud payload warning. The empty-experiment contract keeps every key present

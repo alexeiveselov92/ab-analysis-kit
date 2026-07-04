@@ -278,6 +278,18 @@ class TestPayloadShape:
         (verdict,) = payload["verdicts"]
         assert verdict["mde"] == pytest.approx(0.0251, abs=5e-4)
 
+    def test_point_mde_half_present_is_null_not_finite_arm(self, tables):
+        """A half-present pair (one arm's MDE solved to inf, enrich NULLed it):
+        the point must show null, never the finite arm — taking it alone fakes
+        adequate power on a pair the verdict declares undetectable (D5(b)
+        both-present guard; review finding)."""
+        experiment = make_experiment()
+        seed_series(tables, experiment, days=1, mde_1=0.05, mde_2=None)
+        payload = build_report_payload(experiment, tables)
+
+        (point,) = payload["metrics"][0]["pairs"][0]["series"]
+        assert point["mde"] is None
+
     def test_point_mde_read_time_solve_not_called_per_point(self, tables):
         """Guard the cost fix: building a series triggers zero t-test solves."""
         experiment = make_experiment()
@@ -566,14 +578,16 @@ class TestVerdictsAndSrm:
         payload = build_report_payload(experiment, tables)
         assert payload["srm"]["observed"] == {"control": 2, "treatment": 2}
 
-    def test_srm_observed_windowed_on_replay(self, tables):
-        """A pinned end replays the as-of cohort (exposure_ts < end)."""
+    def test_srm_observed_whole_cohort_under_replay(self, tables):
+        """A pinned end does NOT subset observed: it must stay coherent with
+        the whole-run srm flag/pvalue the driver broadcast onto every row."""
         experiment = make_experiment()
         seed_series(tables, experiment)
         self.seed_exposures(tables, experiment)
         payload = build_report_payload(experiment, tables, end=START + timedelta(days=7))
-        # u4 (exposed day 10) is not in the day-7 cohort
-        assert payload["srm"]["observed"] == {"control": 2, "treatment": 1}
+        # u4 (exposed day 10) is outside the day-7 chart window but still in
+        # the whole-cohort SRM counts — same cohort the flag/pvalue describe
+        assert payload["srm"]["observed"] == {"control": 2, "treatment": 2}
 
     def test_missing_exposures_table_zero_fills(self, tables):
         """_ab_results present but _ab_exposures dropped: no crash, zeros."""
