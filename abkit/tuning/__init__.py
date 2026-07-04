@@ -7,6 +7,12 @@ server (WP6) and ``abk explore`` (WP8) bind these; nothing here touches the
 DB after session load.
 """
 
+from abkit.tuning.config_writer import (
+    AppliedConfig,
+    OrphanedSeries,
+    TunedComparison,
+    apply_tuned_config,
+)
 from abkit.tuning.recompute import (
     CalibrationStatus,
     ExplorePoint,
@@ -27,14 +33,18 @@ from abkit.tuning.session import (
 
 __all__ = [
     "EXPLORE_CACHE_BUDGET",
+    "AppliedConfig",
     "CalibrationStatus",
     "ComparisonSeries",
     "ExplorePoint",
     "ExploreSession",
     "KnobState",
+    "OrphanedSeries",
     "PairRecompute",
     "RecomputeEngine",
     "RecomputeResult",
+    "TunedComparison",
+    "apply_tuned_config",
     "backend_cutoff_loader",
     "find_calibration",
     "load_session",

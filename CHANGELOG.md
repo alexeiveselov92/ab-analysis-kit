@@ -14,6 +14,35 @@ number change).
 ## [Unreleased]
 
 ### Added
+- **M3 WP5 — Apply, `.history`, orphan detection** (per
+  [`docs/specs/m3-implementation-plan.md`](docs/specs/m3-implementation-plan.md)
+  WP5/D4/D9):
+  - `abkit.tuning.config_writer`: `apply_tuned_config` — the ONLY mutation
+    seam of `abk explore`, donor-disciplined **validate → archive → re-emit**:
+    per-comparison `method` blocks (matched by metric; a merely-viewed
+    comparison is never written — the dirty-slot discipline), Review-mode
+    `is_main_metric`/`is_guardrail` flips (marking only, D9), and
+    experiment-level `alpha`/`correction`, merged into the parsed document and
+    validated as a whole (`create_method` per touched method +
+    `ExperimentConfig.model_validate`) before ANY filesystem write. Tunability
+    is registry-derived (paired designs and cross-kind methods refused — never
+    a hardcoded name set); identity-excluded params (`seed`,
+    `max_block_bytes`) carry over from the slot being retuned via the specs.
+  - The previous YAML is archived **byte-verbatim** (comments included) to
+    `<dir>/.history/<experiment>/<experiment>-<stamp>.yml` before overwrite —
+    repeated Applies each archive, same-second Applies de-collide, and
+    discovery never picks archives up as live configs. Comments die on
+    re-emit (owner-ratified D4); re-emission is isolated behind the ONE
+    `_reemit_yaml` strategy function so a comment-preserving ruamel backend
+    can swap in later without contract changes.
+  - **Orphan detection** (NEW vs the donor): old-vs-new `method_config_id`
+    per touched comparison through the single hashing path; an identity edit
+    over a series with persisted rows yields the `orphaned` block + the
+    driver-identical warning (`abk clean` + `abk run --select` hints) in the
+    result, and the provenance header. Apply **never** auto-cleans or
+    auto-runs; alpha-only edits and role flips are orphan-free by
+    construction.
+
 - **M3 WP4 — the explore recompute engine** (per
   [`docs/specs/m3-implementation-plan.md`](docs/specs/m3-implementation-plan.md)
   WP4/D1/D3/D11/D12):
