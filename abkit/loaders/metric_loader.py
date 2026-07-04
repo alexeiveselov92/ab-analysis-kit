@@ -177,13 +177,31 @@ def load_metric(
             f"GROUP BY {unit_col} in the metric SQL?"
         )
 
-    units_by_variant = {v: np.array(units, dtype=object) for v, units in result_units.items()}
+    # Canonical per-unit order (m3-implementation-plan.md D11): sort every
+    # variant's arrays by unit key. Bootstrap replicates index these arrays,
+    # so the physical warehouse read order — which ClickHouse does not
+    # guarantee — would otherwise leak into persisted numbers. Sorting is an
+    # input-assembly fix, not a method change (identical Samples still give
+    # identical results); recorded in statistics-changes.md §8.
+    order_by_variant = {
+        v: sorted(range(len(units)), key=units.__getitem__) for v, units in result_units.items()
+    }
+
+    def _reorder(variant: str, values: list[Any]) -> list[Any]:
+        return [values[i] for i in order_by_variant[variant]]
+
+    units_by_variant = {
+        v: np.array(_reorder(v, units), dtype=object) for v, units in result_units.items()
+    }
     roles_by_variant = {
-        v: {role: _to_float_array(values, role, metric.name) for role, values in roles.items()}
+        v: {
+            role: _to_float_array(_reorder(v, values), role, metric.name)
+            for role, values in roles.items()
+        }
         for v, roles in result_roles.items()
     }
     strata_by_variant: dict[str, np.ndarray | None] = {
-        v: (np.array(result_strata[v], dtype=object) if v in result_strata else None)
+        v: (np.array(_reorder(v, result_strata[v]), dtype=object) if v in result_strata else None)
         for v in units_by_variant
     }
 

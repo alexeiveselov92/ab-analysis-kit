@@ -216,3 +216,22 @@ with these documented, deliberate exceptions — each per the sections above:
     require elementwise-identical `categories_array` on both arms; the legacy
     silently resampled per-arm strata with a shared seed, which breaks the
     pairing whenever strata differ — that input is now a hard validation error.
+
+## 8. Canonical unit order in the loaders (M3 D11 — determinism note, no version bump)
+
+**Decision (2026-07, m3-implementation-plan.md D11):** `load_metric` sorts every
+variant's per-unit arrays (units, all role columns, strata) by unit key after
+fetch, and the explore session cache preserves that order.
+
+Why: bootstrap replicates are order-dependent by construction (resample indices
+index the per-unit array), and the loader previously kept warehouse result-set
+order — which ClickHouse does not guarantee. The M2 "byte-stable re-run" and the
+M3 "unchanged knobs reproduce persisted rows" claims therefore only held on
+order-deterministic backends (fake_db, the seed dataset).
+
+This is a **pipeline-level input-assembly fix, not a method change**: identical
+`Sample` inputs still produce identical outputs, so no `ALGORITHM_VERSION` bump.
+It is still recorded here (never change a number silently, even at the
+assembly layer): bootstrap rows persisted **before** the sort may differ from
+re-computed ones on backends that happened to return a different physical
+order. Closed-form methods are order-invariant and unaffected.

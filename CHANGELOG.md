@@ -14,6 +14,56 @@ number change).
 ## [Unreleased]
 
 ### Added
+- **M3 WP4 — the explore recompute engine** (per
+  [`docs/specs/m3-implementation-plan.md`](docs/specs/m3-implementation-plan.md)
+  WP4/D1/D3/D11/D12):
+  - `abkit.tuning.session`: `load_session` — the one warehouse load pass at
+    explore start (D2): the persisted per-comparison series plus the bounded
+    Tier-S per-unit cache (latest cutoffs first, older newest-first under a
+    ~2×10⁷-value budget; over-budget degrades honestly to a suffstats-only
+    session with a reason string, never a silent partial cache).
+  - `abkit.tuning.recompute`: `RecomputeEngine` — one knob state answered
+    entirely in memory (D1, "no *warehouse* round-trip per knob change"):
+    **Tier E** exact suffstats reconstruction across the whole grid for the
+    closed-form families (t-test `m2 = std²·n`; z-test `nobs` inverted from
+    the persisted SE — never from the one-row-per-unit `size_i`; ratio-delta
+    via the exact denominator≡1 surrogate; CUPED→t-test "CUPED off" rides the
+    persisted ORIGINAL per-arm mean/std), **Tier α** alpha-inversion for
+    closed-form rows (symmetric normal CIs only — resampling families are
+    declaratively excluded), **Tier S** `from_samples` over the session cache
+    (bootstrap knobs, the stratify toggle, CUPED param edits) with the
+    per-row seed re-derived by the persisted convention so unchanged knobs
+    reproduce stored rows byte-exactly, and **Tier R** classification for
+    CUPED off→on / `covariate_lookback` edits (the serialized `/reload`
+    executes them, WP6). Per-pair points carry an exact/approx/baseline tier;
+    windshield chips (lift, CI half-width, p-value, achieved power at
+    `min_effect` with honest capability notes); the live `method_config_id`
+    hashed only through the bound-probe path; knob metadata auto-derived from
+    `param_specs` (nothing special-cases a method name; a supplied `seed` is
+    ignored with a warning); `QuarantinedMethodError` surfaces verbatim.
+  - `find_calibration` + `resolve_fpr_budget` (D3): the calibration chip
+    lookup keyed by `(metric, method_config_id, **alpha**)` against the
+    as-built `_ab_aa_runs` (`status='failed'`/FPR-less rows never count;
+    alpha edits downgrade to `alpha_mismatch`; identity edits flip to
+    uncalibrated — that IS the staleness semantics); budget resolves
+    metric-seam → project `aa_fpr_budget` → `α × 1.5`.
+  - `pipeline.analyze.build_container` is now public (shared by the engine's
+    Tier-S path — byte-identical containers to the pipeline);
+    `InternalTablesManager.aa_runs_table_exists()` guards chip reads on a
+    never-validated project. Sidedness + winsorization stay OFF the knob
+    surface (D12) — deferred to M4 under change control (ROADMAP note).
+
+### Changed
+- **D11 — canonical unit order in `load_metric`** (M3 WP4; recorded in
+  [`statistics-changes.md §8`](docs/specs/statistics-changes.md); a
+  pipeline-level input-assembly fix, NO `ALGORITHM_VERSION` bump): every
+  variant's per-unit arrays are sorted by unit key after fetch, making
+  order-dependent bootstrap replicates reproducible across physical warehouse
+  read orders (ClickHouse guarantees none). Bootstrap rows persisted before
+  the sort may differ from re-computed ones on backends that happened to
+  return a different order; closed-form results are order-invariant.
+
+### Added
 - **M3 WP3 — the self-contained HTML readout + `abk run --report`** (per
   [`docs/specs/m3-implementation-plan.md`](docs/specs/m3-implementation-plan.md)
   WP3/D7/D8):

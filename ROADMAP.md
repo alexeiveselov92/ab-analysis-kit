@@ -93,6 +93,12 @@ definition-of-done includes the relevant
 - Port the autotune scaffolding → placebo A/A splits, FPR + power + achieved-MDE +
   coverage, **honest cumulative-peeking FPR** over the day-grid; `_ab_aa_runs`;
   recommendation; the matrix UX (color vs budget, Recommended row, plain verdicts).
+- **Deferred here from the M3 knob surface (D12, change control):** one/two-sided
+  tests and winsorization — neither exists as a stats-core method param (p-values
+  are hardcoded two-sided; no winsor code anywhere), and the explore rail is
+  auto-derived from `param_specs`, so neither can be faked in the UI. Adding
+  either is a stats-core change with the full obligations (identity impact,
+  `statistics-changes.md` entry, A/A validation) — the M4 harness arbitrates them.
 - **DoD:** closed-form default, bootstrap A/A opt-in with subsampling; worked
   example in the spec; powers the explore calibration chip and the blind-rederivation
   arbitration. *(Must-fixes: matrix UX, peeking FPR, validate cost bound.)*

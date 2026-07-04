@@ -21,6 +21,15 @@ AA_RUN_COLUMNS: tuple[str, ...] = tuple(
 
 
 class _AaRunsMixin(_InternalTablesBase):
+    def aa_runs_table_exists(self) -> bool:
+        """True when ``_ab_aa_runs`` exists — a never-validated project has none.
+
+        Read-only surfaces (the explore calibration chip, m3 WP4) guard with
+        this instead of ``ensure_tables()``: reading must never create schema
+        (the ``results_table_exists`` precedent).
+        """
+        return self._manager.table_exists(TABLE_AA_RUNS, schema=self._manager.internal_location)
+
     def save_aa_run(self, record: dict[str, Any]) -> None:
         """Persist one A/A validation run row (``created_at`` stamped here)."""
         missing = [c for c in AA_RUN_COLUMNS if c not in record]
