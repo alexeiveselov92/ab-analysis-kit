@@ -148,12 +148,33 @@ class SequentialConfig(BaseModel):
 
 
 class ComparisonConfig(BaseModel):
-    """One (metric × method) binding within an experiment."""
+    """One (metric × method) binding within an experiment.
+
+    ``min_effect``/``desired_direction`` are READ-TIME verdict inputs
+    (m3-implementation-plan.md D5; data-contract-and-reporting.md §1) — they
+    are not method params and never enter ``method_config_id``.
+    """
 
     metric: str = Field(..., description="References metrics/<name>.yml by name")
     is_main_metric: bool = Field(default=False, description="Primary winner criterion")
     is_guardrail: bool = Field(default=False, description="Checked for regression only")
     method: MethodConfig = Field(..., description="The statistical method to run")
+    min_effect: float | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "The business-meaningful effect in the units of this comparison's "
+            "persisted effect (test_type-dependent). Enables the FLAT verdict: "
+            "without it, flat cannot be distinguished from underpowered (D5(b))"
+        ),
+    )
+    desired_direction: Literal["increase", "decrease"] = Field(
+        default="increase",
+        description=(
+            "Which effect sign is good for this metric — orients WIN vs LOSE "
+            "for main metrics and the regression check for guardrails (D5(c))"
+        ),
+    )
 
     @model_validator(mode="after")
     def validate_roles(self) -> ComparisonConfig:
@@ -163,6 +184,28 @@ class ComparisonConfig(BaseModel):
                 "cannot both be true"
             )
         return self
+
+
+class ReadoutConfig(BaseModel):
+    """Read-time verdict knobs (m3-implementation-plan.md D5 — never identity)."""
+
+    stabilization_days: float = Field(
+        default=7.0,
+        gt=0,
+        description=(
+            "The trailing elapsed-days window over which significance must be "
+            "persistent (judged over elapsed time, never look count — "
+            "data-contract-and-reporting.md §4); default 7 covers one weekly cycle"
+        ),
+    )
+    guardrail_policy: Literal["block", "warn"] = Field(
+        default="block",
+        description=(
+            "What a regressed guardrail does to a WIN: 'block' caps it at "
+            "INCONCLUSIVE (default); 'warn' keeps WIN with a mandatory loud "
+            "caveat (owner-ratified D5(c))"
+        ),
+    )
 
 
 class ExperimentConfig(BaseModel):
@@ -201,6 +244,7 @@ class ExperimentConfig(BaseModel):
     )
     correction: CorrectionKind | None = Field(default=None, description="None -> project default")
     sequential: SequentialConfig = Field(default_factory=SequentialConfig)
+    readout: ReadoutConfig = Field(default_factory=ReadoutConfig)
     comparisons: list[ComparisonConfig] = Field(...)
 
     # ── field validators ─────────────────────────────────────────────────────

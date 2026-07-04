@@ -14,6 +14,24 @@ number change).
 ## [Unreleased]
 
 ### Added
+- **M3 WP1 — the readout decision core** (per
+  [`docs/specs/m3-implementation-plan.md`](docs/specs/m3-implementation-plan.md) D5):
+  - `abkit.pipeline.readout`: pure read-time WIN/LOSE/FLAT/INCONCLUSIVE
+    verdicts over persisted `_ab_results` rows — SRM hard gate; pre-horizon
+    withholding (extends to FLAT); elapsed-time stabilization over the
+    trailing `readout.stabilization_days` (default 7, floored at 3
+    informative cutoffs); FLAT gated on `min_effect` vs the pair MDE with a
+    read-time MDE fallback for t-test/z-test rows (the z-test `nobs` inverted
+    from the persisted SE, never the unit count); guardrail regression under
+    the owner-ratified `guardrail_policy: block | warn`; read-time
+    Benjamini-Hochberg rescoring (pulled forward from the M5 roadmap line —
+    compute-time BH rows carry the raw alpha); orphaned/unconfigured row
+    filtering with warnings. Verdicts are read-time only, never persisted.
+    Zero statistical numbers changed.
+  - Experiment config: `readout: {stabilization_days, guardrail_policy}` and
+    per-comparison `min_effect` / `desired_direction` (read-time only — never
+    part of `method_config_id`); specs amended
+    (data-contract-and-reporting.md §1, declarative-config.md §2).
 - **M2 — declarative config + DB layer + the recompute pipeline** (per
   [`docs/specs/m2-implementation-plan.md`](docs/specs/m2-implementation-plan.md)):
   - `abkit.core`: duration parser (`N{s,m,h,d,w}`), `TableModel`/`ColumnDefinition`

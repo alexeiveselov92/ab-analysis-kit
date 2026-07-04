@@ -30,6 +30,38 @@ INCONCLUSIVE otherwise. The main metric drives the verdict; guardrails are check
 for regression; **SRM is a hard gate**; **pre-horizon WIN/LOSE is refused unless
 `sequential.enabled`** (decision Q2).
 
+*The exact rules (amended with M3 WP1 — m3-implementation-plan.md D5; the
+verdict is READ-TIME only, recomputed at render, never persisted):*
+
+- **Stabilization** = over the trailing `readout.stabilization_days` (default
+  **7** elapsed-days — one weekly cycle; widened to the last 3 informative
+  cutoffs when the cadence is coarser), every informative cutoff's CI excludes
+  zero with one consistent sign (WIN/LOSE) or includes zero (FLAT). Judged
+  strictly over `elapsed_days`, never look count (§4). Demoted
+  (`insufficient_data`) and degenerate (NULL-bound) rows are gaps, never zeros.
+- **FLAT** additionally needs `comparisons[].min_effect` (in the units of that
+  comparison's persisted `effect`) and pair MDE ≤ `min_effect` at the latest
+  cutoff. NULL `mde_1/2` fall back to a read-time `stats/power.py` solve for
+  t-test/z-test rows (the z-test `nobs` inverted from the persisted SE);
+  methods without MDE capability leave FLAT honestly unreachable, with the
+  rationale saying so. Without `min_effect`, FLAT is unreachable by
+  construction ("cannot distinguish flat from underpowered").
+- **Guardrail regression** = the guardrail's CI excludes zero against its
+  `desired_direction` at the stored per-row alpha at its latest informative
+  cutoff (no stabilization requirement — any significant harm flags).
+  Consequence is `readout.guardrail_policy` (owner-ratified): `block`
+  (default) caps WIN at INCONCLUSIVE; `warn` keeps WIN with a mandatory loud
+  caveat. LOSE is never upgraded or blocked.
+- **Pre-horizon** (rows carry `ci_kind="fixed"` until M5): WIN/LOSE **and
+  FLAT** are withheld before `is_horizon` — FLAT is equally a stop decision.
+- **Multi-arm**: one verdict per (main metric × control-vs-treatment pair);
+  no invented scalar aggregate.
+- **Benjamini-Hochberg** (`correction: benjamini_hochberg`) is applied at
+  read time by `readout.py`, per cutoff across the experiment's comparisons —
+  compute-time rows deliberately carry the raw alpha.
+- Verdicts covering under 7 elapsed days carry the "covers X% of a weekly
+  cycle" representativeness caveat (§4).
+
 ## 2. The results contract (`_ab_results`) — clean & BI-first
 
 One row per `(experiment, metric, variant-pair, method, end_date)`. Designed so any

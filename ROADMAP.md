@@ -99,8 +99,10 @@ definition-of-done includes the relevant
 
 ## M5 — Sequential analysis + planner + corrections
 - `sequential/` (mSPRT always-valid + alpha-spending), opt-in; `ci_kind`/`is_horizon`
-  in the contract. `abk plan` (pre-launch power/sizing). Benjamini-Hochberg
-  read-time; composed-FDR empirical validation.
+  in the contract. `abk plan` (pre-launch power/sizing). ~~Benjamini-Hochberg
+  read-time~~ *(pulled forward to M3 WP1: `pipeline/readout.py` rescoring —
+  an M2-accepted `correction: benjamini_hochberg` would otherwise verdict at
+  the wrong alpha)*; composed-FDR empirical validation (stays here/M4).
 - Sub-day cadence constraints (cumulative-intervals.md §6): `always_valid` is the
   auto-recommended scheme below `1d`; `alpha_spending` requires a pre-committed
   small look grid and is a config error at sub-day cadence; anytime-valid
