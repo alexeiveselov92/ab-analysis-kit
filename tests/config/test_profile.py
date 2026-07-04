@@ -97,7 +97,8 @@ class TestEnvInterpolation:
     def test_secrets_resolved_from_env(self, tmp_path, monkeypatch):
         monkeypatch.setenv("ABKIT_TEST_CH_HOST", "ch.internal")
         monkeypatch.setenv("ABKIT_TEST_CH_PASS", "s3cret")
-        (tmp_path / "profiles.yml").write_text("""
+        (tmp_path / "profiles.yml").write_text(
+            """
 default_profile: dev
 profiles:
   dev:
@@ -107,7 +108,8 @@ profiles:
     password: "{{ env_var('ABKIT_TEST_CH_PASS') }}"
     internal_database: abkit_internal
     data_database: analytics
-""")
+"""
+        )
         config = ProfilesConfig.from_yaml(tmp_path / "profiles.yml")
         profile = config.get_profile()
         assert profile.host == "ch.internal"

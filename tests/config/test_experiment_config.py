@@ -282,7 +282,8 @@ class TestDatesAndMisc:
             ExperimentConfig.model_validate(base_payload(alpha=1.5))
 
     def test_from_yaml_file(self, tmp_path):
-        (tmp_path / "exp.yml").write_text("""
+        (tmp_path / "exp.yml").write_text(
+            """
 name: signup_test
 start_date: 2024-07-01
 end_date: 2024-07-28
@@ -295,7 +296,8 @@ comparisons:
   - metric: signup_cr
     is_main_metric: true
     method: {name: z-test, params: {test_type: relative}}
-""")
+"""
+        )
         config = ExperimentConfig.from_yaml_file(tmp_path / "exp.yml")
         assert config.name == "signup_test"
         assert config.comparisons[0].method.name == "z-test"

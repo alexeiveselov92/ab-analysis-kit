@@ -69,14 +69,16 @@ class TestValidation:
 
 class TestFromYaml:
     def test_round_trip(self, tmp_path):
-        (tmp_path / "abkit_project.yml").write_text("""
+        (tmp_path / "abkit_project.yml").write_text(
+            """
 name: "demo"
 default_profile: "dev"
 statistics:
   alpha: 0.01
 limits:
   warn_looks: 50
-""")
+"""
+        )
         config = ProjectConfig.from_yaml_file(tmp_path / "abkit_project.yml")
         assert config.statistics.alpha == 0.01
         assert config.limits.warn_looks == 50
