@@ -63,6 +63,70 @@ jobs:
       - name: Run the first-run e2e gate
         run: pytest tests/e2e -q --no-cov
 
+  bundle:
+    # The committed-asset freshness gate (m3-implementation-plan.md D7/WP3):
+    # rebuild web/ and diff against abkit/*/assets/*.js so the committed
+    # bundle can never silently drift from its sources, assert the
+    # peeking-honesty marker classes survive in the built artifact, and run
+    # the jsdom smoke suite against it.
+    name: Bundle (web/ freshness + markers)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web toolchain
+        run: npm ci --no-audit --no-fund
+        working-directory: web
+
+      - name: Type-check the renderer sources
+        run: npm run check
+        working-directory: web
+
+      - name: Rebuild bundles (asserts globals + marker classes)
+        run: npm run build
+        working-directory: web
+
+      - name: Committed assets are fresh
+        # porcelain (not `git diff`) so a rebuilt-but-never-committed NEW
+        # asset (the WP7 explore.js scenario) fails too, not only drift in
+        # tracked files
+        run: |
+          status=$(git status --porcelain -- 'abkit/*/assets/')
+          if [ -n "$status" ]; then
+            echo "committed assets drifted from web/ sources:"; echo "$status"; exit 1
+          fi
+
+      - name: Marker classes present in committed bundles
+        run: |
+          for bundle in abkit/*/assets/*.js; do
+            for marker in abk-prehorizon abk-insufficient abk-srm-fail; do
+              grep -q "$marker" "$bundle" \
+                || { echo "missing marker in $bundle: $marker"; exit 1; }
+            done
+          done
+
+      - name: Python-side placeholder hexes stay inside the brand-token layer
+        # html_report.py's page shell + favicon are the only hexes outside
+        # web/src/shared/chart.ts TOKEN_FALLBACKS — every one must appear
+        # there so an M6 palette swap cannot silently miss them
+        run: |
+          for hex in $(grep -oiE '(#|%23)[0-9a-f]{6}' abkit/reporting/html_report.py \
+                        | sed -E 's/^(#|%23)//' | sort -u); do
+            grep -qi "#$hex" web/src/shared/chart.ts \
+              || { echo "hex #$hex in html_report.py is not in TOKEN_FALLBACKS"; exit 1; }
+          done
+
+      - name: jsdom smoke suite over the committed bundle
+        run: npm test
+        working-directory: web
+
   lint:
     name: Lint & type-check
     runs-on: ubuntu-latest
@@ -89,3 +153,16 @@ jobs:
       - name: Mypy
         run: mypy abkit
         continue-on-error: true  # mypy strict mode is aspirational; do not block PRs yet
+
+      - name: Wheel ships the committed report bundle
+        # the real packaging gate (WP3 review finding): the source-tree tests
+        # cannot catch a wheel that silently drops package-data
+        run: |
+          pip wheel --no-deps -w /tmp/wheelhouse .
+          python - <<'EOF'
+          import glob, sys, zipfile
+          wheel = glob.glob("/tmp/wheelhouse/ab_analysis_kit-*.whl")[0]
+          names = zipfile.ZipFile(wheel).namelist()
+          assert "abkit/reporting/assets/report.js" in names, names
+          print("wheel contains abkit/reporting/assets/report.js")
+          EOF

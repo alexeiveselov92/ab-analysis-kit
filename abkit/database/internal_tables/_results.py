@@ -30,6 +30,15 @@ RESULT_COLUMNS: tuple[str, ...] = tuple(
 
 
 class _ResultsMixin(_InternalTablesBase):
+    def results_table_exists(self) -> bool:
+        """True when ``_ab_results`` exists — a never-run project has none.
+
+        Read-only surfaces (``abk run --report`` on a fresh project, explore)
+        guard with this instead of ``ensure_tables()``: reporting must never
+        create schema (m3-implementation-plan.md WP2).
+        """
+        return self._manager.table_exists(TABLE_RESULTS, schema=self._manager.internal_location)
+
     def save_results(self, data: dict[str, np.ndarray]) -> int:
         """Persist a batch of enriched result rows (LWW upsert semantics).
 

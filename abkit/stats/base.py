@@ -248,6 +248,9 @@ class BaseMethod(ABC):
     input_kind: ClassVar[str] = "sample"
     #: Paired designs need unit-aligned arms (not served by the v1 pipeline).
     is_paired: ClassVar[bool] = False
+    #: Needs a per-unit ``cov_array`` on both samples (CUPED / post-normed) —
+    #: the explore Tier-S gate reads this instead of guessing from param names.
+    requires_covariate: ClassVar[bool] = False
 
     def __init__(self, alpha: float = 0.05, **params: Any) -> None:
         if not 0.0 < alpha < 1.0:

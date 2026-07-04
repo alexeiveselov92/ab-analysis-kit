@@ -22,6 +22,7 @@ from abkit.pipeline.readout import (
     MIN_STABLE_CUTOFFS,
     evaluate,
     pair_mde,
+    srm_summary,
 )
 from abkit.stats import Fraction, SufficientStats, create_method
 from abkit.stats.correction import benjamini_hochberg
@@ -997,3 +998,19 @@ class TestSrmSummary:
         readout = evaluate(experiment, rows)
         assert readout.srm_flag is True
         assert readout.srm_pvalue == pytest.approx(1e-6)
+
+    def test_public_srm_summary_matches_evaluate_and_is_window_independent(self):
+        """The extracted `srm_summary` (the report's window-independent SRM
+        chip source) agrees with evaluate's experiment-level SRM, and reflects
+        exactly the rows it is handed."""
+        experiment = make_experiment()
+        rows = make_series(experiment, days=13, srm_pvalue=0.8)
+        rows.append(make_row(experiment, day=14, srm_flag=True, srm_pvalue=1e-6))
+
+        readout = evaluate(experiment, rows)
+        assert srm_summary(experiment, rows) == (readout.srm_flag, readout.srm_pvalue)
+
+        # given only the healthy early rows it returns what those carry; given
+        # the full set it sees the failing horizon row
+        assert srm_summary(experiment, rows[:5]) == (False, pytest.approx(0.8))
+        assert srm_summary(experiment, rows) == (True, pytest.approx(1e-6))

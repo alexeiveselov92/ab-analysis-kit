@@ -267,4 +267,3 @@ and an embedded open-source BI (**Lightdash**). Architectural implication: keep 
 renderer/payload split clean and dependency-free, keep `abkit.stats` pure and
 importable, and keep the data contract BI-first — so none of this has to be rebuilt
 to become an app.
-

@@ -5,11 +5,20 @@ alphas are echoed (the inspectable two-tier scheme, declarative-config.md §6);
 SRM failures print the loud red gate line (data-contract §6). Any failed
 experiment or validation error exits NON-ZERO (the CLI is the Prefect unit of
 automation).
+
+``--report`` (tri-state: absent / bare / path — the donor's flag shape) emits
+one self-contained HTML readout per experiment after its pipeline, inside
+try/except: a report failure yellow-skips and NEVER fails the run — the one
+recorded exception to the exit-non-zero contract (m3-implementation-plan.md
+WP3/D8). Emission happens even when zero cutoffs were pending — re-running an
+up-to-date experiment is the "just give me the report" path (D8).
 """
 
 from __future__ import annotations
 
+import os
 from datetime import datetime
+from pathlib import Path
 
 import click
 
@@ -23,6 +32,7 @@ from abkit.cli._output import (
 )
 from abkit.cli.commands._context import load_project_context
 from abkit.config import select_experiments, validate_level2
+from abkit.config.experiment_config import ExperimentConfig
 from abkit.pipeline import PipelineStep, effective_alphas, run_experiments
 from abkit.stats import n_comparisons
 
@@ -40,6 +50,61 @@ def _parse_date(value: str | None, option: str) -> datetime | None:
     )
 
 
+def _resolve_report_path(report_path: str, project_root: Path, experiment: str) -> Path:
+    """The donor's path convention: "" → reports/<experiment>.html under the
+    project root; a ``.html`` value → that exact file; anything else → a
+    directory getting ``/<experiment>.html`` appended."""
+    if report_path == "":
+        return project_root / "reports" / f"{experiment}.html"
+    candidate = Path(report_path)
+    if candidate.suffix.lower() == ".html":
+        return candidate
+    return candidate / f"{experiment}.html"
+
+
+def _emit_experiment_report(
+    experiment: ExperimentConfig,
+    tables,
+    context,
+    report_path: str,
+    generated_at: str,
+) -> None:
+    """Build + write one experiment readout; prints the house report line.
+
+    Raises on failure — the caller owns the yellow-skip (never fail the run
+    on a report)."""
+    from abkit.reporting import build_report_payload, render_report_html
+
+    payload = build_report_payload(
+        experiment,
+        tables,
+        project=context.project,
+        metric_configs=context.metrics_by_name,
+        generated_at=generated_at,
+    )
+    if payload["period"]["end"] == 0:
+        click.echo("  │ Report: no persisted results, skipped")
+        return
+
+    out = _resolve_report_path(report_path, context.root, experiment.name)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    # atomic replace: a mid-write failure (disk full, kill) must never leave
+    # a truncated file where a previous good report lived (review finding)
+    tmp = out.with_suffix(out.suffix + ".tmp")
+    tmp.write_text(render_report_html(payload), encoding="utf-8")
+    os.replace(tmp, out)
+
+    try:
+        shown: Path | str = out.relative_to(context.root)
+    except ValueError:
+        shown = out
+    verdicts = [str(v["verdict"]) for v in payload["verdicts"]]
+    note = " · ".join(verdicts) if verdicts else "no verdicts yet"
+    if payload["srm"]["flag"]:
+        note += " · SRM FAILED"
+    click.echo(click.style(f"  │ Report → {shown}  ({note})", fg="cyan"))
+
+
 def run_run(
     select: tuple[str, ...],
     exclude: tuple[str, ...],
@@ -50,6 +115,7 @@ def run_run(
     full_refresh: bool,
     force: bool,
     workers: int,
+    report_path: str | None = None,
 ) -> None:
     try:
         parsed_steps = PipelineStep.parse(steps)
@@ -57,6 +123,11 @@ def run_run(
         raise click.BadParameter(str(exc), param_hint="--steps") from exc
 
     validate_only = parsed_steps == [PipelineStep.VALIDATE]
+    if validate_only and report_path is not None:
+        raise click.BadParameter(
+            "--report needs pipeline steps (validate-only runs never touch the DB)",
+            param_hint="--report",
+        )
     context = load_project_context(require_profiles=not validate_only)
     click.echo(f"Project root: {context.root}")
 
@@ -86,6 +157,17 @@ def run_run(
     if not selected:
         echo_done("Nothing selected.")
         return
+    if (
+        report_path is not None
+        and report_path != ""
+        and Path(report_path).suffix.lower() == ".html"
+        and len(selected) > 1
+    ):
+        raise click.BadParameter(
+            f"--report {report_path} names one file but {len(selected)} experiments "
+            "are selected — pass a directory instead",
+            param_hint="--report",
+        )
 
     for _, experiment in selected:
         alphas = effective_alphas(experiment, context.project)
@@ -133,25 +215,63 @@ def run_run(
 
     click.echo()
     failed = 0
-    for outcome in outcomes:
-        if outcome.status == "completed":
-            children = [
-                f"exposures: {outcome.exposures_loaded}",
-                f"cutoffs planned: {outcome.cutoffs_planned}",
-                f"results written: {outcome.results_written}",
-            ]
-            srm_warnings = [w for w in outcome.warnings if "SRM" in w]
-            other_warnings = [w for w in outcome.warnings if "SRM" not in w]
-            echo_tree(outcome.experiment, children, warnings=other_warnings)
-            for warning in srm_warnings:
-                echo_srm(warning)
-        elif outcome.status == "locked":
-            echo_noop(outcome.experiment, outcome.error or "locked")
-        elif outcome.status == "skipped":
-            echo_noop(outcome.experiment, "nothing to do for the selected steps")
-        else:
-            failed += 1
-            echo_error(outcome.experiment, outcome.error or "failed")
+    experiments_by_name = {experiment.name: experiment for _, experiment in selected}
+    report_manager = None
+    report_tables = None
+    generated_at = None
+    try:
+        for outcome in outcomes:
+            if outcome.status == "completed":
+                children = [
+                    f"exposures: {outcome.exposures_loaded}",
+                    f"cutoffs planned: {outcome.cutoffs_planned}",
+                    f"results written: {outcome.results_written}",
+                ]
+                srm_warnings = [w for w in outcome.warnings if "SRM" in w]
+                other_warnings = [w for w in outcome.warnings if "SRM" not in w]
+                echo_tree(outcome.experiment, children, warnings=other_warnings)
+                for warning in srm_warnings:
+                    echo_srm(warning)
+            elif outcome.status == "locked":
+                echo_noop(outcome.experiment, outcome.error or "locked")
+            elif outcome.status == "skipped":
+                echo_noop(outcome.experiment, "nothing to do for the selected steps")
+            else:
+                failed += 1
+                echo_error(outcome.experiment, outcome.error or "failed")
+
+            # ── the readout (D8): per experiment, after its pipeline, inside
+            # try/except — never fail the run on a report ─────────────────────
+            if report_path is None:
+                continue
+            if outcome.status not in ("completed", "skipped"):
+                # a locked/failed pipeline withholds the report but must say
+                # so — automation polling for the artifact should not have to
+                # guess (review finding); the lock/error line already printed
+                click.echo(
+                    click.style(f"  │ Report skipped: experiment {outcome.status}", fg="yellow")
+                )
+                continue
+            try:
+                if report_tables is None:
+                    from abkit.database.internal_tables import InternalTablesManager
+                    from abkit.utils.datetime_utils import now_utc_naive
+
+                    report_manager = context.manager_factory(profile)()
+                    report_tables = InternalTablesManager(report_manager)
+                    generated_at = now_utc_naive().strftime("%Y-%m-%d %H:%M UTC")
+                _emit_experiment_report(
+                    experiments_by_name[outcome.experiment],
+                    report_tables,
+                    context,
+                    report_path,
+                    generated_at or "",
+                )
+            except Exception as report_error:  # never fail the run on a report
+                click.echo(click.style(f"  │ Report skipped: {report_error}", fg="yellow"))
+    finally:
+        if report_manager is not None:
+            report_manager.close()
 
     total_rows = sum(o.results_written for o in outcomes)
     echo_done(

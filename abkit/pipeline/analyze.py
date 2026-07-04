@@ -83,11 +83,16 @@ def comparison_alpha(comparison: ComparisonConfig, alphas: TwoTierAlphas) -> flo
     return alphas.secondary
 
 
-def _build_container(
+def build_container(
     kind: str,
     variant: str,
     loaded: MetricLoadResult,
 ) -> Any:
+    """One variant's loaded role arrays → the stats-core container for ``kind``.
+
+    Shared with the explore recompute engine (m3-implementation-plan.md WP4) —
+    the Tier-S cache path must build byte-identical containers to the pipeline.
+    """
     roles = loaded.roles_by_variant.get(variant, {})
     if kind == "sample":
         return Sample(
@@ -165,8 +170,8 @@ def analyze_cutoff(
             )
             continue
 
-        group_1 = _build_container(method_cls.input_kind, name_1, loaded)
-        group_2 = _build_container(method_cls.input_kind, name_2, loaded)
+        group_1 = build_container(method_cls.input_kind, name_1, loaded)
+        group_2 = build_container(method_cls.input_kind, name_2, loaded)
 
         if needs_seed:
             # Deterministic per-row seed: byte-stable re-runs; identity-excluded.

@@ -66,11 +66,23 @@ class _ExposuresMixin(_InternalTablesBase):
             )
         return written
 
+    def exposures_table_exists(self) -> bool:
+        """True when ``_ab_exposures`` exists — a never-run project has none.
+
+        Read-only surfaces guard with this instead of ``ensure_tables()``;
+        mirrors :meth:`results_table_exists` (m3-implementation-plan.md WP2).
+        """
+        return self._manager.table_exists(TABLE_EXPOSURES, schema=self._manager.internal_location)
+
     def get_exposure_counts(self, experiment: str) -> dict[str, int]:
         """Per-variant unit counts — the SRM gate's observed counts.
 
         Deduped (FINAL on ClickHouse) so a mid-merge ReplacingMergeTree never
-        double-counts a unit (quorum "correctness under async merge").
+        double-counts a unit (quorum "correctness under async merge"). Whole
+        cohort by design: M2 SRM is a single whole-cohort check, so the report
+        pairs these counts with that whole-run flag/pvalue (an as-of subset
+        would mismatch it — review finding); per-cutoff SRM lands with
+        sequential (M5).
         """
         full_table_name = self._manager.get_full_table_name(TABLE_EXPOSURES, use_internal=True)
         query = f"""

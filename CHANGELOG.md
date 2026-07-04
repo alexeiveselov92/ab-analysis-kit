@@ -13,7 +13,317 @@ number change).
 
 ## [Unreleased]
 
+### Fixed
+- **M3 WP5/WP6/WP8 review-closure** (adversarial review, 4 lenses / 25 raw
+  findings; the verify fleet was limit-truncated, findings triaged inline —
+  7 real after dedup):
+  - The D3 calibration gate lost its side doors: **correction-only** and
+    **role-flip-only** Applies now gate too (a correction edit re-keys every
+    comparison; a role flip moves comparisons across the two Bonferroni
+    tiers), and the gate keys by the **prospective EFFECTIVE per-comparison
+    alpha** (`effective_alphas` over the applied alpha/correction), not the
+    raw body alpha — restoring the mechanically testable "every Apply takes
+    the confirm path" DoD. Params carrying a riding `"name"` key are keyed
+    exactly as the writer strips them; unbindable params gate conservatively
+    instead of silently skipping the check.
+  - Handler-thread hardening: a malformed `Content-Length` header and a
+    non-numeric `alpha` in the `/apply` body are clean 400s (previously a
+    dead thread with no HTTP reply); `/apply` is **serialized** under the
+    request lock (two tabs cannot race the archive/rewrite seam or the shared
+    CLI-thread DB manager) and a second Apply after a successful one is a 409;
+    the self-shutdown thread now spawns in a `finally`, so a client that
+    vanishes mid-reply can no longer leave the server alive with the YAML
+    already rewritten (Ctrl-C would then have lied "experiment unchanged").
+  - `/reload` refuses on a budget-degraded (suffstats-only) session instead
+    of silently growing a shadow cache the replies keep contradicting, and
+    keeps `session.cache_values` accounting exact when replacing entries.
+  - The HTTP `comparisons` parser preserves an ABSENT `params` key as `None`
+    (the writer's "a method switch must carry the full param set" guard was
+    bypassable with a fake `{}`); the provenance header sanitizes newlines
+    (no comment-escape injection into the emitted YAML); the WP5 role-flip
+    test now proves the promised per-comparison alpha shift on a
+    three-comparison fixture (`0.05 → 0.025`), not a structural equality.
+
 ### Added
+- **M3 WP8 — `abk explore`** (per
+  [`docs/specs/m3-implementation-plan.md`](docs/specs/m3-implementation-plan.md)
+  WP8; cli-and-dx §1): the cockpit shell —
+  `abk explore --select <exp> [--metric <m>] [--no-serve] [--no-open]
+  [--profile]`. Registered per the house pattern (eager stanza, lazy command
+  body — `abk --version` stays instant). Resolves exactly ONE experiment
+  (selection errors name the namespace), guards a never-run project with the
+  friendly "run `abk run` first" noop (D2), prints the startup orphan warning
+  (the same `list_method_config_ids` scan the driver and `abk clean` use),
+  streams the session load through the house `StageLogRenderer`, then serves
+  the WP6 cockpit — or, with `--no-serve`, atomically writes the static
+  `reports/<experiment>__explore.html` snapshot (null endpoints — the
+  preview badge, Apply disabled). `--metric` narrows the opened comparison
+  (default: the main metric). The Apply epilogue echoes the archive path,
+  updated/preserved comparisons, the orphan warning + `abk clean` hint, and
+  the "re-run `abk run --select <exp>`" reminder; Ctrl-C cancels with the
+  experiment unchanged. All failures exit non-zero (the house rule).
+
+- **M3 WP6 — the explore localhost server + page + payload** (per
+  [`docs/specs/m3-implementation-plan.md`](docs/specs/m3-implementation-plan.md)
+  WP6/D1/D3):
+  - `abkit.tuning.server`: `build_explore_server` / `serve_explore` — the
+    donor's exact interaction contract on `127.0.0.1:0` with a one-shot
+    token: GET serves ONE pre-rendered page on any path (the token gates only
+    POSTs); `POST /recompute` answers knob states from the in-memory session —
+    repeatable, advisory, lock-serialized, **stale-dropping** (outdated
+    `request_id`s get `409 {stale}` before AND after the compute lock —
+    debounced knob drags never queue behind an in-flight bootstrap) and
+    silent; `POST /reload` executes the confirmed Tier-R actions with its OWN
+    manager inside the serialized handler (re-rendering cached cutoffs under
+    the requested lookback — the session tracks per-entry render lookbacks so
+    the refreshed cache serves subsequent `/recompute`s) and streams a
+    run-log through `server.echo`; `POST /validate` is the reserved M4 slot
+    (501); `POST /apply` is the only terminal action — the **server-side
+    calibration gate** (D3: `confirm_uncalibrated` required while the applied
+    `(metric, method_config_id, alpha)` keys are not green — with
+    `_ab_aa_runs` empty until M4 every Apply takes the confirm path), the WP5
+    seam, the `orphaned` block + warning echoed in the reply, then
+    self-shutdown from a daemon thread. Invalid configs return 400 and KEEP
+    serving; error detail travels in the UTF-8 body (never the latin-1 status
+    line); oversized bodies drain-then-413; no pipeline lock is ever taken.
+  - `abkit.tuning.html`: `render_explore_html` — the WP3-hardened template
+    mechanics verbatim (one-pass regex substitution, every `<` in the baked
+    JSON escaped, no webfonts, `abk-explore` mount, `__ABK_EXPLORE__`
+    global). Ships with a committed placeholder `assets/explore.js` (honest
+    pending note) until the WP7 cockpit bundle replaces it — the wheel
+    packaging contract was pre-wired in WP3.
+  - `abkit.tuning.payload`: `build_explore_payload` — the WP2 report payload
+    riding verbatim + the `explore` block (knob surfaces from `param_specs`,
+    per-metric initial calibration chip state keyed by the configured
+    `(method_config_id, alpha)`, session-cache facts, ms-epoch cutoffs) and
+    the four endpoint slots (`None` = the static `--no-serve` preview badge).
+
+- **M3 WP5 — Apply, `.history`, orphan detection** (per
+  [`docs/specs/m3-implementation-plan.md`](docs/specs/m3-implementation-plan.md)
+  WP5/D4/D9):
+  - `abkit.tuning.config_writer`: `apply_tuned_config` — the ONLY mutation
+    seam of `abk explore`, donor-disciplined **validate → archive → re-emit**:
+    per-comparison `method` blocks (matched by metric; a merely-viewed
+    comparison is never written — the dirty-slot discipline), Review-mode
+    `is_main_metric`/`is_guardrail` flips (marking only, D9), and
+    experiment-level `alpha`/`correction`, merged into the parsed document and
+    validated as a whole (`create_method` per touched method +
+    `ExperimentConfig.model_validate`) before ANY filesystem write. Tunability
+    is registry-derived (paired designs and cross-kind methods refused — never
+    a hardcoded name set); identity-excluded params (`seed`,
+    `max_block_bytes`) carry over from the slot being retuned via the specs.
+  - The previous YAML is archived **byte-verbatim** (comments included) to
+    `<dir>/.history/<experiment>/<experiment>-<stamp>.yml` before overwrite —
+    repeated Applies each archive, same-second Applies de-collide, and
+    discovery never picks archives up as live configs. Comments die on
+    re-emit (owner-ratified D4); re-emission is isolated behind the ONE
+    `_reemit_yaml` strategy function so a comment-preserving ruamel backend
+    can swap in later without contract changes.
+  - **Orphan detection** (NEW vs the donor): old-vs-new `method_config_id`
+    per touched comparison through the single hashing path; an identity edit
+    over a series with persisted rows yields the `orphaned` block + the
+    driver-identical warning (`abk clean` + `abk run --select` hints) in the
+    result, and the provenance header. Apply **never** auto-cleans or
+    auto-runs; alpha-only edits and role flips are orphan-free by
+    construction.
+
+- **M3 WP4 — the explore recompute engine** (per
+  [`docs/specs/m3-implementation-plan.md`](docs/specs/m3-implementation-plan.md)
+  WP4/D1/D3/D11/D12):
+  - `abkit.tuning.session`: `load_session` — the one warehouse load pass at
+    explore start (D2): the persisted per-comparison series plus the bounded
+    Tier-S per-unit cache (latest cutoffs first, older newest-first under a
+    ~2×10⁷-value budget; over-budget degrades honestly to a suffstats-only
+    session with a reason string, never a silent partial cache).
+  - `abkit.tuning.recompute`: `RecomputeEngine` — one knob state answered
+    entirely in memory (D1, "no *warehouse* round-trip per knob change"):
+    **Tier E** exact suffstats reconstruction across the whole grid for the
+    closed-form families (t-test `m2 = std²·n`; z-test `nobs` inverted from
+    the persisted SE — never from the one-row-per-unit `size_i`; ratio-delta
+    via the exact denominator≡1 surrogate; CUPED→t-test "CUPED off" rides the
+    persisted ORIGINAL per-arm mean/std), **Tier α** alpha-inversion for
+    closed-form rows (symmetric normal CIs only — resampling families are
+    declaratively excluded), **Tier S** `from_samples` over the session cache
+    (bootstrap knobs, the stratify toggle, CUPED param edits) with the
+    per-row seed re-derived by the persisted convention so unchanged knobs
+    reproduce stored rows byte-exactly, and **Tier R** classification for
+    CUPED off→on / `covariate_lookback` edits (the serialized `/reload`
+    executes them, WP6). Per-pair points carry an exact/approx/baseline tier;
+    windshield chips (lift, CI half-width, p-value, achieved power at
+    `min_effect` with honest capability notes); the live `method_config_id`
+    hashed only through the bound-probe path; knob metadata auto-derived from
+    `param_specs` (nothing special-cases a method name; a supplied `seed` is
+    ignored with a warning); `QuarantinedMethodError` surfaces verbatim.
+  - `find_calibration` + `resolve_fpr_budget` (D3): the calibration chip
+    lookup keyed by `(metric, method_config_id, **alpha**)` against the
+    as-built `_ab_aa_runs` (`status='failed'`/FPR-less rows never count;
+    alpha edits downgrade to `alpha_mismatch`; identity edits flip to
+    uncalibrated — that IS the staleness semantics); budget resolves
+    metric-seam → project `aa_fpr_budget` → `α × 1.5`.
+  - `pipeline.analyze.build_container` is now public (shared by the engine's
+    Tier-S path — byte-identical containers to the pipeline);
+    `InternalTablesManager.aa_runs_table_exists()` guards chip reads on a
+    never-validated project. Sidedness + winsorization stay OFF the knob
+    surface (D12) — deferred to M4 under change control (ROADMAP note).
+
+### Fixed
+- **M3 WP4 review-closure** (adversarial review, 4 lenses / 15 findings, the
+  blocker empirically reproduced by an independent verifier):
+  - `RecomputeEngine.recompute` gained the `analyze_cutoff`-parity gate: a
+    paired or cross-kind knob state (e.g. `t-test` on a fraction series, whose
+    persisted `std_i` is the SE, not a sample std) now raises
+    `MethodParamError` instead of returning a silently ~nobs-fold-collapsed CI
+    labeled `tier="exact"` (the confirmed major).
+  - Tier E now refuses rows whose per-arm columns don't carry mean/std
+    semantics: a resampling series with a non-mean `stat` (e.g. median
+    bootstrap) persists the bootstrapped statistic in `value_i` — such rows
+    recompute only through the Tier-S cache (correct) or stay gaps, never
+    "exact" numbers off the median. Unknown/quarantined legacy row methods are
+    likewise never reconstructed.
+  - New declarative `BaseMethod.requires_covariate` capability flag (CUPED +
+    post-normed families): the Tier-S cache gate reads it instead of guessing
+    from param names, so `post-normed-bootstrap` — which needs `cov_array` but
+    has no `covariate_lookback` param — yields an honest gap on a
+    covariate-less cache instead of an unhandled `SampleValidationError`.
+  - Demoted (`insufficient_data`) and NULLed (H5) rows now pass through the
+    reply untouched as flagged `baseline` points (NULL test columns, real
+    sizes) instead of vanishing; the windshield chips read the latest point
+    *with inference*, so a demoted latest cutoff no longer blanks or shifts
+    them silently.
+  - Point `size_i` keeps the persisted unit-count semantics across every tier
+    (a fraction result's `round(nobs)` no longer makes sizes jump between
+    tiers of one series; the method sizes stay on the raw `result`); the
+    fraction power chip solves on trial counts (`nobs`) from the
+    reconstruction, falling back to SE-inversion.
+  - The session load clamps the cache during the latest-cutoffs pass, bounding
+    the transient peak near the budget in the exact scenario the clamp exists
+    for; `knob_surface` additionally exposes `needs_covariate` per method, the
+    `correction_tier` (correction resolves to the effective alpha upstream —
+    the WP4 DoD's experiment-level-knob classification), and the cache's
+    `covariate_cutoffs` (the WP7 ↻-badge substrate).
+
+### Changed
+- **D11 — canonical unit order in `load_metric`** (M3 WP4; recorded in
+  [`statistics-changes.md §8`](docs/specs/statistics-changes.md); a
+  pipeline-level input-assembly fix, NO `ALGORITHM_VERSION` bump): every
+  variant's per-unit arrays are sorted by unit key after fetch, making
+  order-dependent bootstrap replicates reproducible across physical warehouse
+  read orders (ClickHouse guarantees none). Bootstrap rows persisted before
+  the sort may differ from re-computed ones on backends that happened to
+  return a different order; closed-form results are order-invariant.
+
+### Added
+- **M3 WP3 — the self-contained HTML readout + `abk run --report`** (per
+  [`docs/specs/m3-implementation-plan.md`](docs/specs/m3-implementation-plan.md)
+  WP3/D7/D8):
+  - `abkit.reporting.html_report`: `render_report_html(payload)` — one
+    offline HTML per experiment (baked payload + the inlined committed
+    `assets/report.js` bundle; framework-free, zero network requests, no
+    webfonts — the donor's Google-Fonts links are deliberately dropped).
+    Template mechanics per the donor (escaped title; data-URI favicon; never
+    `.format`), hardened past it after the WP3 adversarial review: the baked
+    JSON escapes **every `<` as `\u003c`** (escaping only `</` leaves the
+    HTML tokenizer's `<!--`+`<script` double-escaped state able to swallow
+    the real terminator), placeholders substitute in **one regex pass** (a
+    payload string containing `__REPORT_JS__` can no longer be clobbered),
+    and the CLI writes the file **atomically** (temp + `os.replace`) so a
+    mid-write failure never truncates a previous good report.
+  - `web/` — the dev-only bundle toolchain (D7): `web/src/shared/payload.ts`
+    (the §5.3 contract in documented lockstep with `builder.py`),
+    `web/src/shared/chart.ts` (canvas primitives + the one placeholder
+    brand-token layer per branding-and-site.md §3), `web/src/report/report.ts`
+    (the experiment-primary renderer: verdict banners with rationale/caveats/
+    guardrails, the stabilization chart — effect + CI vs `elapsed_days`, zero
+    line, horizon marker, wheel-zoom/drag-pan/hover — four one-axis small
+    multiples (variant means incl. CUPED covariate, pair MDE vs `min_effect`,
+    p-value vs α, client-derived avg group size), a results/audit table, the
+    red SRM gate chip, the calibration empty state "uncalibrated — run
+    `abk validate` (M4)", and the sub-day look counter). Built by
+    `web/build.mjs` (esbuild, IIFE, es2019) into the committed, wheel-packaged
+    `abkit/reporting/assets/report.js`.
+  - Peeking honesty rendered per data-contract §4 with **stable
+    machine-checkable markers**: pre-horizon fixed CIs dashed/de-emphasized
+    (`abk-prehorizon`), `insufficient_data` cutoffs greyed with counts+SRM
+    only (`abk-insufficient`), the SRM chip (`abk-srm-fail`); asserted by the
+    build script, the Python suite, the jsdom smoke suite, and a new CI
+    `bundle` job that rebuilds `web/` and diffs the committed assets
+    (freshness gate).
+  - `abk run --report` (D8, the donor's tri-state flag): bare →
+    `reports/<experiment>.html`, a directory → `<dir>/<experiment>.html`, a
+    `.html` value → that exact file. Emitted per experiment after its
+    pipeline **best-effort** — a report failure yellow-skips and never fails
+    the run (the one recorded exception to the CLI exit-non-zero contract) —
+    and even with zero pending cutoffs (the re-run-to-report path).
+    `--report` with `--steps validate` is rejected; one `.html` file with
+    multiple selected experiments is rejected. cli-and-dx §1's never-wired
+    `readout` `--steps` token is amended away (D8).
+  - Payload series points gain per-arm keys `v1/v2/sd1/sd2/cv1/cv2` (stored
+    value/std/CUPED covariate means) — **additive, no schema v-bump** —
+    feeding the §5.2 variant-means/lift view; §5.3 amended, `payload.ts`
+    lockstep.
+
+### Fixed
+- **MDE solve crash + report cost** (M3 WP2 review-closure, adversarial
+  re-verification): `abkit.stats.power` — statsmodels' `solve_power` returns a
+  shape-`(1,)` ndarray from its `fsolve` fallback for a data-dependent
+  few-percent of ordinary `(nobs, ratio)` inputs (e.g. n=139, ratio=1.0);
+  under numpy ≥ 2.0 `float(ndarray)` raised, crashing the readout verdict and
+  report MDE paths. `_as_scalar` now extracts the value (value-preserving —
+  golden tests unchanged, **zero statistical numbers changed**). And the report
+  payload's per-point `mde` reads the **stored** `mde_1/2` columns only (null
+  when the row did not compute MDE) instead of a read-time statsmodels solve
+  per point — the read-time D5(b) fallback stays verdict-level (one solve per
+  pair on the latest cutoff). A worst-case sub-day payload dropped from
+  ~40–100 s (and a hard crash) to milliseconds; data-contract §5.3 amended.
+- **Payload consistency** (M3 WP2 sweep-closure, second review pass):
+  - per-point `mde` now honours the D5(b) **both-present guard** — a
+    half-present stored pair (one arm's MDE solved to inf and was NULLed by
+    enrich) shows null, never the finite arm alone (which would fake adequate
+    power and contradict the verdict on the same cutoff; review finding).
+  - `srm.observed` is the **whole-cohort** count even under a pinned-`end`
+    replay, so it stays coherent with the whole-run `srm.flag`/`pvalue` the
+    driver computes once and broadcasts (the `until=` pin is dropped;
+    per-cutoff SRM lands with M5 sequential). §5.3 amended.
+- **SRM chip loudness under replay** (M3 WP2 final-gate, third review pass):
+  the payload `srm` block is now **window-independent** (current experiment
+  health) — `flag`/`pvalue` come from the latest persisted row *overall* via a
+  new `readout.srm_summary`, not the latest *charted* row. A pinned or empty
+  replay window therefore never silences a failing SRM gate (§6 must-fix) and
+  the flag/pvalue stay coherent with the whole-cohort `observed`; the chart and
+  verdict remain as-of the window. `readout`'s experiment-level SRM aggregation
+  is extracted into `srm_summary` (no behavior change to `evaluate`). §5.3
+  amended.
+
+### Added
+- **M3 WP2 — the experiment-primary report payload** (per
+  [`docs/specs/m3-implementation-plan.md`](docs/specs/m3-implementation-plan.md) D6):
+  - `abkit.reporting.builder`: `build_report_payload(experiment, tables, ...)`
+    — one versioned JSON-serializable payload per experiment from persisted
+    `_ab_results` rows, the shared contract for the WP3 readout renderer and
+    the WP6/WP7 explore shell: WP1 verdict block, experiment-level SRM block
+    (driver-mirrored zero-filled exposure counts), M4-shaped
+    `calibration: null`, `look: {n, planned}` from the one-enumeration
+    planner grid, terse ms-epoch series points, NaN **and ±inf** → null,
+    provenance projection (rendered SQL never enters the payload; one
+    `metric_query` per metric), metric descriptions from the metric YAML,
+    caller-supplied `generated_at`, inclusive `start`/`end` window pinning
+    (historical readout replay), a global point budget with trailing-window
+    clipping + a loud payload warning, and the full-key empty-experiment
+    contract. Zero statistical numbers changed.
+  - `InternalTablesManager`: `results_table_exists()` /
+    `exposures_table_exists()` — the never-run-project guards for read-only
+    surfaces (reporting never creates schema). *(A short-lived `until=` bound
+    on `get_exposure_counts` was added here and then removed in the review
+    passes below — the SRM block is whole-cohort/window-independent; see the
+    Fixed entries.)*
+  - Review-driven consistency rules (adversarial review, 4 lenses): rows for
+    variant pairs outside the declared arms are excluded from every payload
+    surface with a loud warning (never silently mixed into look/period/BH);
+    the driver's orphaned-`method_config_id` scan is surfaced as a payload
+    warning on the read path too.
+  - Specs amended (data-contract-and-reporting.md §5: subsections numbered
+    5.1/5.2, the D2 explore data-source rewording, new §5.3 payload contract;
+    §2 metric-description sourcing note).
 - **M3 WP1 — the readout decision core** (per
   [`docs/specs/m3-implementation-plan.md`](docs/specs/m3-implementation-plan.md) D5):
   - `abkit.pipeline.readout`: pure read-time WIN/LOSE/FLAT/INCONCLUSIVE

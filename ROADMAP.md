@@ -93,6 +93,12 @@ definition-of-done includes the relevant
 - Port the autotune scaffolding → placebo A/A splits, FPR + power + achieved-MDE +
   coverage, **honest cumulative-peeking FPR** over the day-grid; `_ab_aa_runs`;
   recommendation; the matrix UX (color vs budget, Recommended row, plain verdicts).
+- **Deferred here from the M3 knob surface (D12, change control):** one/two-sided
+  tests and winsorization — neither exists as a stats-core method param (p-values
+  are hardcoded two-sided; no winsor code anywhere), and the explore rail is
+  auto-derived from `param_specs`, so neither can be faked in the UI. Adding
+  either is a stats-core change with the full obligations (identity impact,
+  `statistics-changes.md` entry, A/A validation) — the M4 harness arbitrates them.
 - **DoD:** closed-form default, bootstrap A/A opt-in with subsampling; worked
   example in the spec; powers the explore calibration chip and the blind-rederivation
   arbitration. *(Must-fixes: matrix UX, peeking FPR, validate cost bound.)*
@@ -131,3 +137,21 @@ definition-of-done includes the relevant
 Tracked in the RU initiation spec ([docs/ru/project-initiation-spec.md](docs/ru/project-initiation-spec.md))
 — covariate-window choice, v2 trigger threshold, docs domain confirmation, SRM
 `expected_split` source, guardrail multiplicity handling.
+
+### Tooling debt (non-blocking, discovered M3 WP2)
+- **`mypy` fails on clean HEAD** — `numpy` 2.5.0 ships PEP-695 `type X = ...`
+  stubs (Python 3.12+ syntax), but `[tool.mypy] python_version = "3.10"` makes
+  mypy reject them (`numpy/__init__.pyi: Type statement is only supported in
+  Python 3.12 and greater`; the error mis-anchors to `metric_config.py:48`).
+  Fails on **both** the pinned pre-commit mypy (v1.10.0) **and** a newer venv
+  mypy (2.1.0) — a `mirrors-mypy` bump does **not** fix it. CI tolerates it
+  (`mypy abkit` is `continue-on-error: true`), so this is local-dev friction
+  (the pre-commit `mypy` hook is red) not a CI blocker. Fix: raise mypy
+  `python_version` to `3.12`, or pin `numpy<2.5`, or exclude the numpy stubs.
+- **`black` version drift pre-commit ↔ CI** — pre-commit pins `black` 24.4.2
+  while the `[dev]` extra is `black>=23.0` (unpinned), so CI installs the latest
+  (26.x). They format some constructs differently (e.g. multi-line `write_text`
+  in `tests/config/`); `abkit/` currently agrees under both and CI only runs
+  `black --check abkit`, so CI is green today. Fix: pin `black` to one version
+  across `.pre-commit-config.yaml` and the `[dev]` extra so local and CI never
+  diverge.

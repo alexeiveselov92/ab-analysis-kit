@@ -117,7 +117,8 @@ class TestNameAndTags:
 
 class TestFromYaml:
     def test_round_trip(self, tmp_path):
-        (tmp_path / "arpu.yml").write_text("""
+        (tmp_path / "arpu.yml").write_text(
+            """
 name: arpu
 description: "Average revenue per user"
 type: sample
@@ -127,7 +128,8 @@ columns:
   variant: group
   value: gross_usd
 query: "SELECT 1"
-""")
+"""
+        )
         config = MetricConfig.from_yaml_file(tmp_path / "arpu.yml")
         assert config.name == "arpu"
         assert config.type == "sample"
