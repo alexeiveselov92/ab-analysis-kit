@@ -9,9 +9,11 @@ from abkit.reporting.builder import (
     REPORT_POINT_BUDGET,
     build_report_payload,
 )
+from abkit.reporting.html_report import render_report_html
 
 __all__ = [
     "PAYLOAD_VERSION",
     "REPORT_POINT_BUDGET",
     "build_report_payload",
+    "render_report_html",
 ]

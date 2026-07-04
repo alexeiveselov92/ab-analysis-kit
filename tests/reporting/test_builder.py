@@ -142,11 +142,8 @@ def save_rows(tables: InternalTablesManager, rows: list[dict]) -> None:
     tables.save_results(batch)
 
 
-@pytest.fixture(params=[False, True], ids=["sql-like", "clickhouse-like"])
-def tables(request) -> InternalTablesManager:
-    manager = InternalTablesManager(FakeDatabaseManager(clickhouse_like=request.param))
-    manager.ensure_tables()
-    return manager
+# the `tables` fixture lives in tests/reporting/conftest.py (shared with the
+# WP3 html-report suite)
 
 
 def seed_series(
@@ -255,6 +252,12 @@ class TestPayloadShape:
             "rj": 1,
             "s1": 1000,
             "s2": 1000,
+            "v1": 10.0,
+            "v2": 11.0,
+            "sd1": 2.0,
+            "sd2": 2.0,
+            "cv1": None,  # non-CUPED row — covariate means stay null
+            "cv2": None,
             "mde": 0.08,  # max(|mde_1|, |mde_2|) — the underpowered arm wins
             "hz": 0,
             "blk": 0,

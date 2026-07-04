@@ -89,6 +89,18 @@ def init(project_name: str, target_dir: str, db_type: str) -> None:
     show_default=True,
     help="Worker threads across experiments (each gets its own DB connection)",
 )
+@click.option(
+    "--report",
+    "report_path",
+    is_flag=False,
+    flag_value="",
+    default=None,
+    help=(
+        "After the run, emit a self-contained HTML readout per experiment "
+        "(best-effort — never fails the run). Optional value: an output file "
+        "or directory; defaults to reports/<experiment>.html."
+    ),
+)
 def run(
     select: tuple[str, ...],
     exclude: tuple[str, ...],
@@ -99,11 +111,23 @@ def run(
     full_refresh: bool,
     force: bool,
     workers: int,
+    report_path: str | None,
 ) -> None:
     """Run the pipeline: validate → plan → load → SRM → compute → persist."""
     from abkit.cli.commands.run import run_run
 
-    run_run(select, exclude, steps, profile, from_ts, to_ts, full_refresh, force, workers)
+    run_run(
+        select,
+        exclude,
+        steps,
+        profile,
+        from_ts,
+        to_ts,
+        full_refresh,
+        force,
+        workers,
+        report_path,
+    )
 
 
 @cli.command()

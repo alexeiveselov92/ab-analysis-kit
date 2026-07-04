@@ -13,6 +13,56 @@ number change).
 
 ## [Unreleased]
 
+### Added
+- **M3 WP3 — the self-contained HTML readout + `abk run --report`** (per
+  [`docs/specs/m3-implementation-plan.md`](docs/specs/m3-implementation-plan.md)
+  WP3/D7/D8):
+  - `abkit.reporting.html_report`: `render_report_html(payload)` — one
+    offline HTML per experiment (baked payload + the inlined committed
+    `assets/report.js` bundle; framework-free, zero network requests, no
+    webfonts — the donor's Google-Fonts links are deliberately dropped).
+    Template mechanics per the donor (escaped title; data-URI favicon; never
+    `.format`), hardened past it after the WP3 adversarial review: the baked
+    JSON escapes **every `<` as `\u003c`** (escaping only `</` leaves the
+    HTML tokenizer's `<!--`+`<script` double-escaped state able to swallow
+    the real terminator), placeholders substitute in **one regex pass** (a
+    payload string containing `__REPORT_JS__` can no longer be clobbered),
+    and the CLI writes the file **atomically** (temp + `os.replace`) so a
+    mid-write failure never truncates a previous good report.
+  - `web/` — the dev-only bundle toolchain (D7): `web/src/shared/payload.ts`
+    (the §5.3 contract in documented lockstep with `builder.py`),
+    `web/src/shared/chart.ts` (canvas primitives + the one placeholder
+    brand-token layer per branding-and-site.md §3), `web/src/report/report.ts`
+    (the experiment-primary renderer: verdict banners with rationale/caveats/
+    guardrails, the stabilization chart — effect + CI vs `elapsed_days`, zero
+    line, horizon marker, wheel-zoom/drag-pan/hover — four one-axis small
+    multiples (variant means incl. CUPED covariate, pair MDE vs `min_effect`,
+    p-value vs α, client-derived avg group size), a results/audit table, the
+    red SRM gate chip, the calibration empty state "uncalibrated — run
+    `abk validate` (M4)", and the sub-day look counter). Built by
+    `web/build.mjs` (esbuild, IIFE, es2019) into the committed, wheel-packaged
+    `abkit/reporting/assets/report.js`.
+  - Peeking honesty rendered per data-contract §4 with **stable
+    machine-checkable markers**: pre-horizon fixed CIs dashed/de-emphasized
+    (`abk-prehorizon`), `insufficient_data` cutoffs greyed with counts+SRM
+    only (`abk-insufficient`), the SRM chip (`abk-srm-fail`); asserted by the
+    build script, the Python suite, the jsdom smoke suite, and a new CI
+    `bundle` job that rebuilds `web/` and diffs the committed assets
+    (freshness gate).
+  - `abk run --report` (D8, the donor's tri-state flag): bare →
+    `reports/<experiment>.html`, a directory → `<dir>/<experiment>.html`, a
+    `.html` value → that exact file. Emitted per experiment after its
+    pipeline **best-effort** — a report failure yellow-skips and never fails
+    the run (the one recorded exception to the CLI exit-non-zero contract) —
+    and even with zero pending cutoffs (the re-run-to-report path).
+    `--report` with `--steps validate` is rejected; one `.html` file with
+    multiple selected experiments is rejected. cli-and-dx §1's never-wired
+    `readout` `--steps` token is amended away (D8).
+  - Payload series points gain per-arm keys `v1/v2/sd1/sd2/cv1/cv2` (stored
+    value/std/CUPED covariate means) — **additive, no schema v-bump** —
+    feeding the §5.2 variant-means/lift view; §5.3 amended, `payload.ts`
+    lockstep.
+
 ### Fixed
 - **MDE solve crash + report cost** (M3 WP2 review-closure, adversarial
   re-verification): `abkit.stats.power` — statsmodels' `solve_power` returns a

@@ -1,0 +1,22 @@
+{
+  "name": "abkit-web",
+  "private": true,
+  "description": "Dev-only toolchain for abkit's committed browser bundles (m3-implementation-plan.md D7). Sources in src/, built by build.mjs into abkit/*/assets/*.js — the wheel ships the committed artifacts, never this package.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "check": "tsc --noEmit",
+    "pretest": "node build.mjs",
+    "test": "node --test \"test/*.mjs\""
+  },
+  "devDependencies": {
+    "@types/jsdom": "^21.1.7",
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.27.7",
+    "jsdom": "^26.1.0",
+    "typescript": "^5.8.0"
+  }
+}

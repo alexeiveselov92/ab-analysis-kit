@@ -130,7 +130,10 @@ def _point(row: dict) -> dict:
 
     ``mde`` is the per-point pair MDE from the stored columns (:func:
     `_stored_pair_mde`). Demoted rows pass their NULL test columns through as
-    nulls; sizes stay real.
+    nulls; sizes stay real. ``v1/v2/sd1/sd2/cv1/cv2`` are the per-arm stored
+    values/stds/CUPED covariate means — the WP3 additive extension (no v-bump)
+    feeding the §5.2 "variant means/lift" and §3 view-2 renderings; ``cv*`` is
+    null for non-CUPED rows.
     """
     return {
         "t": _ms(row["end_ts"]),
@@ -142,6 +145,12 @@ def _point(row: dict) -> dict:
         "rj": _reject_flag(row.get("reject")),
         "s1": int(row.get("size_1") or 0),
         "s2": int(row.get("size_2") or 0),
+        "v1": _num_or_none(row.get("value_1")),
+        "v2": _num_or_none(row.get("value_2")),
+        "sd1": _num_or_none(row.get("std_1")),
+        "sd2": _num_or_none(row.get("std_2")),
+        "cv1": _num_or_none(row.get("cov_value_1")),
+        "cv2": _num_or_none(row.get("cov_value_2")),
         "mde": _stored_pair_mde(row),
         "hz": _flag01(row.get("is_horizon")),
         "blk": _flag01(row.get("decision_blocked")),

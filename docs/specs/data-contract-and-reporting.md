@@ -194,7 +194,9 @@ nullable numeric maps NaN **and ±inf** to JSON `null` (H5 zero-denominator NaNs
 carry the explanation). The payload derives from **stored** rows (persisted
 `method_params`/`alpha`/`srm_flag`), never from re-evaluating the current YAML;
 header metadata comes from the experiment config (the truth) — `_ab_experiments`
-is informational only. `</` is escaped at HTML-bake time (WP3), not here.
+is informational only. Every `<` is escaped (`\u003c`) at HTML-bake time
+(WP3 — `</`-only escaping would leave the tokenizer's `<!--`+`<script`
+double-escape hazard open), not here.
 
 ```
 {
@@ -233,16 +235,22 @@ is informational only. `</` is escaped at HTML-bake time (WP3), not here.
                                // metric_rendered_query NEVER enters the payload
              pairs: [{c, t,    // all combinations(arms, 2), config order, always
                                // present (series may be empty)
-                      series: [{t, ed, e, lo, hi, p, rj, s1, s2, mde, hz, blk, ins}],
+                      series: [{t, ed, e, lo, hi, p, rj, s1, s2,
+                                v1, v2, sd1, sd2, cv1, cv2, mde, hz, blk, ins}],
                                // terse point keys: t ms-epoch; ed elapsed_days
                                // (float, chart x-axis); e/lo/hi effect + CI;
                                // p pvalue; rj reject 1/0/null (null = withheld);
-                               // s1/s2 sizes; mde = per-point pair MDE from the
-                               // STORED mde_1/2 columns (null when the row did
-                               // not compute MDE — no per-point read-time solve;
-                               // the read-time D5(b) fallback is verdict-level);
-                               // hz/blk/ins 0/1 flags (is_horizon /
-                               // decision_blocked / insufficient_data)
+                               // s1/s2 sizes; v1/v2 + sd1/sd2 per-arm stored
+                               // value/std, cv1/cv2 CUPED covariate means (null
+                               // unless CUPED) — added with WP3 (additive, no
+                               // v-bump) for the §5.2 variant-means/lift and
+                               // §3 view-2 renderings; mde = per-point pair MDE
+                               // from the STORED mde_1/2 columns (null when the
+                               // row did not compute MDE — no per-point
+                               // read-time solve; the read-time D5(b) fallback
+                               // is verdict-level); hz/blk/ins 0/1 flags
+                               // (is_horizon / decision_blocked /
+                               // insufficient_data)
                       diag|null}],  // parsed diagnostics of the latest row
              warnings: [..]}], // row warnings, parsed + deduped, order-preserving
   look: {n, planned}|null,     // n = cutoffs with ≥1 non-demoted row (§4);
