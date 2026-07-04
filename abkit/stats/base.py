@@ -128,6 +128,19 @@ POWER_PARAM = ParamSpec(
     exclusive_bounds=True,
     description="Target power for the MDE solve.",
 )
+COVARIATE_LOOKBACK_PARAM = ParamSpec(
+    name="covariate_lookback",
+    types=(str, int),
+    default=None,
+    description=(
+        "Pre-period covariate window (fixed whole-day lookback, e.g. '14d' — "
+        "statistics-changes.md §5). IDENTITY-BEARING: a different lookback is a "
+        "different covariate, hence a different series. The math here never "
+        "reads it — the pipeline's loader materialises the covariate values; "
+        "the duration grammar is validated by the config layer (the pure core "
+        "does not parse durations)."
+    ),
+)
 N_SAMPLES_PARAM = ParamSpec(
     name="n_samples",
     types=(int,),
@@ -228,6 +241,13 @@ class BaseMethod(ABC):
     ALGORITHM_VERSION: ClassVar[int] = 1
     #: The method's parameter schema.
     param_specs: ClassVar[tuple[ParamSpec, ...]] = ()
+    #: Declarative capability attributes (plan R8) — the pipeline dispatches on
+    #: these instead of isinstance checks against concrete classes. Purely
+    #: descriptive: no numeric behaviour depends on them (no version bump).
+    #: Which container family ``from_samples`` expects: sample | fraction | ratio.
+    input_kind: ClassVar[str] = "sample"
+    #: Paired designs need unit-aligned arms (not served by the v1 pipeline).
+    is_paired: ClassVar[bool] = False
 
     def __init__(self, alpha: float = 0.05, **params: Any) -> None:
         if not 0.0 < alpha < 1.0:

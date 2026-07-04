@@ -29,6 +29,7 @@ import numpy as np
 
 from abkit.stats.base import (
     CALCULATE_MDE_PARAM,
+    COVARIATE_LOOKBACK_PARAM,
     POWER_PARAM,
     TEST_TYPE_PARAM,
     BaseMethod,
@@ -64,7 +65,12 @@ def correlation_warning(method_name: str, arm_name: str, corr_coef: float) -> st
 @register(aliases=("cuped-ttest",))
 class CupedTTest(BaseMethod):
     name = "cuped-t-test"
-    param_specs = (TEST_TYPE_PARAM, CALCULATE_MDE_PARAM, POWER_PARAM)
+    param_specs = (
+        TEST_TYPE_PARAM,
+        CALCULATE_MDE_PARAM,
+        POWER_PARAM,
+        COVARIATE_LOOKBACK_PARAM,
+    )
 
     def from_samples(self, sample_1: Sample, sample_2: Sample) -> TestResult:
         require_pair_type(self.name, sample_1, sample_2, Sample)

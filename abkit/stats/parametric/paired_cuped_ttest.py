@@ -19,7 +19,7 @@ import math
 
 import numpy as np
 
-from abkit.stats.base import TEST_TYPE_PARAM
+from abkit.stats.base import COVARIATE_LOOKBACK_PARAM, TEST_TYPE_PARAM
 from abkit.stats.effects import EffectEstimate, normal_test, relative_delta_effect
 from abkit.stats.exceptions import SampleValidationError
 from abkit.stats.parametric.cuped_ttest import correlation_warning
@@ -41,7 +41,8 @@ def _corr(moments: JointMoments, value_label: str, cov_label: str) -> float:
 @register
 class PairedCupedTTest(BasePairedMethod):
     name = "paired-cuped-t-test"
-    param_specs = (TEST_TYPE_PARAM,)
+    is_paired = True
+    param_specs = (TEST_TYPE_PARAM, COVARIATE_LOOKBACK_PARAM)
 
     def from_suffstats(self, stats_1: PairedSufficientStats, stats_2: None = None) -> TestResult:
         joint = self._as_joint(stats_1, stats_2)

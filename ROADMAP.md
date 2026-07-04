@@ -45,7 +45,7 @@ definition-of-done includes the relevant
   z-test could route through `effects.normal_test` (kept as a verbatim legacy
   transcription deliberately).
 
-## M2 — Declarative config + DB layer + the pipeline (recompute)
+## M2 — Declarative config + DB layer + the pipeline (recompute) ✅
 - pydantic Experiment/Metric/Method configs + two-level validator; Jinja templating
   + the **packaged assignment macro**; project/profiles + env interpolation.
 - Generic DB manager (CH/PG/MySQL) + internal tables (`_ab_experiments`,
@@ -54,16 +54,31 @@ definition-of-done includes the relevant
 - **Sub-day cadence first-class** (decision: cumulative-intervals.md §6):
   duration/schedule-typed `cadence` (dense-early grids), UTC `end_ts` window
   contract with derived `end_date`, `data_lag` watermark planner rule,
-  `max_looks`/`warn_looks` gates, day-grained unit-state + current-day tail
-  reads, `ab_start_ts`/`ab_end_ts` Jinja built-ins, `insufficient_data`
-  small-n row flag; CUPED covariate = fixed lookback (statistics-changes §5).
+  `max_looks`/`warn_looks` gates, `ab_start_ts`/`ab_end_ts` Jinja built-ins,
+  `insufficient_data` small-n row flag; CUPED covariate = fixed lookback
+  (statistics-changes §5, implemented as the pre-period second render —
+  declarative-config §3 amended).
 - `pipeline`: discover → plan → load (cohort once) → SRM gate → compute → enrich →
   persist. `abk run`, `abk run --steps validate` (config-lint), `unlock`,
-  `clean`. Read-only exposures.
-- **DoD:** `abk init && abk run --select example` produces real results on a
-  fresh machine against a seed dataset; idempotent re-run is byte-stable; atomic
-  lock; strictly-monotonic `created_at`; one-row-per-unit guard. *(Must-fixes:
-  macro, alpha inspectability, completeness boundary, lock, SRM-in-CLI.)*
+  `clean`, `init` (runnable example + seed dataset). Read-only exposures.
+- **DoD (met):** `abk init && abk run --select example_signup_test` produces
+  real results against the seed dataset (machine-independent e2e + a
+  testcontainers ClickHouse gate); idempotent byte-stable re-run (incl.
+  bootstrap via derived seeds); atomic lock (PG/MySQL single-statement, CH
+  advisory); strictly-monotonic `created_at`; one-row-per-unit guard.
+  *(Must-fixes: macro, alpha inspectability, completeness boundary, lock,
+  SRM-in-CLI — all done.)*
+- **Deferred (recorded):** the `_ab_unit_state` STATE stage is schema/invariant-
+  complete (twice-run test) but not wired into the v1 driver — the v1 read path
+  is recompute, so writing day-state would double the warehouse scan for data
+  nothing reads; it activates when v2 flips the read path. Paired methods are
+  notebook-only (the pipeline serves independent-arm experiments). Sequential
+  CIs land in M5 (`ci_kind` is always `fixed` in M2 rows). The PG/MySQL
+  testcontainers integration suite (incl. the two-process atomic-claim race
+  test) is deferred to the M3 hardening list — CI runs the ClickHouse
+  first-run e2e gate; the PG/MySQL claim SQL is unit-tested per dialect.
+  Internal table-name overrides (`tables:` block) validate but are rejected
+  until the mixins are parameterized.
 
 ## M3 — The explore cockpit (PRIORITY) + reporting
 - Port the detectkit `tune` package → `abk explore`: localhost server, live

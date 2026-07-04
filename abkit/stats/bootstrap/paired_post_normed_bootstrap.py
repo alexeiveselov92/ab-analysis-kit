@@ -38,6 +38,7 @@ class PairedPostNormedBootstrapTest(BaseBootstrapMethod):
     """Paired z-score-standardised bootstrap (absolute branch only)."""
 
     name = "paired-post-normed-bootstrap"
+    is_paired = True
 
     def _validate_params(self) -> None:
         super()._validate_params()

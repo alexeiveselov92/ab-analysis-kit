@@ -1,0 +1,62 @@
+{#-
+The PACKAGED assignment macro (declarative-config.md §4 — the quorum
+"no leaked boilerplate" must-fix). A metric SQL imports it as:
+
+    {% import 'abkit_assignment.jinja' as ab %}
+
+and describes ONLY the metric aggregation; the correctness-critical
+cohort join, window filter and dedup live here, once:
+
+- ab.exposed_units() — JOINs the persisted _ab_exposures cohort (loaded
+  once per run), deduped per dialect (FINAL on ClickHouse — a mid-merge
+  ReplacingMergeTree must never yield a unit twice; PG/MySQL enforce the
+  PK), and applies BOTH the coarse event_date predicate (Date partition
+  pruning) and the precise half-open event_time window
+  (cumulative-intervals.md §6.4). The exposure_ts filter is dropped when
+  the loader renders the pre-period covariate window
+  (ab_apply_exposure_filter=false — pre-period precedes exposure by
+  construction).
+- ab.variant_col() / ab.stratum_col() — arm/stratum labels from the cohort.
+
+Collision-proofing: the cohort subquery projects its columns under _abk_-
+prefixed aliases, so a fact table with columns named unit_id/variant/
+exposure_ts/stratum can never be captured by the join. The fact-side unit
+key is cast to a string per dialect (the persisted cohort stores unit ids
+as strings).
+
+assignment.added_filters is deliberately NOT injected here: it filters the
+ASSIGNMENT (cohort) query only — silently narrowing every metric's fact
+scan would change numbers invisibly.
+
+Validation asserts the rendered SQL joins _ab_exposures; a metric authored
+without this macro fails config-lint.
+-#}
+
+{%- macro _unit_key_str() -%}
+{%- if ab_dialect == 'clickhouse' -%}toString({{ ab_unit_key }})
+{%- elif ab_dialect == 'postgres' -%}CAST({{ ab_unit_key }} AS TEXT)
+{%- else -%}CAST({{ ab_unit_key }} AS CHAR){%- endif -%}
+{%- endmacro -%}
+
+{%- macro exposed_units(event_date_col='event_date', event_time_col='event_time') -%}
+INNER JOIN (
+    SELECT
+        unit_id     AS _abk_unit_id,
+        variant     AS _abk_variant,
+        exposure_ts AS _abk_exposure_ts,
+        stratum     AS _abk_stratum
+    FROM {{ ab_exposures_table }}{% if ab_dialect == 'clickhouse' %} FINAL{% endif %}
+    WHERE experiment = '{{ ab_experiment_id }}'
+) AS _abk_exposures ON _abk_exposures._abk_unit_id = {{ _unit_key_str() }}
+WHERE {{ event_date_col }} >= '{{ ab_start_date }}'
+  AND {{ event_date_col }} <= '{{ ab_end_date }}'
+  AND {{ event_time_col }} >= '{{ ab_start_ts }}'
+  AND {{ event_time_col }} < '{{ ab_end_ts }}'
+{%- if ab_apply_exposure_filter %}
+  AND {{ event_time_col }} >= _abk_exposures._abk_exposure_ts
+{%- endif %}
+{%- endmacro -%}
+
+{%- macro variant_col() -%}_abk_exposures._abk_variant{%- endmacro -%}
+
+{%- macro stratum_col() -%}_abk_exposures._abk_stratum{%- endmacro -%}

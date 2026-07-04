@@ -1,10 +1,14 @@
 """``abk`` — the ab-analysis-kit command-line interface.
 
-Pre-development: the full command surface (``init``, ``run``, ``explore``,
-``validate``, ``plan``, ``init-claude``, ``clean``, ``unlock``, ``test-report``)
-is specified in ``docs/specs/cli-and-dx.md`` and implemented per ``ROADMAP.md``.
-This module currently exposes only the top-level group so the ``abk`` entry point
-resolves and ``abk --version`` works.
+dbt-like commands over declarative experiment/metric YAML (cli-and-dx.md §1).
+Command bodies import lazily so ``abk --version`` stays instant and no DB
+driver is required until a command actually needs one. Failures exit NON-ZERO
+— the CLI is the Prefect unit of automation (a deliberate, recorded deviation
+from the detectkit donor's swallow-and-return-0 behaviour).
+
+M2 surface: ``init``, ``run``, ``unlock``, ``clean``. The remaining commands
+(``explore``, ``validate``, ``plan``, ``init-claude``, ``test-report``) land
+per ROADMAP.md M3–M6.
 """
 
 from __future__ import annotations
@@ -19,9 +23,130 @@ from abkit import __version__
 def cli() -> None:
     """ab-analysis-kit — declarative A/B experiment analysis.
 
-    Commands are being built per docs/specs/cli-and-dx.md and ROADMAP.md.
+    Examples:
+        abk init my_ab_project
+        abk run --select signup_test
+        abk run --steps validate
+        abk run --select tag:actual
+
     Docs: https://abkit.pipelab.dev
     """
+
+
+@cli.command()
+@click.argument("project_name")
+@click.option(
+    "--target-dir",
+    "-d",
+    default=".",
+    help="Directory to create the project in (default: current directory)",
+)
+@click.option(
+    "--db-type",
+    type=click.Choice(["clickhouse", "postgres", "mysql"]),
+    default="clickhouse",
+    show_default=True,
+    help="Database backend to scaffold the profiles and example SQL for.",
+)
+def init(project_name: str, target_dir: str, db_type: str) -> None:
+    """Initialize a new abkit project (with a runnable example experiment).
+
+    Creates abkit_project.yml, profiles.yml, experiments/, metrics/, sql/
+    and a seed-dataset example so `abk run --select example_signup_test`
+    produces real results on a fresh machine.
+    """
+    from abkit.cli.commands.init import run_init
+
+    run_init(project_name, target_dir, db_type=db_type)
+
+
+@cli.command()
+@click.option(
+    "--select",
+    "-s",
+    multiple=True,
+    help="Experiment selector: name, path glob, tag:<tag>, or * (repeatable; default all)",
+)
+@click.option("--exclude", multiple=True, help="Selectors to exclude (same forms)")
+@click.option(
+    "--steps",
+    default="validate,plan,load,compute",
+    show_default=True,
+    help="Comma-separated pipeline steps. 'validate' alone = config-lint, no DB.",
+)
+@click.option("--profile", help="Profile name (default: profiles.yml default_profile)")
+@click.option("--from", "from_ts", help="Full-refresh window start (with --full-refresh)")
+@click.option("--to", "to_ts", help="Full-refresh window end, exclusive (with --full-refresh)")
+@click.option(
+    "--full-refresh",
+    is_flag=True,
+    help="Re-open already-computed cutoffs in [--from, --to) and recompute them",
+)
+@click.option("--force", is_flag=True, help="Take over a held lock (use with care)")
+@click.option(
+    "--workers",
+    default=1,
+    show_default=True,
+    help="Worker threads across experiments (each gets its own DB connection)",
+)
+def run(
+    select: tuple[str, ...],
+    exclude: tuple[str, ...],
+    steps: str,
+    profile: str | None,
+    from_ts: str | None,
+    to_ts: str | None,
+    full_refresh: bool,
+    force: bool,
+    workers: int,
+) -> None:
+    """Run the pipeline: validate → plan → load → SRM → compute → persist."""
+    from abkit.cli.commands.run import run_run
+
+    run_run(select, exclude, steps, profile, from_ts, to_ts, full_refresh, force, workers)
+
+
+@cli.command()
+@click.option(
+    "--select",
+    "-s",
+    multiple=True,
+    help="Experiment selector (name, glob, tag:<tag>, *; default all)",
+)
+@click.option("--profile", help="Profile name (default: profiles.yml default_profile)")
+def unlock(select: tuple[str, ...], profile: str | None) -> None:
+    """Clear stale pipeline locks left by a run that died."""
+    from abkit.cli.commands.unlock import run_unlock
+
+    run_unlock(select, profile)
+
+
+@cli.command()
+@click.option(
+    "--select",
+    "-s",
+    multiple=True,
+    help="Experiment selector (name, glob, tag:<tag>, *; default all)",
+)
+@click.option(
+    "--orphaned-experiments",
+    is_flag=True,
+    help="Purge experiments that have DB rows but no YAML in the project",
+)
+@click.option("--execute", is_flag=True, help="Apply the changes (default: dry run)")
+@click.option("--yes", is_flag=True, help="Skip the per-experiment purge confirmation")
+@click.option("--profile", help="Profile name (default: profiles.yml default_profile)")
+def clean(
+    select: tuple[str, ...],
+    orphaned_experiments: bool,
+    execute: bool,
+    yes: bool,
+    profile: str | None,
+) -> None:
+    """Prune orphaned result series (method_config_id drift) and removed experiments."""
+    from abkit.cli.commands.clean import run_clean
+
+    run_clean(select, orphaned_experiments, execute, yes, profile)
 
 
 if __name__ == "__main__":

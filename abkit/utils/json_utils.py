@@ -22,3 +22,17 @@ def json_dumps_sorted(obj: Any) -> str:
     return json.dumps(
         obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
     )
+
+
+def json_loads(value: str | bytes) -> Any:
+    """Parse a JSON document (stdlib only — this module must stay import-light).
+
+    Accepts ``bytes``/``bytearray``/``memoryview`` and str subclasses such as
+    ``numpy.str_`` (coerced to exact ``str`` first, matching the dumps path's
+    text-in/text-out convention).
+    """
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        value = bytes(value).decode("utf-8")
+    elif type(value) is not str:
+        value = str(value)
+    return json.loads(value)

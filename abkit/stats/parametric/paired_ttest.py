@@ -76,6 +76,7 @@ class BasePairedMethod(BaseMethod):
 @register(aliases=("paired-ttest",))
 class PairedTTest(BasePairedMethod):
     name = "paired-t-test"
+    is_paired = True
     param_specs = (TEST_TYPE_PARAM,)
 
     def from_suffstats(self, stats_1: PairedSufficientStats, stats_2: None = None) -> TestResult:

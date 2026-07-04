@@ -44,6 +44,7 @@ names/types are ours to choose; this is the proposed v1 contract):
 | test | `alpha` (effective, post-correction), `pvalue`, `effect`, `left_bound`, `right_bound`, `ci_length`, `reject`, `mde_1/2` |
 | integrity | `srm_flag`, `srm_pvalue`, `decision_blocked`, `insufficient_data` (small-n demotion: row written, inference withheld) |
 | sequence | `ci_kind` (`fixed` \| `always_valid`), `is_horizon` (this cutoff == planned horizon) |
+| diagnostics | `warnings` (canonical-JSON array, nullable), `diagnostics` (canonical-JSON object, nullable) — the row's human-readable failure/context signal (θ, boot diagnostics, H5 zero-denominator explanations) routed from the stats core instead of stderr. *(Added in M2 WP3; amends the original proposal which had no home for `TestResult.warnings`/`diagnostics`.)* |
 | provenance | `metric_query`, `metric_rendered_query`, `watermark_ts` (completeness boundary in force), `created_at` (strictly-monotonic LWW version) |
 
 Notes:

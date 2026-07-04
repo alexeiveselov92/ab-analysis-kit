@@ -14,6 +14,78 @@ number change).
 ## [Unreleased]
 
 ### Added
+- **M2 — declarative config + DB layer + the recompute pipeline** (per
+  [`docs/specs/m2-implementation-plan.md`](docs/specs/m2-implementation-plan.md)):
+  - `abkit.core`: duration parser (`N{s,m,h,d,w}`), `TableModel`/`ColumnDefinition`
+    (+`max_length` for MySQL key budgets), and `period_planner` — ONE pure grid
+    enumeration (scalar + dense-early schedule cadence, experiment-tz midnight
+    snapping, DST-safe, horizon always flagged) consumed by BOTH the validator's
+    look gates and the planner anti-join; `data_lag: 0` + half-open windows
+    reproduce `*_wo_curr_day` exactly.
+  - `abkit.database`: generic CH/PG/MySQL managers with the quorum **atomic
+    lock** primitive (PG single-statement `INSERT…ON CONFLICT…DO UPDATE…WHERE`;
+    MySQL row-alias upsert with the claim verdict latched into a session
+    variable; ClickHouse advisory claim with a deterministic read-back
+    tie-break) and the greenfield `_ab_*` schema: `_ab_experiments`,
+    `_ab_exposures` (persisted cohort), `_ab_unit_state` (replace-not-sum,
+    keyed per source-table+column-set+unit+day; twice-run invariant tested),
+    `_ab_results` (the BI contract incl. new `warnings`/`diagnostics` JSON
+    columns — spec §2 amended), `_ab_aa_runs`, `_ab_tasks`; strictly-monotonic
+    distinct `created_at` via `next_version_ts()`.
+  - `abkit.config`: pydantic Experiment (primary entity; cadence
+    duration-or-schedule union; sub-day gates) / Metric (type + column roles) /
+    Method (delegates validation AND `method_config_id` to the stats factory —
+    one hashing path; quarantined branches fail at validate time) / Project
+    (statistical defaults + `max_looks`/`warn_looks`/`min_units_per_arm`) /
+    Profiles (env-interpolated, lazy driver imports); the full
+    declarative-config §8 level-2 validation matrix incl. the macro-usage lint
+    and the peeking warnings; project-root discovery + the two-level selector.
+  - `abkit.loaders`: StrictUndefined Jinja with the authoritative `ab_*`
+    built-ins and the **packaged assignment macro** (`ab.exposed_units()` —
+    dialect-aware cohort dedup, both window predicates, exposure filter);
+    exposure loader (idempotent per experiment; unit-in-two-variants is a hard
+    error) and metric loader (one-row-per-unit REJECTED on violation with the
+    GROUP BY hint).
+  - `abkit.pipeline` + `abkit.compute`: the v1 full-window recompute pipeline —
+    lock → catalog → exposures once → SRM gate (blocking-but-non-dropping,
+    broadcast to every row) → per-comparison anti-join plan (Python-computed
+    watermark) → analyze (declarative `input_kind`/`is_paired` dispatch;
+    two-tier Bonferroni; deterministic per-row bootstrap seeds;
+    `insufficient_data` demotion) → enrich (the full contract row) → LWW
+    persist; worker pool across experiments; backlog + orphaned-series
+    warnings.
+  - `abk` CLI: `run` (validate/plan/load/compute steps, `--full-refresh
+    --from/--to`, the inspectable effective-alphas echo, the red `SRM FAILED`
+    gate line), `unlock`, `clean` (method_config_id drift GC + orphaned
+    experiments; dry-run default), and `init` — a **runnable example**
+    (z-test fraction + CUPED sample metrics, assignment SQL, a deterministic
+    ClickHouse seed dataset, Prefect flow example) that round-trips through
+    the real config classes and the L2 validator at scaffold time.
+  - Tests: 905 (incl. an in-memory SQL-semantics fake backend, a synthetic
+    warehouse that aggregates a real event log per rendered window, the
+    machine-independent first-run e2e mirroring the seed generation rule, and
+    a testcontainers ClickHouse e2e gate that runs where Docker is available).
+- **M2 stats-core additions (zero number changes; goldens untouched):**
+  `COVARIATE_LOOKBACK_PARAM` on the two CUPED methods (the lookback is
+  identity-bearing — a different pre-period is a different covariate series);
+  declarative `BaseMethod.input_kind`/`is_paired` capability attributes.
+
+### Changed (M2 recorded deviations — no statistical numbers changed)
+- **Jinja precedence flip vs the detectkit donor:** `ab_*` built-ins WIN over
+  caller context; a colliding context key raises instead of silently moving
+  the analysis window.
+- **CLI exit codes:** every `abk` command exits non-zero on failure (the donor
+  echoed and returned 0) — the CLI is the Prefect unit of automation.
+- **CUPED covariate mechanics (declarative-config §3/§4 amended):** the
+  covariate comes from a SECOND render of the same metric SQL over the fixed
+  pre-period window with the exposure filter dropped (legacy semantics — the
+  covariate is the same metric pre-period); the original `ab.covariate_window()`
+  conditional-aggregate sketch is superseded (its own spec example would have
+  double-counted the pre-period under plain `sum()`).
+- `_ab_results` gains nullable `warnings`/`diagnostics` canonical-JSON columns
+  (plan R7) — the stats core's human-readable failure signal is persisted, not
+  lost to stderr; data-contract-and-reporting.md §2 amended in the same change.
+
 - **M1 — the pure statistical core `abkit.stats`** (importable standalone;
   numpy/scipy/statsmodels only). Data model: `Sample` / `Fraction` /
   `RatioSample`, sufficient statistics with the exact legacy **mixed-ddof**

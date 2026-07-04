@@ -85,6 +85,7 @@ class PairedPoissonBootstrapTest(PoissonBootstrapTest):
     """
 
     name = "paired-poisson-bootstrap"
+    is_paired = True
 
     def from_samples(self, sample_1: Sample, sample_2: Sample) -> TestResult:
         require_pair_type(self.name, sample_1, sample_2, Sample)

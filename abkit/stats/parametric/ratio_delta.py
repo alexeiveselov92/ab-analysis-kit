@@ -57,6 +57,7 @@ def _arm_linearisation(
 @register
 class RatioDelta(BaseMethod):
     name = "ratio-delta"
+    input_kind = "ratio"
     param_specs = (TEST_TYPE_PARAM,)
 
     def from_samples(self, sample_1: RatioSample, sample_2: RatioSample) -> TestResult:
