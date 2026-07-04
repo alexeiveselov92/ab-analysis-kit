@@ -14,10 +14,15 @@ doctrine). Header metadata comes from the experiment config (the truth);
 
 Units and null discipline (§5.3): timestamps are integer ms-epoch (UTC);
 every nullable numeric passes through :func:`_num_or_none`, so NaN **and
-±inf** become JSON ``null`` (H5 zero-denominator NaNs; ``pair_mde``'s
-``math.inf`` = "configured but unavailable" — the rationale strings carry the
-explanation). No NaN, numpy scalar, or datetime object ever reaches the
-returned dict.
+±inf** become JSON ``null`` (H5 zero-denominator NaNs; the verdict's
+``pair_mde`` ``math.inf`` = "configured but unavailable" — the rationale
+strings carry the explanation). No NaN, numpy scalar, or datetime object ever
+reaches the returned dict.
+
+Cost discipline: per-point MDE reads the **stored** columns only — the
+read-time D5(b) solve runs once per pair on the latest cutoff (the verdict),
+never per historical point (a statsmodels root-solve × O(cutoffs) would cost
+seconds-to-minutes at sub-day cadence; review finding).
 """
 
 from __future__ import annotations
@@ -35,7 +40,7 @@ from abkit.config.metric_config import MetricConfig
 from abkit.config.project_config import ProjectConfig
 from abkit.core.period_planner import generate_grid
 from abkit.database.internal_tables import InternalTablesManager
-from abkit.pipeline.readout import ExperimentReadout, PairVerdict, evaluate, pair_mde
+from abkit.pipeline.readout import ExperimentReadout, PairVerdict, evaluate
 from abkit.utils.datetime_utils import to_naive_utc
 from abkit.utils.json_utils import json_loads
 
@@ -97,14 +102,29 @@ def _parse_json_cell(value: Any) -> Any:
         return None
 
 
+def _stored_pair_mde(row: dict) -> float | None:
+    """The per-point pair MDE from the **stored** columns only (D5(b) combine).
+
+    Deliberately no read-time ``pair_mde`` solve here: that runs a statsmodels
+    root-solve per t/z row, and cumulative windows give every cutoff a unique
+    ``(size, ratio)`` — so the whole series would cost O(cutoffs) solves
+    (seconds-to-minutes at sub-day cadence; review finding). The point series
+    honestly shows *what actually ran*: MDE where the row computed it
+    (``calculate_mde: true``), null otherwise. The read-time D5(b) fallback
+    stays where the FLAT decision needs it — the **verdict**, one solve per
+    pair on the latest cutoff (readout ``pair_mde``)."""
+    mde_1, mde_2 = _num_or_none(row.get("mde_1")), _num_or_none(row.get("mde_2"))
+    magnitudes = [abs(m) for m in (mde_1, mde_2) if m is not None]
+    return max(magnitudes) if magnitudes else None
+
+
 def _point(row: dict) -> dict:
     """One ``_ab_results`` row → the terse §5.3 series point.
 
-    ``mde`` is the D5(b) pair MDE (stored ``mde_1/2`` win, read-time fallback
-    for t/z rows) — the same semantics the verdict uses. Demoted rows pass
-    their NULL test columns through as nulls; sizes stay real.
+    ``mde`` is the per-point pair MDE from the stored columns (:func:
+    `_stored_pair_mde`). Demoted rows pass their NULL test columns through as
+    nulls; sizes stay real.
     """
-    mde, _reason = pair_mde(row)
     return {
         "t": _ms(row["end_ts"]),
         "ed": _num_or_none(row.get("elapsed_days")),
@@ -115,7 +135,7 @@ def _point(row: dict) -> dict:
         "rj": _reject_flag(row.get("reject")),
         "s1": int(row.get("size_1") or 0),
         "s2": int(row.get("size_2") or 0),
-        "mde": _num_or_none(mde),
+        "mde": _stored_pair_mde(row),
         "hz": _flag01(row.get("is_horizon")),
         "blk": _flag01(row.get("decision_blocked")),
         "ins": _flag01(row.get("insufficient_data")),

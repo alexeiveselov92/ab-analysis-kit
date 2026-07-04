@@ -19,13 +19,14 @@ from abkit.config.metric_config import MetricConfig
 from abkit.core.period_planner import generate_grid
 from abkit.database.internal_tables import InternalTablesManager
 from abkit.database.internal_tables._results import RESULT_COLUMNS
-from abkit.pipeline.readout import evaluate, pair_mde
+from abkit.pipeline.readout import evaluate
 from abkit.reporting.builder import (
     PAYLOAD_VERSION,
     _ms,
     _num_or_none,
     build_report_payload,
 )
+from abkit.stats.power import _ttest_effect_size_at_power
 from abkit.utils.json_utils import json_dumps_sorted
 from tests._helpers.fake_db import FakeDatabaseManager
 
@@ -260,21 +261,34 @@ class TestPayloadShape:
             "ins": 0,
         }
 
-    def test_point_mde_read_time_fallback(self, tables):
-        """NULL mde columns on a t-test row: the read-time D5(b) recompute.
+    def test_point_mde_null_when_not_computed(self, tables):
+        """NULL mde columns: the point shows null — no per-point read-time solve.
 
-        The expected value is a pinned known answer (value 10.0/11.0, std 2.0,
-        n 1000, relative, alpha 0.05, power 0.8), NOT a call into the helper
-        under test — a circular oracle would pass under any wiring bug.
+        The read-time D5(b) fallback is verdict-level, not per historical point
+        (cost discipline). A row that never computed MDE honestly reports null.
         """
         experiment = make_experiment()
-        rows = seed_series(tables, experiment, days=1, mde_1=None, mde_2=None)
+        seed_series(tables, experiment, days=1, mde_1=None, mde_2=None)
         payload = build_report_payload(experiment, tables)
 
         (point,) = payload["metrics"][0]["pairs"][0]["series"]
-        assert point["mde"] == pytest.approx(0.0251, abs=5e-4)
-        # and it agrees with the verdict-side helper on the same row
-        assert point["mde"] == _num_or_none(pair_mde(rows[0])[0])
+        assert point["mde"] is None
+        # but the verdict still carries the read-time fallback (0.0251 known
+        # answer for value 10/11, std 2, n 1000, relative, alpha 0.05, power .8)
+        (verdict,) = payload["verdicts"]
+        assert verdict["mde"] == pytest.approx(0.0251, abs=5e-4)
+
+    def test_point_mde_read_time_solve_not_called_per_point(self, tables):
+        """Guard the cost fix: building a series triggers zero t-test solves."""
+        experiment = make_experiment()
+        seed_series(tables, experiment, days=8, mde_1=None, mde_2=None)
+        _ttest_effect_size_at_power.cache_clear()
+        before = _ttest_effect_size_at_power.cache_info()
+        build_report_payload(experiment, tables)
+        after = _ttest_effect_size_at_power.cache_info()
+        # the only solves are the verdict's (one per pair on the latest cutoff),
+        # never one per point — 8 points would be 8+ misses if regressed
+        assert after.misses - before.misses <= 2
 
     def test_method_block_reflects_what_ran(self, tables):
         experiment = make_experiment()

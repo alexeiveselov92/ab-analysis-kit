@@ -25,12 +25,29 @@ from statsmodels.stats.proportion import proportion_effectsize
 from abkit.stats.exceptions import MethodParamError
 
 
+def _as_scalar(value: object) -> float:
+    """Extract a Python float from a statsmodels ``solve_power`` return.
+
+    statsmodels' internal ``fsolve`` fallback (used when brentq bracketing
+    fails, which happens for a data-dependent ~few-percent of ordinary
+    ``(nobs, ratio)`` inputs) returns a shape-``(1,)`` ndarray rather than a
+    scalar. ``float(ndarray-of-size-1)`` raised silently under numpy < 2.0 and
+    now *raises* under numpy ≥ 2.0 — crashing the readout/report MDE path on
+    plain sizes (e.g. n=139, ratio=1.0). Extracting element 0 is
+    value-preserving (same number the scalar path yields); no statistical
+    number changes (golden-tested)."""
+    array = np.asarray(value, dtype=float).reshape(-1)
+    if array.size != 1:
+        raise ValueError(f"solve_power returned {array.size} values, expected 1")
+    return float(array[0])
+
+
 @lru_cache(maxsize=4096)
 def _ttest_effect_size_at_power(size: int, alpha: float, power: float, ratio: float) -> float:
     """Cached MDE-side solve: the effect size depends only on (n, α, power, ratio),
     so cumulative runs (same sizes every day, many metrics) hit the cache instead
     of re-running the brentq root-solve per call (review finding)."""
-    return float(
+    return _as_scalar(
         TTestIndPower().solve_power(
             effect_size=None,
             nobs1=size,
@@ -44,7 +61,7 @@ def _ttest_effect_size_at_power(size: int, alpha: float, power: float, ratio: fl
 
 @lru_cache(maxsize=4096)
 def _normal_effect_size_at_power(size: int, alpha: float, power: float, ratio: float) -> float:
-    return float(
+    return _as_scalar(
         NormalIndPower().solve_power(
             effect_size=None,
             nobs1=size,

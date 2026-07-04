@@ -232,9 +232,12 @@ is informational only. `</` is escaped at HTML-bake time (WP3), not here.
                                // terse point keys: t ms-epoch; ed elapsed_days
                                // (float, chart x-axis); e/lo/hi effect + CI;
                                // p pvalue; rj reject 1/0/null (null = withheld);
-                               // s1/s2 sizes; mde = D5(b) pair MDE (stored wins,
-                               // read-time t/z fallback); hz/blk/ins 0/1 flags
-                               // (is_horizon / decision_blocked / insufficient_data)
+                               // s1/s2 sizes; mde = per-point pair MDE from the
+                               // STORED mde_1/2 columns (null when the row did
+                               // not compute MDE — no per-point read-time solve;
+                               // the read-time D5(b) fallback is verdict-level);
+                               // hz/blk/ins 0/1 flags (is_horizon /
+                               // decision_blocked / insufficient_data)
                       diag|null}],  // parsed diagnostics of the latest row
              warnings: [..]}], // row warnings, parsed + deduped, order-preserving
   look: {n, planned}|null,     // n = cutoffs with ≥1 non-demoted row (§4);

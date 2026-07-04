@@ -14,6 +14,7 @@ from statsmodels.stats.power import TTestIndPower
 
 from abkit.stats.exceptions import MethodParamError
 from abkit.stats.power import (
+    _as_scalar,
     cuped_adjusted_std,
     get_cuped_ttest_mde,
     get_fraction_mde,
@@ -27,6 +28,26 @@ from abkit.stats.power import (
 def test_mde_inf_guard_size() -> None:
     assert get_ttest_mde(10.0, 5.0, 1) == float("inf")
     assert get_ttest_mde(10.0, 5.0, 0) == float("inf")
+
+
+@pytest.mark.parametrize("size", [139, 146, 151, 165, 174])
+def test_mde_solve_survives_ndarray_return(size: int) -> None:
+    """statsmodels' fsolve fallback returns a shape-(1,) ndarray for a
+    data-dependent few-percent of ordinary sizes; under numpy >= 2.0
+    ``float(ndarray)`` raises. The MDE solve must extract the scalar, not
+    crash the readout/report path (review finding)."""
+    mde = get_ttest_mde(10.0, 5.0, size, test_type="relative", alpha=0.05, power=0.8)
+    assert math.isfinite(mde) and mde > 0
+
+
+def test_as_scalar_extracts_and_rejects() -> None:
+    import numpy as np
+
+    assert _as_scalar(np.array([1.5])) == 1.5
+    assert _as_scalar(1.5) == 1.5
+    assert _as_scalar(np.float64(2.0)) == 2.0
+    with pytest.raises(ValueError):
+        _as_scalar(np.array([1.0, 2.0]))
 
 
 def test_mde_inf_guard_zero_std() -> None:

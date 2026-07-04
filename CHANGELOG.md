@@ -13,6 +13,20 @@ number change).
 
 ## [Unreleased]
 
+### Fixed
+- **MDE solve crash + report cost** (M3 WP2 review-closure, adversarial
+  re-verification): `abkit.stats.power` — statsmodels' `solve_power` returns a
+  shape-`(1,)` ndarray from its `fsolve` fallback for a data-dependent
+  few-percent of ordinary `(nobs, ratio)` inputs (e.g. n=139, ratio=1.0);
+  under numpy ≥ 2.0 `float(ndarray)` raised, crashing the readout verdict and
+  report MDE paths. `_as_scalar` now extracts the value (value-preserving —
+  golden tests unchanged, **zero statistical numbers changed**). And the report
+  payload's per-point `mde` reads the **stored** `mde_1/2` columns only (null
+  when the row did not compute MDE) instead of a read-time statsmodels solve
+  per point — the read-time D5(b) fallback stays verdict-level (one solve per
+  pair on the latest cutoff). A worst-case sub-day payload dropped from
+  ~40–100 s (and a hard crash) to milliseconds; data-contract §5.3 amended.
+
 ### Added
 - **M3 WP2 — the experiment-primary report payload** (per
   [`docs/specs/m3-implementation-plan.md`](docs/specs/m3-implementation-plan.md) D6):
