@@ -35,6 +35,15 @@ number change).
     replay, so it stays coherent with the whole-run `srm.flag`/`pvalue` the
     driver computes once and broadcasts (the `until=` pin is dropped;
     per-cutoff SRM lands with M5 sequential). §5.3 amended.
+- **SRM chip loudness under replay** (M3 WP2 final-gate, third review pass):
+  the payload `srm` block is now **window-independent** (current experiment
+  health) — `flag`/`pvalue` come from the latest persisted row *overall* via a
+  new `readout.srm_summary`, not the latest *charted* row. A pinned or empty
+  replay window therefore never silences a failing SRM gate (§6 must-fix) and
+  the flag/pvalue stay coherent with the whole-cohort `observed`; the chart and
+  verdict remain as-of the window. `readout`'s experiment-level SRM aggregation
+  is extracted into `srm_summary` (no behavior change to `evaluate`). §5.3
+  amended.
 
 ### Added
 - **M3 WP2 — the experiment-primary report payload** (per

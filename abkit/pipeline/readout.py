@@ -327,6 +327,64 @@ def pair_mde(row: dict) -> tuple[float | None, str | None]:
 # ── evaluate ─────────────────────────────────────────────────────────────────
 
 
+def _group_series(rows: Sequence[dict]) -> dict[tuple[str, str, str], list[dict]]:
+    """Group rows into ``(metric, name_1, name_2)`` series, each end_ts-ascending."""
+    series: dict[tuple[str, str, str], list[dict]] = {}
+    for row in rows:
+        key = (str(row["metric"]), str(row["name_1"]), str(row["name_2"]))
+        series.setdefault(key, []).append(row)
+    for group in series.values():
+        group.sort(key=lambda row: row["end_ts"])
+    return series
+
+
+def _srm_from_series(
+    experiment: ExperimentConfig, series: dict[tuple[str, str, str], list[dict]]
+) -> tuple[bool, float | None]:
+    """The experiment-level SRM ``(flag, pvalue)`` over pre-grouped series.
+
+    When any latest row is flagged, the reported p-value must come from a
+    FLAGGED row (a lagging non-flagged series would otherwise pair
+    ``srm_flag=True`` with a healthy p — review finding); ``min()`` picks the
+    loudest evidence.
+    """
+    control = experiment.assignment.variants[0]
+    treatments = experiment.assignment.variants[1:]
+    main_comparisons = [c for c in experiment.comparisons if c.is_main_metric]
+    srm_flag = False
+    flagged_pvalues: list[float] = []
+    healthy_pvalues: list[float] = []
+    for comparison in main_comparisons:
+        for treatment in treatments:
+            group = series.get((comparison.metric, control, treatment))
+            if not group:
+                continue
+            latest = group[-1]
+            flagged = _flag(latest.get("srm_flag"))
+            srm_flag = srm_flag or flagged
+            pvalue = _num(latest.get("srm_pvalue"))
+            if pvalue is not None:
+                (flagged_pvalues if flagged else healthy_pvalues).append(pvalue)
+    if flagged_pvalues:
+        return srm_flag, min(flagged_pvalues)
+    if healthy_pvalues:
+        return srm_flag, healthy_pvalues[0]
+    return srm_flag, None
+
+
+def srm_summary(experiment: ExperimentConfig, rows: Sequence[dict]) -> tuple[bool, float | None]:
+    """The experiment-level SRM ``(flag, pvalue)`` over raw (ungrouped) rows.
+
+    The report's loud §6 SRM chip calls this over the FULL persisted rows
+    (current experiment health, window-independent) so the chip never goes
+    silent under a pinned/empty replay — while ``evaluate`` uses the same core
+    over the windowed series for the as-of verdict. SRM is a whole-experiment
+    gate ("is assignment broken?"), not a per-cutoff series in M2 (per-cutoff
+    lands with M5 sequential)."""
+    filtered, _warnings = _filter_rows(experiment, rows)
+    return _srm_from_series(experiment, _group_series(filtered))
+
+
 def evaluate(
     experiment: ExperimentConfig,
     rows: Sequence[dict],
@@ -360,12 +418,7 @@ def evaluate(
         )
     sig_map = _build_sig_map(filtered, correction)
 
-    series: dict[tuple[str, str, str], list[dict]] = {}
-    for row in filtered:
-        key = (str(row["metric"]), str(row["name_1"]), str(row["name_2"]))
-        series.setdefault(key, []).append(row)
-    for group in series.values():
-        group.sort(key=lambda row: row["end_ts"])
+    series = _group_series(filtered)
 
     control = experiment.assignment.variants[0]
     treatments = experiment.assignment.variants[1:]
@@ -387,30 +440,7 @@ def evaluate(
                 )
             )
 
-    # The experiment-level SRM summary: when any latest row is flagged, the
-    # reported p-value must come from a FLAGGED row (a lagging non-flagged
-    # series would otherwise pair srm_flag=True with a healthy p — review
-    # finding); min() picks the loudest evidence.
-    srm_flag = False
-    flagged_pvalues: list[float] = []
-    healthy_pvalues: list[float] = []
-    for comparison in main_comparisons:
-        for treatment in treatments:
-            group = series.get((comparison.metric, control, treatment))
-            if not group:
-                continue
-            latest = group[-1]
-            flagged = _flag(latest.get("srm_flag"))
-            srm_flag = srm_flag or flagged
-            pvalue = _num(latest.get("srm_pvalue"))
-            if pvalue is not None:
-                (flagged_pvalues if flagged else healthy_pvalues).append(pvalue)
-    if flagged_pvalues:
-        srm_pvalue: float | None = min(flagged_pvalues)
-    elif healthy_pvalues:
-        srm_pvalue = healthy_pvalues[0]
-    else:
-        srm_pvalue = None
+    srm_flag, srm_pvalue = _srm_from_series(experiment, series)
 
     return ExperimentReadout(
         experiment=experiment.name,

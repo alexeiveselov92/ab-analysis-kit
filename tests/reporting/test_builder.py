@@ -589,6 +589,37 @@ class TestVerdictsAndSrm:
         # the whole-cohort SRM counts — same cohort the flag/pvalue describe
         assert payload["srm"]["observed"] == {"control": 2, "treatment": 2}
 
+    def test_srm_block_window_independent(self, tables):
+        """The srm flag/pvalue come from the latest row OVERALL, not the latest
+        charted row — a pinned end that predates a failing cutoff must still
+        show the failing gate (§6 SRM loud; window-independent)."""
+        experiment = make_experiment()
+        # healthy early, fails at the horizon
+        rows = [make_row(experiment, day=d) for d in range(1, 14)]
+        rows.append(make_row(experiment, day=14, srm_flag=True, srm_pvalue=1e-6))
+        save_rows(tables, rows)
+
+        pinned = build_report_payload(experiment, tables, end=START + timedelta(days=7))
+        assert pinned["srm"]["flag"] is True
+        assert pinned["srm"]["pvalue"] == 1e-6
+        assert pinned["period"]["end"] == _ms(START + timedelta(days=7))  # chart is as-of
+
+    def test_srm_loud_on_empty_window(self, tables):
+        """An empty pin (no charted rows) must not silence a failing SRM gate:
+        observed stays whole-cohort and flag/pvalue come from the latest row
+        overall (the critic's silent-SRM hole — §6 must-fix)."""
+        experiment = make_experiment()
+        rows = [make_row(experiment, day=d, srm_flag=True, srm_pvalue=1e-9) for d in range(10, 15)]
+        save_rows(tables, rows)
+        self.seed_exposures(tables, experiment)  # 2:2 here, but flag is set
+        payload = build_report_payload(experiment, tables, end=START + timedelta(days=5))
+
+        assert payload["period"]["end"] == 0  # no charted rows in the window
+        assert payload["metrics"][0]["pairs"][0]["series"] == []
+        assert payload["srm"]["flag"] is True  # NOT silenced
+        assert payload["srm"]["pvalue"] == 1e-9
+        assert payload["srm"]["observed"] == {"control": 2, "treatment": 2}
+
     def test_missing_exposures_table_zero_fills(self, tables):
         """_ab_results present but _ab_exposures dropped: no crash, zeros."""
         experiment = make_experiment()

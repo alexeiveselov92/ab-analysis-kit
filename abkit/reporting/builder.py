@@ -40,7 +40,7 @@ from abkit.config.metric_config import MetricConfig
 from abkit.config.project_config import ProjectConfig
 from abkit.core.period_planner import generate_grid
 from abkit.database.internal_tables import InternalTablesManager
-from abkit.pipeline.readout import ExperimentReadout, PairVerdict, evaluate
+from abkit.pipeline.readout import ExperimentReadout, PairVerdict, evaluate, srm_summary
 from abkit.utils.datetime_utils import to_naive_utc
 from abkit.utils.json_utils import json_loads
 
@@ -334,6 +334,7 @@ def build_report_payload(
 
     declared_pairs = set(combinations(variants, 2))
     ready = tables.results_table_exists()
+    declared_by_comparison: dict[str, list[dict]] = {}
     rows_by_comparison: dict[str, list[dict]] = {}
     stale_by_metric: dict[str, int] = {}
     for comparison in experiment.comparisons:
@@ -344,28 +345,30 @@ def build_report_payload(
             if ready
             else []
         )
-        windowed = _window_filter(loaded, start, end)
         # pairs outside the declared variants (a mid-flight arm rename) are
         # not chartable; drop them from EVERY payload surface — series, look,
         # period, latest-row method block — loudly, never silently
-        charted = [
-            row for row in windowed if (str(row["name_1"]), str(row["name_2"])) in declared_pairs
+        declared = [
+            row for row in loaded if (str(row["name_1"]), str(row["name_2"])) in declared_pairs
         ]
-        if len(charted) != len(windowed):
-            stale_by_metric[comparison.metric] = len(windowed) - len(charted)
-        rows_by_comparison[comparison.metric] = charted
+        if len(declared) != len(loaded):
+            stale_by_metric[comparison.metric] = len(loaded) - len(declared)
+        declared_by_comparison[comparison.metric] = declared
+        # the chart + verdict are as-of the window; the SRM block is not
+        rows_by_comparison[comparison.metric] = _window_filter(declared, start, end)
 
     charted_rows = [row for rows in rows_by_comparison.values() for row in rows]
+    declared_rows = [row for rows in declared_by_comparison.values() for row in rows]
     readout: ExperimentReadout = evaluate(experiment, charted_rows, project=project)
 
+    # SRM block — CURRENT experiment health, window-independent (§6 "SRM loud"):
+    # flag/pvalue come from the latest persisted row overall (not the latest
+    # *charted* row), so a pinned/empty replay never silences a failing gate,
+    # and they stay coherent with the whole-cohort observed counts below. M2
+    # SRM is one whole-experiment check (per-cutoff SRM = M5 sequential).
+    srm_flag, srm_pvalue = srm_summary(experiment, declared_rows)
     observed_counts: dict[str, int] = {}
     if ready and tables.exposures_table_exists():
-        # WHOLE-cohort counts (not as-of the pinned end): M2 SRM is a single
-        # whole-cohort check (driver.py) whose flag/pvalue enrich broadcasts
-        # onto every row; the readout srm block below carries that same
-        # whole-run flag/pvalue, so the observed counts must match it — an
-        # as-of subset would pair a subset count with a whole-run p (review
-        # finding). Per-cutoff SRM lands with sequential (M5).
         observed_counts = tables.get_exposure_counts(experiment.name)
     # zero-fill declared variants, mirroring the driver's SRM gate input
     observed = {variant: int(observed_counts.get(variant, 0)) for variant in variants}
@@ -425,8 +428,8 @@ def build_report_payload(
         "tz": experiment.timezone,
         "arms": variants,
         "srm": {
-            "flag": bool(readout.srm_flag),
-            "pvalue": _num_or_none(readout.srm_pvalue),
+            "flag": bool(srm_flag),
+            "pvalue": _num_or_none(srm_pvalue),
             "observed": observed,
             "expected": {
                 variant: float(split)

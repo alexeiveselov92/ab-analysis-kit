@@ -206,7 +206,11 @@ is informational only. `</` is escaped at HTML-bake time (WP3), not here.
   cadence_seconds,             // min cadence step (sub-day detection: < 86400)
   tz,                          // experiment timezone (IANA)
   arms: [..],                  // variant names, config order; first = control
-  srm: {flag, pvalue|null,     // experiment-level, from the readout (flagged-row p)
+  srm: {flag, pvalue|null,     // CURRENT experiment health, window-INDEPENDENT
+                               // (§6 "SRM loud"): flag/pvalue from the latest
+                               // persisted row overall (not the latest charted
+                               // row), so a pinned/empty replay never silences
+                               // a failing gate
         observed: {arm: count},   // WHOLE-cohort exposure counts, declared arms
                                   // zero-filled — coherent with the whole-run
                                   // flag/pvalue (M2 SRM is one whole-cohort
@@ -251,10 +255,13 @@ is informational only. `</` is escaped at HTML-bake time (WP3), not here.
 ```
 
 `start`/`end` args bound the window on `end_ts` (inclusive); pinning `end`
-**replays** the readout as-of a historical cutoff. (`srm.observed` stays
-whole-cohort even under a pin — it must match the whole-run `srm.pvalue`/`flag`
-the driver computed once and broadcast onto every row.) A global point budget
-(`REPORT_POINT_BUDGET`,
+**replays** the chart + verdict as-of a historical cutoff. The `srm` block is
+the one exception — it is **window-independent** (current experiment health):
+flag/pvalue come from the latest persisted row overall and `observed` is the
+whole cohort, so the loud §6 gate never goes silent or incoherent under a
+pinned or empty window (M2 stores only the current cohort and runs one
+whole-cohort SRM check; a truthful as-of SRM needs the M5 per-cutoff
+sequential gate). A global point budget (`REPORT_POINT_BUDGET`,
 20 000 across metrics × pairs × cutoffs) clips every series to its trailing
 window **after** the verdict is evaluated on the full series, and appends a
 loud payload warning. The empty-experiment contract keeps every key present
