@@ -346,15 +346,19 @@ def _srm_from_series(
     When any latest row is flagged, the reported p-value must come from a
     FLAGGED row (a lagging non-flagged series would otherwise pair
     ``srm_flag=True`` with a healthy p — review finding); ``min()`` picks the
-    loudest evidence.
+    loudest evidence. ALL comparisons' series are scanned, not just main —
+    SRM is a whole-experiment fact stamped on every row, and a main-only scan
+    goes silent exactly when the main series is empty under its CURRENT
+    ``method_config_id`` (e.g. right after an explore Apply edited the main
+    method) while flagged rows still exist on other series (§6 must stay
+    loud — milestone-review finding).
     """
     control = experiment.assignment.variants[0]
     treatments = experiment.assignment.variants[1:]
-    main_comparisons = [c for c in experiment.comparisons if c.is_main_metric]
     srm_flag = False
     flagged_pvalues: list[float] = []
     healthy_pvalues: list[float] = []
-    for comparison in main_comparisons:
+    for comparison in experiment.comparisons:
         for treatment in treatments:
             group = series.get((comparison.metric, control, treatment))
             if not group:
@@ -503,9 +507,7 @@ def _pair_verdict(
     caveats: list[str] = []
 
     def build(verdict: VerdictKind, latest: dict | None) -> PairVerdict:
-        guardrails = _guardrail_statuses(
-            experiment, control, treatment, series, sig_map, guardrail_comparisons
-        )
+        guardrails = _guardrail_statuses(control, treatment, series, guardrail_comparisons)
         verdict, extra_rationale, extra_caveats = _apply_guardrail_policy(
             experiment, verdict, guardrails
         )
@@ -670,11 +672,9 @@ def _pair_verdict(
 
 
 def _guardrail_statuses(
-    experiment: ExperimentConfig,
     control: str,
     treatment: str,
     series: dict[tuple[str, str, str], list[dict]],
-    sig_map: dict[_RowKey, _Sig],
     guardrail_comparisons: list[ComparisonConfig],
 ) -> tuple[GuardrailStatus, ...]:
     statuses: list[GuardrailStatus] = []
@@ -695,10 +695,18 @@ def _guardrail_statuses(
             )
             continue
         latest = informative[-1]
-        sig = sig_map.get(_row_key(latest), _Sig(False, 0))
-        # D5(c): any significant harm at the latest cutoff flags — conservative,
-        # no stabilization requirement.
-        regressed = sig.significant and sig.sign == -desired_sign
+        # D5(c): regression = the STORED CI excludes zero against the desired
+        # direction at the stored per-row alpha — conservative ("any
+        # significant harm flags"), no stabilization requirement, and
+        # deliberately CORRECTION-INDEPENDENT: BH adjustment (which can only
+        # inflate p-values) must never un-flag a stored-significant harm
+        # (milestone-review finding).
+        left = _num(latest.get("left_bound"))
+        right = _num(latest.get("right_bound"))
+        sign = (
+            1 if (left is not None and left > 0) else -1 if (right is not None and right < 0) else 0
+        )
+        regressed = sign != 0 and sign == -desired_sign
         statuses.append(
             GuardrailStatus(
                 metric=guardrail.metric,

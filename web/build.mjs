@@ -63,6 +63,19 @@ async function bundle({ entry, outFile, global: globalName, markers }) {
     console.error(`build: ${path.relative(REPO, outFile)} is missing required markers: ${missing.join(', ')}`);
     process.exit(1);
   }
+  // The bundle is inlined VERBATIM into <script>…</script> by the Python
+  // bake (only the payload slot is <-escaped): a "</script" or "<!--" inside
+  // any bundle string would terminate the inline script early (or enter the
+  // tokenizer's double-escaped state) and kill the whole page — gate it here,
+  // where the offending source line is one grep away.
+  const hazard = /<\/script|<!--/i.exec(code);
+  if (hazard) {
+    console.error(
+      `build: ${path.relative(REPO, outFile)} contains the script-tokenizer hazard ` +
+        `sequence ${JSON.stringify(hazard[0])} — inline <script> baking would break`,
+    );
+    process.exit(1);
+  }
 
   await fs.mkdir(path.dirname(outFile), { recursive: true });
   await fs.writeFile(outFile, code, 'utf8');

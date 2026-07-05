@@ -885,6 +885,47 @@ class TestGuardrailEdgeCases:
         assert verdict.verdict == "LOSE"
         assert "regressed" in joined(verdict.caveats)
 
+    def test_guardrail_regression_is_correction_independent_under_bh(self):
+        """D5(c): regression = the STORED CI excludes zero against the desired
+        direction — BH adjustment (which only inflates p-values) must never
+        un-flag a stored-significant harm (milestone-review finding). Here the
+        crashes harm (raw p=0.04, CI [0.01, 0.19]) BH-adjusts to 0.06 > α
+        behind the quiet 'sessions' secondary, but must still cap the WIN."""
+        experiment = make_experiment(
+            correction="benjamini_hochberg",
+            comparisons=[
+                {"metric": "revenue", "is_main_metric": True, "method": {"name": "t-test"}},
+                {"metric": "sessions", "method": {"name": "t-test"}},
+                {
+                    "metric": "crashes",
+                    "is_guardrail": True,
+                    "desired_direction": "decrease",
+                    "method": {"name": "t-test"},
+                },
+            ],
+        )
+        rows = make_series(experiment, pvalue=1e-4)  # the main WIN
+        rows += make_series(
+            experiment,
+            metric="sessions",
+            effect=0.001,
+            left_bound=-0.05,
+            right_bound=0.05,
+            pvalue=0.9,
+            reject=False,
+        )
+        rows += make_series(
+            experiment,
+            metric="crashes",
+            effect=0.10,
+            left_bound=0.01,
+            right_bound=0.19,
+            pvalue=0.04,
+        )
+        verdict = single_verdict(experiment, rows)
+        assert any(g.regressed for g in verdict.guardrails)
+        assert verdict.verdict == "INCONCLUSIVE"  # block (default) caps the WIN
+
 
 class TestFlatCaveats:
     def test_flat_on_short_horizon_carries_the_weekly_caveat(self):
@@ -978,6 +1019,23 @@ class TestMdeHalfStored:
 
 
 class TestSrmSummary:
+    def test_flag_survives_an_empty_main_series(self):
+        """SRM must stay loud when the main series is empty under its CURRENT
+        method_config_id (exactly the state an explore Apply that edits the
+        main method produces) while another series carries flagged rows —
+        §6 must-fix, milestone-review finding."""
+        experiment = guardrail_experiment()
+        rows = make_series(
+            experiment,
+            metric="crashes",
+            srm_flag=True,
+            decision_blocked=True,
+            srm_pvalue=1e-6,
+        )  # and NO revenue (main) rows at all
+        flag, pvalue = srm_summary(experiment, rows)
+        assert flag is True
+        assert pvalue == pytest.approx(1e-6)
+
     def test_pvalue_comes_from_a_flagged_row(self):
         """Two mains: metric A lags (healthy latest row), metric B's latest is
         flagged — the summary must pair srm_flag=True with the FLAGGED p."""

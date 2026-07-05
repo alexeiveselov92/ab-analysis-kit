@@ -142,13 +142,15 @@ function buildHeader(payload: ReportPayload): HTMLElement {
   const title = payload.project
     ? `${esc(payload.project)} · ${esc(payload.experiment)}`
     : esc(payload.experiment);
+  // period timestamps render in UTC (ms-epoch bake) — label them so a
+  // non-UTC experiment tz shown next door can't read as an off-by-one date
   const period =
     payload.period.end > 0
-      ? `${fmtDate(payload.period.start)} – ${fmtTs(payload.period.end)}`
-      : `${fmtDate(payload.period.start)} – (no cutoffs yet)`;
+      ? `${fmtDate(payload.period.start)} – ${fmtTs(payload.period.end)} UTC`
+      : `${fmtDate(payload.period.start)} UTC – (no cutoffs yet)`;
   const meta =
-    `${period} · horizon ${fmtDate(payload.period.horizon)}` +
-    ` · cadence ${humanCadence(payload.cadence_seconds)} · ${esc(payload.tz)}` +
+    `${period} · horizon ${fmtDate(payload.period.horizon)} (UTC)` +
+    ` · cadence ${humanCadence(payload.cadence_seconds)} · tz ${esc(payload.tz)}` +
     (payload.generated_at ? ` · generated ${esc(payload.generated_at)}` : '');
 
   const top = el('div', 'abk-h-top');
@@ -504,8 +506,14 @@ function createStabilizationChart(
   // band so the closing segment into the horizon renders SOLID — the planner
   // yields exactly one hz=1 cutoff (the last), and a post band of one point
   // would otherwise paint the decision-grade cutoff with the pre-horizon
-  // de-emphasis (WP3 review finding).
-  const firstHz = pts.findIndex((p) => p.hz === 1);
+  // de-emphasis (WP3 review finding). A stored hz=1 row counts only while it
+  // still IS the current config horizon: after an end_date extension the old
+  // horizon row goes stale mid-series (the planner never rewrites computed
+  // rows) and everything must render pre-horizon again (milestone-review
+  // finding).
+  const isDecisionGrade = (p: SeriesPoint): boolean =>
+    p.hz === 1 && p.t >= payload.period.horizon;
+  const firstHz = pts.findIndex(isDecisionGrade);
   const bandPoint = (p: SeriesPoint, i: number): BandPoint => ({ x: xs[i], lo: p.lo, hi: p.hi });
   const preBand: BandPoint[] = [];
   const postBand: BandPoint[] = [];
@@ -539,7 +547,7 @@ function createStabilizationChart(
   const insSpans = spansFor((p) => p.ins === 1);
   const blkSpans = spansFor((p) => p.blk === 1 && p.ins === 0);
 
-  const storedHz = pts.find((p) => p.hz === 1 && p.ed !== null);
+  const storedHz = firstHz !== -1 && pts[firstHz].ed !== null ? pts[firstHz] : undefined;
   const dividerEd = storedHz !== undefined ? (storedHz.ed as number) : horizonEd;
 
   // domains -------------------------------------------------------------------
@@ -729,7 +737,7 @@ function createStabilizationChart(
       html += `<span>n₁=${p.s1} n₂=${p.s2}</span>`;
       if (p.mde !== null) html += `<span>MDE ${esc(fmtVal(p.mde))}</span>`;
       const flags: string[] = [];
-      if (p.hz === 1) flags.push('at horizon');
+      if (isDecisionGrade(p)) flags.push('at horizon');
       else flags.push('pre-horizon');
       if (p.blk === 1) flags.push('SRM-blocked');
       if (flags.length > 0) html += `<span class="abk-ro-flag">${esc(flags.join(' · '))}</span>`;

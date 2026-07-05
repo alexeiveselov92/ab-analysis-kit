@@ -533,9 +533,13 @@ function buildParamControl(
 
 interface KnobValues {
   method: string;
-  /** minimal params — knobs at their spec default are OMITTED (identity is
-   * computed from non-default identity params; minimal params keep the
-   * applied YAML minimal, the donor discipline) */
+  /** FULL params — every rendered knob's current value (unset optionals
+   * omitted). Storing minimal params here would make "edited back to the
+   * spec default" indistinguishable from "never touched", so a rail rebuild
+   * would silently resurrect the configured non-default value
+   * (milestone-review finding). Wire bodies are minimalized at send time —
+   * identity hashes only non-default identity params, so the YAML stays
+   * minimal (the donor discipline) with the same method_config_id. */
   params: Record<string, unknown>;
 }
 
@@ -595,6 +599,11 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
   const dirty = new Set<string>(); // genuine user edits only
   const lastReply = new Map<string, RecomputeReply>();
   const lastComputed = new Map<string, KnobValues>(); // for Tier-R revert
+  // metrics whose session cache now holds covariates thanks to a completed
+  // /reload — the BAKED covariate_cutoffs fact goes stale the moment the
+  // server re-renders, and forgetting that would demand a redundant full
+  // warehouse reload on every method round-trip (milestone-review finding)
+  const covariateReloaded = new Set<string>();
 
   // Seeded from the BAKED count (experiment.comparisons — it includes
   // duplicate-metric comparisons explore does not surface), then adjusted by
@@ -901,7 +910,7 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
     spinner.classList.add('on');
     const body = JSON.stringify({
       metric,
-      method: { name: knobs.method, params: knobs.params },
+      method: { name: knobs.method, params: minimalParams(knobs.method, knobs.params) },
       alpha: effAlphaFor(metric),
       request_id: myId,
     });
@@ -955,6 +964,8 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
       // (shown after a switch mid-reload) must survive this reply
       reloadPendingFor.delete(reply.metric);
       if (reply.metric === activeMetric) reloadBar.style.display = 'none';
+      const reloadedWith = surfaces[reply.metric]?.methods.find((m) => m.name === reply.method);
+      if (reloadedWith?.needs_covariate) covariateReloaded.add(reply.metric);
     }
     if (reply.metric !== activeMetric) return; // a metric switch raced the reply
 
@@ -1019,7 +1030,7 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
   }
 
   function configText(reply: RecomputeReply, knobs: KnobValues): string {
-    const paramsStr = JSON.stringify(knobs.params);
+    const paramsStr = JSON.stringify(minimalParams(knobs.method, knobs.params));
     return (
       `// ${reply.metric}: method=${reply.method} params=${paramsStr} ` +
       `α=${fmtAlpha(reply.alpha)} (effective; raw ${fmtAlpha(rawAlpha)}, ${correction}) ` +
@@ -1074,7 +1085,9 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
     // no cached covariate (the reload substrate)
     const options = surface.methods.map((ms) => ({
       label:
-        ms.needs_covariate && surface.cache.covariate_cutoffs.length === 0
+        ms.needs_covariate &&
+        surface.cache.covariate_cutoffs.length === 0 &&
+        !covariateReloaded.has(activeMetric as string)
           ? `${ms.name} ↻`
           : ms.name,
       value: ms.name,
@@ -1258,7 +1271,12 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
     const m = methodSurface(knobs.method);
     if (!m) return false;
     const surface = currentSurface();
-    if (methodSwitched && m.needs_covariate && surface.cache.covariate_cutoffs.length === 0) {
+    if (
+      methodSwitched &&
+      m.needs_covariate &&
+      surface.cache.covariate_cutoffs.length === 0 &&
+      !covariateReloaded.has(activeMetric as string)
+    ) {
       return true;
     }
     const prev = lastComputed.get(activeMetric as string) || configuredKnobs(activeMetric as string);
@@ -1275,11 +1293,24 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
     const params: Record<string, unknown> = {};
     for (const ctl of paramCtls) {
       const v = ctl.get();
-      if (v === undefined) continue;
-      if (v === ctl.spec.default) continue; // minimal params — defaults are omitted
-      params[ctl.spec.name] = v;
+      if (v === undefined) continue; // unset optional (empty text) — no value
+      params[ctl.spec.name] = v; // FULL capture — see the KnobValues contract
     }
     return { method, params };
+  }
+
+  /** Drop knobs at their spec default for the wire (identity-equal — the
+   * hash uses non-default identity params only; the applied YAML stays
+   * minimal, the donor discipline). */
+  function minimalParams(method: string, params: Record<string, unknown>): Record<string, unknown> {
+    const m = methodSurface(method);
+    const out: Record<string, unknown> = {};
+    for (const [name, v] of Object.entries(params)) {
+      const spec = m?.params.find((s) => s.name === name);
+      if (spec && v === spec.default) continue;
+      out[name] = v;
+    }
+    return out;
   }
 
   function knobChanged(): void {
@@ -1311,10 +1342,20 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
     if (activeMetric === null) return;
     dirty.add(activeMetric);
     applyMsgReset();
-    // re-seed the knob set for the new method: overlapping saved values are
-    // carried in seedValueFor; then decide reload-vs-recompute
+    // re-seed the knob set for the new method: an edited state for THIS
+    // method wins, then the last-computed state (a method round-trip after a
+    // reload must keep the rendered covariate_lookback), then defaults
     const saved = edited.get(activeMetric);
-    edited.set(activeMetric, { method: name, params: saved && saved.method === name ? saved.params : {} });
+    const computed = lastComputed.get(activeMetric);
+    edited.set(activeMetric, {
+      method: name,
+      params:
+        saved && saved.method === name
+          ? saved.params
+          : computed && computed.method === name
+            ? { ...computed.params }
+            : {},
+    });
     buildKnobControls();
     const knobs = readKnobs();
     edited.set(activeMetric, knobs);
@@ -1586,6 +1627,42 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
       applyMsg.textContent = '';
       applyMsg.className = 'abk-apply-msg';
     }
+    // a knob turned while the confirm box is open makes its cost text stale —
+    // force the user back through the guarded Apply button
+    if (confirmBox.style.display !== 'none') {
+      confirmBox.style.display = 'none';
+      applyBtn.disabled = false;
+    }
+  }
+
+  /** The shared Apply preflight: flush the on-screen state, refuse the
+   * no-op and pending-Tier-R cases. BOTH entry points (the Apply button and
+   * the confirm box's "Apply anyway") must run it — the confirm path used to
+   * skip the guards, letting an un-computed Tier-R edit ride into the YAML
+   * (milestone-review finding). */
+  function preflightApply(): ApplyRequest | null {
+    if (activeMetric !== null) {
+      // capture the on-screen state even if no change event fired (donor 1798)
+      if (debounceTimer) {
+        window.clearTimeout(debounceTimer);
+        debounceTimer = 0;
+      }
+      if (dirty.has(activeMetric)) edited.set(activeMetric, readKnobs());
+    }
+    const body = collectApplyBody();
+    if (body.comparisons.length === 0 && body.alpha === undefined && body.correction === undefined) {
+      applyMsg.className = 'abk-apply-msg info';
+      applyMsg.textContent = 'nothing to apply — no knob has been tuned';
+      return null;
+    }
+    if (reloadPendingFor.size > 0) {
+      applyMsg.className = 'abk-apply-msg err';
+      applyMsg.textContent =
+        `a Tier-R change is pending on ${[...reloadPendingFor.keys()].join(', ')} — ` +
+        'reload or revert it before applying';
+      return null;
+    }
+    return body;
   }
 
   function collectApplyBody(): ApplyRequest {
@@ -1598,7 +1675,7 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
         const k = edited.get(name) || configuredKnobs(name);
         // params key ALWAYS present on a method edit ("the cockpit sends
         // what it shows"); role-only flips carry no method key at all
-        entry.method = { name: k.method, params: { ...k.params } };
+        entry.method = { name: k.method, params: minimalParams(k.method, k.params) };
       }
       if (roleDirty.has(name)) {
         const r = roles.get(name) as RoleState;
@@ -1650,7 +1727,12 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
     go.textContent = 'Apply anyway';
     go.onclick = (): void => {
       confirmBox.style.display = 'none';
-      sendApply({ ...collectApplyBody(), confirm_uncalibrated: true });
+      const body = preflightApply(); // the SAME guards as the Apply button
+      if (body === null) {
+        applyBtn.disabled = false;
+        return;
+      }
+      sendApply({ ...body, confirm_uncalibrated: true });
     };
     const cancel = document.createElement('button');
     cancel.type = 'button';
@@ -1666,27 +1748,8 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
   }
 
   applyBtn.onclick = (): void => {
-    if (activeMetric !== null) {
-      // capture the on-screen state even if no change event fired (donor 1798)
-      if (debounceTimer) {
-        window.clearTimeout(debounceTimer);
-        debounceTimer = 0;
-      }
-      if (dirty.has(activeMetric)) edited.set(activeMetric, readKnobs());
-    }
-    const body = collectApplyBody();
-    if (body.comparisons.length === 0 && body.alpha === undefined && body.correction === undefined) {
-      applyMsg.className = 'abk-apply-msg info';
-      applyMsg.textContent = 'nothing to apply — no knob has been tuned';
-      return;
-    }
-    if (reloadPendingFor.size > 0) {
-      applyMsg.className = 'abk-apply-msg err';
-      applyMsg.textContent =
-        `a Tier-R change is pending on ${[...reloadPendingFor.keys()].join(', ')} — ` +
-        'reload or revert it before applying';
-      return;
-    }
+    const body = preflightApply();
+    if (body === null) return;
     applyBtn.disabled = true;
     if (!applyGateGreen()) {
       const lines = gateHeadlines();
@@ -1819,13 +1882,15 @@ function buildHeader(payload: ExplorePayload, live: boolean): HTMLElement {
   );
   h.appendChild(top);
 
+  // period timestamps render in UTC (ms-epoch bake) — label them so a
+  // non-UTC experiment tz shown next door can't read as an off-by-one date
   const watermark =
     payload.period.end > 0
-      ? `latest cutoff ${fmtTs(payload.period.end)} (whatever the last \`abk run\` produced)`
+      ? `latest cutoff ${fmtTs(payload.period.end)} UTC (whatever the last \`abk run\` produced)`
       : 'no persisted cutoffs yet';
   const meta =
-    `${fmtDate(payload.period.start)} – horizon ${fmtDate(payload.period.horizon)}` +
-    ` · cadence ${humanCadence(payload.cadence_seconds)} · ${esc(payload.tz)}` +
+    `${fmtDate(payload.period.start)} – horizon ${fmtDate(payload.period.horizon)} (UTC)` +
+    ` · cadence ${humanCadence(payload.cadence_seconds)} · tz ${esc(payload.tz)}` +
     ` · arms: ${payload.arms.map(esc).join(' vs ')} (first = control) · ${esc(watermark)}`;
   const metaDiv = el('div', 'abk-meta');
   metaDiv.innerHTML = meta;
@@ -1887,16 +1952,20 @@ function createExploreChart(
   const xsB = base.map((p) => (p.ed === null ? NaN : p.ed));
   const esB = base.map((p) => num(p.e));
   const horizonEd = (payload.period.horizon - payload.period.start) / MS_PER_DAY;
-  const storedHz = base.find((p) => p.hz === 1 && p.ed !== null);
+  // §4 corroborated horizon: a stored hz=1 row is decision-grade only while
+  // it still IS the current config horizon — after an end_date extension the
+  // old horizon row goes stale mid-series (the planner never rewrites
+  // computed rows) and everything must render pre-horizon again
+  // (milestone-review finding).
+  const isDecisionGrade = (p: SeriesPoint): boolean =>
+    p.hz === 1 && p.t >= payload.period.horizon;
+  const firstHzIdx = base.findIndex(isDecisionGrade);
+  const storedHz = firstHzIdx !== -1 && base[firstHzIdx].ed !== null ? base[firstHzIdx] : undefined;
   const dividerEd = storedHz !== undefined ? (storedHz.ed as number) : horizonEd;
-  const firstHzTs = ((): number | null => {
-    const p = base.find((q) => q.hz === 1);
-    return p ? p.t : null;
-  })();
+  const firstHzTs = firstHzIdx !== -1 ? base[firstHzIdx].t : null;
   const isPre = (endTs: number): boolean => (firstHzTs === null ? true : endTs < firstHzTs);
 
   // baseline pre/post bands (drawn only while no live series is adopted)
-  const firstHzIdx = base.findIndex((p) => p.hz === 1);
   const preBandB: BandPoint[] = [];
   const postBandB: BandPoint[] = [];
   base.forEach((p, i) => {
@@ -2282,7 +2351,7 @@ function createExploreChart(
       html += `</span>`;
       html += `<span>p ${p.p === null ? '—' : esc(fmtP(p.p))}</span>`;
       html += `<span>n₁=${p.s1} n₂=${p.s2}</span>`;
-      const flags: string[] = [p.hz === 1 ? 'at horizon' : 'pre-horizon'];
+      const flags: string[] = [isPre(p.t) ? 'pre-horizon' : 'at horizon'];
       if (p.blk === 1) flags.push('SRM-blocked');
       html += `<span class="abk-ro-flag">${esc(flags.join(' · '))}</span>`;
       if (livePts !== null) html += `<span class="abk-ro-flag">no live point at this cutoff (reload?)</span>`;

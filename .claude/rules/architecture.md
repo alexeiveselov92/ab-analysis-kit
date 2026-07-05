@@ -1,7 +1,8 @@
 # abkit architecture — as built
 
 > The contributor/assistant condensation of the system **as it exists in code**.
-> Reflects: **M1 + M2 shipped** (`__version__ = 0.0.1.dev0`).
+> Reflects: **M1 + M2 + M3 shipped** (`__version__ = 0.0.1.dev0`; M3's WP9
+> testcontainers hardening deferred to a Docker-equipped environment).
 > Design contracts for what is being *built next* live in [docs/specs/](../../docs/specs/)
 > (canonical for M3+ work); this file must never claim unbuilt code exists.
 > Keep in sync with `docs/` on every milestone (and with the `init-claude`
@@ -43,17 +44,32 @@ abkit/
   compute/               # ✅ M2: recompute_backend (v1 full-window strategy)
   pipeline/              # ✅ M2: driver (lock→load→SRM→plan→compute→persist),
                          #   analyze, enrich, _types; worker pool
+  reporting/             # ✅ M3: builder (the §5.3 terse payload + verdicts),
+    assets/report.js     #   html_report (hardened bake), the committed bundle
+  tuning/                # ✅ M3: session (bounded Tier-S cache), recompute
+    assets/explore.js    #   (Tiers E/α/S/R + D3 calibration), config_writer
+                         #   (Apply seam + .history + orphans), server (WP6),
+                         #   payload (explore block), html (page bake)
   stats/                 # ✅ M1: the pure numpy core (details below)
   utils/                 # stdlib-only: json_utils (canonical hash path),
                          #   datetime_utils (naive-UTC), env_interpolation
+web/                     # ✅ M3: the dev-only TS toolchain (never wheel-shipped)
+  src/shared/            #   chart.ts (canvas primitives + TOKEN_FALLBACKS —
+                         #   THE brand-token layer), payload.ts (lockstep types)
+  src/report/ src/explore/  # the two renderers → committed assets (build.mjs)
+  test/                  #   jsdom smoke suites + type-checked fixtures
 tests/
   stats/ golden/         # M1 (incl. test_purity.py; golden rel-1e-9)
   core/ config/ database/ loaders/ pipeline/ cli/ e2e/   # M2
+  reporting/ tuning/     # M3 (+ cli/test_explore_command.py, the report/
+                         #   explore e2e gates in tests/e2e/)
   _helpers/fake_db.py    # in-memory manager with SQL-backend semantics
+  _helpers/synthetic_ab.py  # SyntheticWarehouse (3 metric kinds, shuffle mode)
 ```
 
-Not yet present (M3+): `validate/` (A/A engine), `reporting/`, `tuning/`
-(explore cockpit), `stats/sequential/`, `compute/incremental_backend`.
+Not yet present (M4+): `validate/` (A/A engine), `stats/sequential/`,
+`compute/incremental_backend`. M3's WP9 (PG/MySQL testcontainers + the
+two-process lock race) is deferred to a Docker-equipped environment.
 
 ### M2 pipeline facts an assistant must know
 
@@ -73,6 +89,34 @@ Not yet present (M3+): `validate/` (A/A engine), `reporting/`, `tuning/`
 - **`ci_kind` is always `"fixed"` in M2** (sequential lands M5); the STATE
   stage is deliberately not wired in v1 (recompute read path — see the driver
   docstring); paired methods are notebook-only.
+
+### M3 reporting/explore facts an assistant must know
+
+- **Two point vocabularies, never mixed:** the baked report series uses TERSE
+  keys (`t/ed/e/lo/hi/p/rj/s1…/hz/blk/ins` — `web/src/shared/payload.ts`);
+  `/recompute`+`/reload` replies use FULL names (`server._result_json`).
+  Timestamps are ms-epoch ints everywhere; NaN/±inf → null.
+- **Explore reads persisted rows (D2):** one lock-free session-load pass fills
+  the bounded Tier-S cache (`EXPLORE_CACHE_BUDGET`); over budget ⇒ honest
+  suffstats-only degradation, never a partial cache. Recompute tiers: E exact
+  suffstats, α-inversion (approx), S from the cache, R = warehouse reload via
+  `POST /reload` (its own manager, serialized).
+- **The client mirrors `analyze.effective_alphas`** over
+  `payload["explore"]["experiment"]` (raw alpha/correction/counts baked by
+  `tuning/payload.py`) — keep `explore.ts#effectiveAlpha` and that block in
+  lockstep (pinned by `tests/tuning/test_explore_bundle.py`).
+- **The D3 calibration gate** keys by `(metric, method_config_id, EFFECTIVE
+  alpha)`; with `_ab_aa_runs` empty (until M4) every Apply takes the
+  `confirm_uncalibrated` path — server-enforced, client-mirrored.
+- **Committed bundles are build artifacts:** edit `web/src/**`, run
+  `cd web && npm run build`, commit the changed `abkit/*/assets/*.js` in the
+  same PR (CI diffs freshness, greps the §4 marker classes
+  `abk-prehorizon`/`abk-insufficient`/`abk-srm-fail`, and asserts the wheel
+  ships both bundles). All colors go through `TOKEN_FALLBACKS` — the CI hex
+  loop rejects a page-shell hex missing from the token layer.
+- **request_id stale-drop:** ids are a single global on the server; the client
+  seeds from `Date.now()` (and re-seeds after a two-tab 409) — never restart
+  the counter at 0/1.
 
 ## The stats core (`abkit.stats`) — the implemented system
 
@@ -143,16 +187,17 @@ identity param orphans the prior results series.
 - Stratification uses Hamilton apportionment; Poisson bootstrap is mean-only
   (guarded); zero denominators → NaN + warning (H5), never an exception.
 
-## M3+ targets (being built next — specs are canonical)
+## M4+ targets (being built next — specs are canonical)
 
-Explore cockpit + reporting (M3), the A/A matrix (M4), sequential (M5). Read
-before coding:
+The A/A matrix / `abk validate` (M4), sequential (M5), init-claude + docs
+site (M6). Read before coding:
 
-- The cockpit & readout → [data-contract-and-reporting.md §5](../../docs/specs/data-contract-and-reporting.md),
-  [cli-and-dx.md §2](../../docs/specs/cli-and-dx.md)
 - The A/A FPR matrix → [aa-false-positive-matrix.md](../../docs/specs/aa-false-positive-matrix.md)
 - The blocking must-fix checklist → [quorum-review.md](../../docs/specs/quorum-review.md)
-- The M2 implementation record → [m2-implementation-plan.md](../../docs/specs/m2-implementation-plan.md)
+- The cockpit & readout as-built contracts → [data-contract-and-reporting.md §5](../../docs/specs/data-contract-and-reporting.md),
+  [cli-and-dx.md §2](../../docs/specs/cli-and-dx.md)
+- The implementation records → [m2-implementation-plan.md](../../docs/specs/m2-implementation-plan.md),
+  [m3-implementation-plan.md](../../docs/specs/m3-implementation-plan.md)
 
 ## Invariants (do not violate)
 

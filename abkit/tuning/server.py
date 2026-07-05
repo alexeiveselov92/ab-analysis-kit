@@ -404,23 +404,47 @@ def _uncalibrated_keys(
 
     from abkit.pipeline.analyze import comparison_alpha, effective_alphas
 
-    prospective = session.experiment
-    if alpha is not None or correction is not None:
-        updates: dict[str, Any] = {}
-        if alpha is not None:
-            updates["alpha"] = alpha
-        if correction is not None:
-            updates["correction"] = correction
-        prospective = session.experiment.model_copy(update=updates)
+    # The PROSPECTIVE experiment folds in alpha/correction edits AND the
+    # posted role flips before resolving effective alphas: a role flip moves
+    # comparisons across the two Bonferroni tiers and shifts the non-main
+    # count, so gating at the OLD roles' alphas would under-gate exactly the
+    # edit class D3 calls out (milestone-review finding — latent while
+    # ``_ab_aa_runs`` is empty, load-bearing from M4 on).
+    role_updates = {
+        tuned.metric: tuned
+        for tuned in comparisons
+        if tuned.is_main_metric is not None or tuned.is_guardrail is not None
+    }
+    prospective_comparisons = []
+    flipped_by_metric: dict[str, Any] = {}
+    for comp in session.experiment.comparisons:
+        tuned = role_updates.get(comp.metric)
+        if tuned is not None:
+            role_fields: dict[str, Any] = {}
+            if tuned.is_main_metric is not None:
+                role_fields["is_main_metric"] = bool(tuned.is_main_metric)
+            if tuned.is_guardrail is not None:
+                role_fields["is_guardrail"] = bool(tuned.is_guardrail)
+            comp = comp.model_copy(update=role_fields)
+        prospective_comparisons.append(comp)
+        flipped_by_metric.setdefault(comp.metric, comp)  # explore serves the first
+    updates: dict[str, Any] = {}
+    if alpha is not None:
+        updates["alpha"] = alpha
+    if correction is not None:
+        updates["correction"] = correction
+    if role_updates:
+        updates["comparisons"] = prospective_comparisons
+    prospective = session.experiment.model_copy(update=updates) if updates else session.experiment
     try:
         alphas = effective_alphas(prospective, session.project)
     except Exception:
         alphas = None  # apply_tuned_config will produce the real error
 
-    def _effective(series: Any) -> float:
+    def _effective(metric: str, series: Any) -> float:
         if alphas is None:
             return series.configured_alpha
-        return comparison_alpha(series.comparison, alphas)
+        return comparison_alpha(flipped_by_metric.get(metric, series.comparison), alphas)
 
     findings: list[str] = []
 
@@ -448,7 +472,7 @@ def _uncalibrated_keys(
             findings.append(f"{tuned.metric}: method params not bindable — treated as uncalibrated")
             checked.add(tuned.metric)
             continue
-        _check(tuned.metric, new_id, _effective(series))
+        _check(tuned.metric, new_id, _effective(tuned.metric, series))
         checked.add(tuned.metric)
 
     rekeys_everything = (
@@ -465,7 +489,9 @@ def _uncalibrated_keys(
         # the two Bonferroni tiers — both gate conservatively (D3)
         for metric, series in session.series_by_metric.items():
             if metric not in checked:
-                _check(metric, series.comparison.method.method_config_id, _effective(series))
+                _check(
+                    metric, series.comparison.method.method_config_id, _effective(metric, series)
+                )
     return findings
 
 
@@ -683,7 +709,12 @@ def serve_explore(
     try:
         server.serve_forever(poll_interval=0.3)
     except KeyboardInterrupt:
-        return None
+        # Fall through to the applied-aware return: a Ctrl-C racing the
+        # post-Apply self-shutdown window (~poll_interval) must not discard a
+        # SUCCESSFUL Apply — the YAML is already rewritten and a series
+        # possibly orphaned; reporting it as "cancelled — unchanged" would
+        # suppress the orphan/re-run epilogue (milestone-review finding).
+        pass
     finally:
         server.server_close()
     return server.applied

@@ -29,6 +29,8 @@ swap in later without touching the Apply contract (the ROADMAP backlog note).
 
 from __future__ import annotations
 
+import os
+import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -325,9 +327,23 @@ def apply_tuned_config(
     orphaned: list[OrphanedSeries] = []
     if tables is not None:
         for metric, old_id, new_id in id_changes:
-            if old_id is None or new_id is None or old_id == new_id:
+            if new_id is None or old_id == new_id:
                 continue
             stored = tables.list_method_config_ids(experiment_name, metric)
+            if old_id is None:
+                # The stored method block no longer binds (legacy/quarantined
+                # entry) — the id it ran under is unknowable from the config.
+                # A broken entry never BLOCKS Apply, but the warn-before-write
+                # DoD must still hold: every persisted series that is not the
+                # new id is about to be stranded.
+                for (m, stored_id), rows in stored.items():
+                    if m == metric and stored_id != new_id and rows:
+                        orphaned.append(
+                            OrphanedSeries(
+                                metric=metric, old_id=stored_id, new_id=new_id, rows=rows
+                            )
+                        )
+                continue
             rows = stored.get((metric, old_id), 0)
             if rows:
                 orphaned.append(
@@ -369,5 +385,25 @@ def apply_tuned_config(
         experiment_fields,
         result.orphan_warning,
     )
-    original_path.write_bytes(header.encode("utf-8") + b"\n" + _reemit_yaml(raw, original_bytes))
+    _atomic_write_bytes(
+        original_path, header.encode("utf-8") + b"\n" + _reemit_yaml(raw, original_bytes)
+    )
     return result
+
+
+def _atomic_write_bytes(path: Path, data: bytes) -> None:
+    """temp + ``os.replace`` in the target's own directory (same filesystem)
+    so a mid-write failure (ENOSPC, SIGKILL, power loss) can never truncate
+    the user's live config — "a broken config never lands" applies to the
+    filesystem, not just the validator."""
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_name, path)
+    except BaseException:
+        if os.path.exists(tmp_name):
+            os.unlink(tmp_name)
+        raise

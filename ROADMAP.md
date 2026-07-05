@@ -80,14 +80,26 @@ definition-of-done includes the relevant
   Internal table-name overrides (`tables:` block) validate but are rejected
   until the mixins are parameterized.
 
-## M3 — The explore cockpit (PRIORITY) + reporting
-- Port the detectkit `tune` package → `abk explore`: localhost server, live
-  `from_suffstats` recompute, stabilization chart, Basic/Advanced knobs,
-  `.history` write-back, orphan detection.
-- Port `reporting` → self-contained HTML readout; `readout.py` decision logic
-  (WIN/LOSE/FLAT/INCONCLUSIVE; pre-horizon refusal; SRM gate).
-- **DoD:** Apply gated when uncalibrated; calibration chip wired (depends on M4).
-  *(Must-fixes: calibration-in-explore, SRM surfacing.)*
+## M3 — The explore cockpit (PRIORITY) + reporting ✅ SHIPPED
+- ✅ `abk explore`: localhost server, live `from_suffstats` recompute (Tiers
+  E/α/S/R over a bounded session cache), stabilization chart with tier-styled
+  segments, Basic/Advanced knobs auto-derived from `param_specs`,
+  `.history` write-back, orphan detection, the D3 calibration gate.
+- ✅ Self-contained HTML readout (`abk run --report`); readout decision logic
+  (WIN/LOSE/FLAT/INCONCLUSIVE; pre-horizon refusal; SRM gate); the `web/`
+  toolchain with committed bundles + CI freshness/marker/token gates.
+- ✅ **DoD held:** Apply gated when uncalibrated (`confirm_uncalibrated`
+  against the empty `_ab_aa_runs`, e2e-tested); calibration chip wired (all
+  D3 states; goes green via M4). *(Must-fixes discharged: calibration-in-
+  explore, SRM surfacing, peeking rendering — see
+  m3-implementation-plan.md §5.)*
+- **Deferred from M3:** WP9 PG/MySQL testcontainers + the two-process lock
+  race (needs Docker — run in CI or a Docker-equipped box; the plan-§4 DoD
+  row and the exit-gate "integration matrix"/"both e2e variants" words move
+  with it); the real-ClickHouse explore e2e leg exercising D11 over a live
+  warehouse read order (D11 is unit-proven by the order-permutation test —
+  milestone-review record); Segment mode (D9); the `--metric` narrowing
+  beyond default-metric selection is as built.
 
 ## M4 — A/A false-positive matrix (`abk validate`)
 - Port the autotune scaffolding → placebo A/A splits, FPR + power + achieved-MDE +
