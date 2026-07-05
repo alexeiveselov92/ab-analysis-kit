@@ -139,15 +139,18 @@ def run_validation(
     *,
     now_iso: str,
     extra_methods: list[MethodConfig] | None = None,
+    metric_filter: str | None = None,
 ) -> AaValidateResult:
     """Score every cell and return the per-cell results + the recommendation.
 
     Reads the warehouse (never writes); the caller persists. Panels are cached by
     ``(metric, covariate_lookback)`` — methods sharing a metric and lookback reuse
-    one load.
+    one load. ``metric_filter`` restricts scoring to a single metric (``--metric``).
     """
     log: list[DecisionEntry] = []
     specs = enumerate_cells(experiment, project, extra_methods)
+    if metric_filter is not None:
+        specs = [s for s in specs if s.metric == metric_filter]
     share_a = _share_a(experiment)
     panel_cache: dict[tuple[str, object], PlaceboPanel] = {}
     cells: list[CellResult] = []
