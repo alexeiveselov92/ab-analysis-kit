@@ -13,6 +13,39 @@ number change).
 
 ## [Unreleased]
 
+### Added
+- **M4 — `abk validate`, the A/A false-positive matrix.** The trust artifact that
+  answers "is this method actually calibrated on this data, or does it lie about its
+  α?" (docs/specs/aa-false-positive-matrix.md; the implementation record is
+  [`m4-implementation-plan.md`](docs/specs/m4-implementation-plan.md)):
+  - **`abk validate --select <exp> [--method <m>] [--metric <m>] [--iterations N]
+    [--inject-effect <pct>] [--scoring fpr|power|mde] [--report] [--force]`** — draws N
+    deterministic placebo A/A splits over the experiment's own pooled cohort
+    (label-permutation, an exact null by construction), scores each declared method's
+    empirical **single-look FPR**, **cumulative-peeking FPR**, **power @ MDE**,
+    **achieved MDE**, **CI coverage**, and **effect-exaggeration-at-stop**, and persists
+    one `_ab_aa_runs` audit row per cell at the effective per-comparison alpha. Its own
+    out-of-band lock (`process_type='validate'`, `abk unlock`-clearable); non-zero exit
+    on failure; stages `LOAD → RESAMPLE → SCORE → PERSIST` (distinct copy from `abk run`'s
+    config-lint `VALIDATE`).
+  - **Honest peeking FPR** — the naive optional-stopping hazard (CI-excludes-zero at
+    *any* look, pre-horizon refusal off), reported *beside* the single-look FPR so the
+    jump is visible, with the per-look cumulative curve. Deliberately not the readout's
+    stabilized verdict (that is the *defense*); `pipeline/readout.py` is untouched.
+  - **The matrix UX** — budget-band-colored FPR cells, an explicit **Recommended** row
+    (FPR-closest-to-nominal, max-power) with a truthful one-line rationale, plain-language
+    per-method verdicts, and the "nominal α 5%, real peeking FPR X%" headline. Rendered by
+    `abk validate --report` reusing the committed report bundle (no third JS bundle) and
+    surfaced live by the explore calibration chip.
+  - **Auto mode** — a real server-side `POST /validate` (was a 501 stub) runs a reduced
+    validate, refreshes `session.aa_rows` in place so the D3 chip greens without an
+    explore restart, and re-seeds the knobs to the recommended config. The Apply gate is
+    unchanged (an uncalibrated Apply still confirms).
+  - **`metric.aa_fpr_budget`** (a fraction in `(0,1]`) completes the budget resolver
+    (metric → project → α×1.5); added to the §8 validation matrix.
+  - **No statistical numbers changed** — validate reads the existing `from_suffstats`
+    methods; the goldens are untouched and no `ALGORITHM_VERSION` was bumped.
+
 ### Fixed
 - **M3 milestone review closure** (the WP10 exit gate: 7 lenses / 17 raw
   findings, verified + inline-triaged — 13 real, all fixed; the full record

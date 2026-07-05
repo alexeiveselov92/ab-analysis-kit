@@ -13,12 +13,22 @@
 Out-of-band (not in the `run` hot path). Reuses the ported autotune scaffolding
 (load → resolve → resample → score → persist → emit + lock/finalize):
 
-1. Take real pre-experiment / historical data for the unit population.
+1. Take real data for the unit population. **As built (D1):** the source is the
+   experiment's **own pooled cohort** rendered over the real cadence grid (reusing
+   `RecomputeBackend.load_cutoff` + the metric loaders), *not* a separate historical
+   window. Pooling the per-variant arrays and permuting the unit→arm labels destroys
+   any true treatment effect and yields an exact null by construction (the standard
+   permutation-A/A) while exercising the real grid, cadence, cohort, and metric SQL —
+   no exposure-free loader, no torn `_ab_exposures` write (shuffling is in-memory
+   only). A dedicated pre-experiment historical window is a recorded follow-up, not a
+   correctness gap (the permutation already removes the effect).
 2. **A/A (false-positive):** repeatedly (N iterations, e.g. 1000–10000) draw
    **placebo splits** where, by construction, there is **no** true effect; run the
    candidate method(s); record whether each falsely rejects H₀ at the configured α.
    **Empirical FPR** = share of placebo runs that flagged significance. A
-   well-calibrated method gives FPR ≈ α.
+   well-calibrated method gives FPR ≈ α. The significance primitive is the readout's
+   own **CI-excludes-zero** rule (`_build_sig_map`), not the raw `reject` flag, so
+   z-test / bootstrap edge cases follow the readout.
 3. **Power:** inject a known synthetic effect of size **MDE** into one placebo arm
    and record the rejection rate. **Power** = share that correctly detect it. Also
    report **achieved MDE** at the target power and **CI coverage**.
@@ -41,24 +51,43 @@ Because the product *is* the cumulative chart, the matrix MUST report the
 **real cumulative-peeking FPR**, not a single-look FPR:
 
 - Run each A/A placebo through the **full cadence grid** (the experiment's actual
-  grid, daily or sub-day — cumulative-intervals.md §6) and the **actual readout
-  decision rule** ("CI excludes zero and stabilized"), and record whether it *ever*
-  falsely calls a winner across the experiment lifetime. For closed-form methods
-  this is near-free: per-interval sufficient statistics are computed once per
-  placebo split and prefix-summed across the grid (the `accumulate.py` merge
-  primitive). Very dense grids may be subsampled (cap ~100 points, denser early
-  where the FPR accrues fastest) — the matrix must state when it did.
+  grid, daily or sub-day — cumulative-intervals.md §6) and record whether it *ever*
+  falsely calls a winner across the experiment lifetime. **As built (D3):** the
+  peeking FPR is the naive **optional-stopping** hazard — the share of placebos whose
+  CI **excludes zero at *any* look** (pre-horizon refusal OFF, the horizon look
+  included, so peeking ≥ single-look by construction), modelling the analyst who
+  eyeballs the daily chart and stops the first time the CI clears zero. It is
+  deliberately **not** the official readout verdict ("CI excludes zero *and*
+  stabilized"): that rule's trailing-window stabilization-persistence is the tool's
+  *defense* against peeking — run literally it drops the peeking FPR *below* the
+  single-look rate, the opposite of the hazard this column exists to expose. The
+  stabilized-with-persistence rule stays the official verdict (`pipeline/readout.py`
+  untouched); this column measures the trap it defends against. The **single-look
+  FPR** (horizon cutoff only) is reported *beside* the peeking FPR so the jump is
+  visible. For closed-form methods this is near-free: per-interval sufficient
+  statistics are computed once per placebo split and prefix-summed across the grid
+  (the `accumulate.py` merge primitive). Very dense grids may be subsampled (cap ~100
+  points, denser early where the FPR accrues fastest) — the matrix states the
+  `(kept, total)` count when it did.
 - Report **effect exaggeration at stop** (winner's curse) as a first-class column
   beside FPR: conditional on stopping early, the effect estimate is biased away
   from zero — at hundreds of looks this is the analyst's biggest practical trap
   and FPR alone does not show it.
 - Surface this as a **headline number** beside the nominal α — e.g. "nominal α 5%,
   **real peeking FPR 14%**" — in the matrix, the HTML report, and the explore chip.
-- Show the **same metric with `sequential.enabled`** side-by-side so the analyst
-  sees the always-valid CI brings it back to ≈ α. This is how we keep the
-  fixed-horizon default *honest* without changing it.
-- The composed multiple-testing FDR/FWER (config-time Bonferroni × read-time BH ×
-  peeking) is validated **empirically** over the day-grid, never assumed.
+- **Sequential side-by-side is deferred to M5 (D8).** Showing the same metric with
+  `sequential.enabled` beside the fixed-horizon peeking FPR — so the analyst sees the
+  always-valid CI bring it back to ≈ α — needs the sequential engine (`stats/sequential/`,
+  mSPRT/alpha-spending), which lands in M5; all M4 rows carry `ci_kind='fixed'`. M4
+  renders the fixed-horizon peeking FPR + the single-look FPR (the honest jump) and
+  leaves the "with sequential" column as a documented placeholder. This is how we keep
+  the fixed-horizon default *honest* without changing it — completed in M5.
+- **Composed multiple-testing (partial in M4; full sweep in M5 — D9).** M4 measures
+  each cell's peeking FPR over the grid and writes rows at the correct **two-tier
+  Bonferroni** effective per-comparison alphas (so the composition's alpha half is
+  exercised and the chip reads the same alpha the readout does). The full empirical
+  composed FDR/FWER (config-time Bonferroni × read-time BH × peeking) over the
+  **multi-metric** family is deferred to M5; read-time BH already shipped in M3.
 
 ## 4. UX (must-fix — a raw grid will be misread)
 
@@ -100,15 +129,75 @@ bootstrap A/A is the expensive corner. Therefore:
 
 ## 7. `_ab_aa_runs` (audit)
 
-`run_id`, `experiment`, `metric`, `method_config_id`, `iterations`, `inject_effect`,
-`empirical_fpr`, `peeking_fpr`, `power`, `achieved_mde`, `ci_coverage`, `verdict`,
-`created_at`. Informational; never pruned by `clean`. Feeds the
+**As-built columns (D15 — this supersedes the earlier sketch).** The shipped model
+(`abkit/database/tables.py`, `_AaRunsMixin`) is a superset-with-renames of the
+original sketch; `find_calibration`, the chip, and the D3 gate are all built against
+it, so M4 writes these and this section matches the code:
+
+`experiment`, `run_id`, `metric`, `method_name`, `method_params`, `method_config_id`,
+`mode` (the `--scoring` selection objective: `fpr`|`power`|`mde`), `iterations`,
+`alpha` (the **effective post-correction per-comparison** alpha the chip looks up),
+`injected_effect`, `fpr` (single-look), `peeking_fpr`, `power`, `achieved_mde`,
+`coverage`, `effect_exaggeration`, `verdict`, `details` (canonical JSON: the peeking
+curve, `(kept,total)` subsample note, the selection rationale, warnings),
+`status` (`success`|`failed`), `error_message`, `created_at` (the strictly-monotonic
+LWW version, stamped by `save_aa_run`).
+
+Renames from the sketch: `inject_effect`→`injected_effect`, `empirical_fpr`→`fpr`,
+`ci_coverage`→`coverage`. The PK stays `(experiment, run_id)` under
+`ReplacingMergeTree(created_at)`; a matrix is one row **per cell** via a per-cell
+`run_id = "{run_stamp}:{cell_hash}"` (D4), never a shared id that would collapse. A
+`status='failed'` row (or one with `fpr` null) is kept for audit but never counted by
+`find_calibration`. Informational; never pruned by `clean`. Feeds the
 [blind-rederivation arbitration](statistics-changes.md#0-the-process) — when legacy
 vs blind-derived methods disagree, this table decides.
 
-## 8. Worked example (to author with the implementation)
+## 8. Worked example
 
-A concrete worked matrix on a real metric — showing a well-calibrated z-test, an
-FPR-inflated naive t-test on a ratio metric, and the peeking-FPR jump fixed by
-sequential — lands here as the readability deliverable (the matrix's analyst-facing
-clarity *is* the feature, not the numbers).
+A concrete worked matrix — the readability deliverable (the analyst-facing clarity
+*is* the feature). The numbers below are the deterministic output of `abk validate`
+over the synthetic A/A fixture in `tests/_helpers/synthetic_ab.py` (320 units, a
+14-day daily grid, 2000 placebo splits, nominal α = 5%, `aa_fpr_budget` = α × 1.5 =
+7.5%), pinned by the exit-gate e2e `tests/e2e/test_validate_matrix.py`. The original
+sketch imagined a "well-calibrated z-test / inflated t-test on a ratio"; the real
+fixtures **invert which method breaks** — the mechanism (a variance-underestimating
+test on non-independent observations) is identical, but here it is the z-test on a
+*clustered proportion*, while the ratio method is well-calibrated. The matrix reports
+what is true, not the hypothetical.
+
+| metric (kind) | method | single-look FPR | peeking FPR (14 looks) | power @ δ=15% | CI coverage | verdict |
+|---|---|---|---|---|---|---|
+| `arpu` (sample) | `t-test` | **5.3%** ✅ | 8.6% | 96% | 95% ✅ | well-calibrated |
+| `conversion` (fraction, `nobs`>1) | `z-test` | **42.4%** ❌ | 43.5% | 95% | 55% ❌ | FPR inflated, **do not use** |
+| `ctr` (ratio) | `ratio-delta` | **4.8%** ✅ | **12.7%** ⚠ | 100% | 95% ✅ | calibrated single-look; peeking breaks budget |
+
+Reading it — the three classic failures the matrix exists to catch:
+
+1. **Well-calibrated (`arpu` / `t-test`).** A t-test on a per-unit continuous metric.
+   The placebo split is exchangeable, so the single-look FPR sits on α (5.3%, inside
+   the 7.5% budget) and the CI covers the injected truth at the nominal 95%. This is
+   the reference row: *this is what calibrated looks like*.
+
+2. **FPR inflated — a naive test on non-independent data (`conversion` / `z-test`).**
+   `conversion` is a proportion whose per-unit `nobs` > 1 (each user contributes
+   several correlated trials). A two-proportion z-test pools the trials as independent
+   Bernoulli draws, so it **underestimates the variance** — and the more days of
+   clustered trials accumulate, the worse it gets (12% at a 4-day horizon, **42% at
+   14 days**). The *same* underestimate collapses CI coverage to **55%** (vs the 95%
+   it claims). This is the A/B analog of "a naive t-test on a ratio metric": both
+   ignore within-unit correlation. Verdict: **do not use** — reach for a method that
+   accounts for the clustering (a delta-method ratio, or the metric re-expressed
+   per-unit).
+
+3. **Peeking breaks a calibrated method (`ctr` / `ratio-delta`).** `ratio-delta` is
+   *correctly* specified for the ratio metric — its single-look FPR is a healthy 4.8%.
+   But the product **is** the daily cumulative chart, and an analyst who stops the
+   first time the CI clears zero is running 14 correlated looks. That optional-stopping
+   FPR is **12.7%** — over budget on a method that passes every single-look check. FPR
+   alone would green-light it; the peeking column is what exposes the trap. Sequential
+   analysis (M5) is what brings this back toward α without changing the fixed-horizon
+   default (§3, D8).
+
+The **Recommended** row and its one-line rationale, the budget-band colors, and this
+peeking headline ("nominal α 5%, real peeking FPR 12.7%") are what `abk validate
+--report` renders and the explore calibration chip surfaces live (§4, §5).

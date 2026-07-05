@@ -196,12 +196,16 @@ def _validate_one(
 
         _emit_matrix(experiment.name, result)
         tables.release_lock(experiment.name, "pipeline", "validate", status="completed")
-    except Exception as exc:  # record on the lock row, then continue to the next experiment
+    except BaseException as exc:  # incl. KeyboardInterrupt/SystemExit — never strand the lock
         tables.release_lock(
             experiment.name, "pipeline", "validate", status="failed", error_message=str(exc)
         )
         echo_error(experiment.name, f"validate failed: {exc}")
         manager.close()
+        if not isinstance(exc, Exception):
+            # a signal / interpreter exit still propagates — but with the lock RELEASED,
+            # never stranded for the 2h compute timeout (driver.py:229–236 precedent).
+            raise
         return "failed"
 
     if report_path is not None:

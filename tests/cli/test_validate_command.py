@@ -108,3 +108,29 @@ def test_metric_narrows_scope(scaffolded):
 def test_bad_selection_exits_nonzero(scaffolded):
     result = runner.invoke(cli, ["validate", "--select", "no_such_experiment"])
     assert result.exit_code != 0 or "Nothing selected" in result.output
+
+
+def test_baseexception_releases_the_validate_lock(scaffolded, monkeypatch):
+    """m4 exit-gate F5: a BaseException (Ctrl+C / SystemExit) mid-validation RELEASES the
+    lock instead of stranding it 'running' for the 2h compute timeout, and re-propagates —
+    so the next validate isn't silently no-op'd. (`except Exception` would have missed it.)"""
+    import abkit.validate as validate_mod
+
+    real = validate_mod.run_validation
+    calls = {"n": 0}
+
+    def interrupt_first(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise SystemExit(2)  # a BaseException — the exact branch a Ctrl+C takes
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(validate_mod, "run_validation", interrupt_first)
+    first = runner.invoke(cli, ["validate", "--select", EXP, "--iterations", "50"])
+    assert first.exit_code != 0  # the interrupt propagated, not swallowed as success
+    assert not _aa_rows(scaffolded)  # nothing persisted on the interrupted run
+
+    # the lock was RELEASED, not stranded: the next validate runs without --force
+    second = runner.invoke(cli, ["validate", "--select", EXP, "--iterations", "50"])
+    assert second.exit_code == 0, second.output
+    assert _aa_rows(scaffolded)  # it acquired the free lock and wrote rows

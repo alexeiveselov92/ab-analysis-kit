@@ -48,9 +48,11 @@ commit per WP.
 
 ## 0. Progress & resume note (2026-07-05)
 
-**WP1–WP6 done** (WP1–WP4 merged in PR #6; WP5 merged in PR #7; WP6 on
-`claude/m4-wp6-auto`); **WP7 remains** (M4 is NOT yet complete — do not flip
-CLAUDE.md / rules / ROADMAP to "M4 shipped" until WP7).
+**WP1–WP7 done — M4 is COMPLETE** (WP1–WP4 merged in PR #6; WP5 in PR #7; WP6 in PR #8;
+WP7 on `claude/m4-wp7-exit-gate`). CLAUDE.md / `.claude/rules/{architecture,contributing}`
+/ ROADMAP are flipped to "M4 shipped"; the §5 exit-gate review record is appended (5
+distinct findings fixed). The exit-gate e2e (`tests/e2e/test_validate_matrix.py`) proves
+the three classic failures in Binomial bands.
 
 | WP | Status | Lands in |
 |---|---|---|
@@ -60,7 +62,7 @@ CLAUDE.md / rules / ROADMAP to "M4 shipped" until WP7).
 | WP4 CLI + lock | ✅ done | `abkit/cli/commands/validate.py`, `abkit/cli/main.py` (registration), `abkit/cli/commands/unlock.py` (validate-lock); `tests/cli/test_validate_command.py` |
 | WP5 report+payload+budget | ✅ done | `abkit/reporting/calibration.py` (block builder) + `builder.py` (fill); `validate.py` `_emit_report` reuses the report bundle (standalone `validate/report.py` **retired**, D10); `scoring.py`+`runner.py` (the `peeking_curve`); `metric_config.py`+`recompute.py` (`aa_fpr_budget`, D12); `web/src/{shared/payload.ts,report/report.ts}` + rebuilt `report.js`; tests: `tests/reporting/test_{calibration,builder}.py`, `tests/config/test_metric_config.py`, `tests/validate/test_scoring.py`, `tests/tuning/test_recompute.py`, `web/test/{fixtures,smoke}.mjs` |
 | WP6 Auto mode | ✅ done | `abkit/tuning/server.py` (`_handle_validate`, `_run_validate`, `AUTO_ITERATIONS`/`AUTO_GRID_CAP`), `web/src/explore/{explore.ts (pokeValidate/adoptValidate),payload.ts (ValidateReply)}` + rebuilt `explore.js`; tests: `tests/tuning/test_server.py::TestAutoValidate`, `web/test/{fixtures-explore,smoke-explore}.mjs` |
-| WP7 e2e + review + docs | ⏳ next | see WP7 |
+| WP7 e2e + review + docs | ✅ done | `tests/e2e/test_validate_matrix.py`; aa-fpr §1/§3/§7/§8 amended; declarative-config §8 / cli-and-dx §1; ROADMAP + CHANGELOG + CLAUDE.md + `.claude/rules/*` flipped; §5 exit-gate review (5 findings fixed + regression tests) |
 
 **How `abk validate` works today** (the vertical slice): `abk validate --select <exp>
 [--method <m>] [--metric <m>] [--iterations N] [--inject-effect <pct>]
@@ -707,3 +709,68 @@ matches the alpha the chip looks up (both through `comparison_alpha ∘ effectiv
 `find_calibration` reads `calibrated`, not `alpha_mismatch`); R17 (in-session flip), R18
 (re-seed + green), and R19 (Apply gate unchanged) hold, each with a test that proves the
 claim rather than passing vacuously.
+
+### WP7 / M4 exit-gate review (2026-07-05) — 7 lenses (engine-math, determinism/
+identity, persistence/chip, CLI/lock, reporting-lockstep, Auto-mode, WP7-gate+docs),
+each raw finding adversarially verified refute-by-default (a second verifier per
+finding). **7 raw findings; 6 CONFIRMED (5 distinct after dedup — the bootstrap-abort
+bug surfaced independently from the engine-math and determinism lenses); all fixed in
+the WP7 commit with regression tests. 3 lenses clean (persistence/chip,
+reporting-lockstep, Auto-mode); 1 refutation (the CLI manager-leak-on-acquire angle —
+consistent with the driver contract, not a validate-specific defect).**
+
+- **F1 (high, fixed) — a bootstrap/paired declared method aborted the WHOLE experiment
+  instead of failing one cell.** `score_cell` calls `method.from_suffstats` for every
+  method (scoring.py:193/240); the bootstrap family hard-raises `SampleValidationError`
+  (a `StatsError`, NOT a `ValueError`), which the runner's per-cell `except` tuple
+  `(ValidateError, QuarantinedMethodError, KeyError, ValueError)` did not catch — so it
+  escaped `run_validation` and was caught only by the CLI's outer `except Exception`,
+  marking the whole experiment failed and persisting **zero** rows (every metric's chip
+  then reads `uncalibrated`, including the closed-form cells that scored fine). Fix: the
+  per-cell tuple now catches `StatsError` (covers `QuarantinedMethodError` +
+  `SampleValidationError`), so an unscoreable cell fails only its own row (status
+  `failed`, reason recorded — R37). Regression:
+  `test_bootstrap_cell_fails_gracefully_without_aborting_siblings`.
+- **F2 (medium, fixed) — absolute-effect CI coverage was biased ~2pp low.** For
+  `test_type='absolute'`, `_injected_truth` anchored δ·μ̂ on the *realized control mean*
+  `result.value_1`, which co-varies (negated) with the effect estimate, so the
+  estimate−truth deviation scaled both arms' noise by (1+δ) while the CI scaled only the
+  injected arm's — publishing ~93% coverage where the truth is ~95%. Fix: anchor on a
+  FIXED, split-invariant pooled horizon estimate (`_point_estimate` over all present
+  units), computed once. Verified: 0.936 → 0.958 in-fixture. Regression:
+  `test_absolute_test_type_coverage_is_calibrated` (the relative path returns δ exactly
+  and is unaffected — the e2e numbers are unchanged). No `ALGORITHM_VERSION` bump: this
+  is validate-measurement code, not a stats-core baseline.
+- **F3 (low, fixed) — a zero-trial fraction arm crashed instead of being a gap.**
+  `build_arm` built `Fraction(count, nobs=Σtrials)`; when a placebo fraction arm's
+  present units all have `nobs=0` (a common early-cutoff / left-join shape), `Fraction`
+  raised `SampleValidationError` ("nobs must be positive") — the same uncaught-abort
+  path as F1, contradicting the docstring's "a gap, not a zero … never a crash." Fix:
+  `build_arm` returns `None` (a gap) when `Σtrials ≤ 0`, tallied via the existing
+  arm-is-None branch. Regression: `test_zero_trial_fraction_arm_is_a_gap_not_a_crash`.
+- **F4 (medium, fixed) — Ctrl+C stranded the validate lock.** `_validate_one` guarded
+  the body with `except Exception`, so a `KeyboardInterrupt`/`SystemExit` (a
+  `BaseException`) skipped `release_lock`, leaving the `_ab_tasks` row `running` for up
+  to the compute timeout (~2h) — every later `abk validate` then no-ops "lock held" at
+  exit 0. The docstring's "failures are recorded on the lock row before propagating" was
+  false under Ctrl+C. Fix: `except BaseException`, record on the lock row, then re-raise
+  non-`Exception`s (the `driver.py:229–236` contract) so the interrupt still propagates
+  but with the lock RELEASED. Regression:
+  `test_baseexception_releases_the_validate_lock`.
+- **F5 (low, fixed) — the §8 worked-example peeking cells didn't reproduce.** The table
+  listed 8.7% / 43.6%, but the fixture emits `peeking_fpr` 0.0865 / 0.4355, which the
+  tool's own `{:.1%}` / `toFixed(1)` formatters (and the baked verdict string) render as
+  **8.6% / 43.5%** — the doc was 0.1pp high on both and contradicted the tool's output.
+  Fix: corrected the two cells, and added `test_worked_example_numbers_match_the_spec_table`
+  so the §8 table is now genuinely "pinned by the exit-gate e2e" (all four column
+  renderings asserted against the tool's formatter).
+
+Verified-clean lenses confirmed: the persisted `_ab_aa_runs` records carry every D15
+column, failed/`fpr=None` rows never calibrate, and `find_calibration` keys/over-budget/
+`alpha_mismatch` correctly (persistence/chip); the Python↔`payload.ts`↔`report.ts`
+calibration contract is in lockstep with the latest-invocation pick and token-layer
+colors (reporting-lockstep); the Auto `_run_validate` closes its manager on every path,
+mutates `session.aa_rows` in place, honors request_id stale-drop, and leaves the Apply
+gate unchanged (Auto-mode). The refuted item: the CLI's `manager` leak if `acquire_lock`
+itself *raises* (outside the try) — the driver has the identical shape, so it is a
+consistent, pre-existing pattern, not a WP4 regression (recorded, not fixed here).

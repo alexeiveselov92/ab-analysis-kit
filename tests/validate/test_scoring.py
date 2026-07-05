@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 import pytest
 
 from abkit.stats.factory import create_method
+from abkit.validate.panel import PanelCutoff, PlaceboPanel
 from abkit.validate.scoring import score_cell
 from tests.validate._panels import fraction_panel, normal_panel
 
@@ -69,9 +71,9 @@ def test_peeking_curve_is_monotone_and_ends_at_peeking_fpr():
     assert len(curve) == len(panel.cutoffs)  # one (elapsed_days, cumulative_fpr) per look
     # cumulative FPR is monotone non-decreasing (optional-stopping accrues, never undoes)
     ys = [y for _x, y in curve]
-    assert all(b >= a - 1e-12 for a, b in zip(ys, ys[1:]))
+    assert all(b >= a - 1e-12 for a, b in zip(ys, ys[1:], strict=False))
     xs = [x for x, _y in curve]
-    assert all(b >= a for a, b in zip(xs, xs[1:]))  # looks are ordered by elapsed time
+    assert all(b >= a for a, b in zip(xs, xs[1:], strict=False))  # ordered by elapsed time
     # the final look equals the reported cumulative peeking FPR
     assert curve[-1][1] == pytest.approx(score.peeking_fpr)
     # and the curve's terminus exceeds its first look — the honest peeking climb
@@ -122,3 +124,43 @@ def test_degenerate_horizon_is_counted_not_a_rejection():
     assert score.valid_iterations < 50  # most/all iterations degenerate at the horizon
     assert score.degenerate_horizon > 0
     assert score.fpr is None or score.fpr == 0.0  # never inflated by counting gaps
+
+
+def test_absolute_test_type_coverage_is_calibrated():
+    """m4 exit-gate F2: the absolute-effect truth (δ·μ̂) anchors on the FIXED pooled
+    horizon mean, not the realized control mean — which co-varies with the effect
+    estimate and biases coverage ~2pp low. A well-calibrated CI must cover at ~1−α."""
+    panel = normal_panel(n_units=4000, n_cutoffs=1, seed=43)
+    method = create_method("t-test", alpha=ALPHA, params={"test_type": "absolute"})
+    score = score_cell(panel, method, iterations=4000, seed_parts=SEED_PARTS, inject_effect=0.2)
+    assert score.coverage is not None
+    # the noisy value_1 anchor gives ~0.936 here; the fixed pooled anchor restores ~0.958
+    assert 0.945 < score.coverage < 0.97
+
+
+def test_zero_trial_fraction_arm_is_a_gap_not_a_crash():
+    """m4 exit-gate F3: a fraction cutoff whose present units all have 0 trials is a
+    degenerate gap (build_arm -> None), never a Fraction(nobs=0) SampleValidationError
+    that would escape per-cell isolation and abort the whole experiment."""
+    n = 120
+    unit_idx = np.arange(n)
+    cutoff = PanelCutoff(
+        elapsed_days=1.0,
+        is_horizon=True,
+        unit_idx=unit_idx,
+        values=np.zeros(n),
+        secondary=np.zeros(n),  # every present unit has 0 trials
+    )
+    panel = PlaceboPanel(
+        n_units=n,
+        cutoffs=(cutoff,),
+        covariate=None,
+        input_kind="fraction",
+        kept_grid_points=1,
+        total_grid_points=1,
+    )
+    method = create_method("z-test", alpha=ALPHA)
+    score = score_cell(panel, method, iterations=50, seed_parts=SEED_PARTS)  # must NOT raise
+    assert score.valid_iterations == 0  # every cutoff is a gap
+    assert score.degenerate_horizon > 0
+    assert score.fpr is None

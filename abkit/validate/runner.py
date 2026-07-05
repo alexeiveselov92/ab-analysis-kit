@@ -18,7 +18,7 @@ from abkit.config.method_config import MethodConfig
 from abkit.config.metric_config import MetricConfig
 from abkit.config.project_config import ProjectConfig
 from abkit.pipeline.analyze import comparison_alpha, effective_alphas
-from abkit.stats.exceptions import QuarantinedMethodError
+from abkit.stats.exceptions import StatsError
 from abkit.validate._types import DecisionEntry, ValidateError
 from abkit.validate.load import DEFAULT_GRID_CAP, load_placebo_panel
 from abkit.validate.panel import PlaceboPanel
@@ -262,7 +262,10 @@ def _score_one(
             inject_effect=settings.inject_effect,
             target_power=settings.target_power,
         )
-    except (ValidateError, QuarantinedMethodError, KeyError, ValueError) as exc:
+    except (ValidateError, StatsError, KeyError, ValueError) as exc:
+        # StatsError covers QuarantinedMethodError AND the bootstrap-family / degenerate
+        # SampleValidationError — a single unscoreable cell fails only ITS row (R37),
+        # never aborting the whole experiment's matrix (m4 exit-gate review, F1).
         log.append(DecisionEntry("score", f"{spec.metric}/{spec.method.name}: failed — {exc}"))
         return CellResult(
             **base,

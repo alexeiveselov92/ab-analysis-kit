@@ -79,8 +79,11 @@ def build_arm(
     if input_kind == "fraction":
         if secondary is None:
             raise ValueError("fraction input_kind requires an nobs (trials) array")
+        nobs = float(secondary[pos].sum())
+        if nobs <= 0:
+            return None  # a zero-trial arm is degenerate — a gap, not a crash (Fraction rejects nobs≤0)
         # per-unit (successes, trials) summed into the arm's proportion suffstats
-        return Fraction(count=float(arm_values.sum()), nobs=float(secondary[pos].sum()), name=name)
+        return Fraction(count=float(arm_values.sum()), nobs=nobs, name=name)
     if input_kind == "ratio":
         if secondary is None:
             raise ValueError("ratio input_kind requires a denominator array")

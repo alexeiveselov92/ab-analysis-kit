@@ -101,26 +101,49 @@ definition-of-done includes the relevant
   milestone-review record); Segment mode (D9); the `--metric` narrowing
   beyond default-metric selection is as built.
 
-## M4 — A/A false-positive matrix (`abk validate`)
-- Port the autotune scaffolding → placebo A/A splits, FPR + power + achieved-MDE +
-  coverage, **honest cumulative-peeking FPR** over the day-grid; `_ab_aa_runs`;
-  recommendation; the matrix UX (color vs budget, Recommended row, plain verdicts).
-- **Deferred here from the M3 knob surface (D12, change control):** one/two-sided
-  tests and winsorization — neither exists as a stats-core method param (p-values
-  are hardcoded two-sided; no winsor code anywhere), and the explore rail is
-  auto-derived from `param_specs`, so neither can be faked in the UI. Adding
-  either is a stats-core change with the full obligations (identity impact,
-  `statistics-changes.md` entry, A/A validation) — the M4 harness arbitrates them.
-- **DoD:** closed-form default, bootstrap A/A opt-in with subsampling; worked
-  example in the spec; powers the explore calibration chip and the blind-rederivation
-  arbitration. *(Must-fixes: matrix UX, peeking FPR, validate cost bound.)*
+## M4 — A/A false-positive matrix (`abk validate`) ✅ SHIPPED
+- ✅ Ported the autotune scaffolding → the pure `abkit/validate/` engine (placebo
+  label-permutation splits over the experiment's own pooled cohort, D1; FPR + power +
+  achieved-MDE + coverage + effect-exaggeration; **honest cumulative-peeking FPR** —
+  the naive optional-stopping hazard, D3 — over the one-enumeration day-grid, denser-
+  early ≤100-point cap with disclosure), `_ab_aa_runs` persistence (per-cell `run_id`,
+  D4; effective two-tier alphas), the recommendation + plain-language verdicts, and the
+  matrix UX (budget-band colors, Recommended row + rationale).
+- ✅ `abk validate` CLI (own out-of-band `validate` lock, D5, `abk unlock`-clearable;
+  non-zero exit on failure), `--report` reusing the committed report bundle (D10, no
+  third JS bundle), the `metric.aa_fpr_budget` override completing the resolver (D12),
+  and **Auto mode** — server-side `POST /validate` that greens the live explore chip in
+  place and re-seeds the knobs, Apply gate unchanged (R19).
+- ✅ **DoD held:** closed-form default (bootstrap A/A left an opt-in follow-up, D7);
+  worked example authored (`aa-false-positive-matrix.md §8`); powers the explore
+  calibration chip and the blind-rederivation arbitration; the exit-gate e2e proves the
+  three classic failures in Binomial bands (`tests/e2e/test_validate_matrix.py`); zero
+  method-math changes (goldens untouched, no `ALGORITHM_VERSION` bump). *(Must-fixes
+  discharged: matrix UX, peeking FPR, validate cost bound.)*
+- **Deferred to M5:** the sequential side-by-side column (D8 — needs `stats/sequential/`,
+  all M4 rows are `ci_kind='fixed'`) and the full empirical **composed** FDR/FWER sweep
+  over the multi-metric family (D9 — M4 ships each cell's peeking FPR at the correct
+  two-tier alphas; read-time BH already shipped in M3).
+- **Arbitrated, not implemented (D14, ex-D12, change control):** one/two-sided tests
+  and winsorization — neither exists as a stats-core method param (p-values are
+  hardcoded two-sided; no winsor code anywhere), and the explore rail is auto-derived
+  from `param_specs`, so neither can be faked in the UI. Adding either is a stats-core
+  change with the full obligations (identity impact, `statistics-changes.md` entry, A/A
+  validation *through this harness*) — a named future change, not a milestone gap.
 
 ## M5 — Sequential analysis + planner + corrections
 - `sequential/` (mSPRT always-valid + alpha-spending), opt-in; `ci_kind`/`is_horizon`
   in the contract. `abk plan` (pre-launch power/sizing). ~~Benjamini-Hochberg
   read-time~~ *(pulled forward to M3 WP1: `pipeline/readout.py` rescoring —
   an M2-accepted `correction: benjamini_hochberg` would otherwise verdict at
-  the wrong alpha)*; composed-FDR empirical validation (stays here/M4).
+  the wrong alpha)*.
+- **The A/A matrix's `sequential.enabled` side-by-side column (from M4/D8):** once
+  the sequential engine exists, `abk validate` renders the same metric's always-valid
+  peeking FPR beside the fixed-horizon one, so the analyst sees the CI brought back to
+  ≈ α — the honest completion of the peeking story.
+- **The full composed multiple-testing FDR/FWER empirical validation (from M4/D9):**
+  the composed Bonferroni × read-time BH × peeking sweep over the *multi-metric* family
+  (M4 validated only the per-cell peeking FPR at the correct two-tier alphas).
 - Sub-day cadence constraints (cumulative-intervals.md §6): `always_valid` is the
   auto-recommended scheme below `1d`; `alpha_spending` requires a pre-committed
   small look grid and is a config error at sub-day cadence; anytime-valid

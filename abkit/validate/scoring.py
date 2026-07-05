@@ -155,6 +155,26 @@ def score_cell(
     ratio = (1.0 - share_a) / share_a  # n_treatment / n_control at the split
     warnings: list[str] = []
 
+    # Absolute-effect coverage anchors the injected truth (δ·μ̂) on a FIXED,
+    # split-invariant estimate of the shared population mean — the pooled point
+    # estimate over ALL present horizon units, computed once. Anchoring on the
+    # realized control mean (value_1) instead biases coverage low, because value_1
+    # co-varies with the effect estimate (m4 exit-gate review, F2). None for a
+    # degenerate horizon or the ratio family (whose absolute path is unreached).
+    horizon_pooled: float | None = None
+    if inject_effect is not None:
+        hc = panel.cutoffs[horizon_pos]
+        pooled_arm = build_arm(
+            panel.input_kind,
+            hc.values,
+            hc.secondary,
+            panel.covariate,
+            hc.unit_idx,
+            np.arange(hc.unit_idx.size),
+        )
+        if pooled_arm is not None:
+            horizon_pooled = _point_estimate(pooled_arm)
+
     single_look_hits = 0
     peek_hits = 0
     valid_iterations = 0
@@ -243,9 +263,11 @@ def score_cell(
                     coverage_n += 1
                     if sig[0]:
                         power_hits += 1
-                    # absolute-effect truth anchors on the control point estimate
-                    # (value_1) — correct units for sample/fraction/ratio alike.
-                    truth = _injected_truth(method, inject_effect, result.value_1)
+                    # absolute-effect truth = δ·μ̂ on the FIXED pooled horizon estimate
+                    # (split-invariant); relative truth ignores the anchor. Fall back to
+                    # value_1 only on a degenerate horizon where no pooled arm was built.
+                    anchor = horizon_pooled if horizon_pooled is not None else result.value_1
+                    truth = _injected_truth(method, inject_effect, anchor)
                     if result.left_bound <= truth <= result.right_bound:
                         coverage_hits += 1
 
@@ -313,14 +335,29 @@ def _first_significant_look(
     return None
 
 
-def _injected_truth(method: BaseMethod, delta: float, control_estimate: float) -> float:
+def _point_estimate(arm: object) -> float | None:
+    """The arm's scalar point estimate: mean (sample), proportion (fraction).
+
+    Returns ``None`` for the ratio family — whose absolute-effect path is unreached
+    (``ratio-delta`` has no ``test_type`` param, so it scores relative), leaving the
+    caller to fall back to the control estimate.
+    """
+    if isinstance(arm, Fraction):
+        return float(arm.prop)
+    if isinstance(arm, SufficientStats):
+        return float(arm.mean)
+    return None
+
+
+def _injected_truth(method: BaseMethod, delta: float, pooled_estimate: float) -> float:
     """The true effect a multiplicative δ induces, in the method's estimand units (D2).
 
     Relative test_type → δ exactly (δ *is* the estimand). Absolute → δ·μ̂ where μ̂ is
-    the control arm's point estimate (``value_1``) — in the effect's units for every
-    metric kind (mean / proportion / ratio).
+    a FIXED, split-invariant estimate of the shared population mean (the pooled point
+    estimate over all present horizon units) — NOT the realized control mean, which
+    co-varies with the effect estimate and biases coverage low (m4 exit-gate review).
     """
     test_type = method.test_type if "test_type" in method.params else "relative"
     if test_type == "relative":
         return float(delta)
-    return float(delta) * control_estimate
+    return float(delta) * pooled_estimate

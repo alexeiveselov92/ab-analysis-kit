@@ -13,6 +13,7 @@ from synthetic_ab import (
 
 from abkit.compute.recompute_backend import RecomputeBackend
 from abkit.config.experiment_config import ExperimentConfig
+from abkit.config.method_config import MethodConfig
 from abkit.core.period_planner import generate_grid
 from abkit.pipeline.analyze import comparison_alpha, effective_alphas
 from abkit.validate.result import CellResult
@@ -198,6 +199,37 @@ def test_run_validation_scores_cells_and_marks_one_recommended():
     assert cell.alpha == comparison_alpha(
         experiment.comparisons[0], effective_alphas(experiment, PROJECT)
     )
+
+
+def test_bootstrap_cell_fails_gracefully_without_aborting_siblings():
+    """m4 exit-gate F1: a declared bootstrap method has no from_suffstats path and raises
+    SampleValidationError (a StatsError). It must fail only ITS OWN cell (status='failed',
+    reason recorded — R37), never escape per-cell isolation and abort the whole
+    experiment's matrix, discarding the sibling closed-form cell."""
+    warehouse = SyntheticWarehouse()
+    seed_cohort(warehouse, n_per_arm=140)
+    seed_null_events(warehouse)
+    experiment = make_experiment("aa_boot", "arpu", {"name": "t-test"})
+    backend = RecomputeBackend(warehouse, experiment)
+
+    result = run_validation(
+        backend,
+        experiment,
+        PROJECT,
+        METRICS,
+        {name: cfg.get_query_text(None) for name, cfg in METRICS.items()},
+        _grid(experiment),
+        ValidateSettings(iterations=200),
+        now_iso=NOW_ISO,
+        extra_methods=[MethodConfig(name="bootstrap")],
+    )
+    by_method = {c.method_name: c for c in result.cells}
+    # the closed-form sibling still scores and would persist
+    assert by_method["t-test"].status == "success" and by_method["t-test"].fpr is not None
+    # the bootstrap cell fails in isolation, carrying its reason for the audit row
+    assert by_method["bootstrap"].status == "failed"
+    assert by_method["bootstrap"].fpr is None
+    assert by_method["bootstrap"].error_message
 
 
 def test_run_validation_is_reproducible():
