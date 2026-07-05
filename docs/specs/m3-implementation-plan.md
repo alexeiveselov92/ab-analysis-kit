@@ -380,4 +380,85 @@ Every reader- or critique-surfaced open decision is settled below; spec amendmen
 
 ## 5. Adversarial review record (M3 exit gate)
 
-*Appended at M3 close (WP10) — six lenses proposed: recompute exactness/statistical binding, verdict-logic DoD audit, HTTP surface, config-write/orphaning integrity, payload/renderer self-containment, time & grids.*
+Run 2026-07-05 at M3 close (WP10), the M1/M2 pattern: the six proposed lenses
+plus a seventh (the WP7 cockpit client — its per-WP review fleet was
+limit-truncated mid-run, so the milestone pass re-covered wire-contract
+parity, apply/dirty discipline, escaping, and the client DoD). 17 raw
+findings; each independently verified where the verify fleet survived, the
+rest triaged inline against the code (the recorded M1/M2 fallback). Outcome:
+**13 real, all fixed in the closing `fix(m3)` commit; 2 refuted; 2 were
+record-keeping** (folded into this section and ROADMAP).
+
+Fixed (severity — lens — the defect):
+
+1. **major — config-write** — the final Apply write was a bare
+   `write_bytes` (open-truncate-write): an ENOSPC/kill mid-write could leave
+   the live YAML torn while the 400 reply framed it as "invalid config:
+   nothing written". Now temp + `os.replace` (+fsync) in the target
+   directory — "a broken config never lands" holds on the filesystem too.
+2. **major — verdict-logic** — guardrail regression was judged through the
+   BH-adjusted significance map; BH (which only inflates p-values) could
+   un-flag a stored-CI-significant harm and un-block a WIN. Regression is
+   now judged from the STORED bounds, correction-independent (D5(c)).
+3. **major — verdict-logic** — the SRM summary scanned MAIN series only, so
+   the exact state explore's Apply produces (main series empty under its new
+   `method_config_id`, flagged rows on other series) rendered a green
+   "SRM ok" chip. All comparisons' series are scanned now (§6 stays loud).
+4. **major — recompute-exactness/HTTP (two lenses)** — the D3 Apply gate
+   keyed role-flipped comparisons at their PRE-flip effective alphas
+   (`prospective` folded in alpha/correction but never roles); a main-flip
+   over a calibrated matrix would Apply ungated into never-validated alphas
+   (latent while `_ab_aa_runs` is empty). Role flips now overlay the
+   prospective experiment before `effective_alphas`.
+5. **major — HTTP** — a Ctrl-C racing the post-Apply self-shutdown window
+   (`except KeyboardInterrupt: return None`) discarded `server.applied`,
+   reporting a successful orphan-creating Apply as "cancelled — unchanged".
+   The handler now falls through to the applied-aware return.
+6. **major — time-grids** — both charts split the CI band at the FIRST
+   stored `hz=1` row; after an `end_date` extension that row goes stale
+   mid-series and later cutoffs rendered as decision-grade solid CIs (§4
+   violation). Decision-grade is now corroborated: `hz===1` AND
+   `t >= period.horizon` (stale flags render pre-horizon again).
+7. **major — cockpit-client** — minimal-params storage made "edited back to
+   the spec default" indistinguishable from "never touched": any rail
+   rebuild silently resurrected the configured non-default value. `edited`
+   now stores FULL params; wire bodies are minimalized at send time.
+8. **major — cockpit-client** — the confirm box's "Apply anyway" skipped
+   every Apply guard (debounce flush, no-op, pending-Tier-R), letting an
+   un-computed Tier-R edit ride into the YAML. Both entry points now share
+   one preflight, and further knob edits dismiss the stale confirm.
+9. **minor — config-write** — an unbindable stored method block
+   (renamed/quarantined by a later abkit) returned `old_id=None` and the
+   orphan scan skipped the metric entirely — an identity edit could Apply
+   with no warning. The scan now reports every stored id ≠ the new id.
+10. **minor — cockpit-client** — the baked `covariate_cutoffs` fact went
+    stale after a successful `/reload`, demanding a redundant full warehouse
+    re-render on every method round-trip (and mislabeling ↻ forever).
+11. **minor — selfcontainment** — the explore bake test scanned for
+    `http://` only; an `https://` webfont import would ship with green CI.
+    Both schemes now asserted (report-side parity).
+12. **minor — selfcontainment** — nothing gated `</script`/`<!--` sequences
+    inside the BUNDLES (only the payload slot is `<`-escaped); a help-string
+    in a renderer would kill the whole inline page. `build.mjs` now fails on
+    tokenizer-hazard sequences pre-write.
+13. **minor — time-grids** — period dates render as UTC next to the
+    experiment-tz label (a Tokyo experiment showed the day before its
+    configured start). Header timestamps are now labeled UTC explicitly in
+    both surfaces (baking config-local date strings recorded as a future
+    nicety).
+
+Refuted (verified not-a-bug): the WP9 DoD-row objection (an explicitly
+recorded ROADMAP/CLAUDE.md deferral — see the annotation below) and the
+demand for a canvas-2D `setLineDash` proof of the dashed pre-horizon
+rendering (the plan ratified the marker-class + payload-flag + e2e proof
+standard at WP3; the code is correct as written).
+
+Record-keeping (this section + ROADMAP): the §4 row "M2 deferral: PG/MySQL
+testcontainers + two-process atomic-claim race" and the exit-gate words
+"the PG/MySQL/CH integration matrix" and "both e2e variants" are **carried
+by the WP9 deferral** — they are NOT discharged by M3 and move with WP9 to a
+Docker-equipped environment. Likewise the WP10 claim that the ClickHouse
+e2e variant "also exercises D11" over a real warehouse: D11 byte-stability
+is proven by the unit-level order-permutation test only; the real-CH explore
+leg is recorded in ROADMAP next to WP9. Neither residue weakens a shipped
+behavior; both are coverage debt, recorded, never silently dropped.

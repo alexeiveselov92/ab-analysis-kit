@@ -22,7 +22,7 @@ The as-built condensation for contributors/assistants (detectkit-style):
 Design contracts for what is being *built next* stay in [docs/specs/](docs/specs/)
 (canonical for M2+ work — table below). Keep rules ↔ docs in sync per milestone.
 
-## Status: M1 + M2 shipped; next up M3
+## Status: M1 + M2 + M3 shipped; next up M4
 
 **Done — M1, the pure statistical core** (`abkit.stats`, importable standalone;
 see [ROADMAP.md](ROADMAP.md) for the deferred-cleanup list): data model with the
@@ -43,15 +43,28 @@ packaged assignment macro, the one-enumeration period planner
 `abk` CLI (`init` with a runnable seed example, `run`, `unlock`, `clean`);
 900+ tests incl. a first-run e2e gate.
 
+**Done — M3, the explore cockpit + reporting (the PRIORITY interface)** (see
+[ROADMAP.md](ROADMAP.md) M3 and
+[m3-implementation-plan.md](docs/specs/m3-implementation-plan.md) §5 for the
+record): the readout core + WIN/LOSE/FLAT/INCONCLUSIVE verdicts, the §5.3
+terse experiment payload, the self-contained HTML readout
+(`abk run --report`), and the explore cockpit (`abk explore` — localhost
+server, Tiers E/α/S/R recompute over a bounded session cache, the D3
+calibration gate with `confirm_uncalibrated`, the Apply seam with `.history`
+archives + orphan detection, the browser client with the donor's stale-drop
+discipline), plus the `web/` TS toolchain with committed wheel-shipped
+bundles and CI freshness/marker/token gates; 1250+ tests incl. the report and
+explore-session e2e gates. Deferred: WP9 testcontainers hardening (needs
+Docker), D9 Segment mode, D12 sidedness/winsorization (M4 change control).
+
 **Decided** (recorded in the specs + CHANGELOG): sub-day cumulative intervals
 ([cumulative-intervals.md §6](docs/specs/cumulative-intervals.md)); CUPED
 covariate = fixed whole-day lookback implemented as the pre-period second
 render ([declarative-config.md §3](docs/specs/declarative-config.md)); Jinja
 built-ins win over context; CLI exits non-zero on failure.
 
-**Next — M3** (the explore cockpit + reporting — the PRIORITY interface). The
-source of truth is [docs/specs/](docs/specs/). Read the relevant spec before
-writing code:
+**Next — M4** (`abk validate` — the A/A FPR matrix). The source of truth is
+[docs/specs/](docs/specs/). Read the relevant spec before writing code:
 
 | If you're working on… | Read |
 |---|---|

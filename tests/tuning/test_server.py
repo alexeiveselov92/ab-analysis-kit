@@ -349,6 +349,52 @@ class TestApplyGateClosure:
         assert status == 409
         assert "abk validate" in detail
 
+    def test_role_flip_gates_at_the_prospective_alpha(self):
+        """(milestone-review) A main-flip re-tiers the bonferroni budget for
+        EVERY comparison — the gate must key its D3 lookups at the PROSPECTIVE
+        effective alphas, not the pre-flip ones, or a fully calibrated
+        experiment would Apply ungated into never-validated alphas (latent in
+        M3 while ``_ab_aa_runs`` is empty; load-bearing from M4)."""
+        from types import SimpleNamespace
+
+        from synthetic_ab import METRICS as ALL_METRICS
+        from synthetic_ab import PROJECT, experiment_payload
+
+        from abkit.config.experiment_config import ExperimentConfig
+        from abkit.tuning import load_session
+        from abkit.tuning.config_writer import TunedComparison
+        from abkit.tuning.server import _uncalibrated_keys
+
+        # 2 comparisons, 2 arms → 1 pair; bonferroni: pre-flip both effective
+        # alphas are 0.05 (main tier α/1; secondary α/(1·1)); flipping arpu to
+        # non-main moves BOTH to α/(1·2) = 0.025.
+        document = experiment_payload("exp_roles", "arpu", T_TEST, alpha=0.05)
+        document["comparisons"].append({"metric": "conversion", "method": {"name": "z-test"}})
+        experiment = ExperimentConfig.model_validate(document)
+        warehouse = SyntheticWarehouse()
+        tables = InternalTablesManager(warehouse)
+        session = load_session(experiment, ALL_METRICS, PROJECT, tables, loader=None)
+        # every comparison fully calibrated at its PRE-flip alpha
+        session.aa_rows = [
+            {
+                "metric": name,
+                "method_config_id": series.comparison.method.method_config_id,
+                "status": "success",
+                "fpr": 0.05,
+                "alpha": 0.05,
+                "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+            }
+            for name, series in session.series_by_metric.items()
+        ]
+        srv = SimpleNamespace(session=session)
+        flip = TunedComparison(
+            metric="arpu", method_name=None, params=None, is_main_metric=False, is_guardrail=None
+        )
+        findings = _uncalibrated_keys(srv, [flip], None, None)
+        # the prospective 0.025 keys have no calibration rows → must gate
+        assert findings, "role flip passed ungated at the stale pre-flip alphas"
+        assert all("α=0.025" in f or "0.025" in f for f in findings)
+
     def test_params_with_a_riding_name_key_still_gate(self, explore):
         status, detail = http(
             explore.endpoint("apply"),
@@ -444,6 +490,30 @@ class TestApplyGateClosure:
 
 
 class TestServeExplore:
+    def test_ctrl_c_racing_the_post_apply_shutdown_keeps_applied(self, tmp_path, monkeypatch):
+        """(milestone-review) A KeyboardInterrupt landing in the post-Apply
+        self-shutdown window (~poll_interval) must not report a SUCCESSFUL
+        Apply as 'cancelled — unchanged': the YAML is already rewritten and a
+        series possibly orphaned — the epilogue must run."""
+        from abkit.tuning import server as server_mod
+
+        sentinel = object()
+
+        def fake_serve_forever(self, poll_interval=0.5):
+            del poll_interval
+            self.applied = sentinel  # an Apply landed…
+            raise KeyboardInterrupt  # …and Ctrl-C races the self-shutdown
+
+        monkeypatch.setattr(server_mod._ExploreServer, "serve_forever", fake_serve_forever)
+        applied = serve_explore(
+            payload={"experiment": "exp_srv"},
+            original_path=tmp_path / "exp_srv.yml",
+            project_root=tmp_path,
+            open_browser=False,
+            echo=lambda _line: None,
+        )
+        assert applied is sentinel
+
     def test_serve_returns_applied_and_prints_url(self, tmp_path):
         explore = Explore(tmp_path)
         explore.stop()  # reuse the built harness; serve_explore runs its own server
@@ -517,4 +587,8 @@ class TestPayloadAndHtml:
         assert "\\u003c" in page
         assert "window.__ABK_EXPLORE__" in page
         assert 'id="abk-explore"' in page
-        assert "http://" not in page.replace("http://www.w3.org", "")  # no network
+        # zero network, both schemes — an https:// webfont import would slip
+        # past an http://-only scan (milestone-review finding)
+        stripped = page.replace("http://www.w3.org", "")
+        assert "http://" not in stripped
+        assert "https://" not in stripped

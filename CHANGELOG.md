@@ -14,6 +14,41 @@ number change).
 ## [Unreleased]
 
 ### Fixed
+- **M3 milestone review closure** (the WP10 exit gate: 7 lenses / 17 raw
+  findings, verified + inline-triaged — 13 real, all fixed; the full record
+  is [`m3-implementation-plan.md §5`](docs/specs/m3-implementation-plan.md)):
+  - **Apply writes are atomic**: the final YAML overwrite goes through
+    temp + `os.replace` (+fsync) — an ENOSPC/kill mid-write can no longer
+    leave the live config torn while the reply claims nothing was written.
+  - **Guardrail regression is correction-independent**: judged from the
+    STORED CI bounds per D5(c) — BH adjustment can no longer un-flag a
+    stored-significant harm and un-block a WIN (known-answer test added).
+  - **SRM stays loud over an empty main series**: the summary scans ALL
+    comparisons' series, so the state an explore Apply produces (main series
+    empty under its new id, flagged rows elsewhere) no longer renders a
+    green "SRM ok" chip.
+  - **The D3 Apply gate keys role flips at the PROSPECTIVE alphas**: posted
+    is_main/is_guardrail flips overlay the prospective experiment before
+    `effective_alphas`, closing the under-gating latent behind the empty
+    `_ab_aa_runs` (server + regression test).
+  - **Ctrl-C cannot swallow a successful Apply**: `serve_explore` returns
+    the applied config even when SIGINT races the post-Apply self-shutdown
+    window — the orphan/re-run epilogue always prints.
+  - **Stale mid-series horizons render honestly**: both charts corroborate
+    a stored `hz=1` row against the CURRENT config horizon, so an
+    `end_date` extension no longer paints later cutoffs as decision-grade
+    solid CIs (§4).
+  - **Cockpit dirty-state fidelity**: `edited` keeps FULL params (an edit
+    back to a spec default no longer silently reverts to the configured
+    value on a rail rebuild; wire bodies are minimalized at send time), and
+    the confirm box's "Apply anyway" runs the same preflight as the Apply
+    button (a pending Tier-R edit can no longer ride into the YAML).
+  - **Orphan warnings survive unbindable legacy method blocks**; the client
+    remembers a completed covariate `/reload` (no redundant re-renders);
+    the explore bake test asserts `https://` too; `build.mjs` fails on
+    `</script`/`<!--` tokenizer hazards inside a bundle; header period
+    timestamps are labeled UTC next to the experiment-tz name.
+
 - **M3 WP5/WP6/WP8 review-closure** (adversarial review, 4 lenses / 25 raw
   findings; the verify fleet was limit-truncated, findings triaged inline —
   7 real after dedup):
@@ -45,6 +80,51 @@ number change).
     three-comparison fixture (`0.05 → 0.025`), not a structural equality.
 
 ### Added
+- **M3 WP7 — the explore cockpit client** (per
+  [`docs/specs/m3-implementation-plan.md`](docs/specs/m3-implementation-plan.md)
+  WP7; data-contract §5.1 as amended by D9/D12): the browser half of
+  `abk explore`, ported from the detectkit `tune.ts` skeleton to
+  `web/src/explore/` and committed as the wheel-shipped
+  `abkit/tuning/assets/explore.js` (replacing the WP6 placeholder). The
+  windshield: the stabilization chart with D1-tier-styled live segments
+  (solid exact, hatched "approx (α-only)", the persisted baseline always
+  visible), §4 dashed pre-horizon CIs, greyed insufficient spans, run breaks
+  at server-refused cutoffs, an off-scale indicator, and pinned chips (lift,
+  ±CI, p, power, the D3 calibration chip incl. the alpha-mismatch downgrade,
+  the red SRM gate, the sub-day look counter) re-keyed from every
+  `/recompute` reply. The side rail is auto-derived from `param_specs`
+  (Basic = method/CUPED/test_type/alpha; an Advanced disclosure for the
+  rest + correction; identity ⚠ and Tier-R ↻ badges; the donor's slider
+  identity hazard ported). Tier-R edits route through a per-metric confirm →
+  `POST /reload`; Apply follows the dirty-slot discipline (role-only entries
+  carry no method key; minimal params) behind the uncalibrated-cost confirm
+  mirroring the server gate, with the archive/orphan/`abk clean` epilogue.
+  The donor's stale-drop discipline is re-expressed over HTTP: a monotonic
+  `request_id` seeded from `Date.now()` (re-seeded after a two-tab 409),
+  `AbortController` kill-not-queue, stale replies never clear the spinner,
+  the 130 ms debounce with the flush-before-switch trap. The client resolves
+  raw alpha + correction to the effective per-comparison alpha by mirroring
+  `analyze.effective_alphas` over the new
+  `payload["explore"]["experiment"]` block (raw alpha, correction + choices,
+  `groups_count`, `non_main_count`). Toolchain: a second `build.mjs` bundle
+  entry (marker-gated), `--abk-explore-accent` joins the brand-token layer,
+  the CI hex loop covers `tuning/html.py`, the wheel gate asserts
+  `explore.js`, a jsdom smoke suite drives the live half through a fake
+  `fetch`, and `tests/tuning/test_explore_bundle.py` pins the bundle
+  packaging + the alpha-mirror substrate. Reviewed: 11 findings fixed
+  pre-merge (stale cached-reply adoption on metric switch, surfaced-subset
+  `non_main_count`, two-tab 409 lockout, reload-pending Apply bypass, chart
+  listener leak, and six more).
+
+- **M3 WP10 — the e2e exit gate** (per the plan WP10):
+  `tests/e2e/test_first_report.py` (scaffold → `abk run --report` → a
+  verdict-bearing, self-contained readout with the baked payload asserted
+  structurally; re-run byte-stable modulo `generated_at`; a builder crash
+  yellow-skips) and `tests/e2e/test_explore_session.py` (the real explore
+  server over live HTTP: persisted numbers reproduced at rel-1e-9, Tier-E
+  alpha recompute + α-inversion on a suffstats-only CUPED series, the stale
+  409, the Apply gate → `.history` archive → orphan block → self-shutdown).
+
 - **M3 WP8 — `abk explore`** (per
   [`docs/specs/m3-implementation-plan.md`](docs/specs/m3-implementation-plan.md)
   WP8; cli-and-dx §1): the cockpit shell —

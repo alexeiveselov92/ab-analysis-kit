@@ -54,6 +54,8 @@ export const TOKEN_FALLBACKS: Record<string, string> = {
   '--abk-st-critical': '#d03b3b',
   // success-colored TEXT on the light surface needs the darker step
   '--abk-good-text': '#006300',
+  // the explore cockpit's page accent (favicon, badges, Apply — tuning/html.py)
+  '--abk-explore-accent': '#2e7d5b',
 };
 
 /** Read a brand CSS custom property off :root, falling back to the placeholder. */

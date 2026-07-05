@@ -12,10 +12,11 @@ the endpoint slots a server injects post-bind (``None`` in the static
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, get_args
 
 import numpy as np
 
+from abkit.config.experiment_config import CorrectionKind
 from abkit.tuning.recompute import RecomputeEngine, find_calibration, resolve_fpr_budget
 from abkit.tuning.session import ExploreSession
 from abkit.utils.datetime_utils import to_naive_utc
@@ -85,10 +86,30 @@ def build_explore_payload(
         next(iter(session.series_by_metric), None),
     )
 
+    # The experiment-level knob substrate (WP7): the client renders the raw
+    # alpha/correction knobs and mirrors analyze.effective_alphas to resolve
+    # them into the EFFECTIVE per-comparison alpha every /recompute sends
+    # (KnobState.alpha) — that mirror needs the resolved raw values and the
+    # two-tier counts, which the report payload does not carry.
+    experiment = session.experiment
+    project = session.project
     payload = dict(report_payload)
     payload["explore"] = {
         "metrics": metrics,
         "default_metric": default_metric,
+        "experiment": {
+            "alpha": (
+                experiment.alpha if experiment.alpha is not None else project.statistics.alpha
+            ),
+            "correction": (
+                experiment.correction
+                if experiment.correction is not None
+                else project.statistics.correction
+            ),
+            "correction_choices": list(get_args(CorrectionKind)),
+            "groups_count": len(experiment.assignment.variants),
+            "non_main_count": sum(1 for c in experiment.comparisons if not c.is_main_metric),
+        },
         "cache": {
             "values": session.cache_values,
             "disabled_reason": session.cache_disabled_reason,

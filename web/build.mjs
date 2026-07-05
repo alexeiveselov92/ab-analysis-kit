@@ -31,7 +31,14 @@ const BUNDLES = [
     // stable machine-checkable peeking-honesty markers (data-contract §4)
     markers: ['abk-prehorizon', 'abk-insufficient', 'abk-srm-fail'],
   },
-  // WP7 adds: src/explore/ → abkit/tuning/assets/explore.js (__ABK_EXPLORE__)
+  {
+    entry: path.join(here, 'src', 'explore', 'explore.ts'),
+    outFile: path.join(REPO, 'abkit', 'tuning', 'assets', 'explore.js'),
+    global: '__ABK_EXPLORE__',
+    // the same §4 peeking-honesty markers as the report bundle — the CI
+    // marker step greps every abkit/*/assets/*.js for all three
+    markers: ['abk-prehorizon', 'abk-insufficient', 'abk-srm-fail'],
+  },
 ];
 
 /**
@@ -54,6 +61,19 @@ async function bundle({ entry, outFile, global: globalName, markers }) {
   const missing = [globalName, ...markers].filter((m) => !code.includes(m));
   if (missing.length > 0) {
     console.error(`build: ${path.relative(REPO, outFile)} is missing required markers: ${missing.join(', ')}`);
+    process.exit(1);
+  }
+  // The bundle is inlined VERBATIM into <script>…</script> by the Python
+  // bake (only the payload slot is <-escaped): a "</script" or "<!--" inside
+  // any bundle string would terminate the inline script early (or enter the
+  // tokenizer's double-escaped state) and kill the whole page — gate it here,
+  // where the offending source line is one grep away.
+  const hazard = /<\/script|<!--/i.exec(code);
+  if (hazard) {
+    console.error(
+      `build: ${path.relative(REPO, outFile)} contains the script-tokenizer hazard ` +
+        `sequence ${JSON.stringify(hazard[0])} — inline <script> baking would break`,
+    );
     process.exit(1);
   }
 

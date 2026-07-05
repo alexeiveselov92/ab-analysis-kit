@@ -394,6 +394,58 @@ class TestOrphanDetection:
         )
         assert result.orphaned == ()
 
+    def test_unbindable_old_method_still_warns_about_stored_series(self, tmp_path):
+        """(milestone-review) A stored method block that no longer binds
+        (renamed/quarantined by a later abkit) must not silence the orphan
+        warning — the persisted series is stranded either way, so every
+        stored id that is not the new one is reported (a broken entry never
+        BLOCKS Apply; it must still WARN before the write)."""
+        experiments = tmp_path / "experiments"
+        experiments.mkdir()
+        path = experiments / "exp_apply.yml"
+        path.write_text(
+            EXPERIMENT_YAML.replace("name: t-test", "name: legacy-not-a-method"),
+            encoding="utf-8",
+        )
+        stored_id = "deadbeef" * 8
+        tables = seeded_tables("exp_apply", "arpu", stored_id, rows=5)
+        result = apply(
+            root=tmp_path,
+            path=path,
+            comparisons=[
+                TunedComparison("arpu", method_name="t-test", params={"test_type": "absolute"})
+            ],
+            tables=tables,
+        )
+        assert len(result.orphaned) == 1
+        assert result.orphaned[0].old_id == stored_id
+        assert result.orphaned[0].rows == 5
+        assert "abk clean" in result.orphan_warning
+
+
+class TestAtomicFinalWrite:
+    def test_failed_final_write_never_truncates_the_live_config(self, project, monkeypatch):
+        """(milestone-review) 'a broken config never lands' applies to the
+        filesystem too: the final overwrite goes through temp + os.replace,
+        so an ENOSPC/kill mid-write leaves the live YAML byte-identical."""
+        import abkit.tuning.config_writer as config_writer_mod
+
+        root, path = project
+        original = path.read_text(encoding="utf-8")
+
+        def boom(_src, _dst):
+            raise OSError("No space left on device")
+
+        monkeypatch.setattr(config_writer_mod.os, "replace", boom)
+        with pytest.raises(OSError):
+            apply(
+                root=root,
+                path=path,
+                comparisons=[TunedComparison("arpu", params={"test_type": "absolute"})],
+            )
+        assert path.read_text(encoding="utf-8") == original  # never truncated
+        assert not list(path.parent.glob("*.tmp"))  # the temp file is cleaned up
+
 
 class TestArchiveAccumulation:
     def test_repeated_applies_each_archive(self, project):
