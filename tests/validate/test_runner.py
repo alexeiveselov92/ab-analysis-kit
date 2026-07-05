@@ -18,6 +18,7 @@ from abkit.pipeline.analyze import comparison_alpha, effective_alphas
 from abkit.validate.result import CellResult
 from abkit.validate.runner import (
     ValidateSettings,
+    _mark_recommended,
     _select_recommended,
     enumerate_cells,
     run_validation,
@@ -126,6 +127,49 @@ def test_select_recommended_falls_back_when_none_in_budget():
     rec_id, rationale = _select_recommended([cell("A", 0.11), cell("B", 0.30)])
     assert rec_id == "A"  # closest-to-nominal fallback (lowest fpr)
     assert "fallback" in rationale
+
+
+def test_mark_recommended_carries_the_actual_rationale_not_a_hardcode():
+    """WP5 review: the over-budget fallback rationale must reach the report — a
+    Recommended over-budget cell may NOT claim it was selected 'within budget'."""
+
+    def cell(mid, fpr):
+        return CellResult(
+            metric="arpu",
+            method_name=mid,
+            method_params="{}",
+            method_config_id=mid,
+            mode="fpr",
+            alpha=0.05,
+            iterations=100,
+            injected_effect=None,
+            fpr=fpr,
+            peeking_fpr=None,
+            power=0.9,
+            achieved_mde=None,
+            coverage=None,
+            effect_exaggeration=None,
+            verdict="",
+            budget=0.075,
+            recommended=False,
+            details={},
+        )
+
+    # every method over the 0.075 budget -> the fallback branch of _select_recommended
+    cells = [cell("A", 0.11), cell("B", 0.30)]
+    rec_id, rationale = _select_recommended(cells)
+    marked = [
+        _mark_recommended(c, rationale if c.method_config_id == rec_id else None) for c in cells
+    ]
+    rec = next(c for c in marked if c.recommended)
+    assert rec.method_config_id == rec_id
+    # the stored rationale is the real fallback warning, never the in-budget hardcode
+    assert rec.details["recommended_rationale"] == rationale
+    assert "fallback" in rec.details["recommended_rationale"]
+    assert "within budget" not in rec.details["recommended_rationale"]
+    # the non-recommended cell stays unflagged with no injected rationale
+    other = next(c for c in marked if not c.recommended)
+    assert "recommended_rationale" not in other.details
 
 
 def test_run_validation_scores_cells_and_marks_one_recommended():

@@ -649,4 +649,26 @@ one `fix(m4)` commit.
 
 ## 5. Adversarial review record (M4 exit gate)
 
-_Appended at M4 close (WP7), the M1/M2/M3 pattern._
+_The full 7-lens record is appended at M4 close (WP7). Per-WP review notes accrue here._
+
+### WP5 review (2026-07-05) — 5 lenses (block-builder, scorer-curve, TS-report,
+contract-lockstep, integration/invariants), each finding adversarially verified
+(refute-by-default). **1 confirmed of 1 raw finding; 4 lenses clean.** Fixed in the WP5
+review-closure commit:
+
+- **F1 (low, fixed) — the Recommended-row rationale was hardcoded.**
+  `_mark_recommended` stamped `details["recommended_rationale"] = "highest power among
+  in-budget methods"` unconditionally, but `_select_recommended` returns a distinct
+  **over-budget fallback** rationale ("…highest-power fallback (use with caution)") when
+  no method is in budget — which was only logged, never persisted. So a report where every
+  method is over budget badged the fallback cell "Recommended" with a rationale claiming it
+  was "within budget", contradicting the same row's red FPR + "do not use" verdict. Fix:
+  thread the actual `_select_recommended` rationale through `_mark_recommended` (now
+  `(cell, rationale: str | None)`); regression test
+  `test_mark_recommended_carries_the_actual_rationale_not_a_hardcode`.
+
+The verified-clean lenses confirmed: the `peeking_curve` endpoint equals the reported
+`peeking_fpr` by construction and is monotone/deterministic; the Python block ↔
+`payload.ts` ↔ `report.ts` field contract is in lockstep (fractions throughout, ×100 only
+renderer-side); the persisted `budget`-in-`details` fallback is correct; `_emit_report`
+reuses the bundle without regression; no dangling `render_validate_report` reference.
