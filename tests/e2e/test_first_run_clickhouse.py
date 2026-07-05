@@ -37,6 +37,27 @@ pytestmark = pytest.mark.skipif(not _docker_available(), reason="Docker not avai
 runner = CliRunner()
 
 
+def _iter_seed_statements(seed: str):
+    """Yield each executable statement from the seed SQL.
+
+    Strips full-line ``--`` comments FIRST, then splits on ``;``. Order matters:
+    the previous naive ``split(';')``-then-``startswith('--')`` skip was doubly
+    broken — (a) the file-header comment shares a chunk with ``CREATE DATABASE
+    IF NOT EXISTS analytics``, so that whole chunk (and the DB creation) was
+    discarded, and (b) a comment line itself contains a ``;`` ("…their k % 14-th
+    day); treatment also spends ~15% more."), so splitting first tore the
+    comment across two chunks and leaked prose into the next statement. Removing
+    comment lines before the split fixes both. Real users load the file via
+    ``clickhouse-client --multiquery`` (comment-aware); only this Python loader
+    needed the fix.
+    """
+    no_comments = "\n".join(line for line in seed.splitlines() if not line.strip().startswith("--"))
+    for chunk in no_comments.split(";"):
+        body = chunk.strip()
+        if body:
+            yield body
+
+
 @pytest.fixture(scope="module")
 def clickhouse():
     with testcontainers_clickhouse.ClickHouseContainer("clickhouse/clickhouse-server:24.3") as ch:
@@ -64,12 +85,13 @@ def test_first_run_against_real_clickhouse(clickhouse, tmp_path, monkeypatch):
     profiles = profiles.replace('password: ""', f'password: "{password}"')
     (project / "profiles.yml").write_text(profiles)
 
-    # load the scaffolded seed dataset, statement by statement
+    # load the scaffolded seed dataset, statement by statement (comments stripped
+    # before the ';' split so CREATE DATABASE — which shares a chunk with the
+    # header comment — is not skipped)
     client = Client(host=host, port=port, user=user, password=password)
     seed = (project / "seed" / "seed_dataset.clickhouse.sql").read_text()
-    for statement in seed.split(";"):
-        if statement.strip() and not statement.strip().startswith("--"):
-            client.execute(statement)
+    for statement in _iter_seed_statements(seed):
+        client.execute(statement)
 
     # freeze "now" past the horizon so the whole grid is complete
     import abkit.pipeline.driver as driver_mod
