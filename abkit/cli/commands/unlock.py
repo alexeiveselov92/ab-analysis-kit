@@ -33,16 +33,22 @@ def run_unlock(select: tuple[str, ...], profile: str | None) -> None:
 
         cleared = 0
         errors = 0
+        # the pipeline lock (run) and the out-of-band validate lock (m4 D5) share the
+        # (experiment, scope, process_type) key shape — clear both process types.
+        lock_kinds = (("pipeline", "run"), ("pipeline", "validate"))
         for _, experiment in selected:
+            released = []
             try:
-                was_locked = tables.clear_lock(experiment.name)
+                for scope, process_type in lock_kinds:
+                    if tables.clear_lock(experiment.name, scope, process_type):
+                        released.append(process_type)
             except Exception as exc:
                 errors += 1
                 echo_error(experiment.name, f"error clearing lock: {exc}")
                 continue
-            if was_locked:
+            if released:
                 cleared += 1
-                echo_tree(experiment.name, ["lock cleared"])
+                echo_tree(experiment.name, [f"{kind} lock cleared" for kind in released])
             else:
                 echo_noop(experiment.name, "no active lock")
     finally:

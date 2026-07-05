@@ -169,6 +169,74 @@ def explore(
     "--select",
     "-s",
     multiple=True,
+    help="Experiment selector — name, path glob, tag:<tag>, or * (repeatable; default all)",
+)
+@click.option(
+    "--method",
+    "-m",
+    multiple=True,
+    help="Extra registered method(s) to score beyond the declared comparison (repeatable)",
+)
+@click.option("--metric", help="Validate only this metric (default: every declared comparison)")
+@click.option(
+    "--iterations", "-n", default=2000, show_default=True, help="Placebo A/A splits per cell"
+)
+@click.option(
+    "--inject-effect",
+    type=float,
+    default=None,
+    help="Inject this relative effect (e.g. 0.05) to measure power / achieved MDE / coverage",
+)
+@click.option(
+    "--scoring",
+    type=click.Choice(["fpr", "power", "mde"]),
+    default="fpr",
+    show_default=True,
+    help="Selection objective for the 'Recommended' row (all columns are always computed)",
+)
+@click.option(
+    "--report",
+    "report_path",
+    is_flag=False,
+    flag_value="",
+    default=None,
+    help=(
+        "Emit a self-contained HTML matrix report (best-effort). Optional value: an "
+        "output file or directory; defaults to reports/<experiment>__validate.html."
+    ),
+)
+@click.option("--force", is_flag=True, help="Take over a held validate lock (use with care)")
+@click.option("--profile", help="Profile name (default: profiles.yml default_profile)")
+def validate(
+    select: tuple[str, ...],
+    method: tuple[str, ...],
+    metric: str | None,
+    iterations: int,
+    inject_effect: float | None,
+    scoring: str,
+    report_path: str | None,
+    force: bool,
+    profile: str | None,
+) -> None:
+    """Score each method's empirical false-positive rate on placebo A/A splits.
+
+    Out-of-band from `abk run`: measures whether each method is actually calibrated
+    on this data (FPR ≈ α?), the honest cumulative-peeking FPR, power, achieved MDE,
+    and CI coverage — persisted to `_ab_aa_runs` so the explore calibration chip
+    lights. `--report` writes the matrix as a self-contained HTML page.
+    """
+    from abkit.cli.commands.validate import run_validate
+
+    run_validate(
+        select, method, metric, iterations, inject_effect, scoring, report_path, force, profile
+    )
+
+
+@cli.command()
+@click.option(
+    "--select",
+    "-s",
+    multiple=True,
     help="Experiment selector (name, glob, tag:<tag>, *; default all)",
 )
 @click.option("--profile", help="Profile name (default: profiles.yml default_profile)")
