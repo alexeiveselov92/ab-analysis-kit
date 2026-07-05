@@ -223,8 +223,13 @@ double-escape hazard open), not here.
                                   // flag/pvalue (M2 SRM is one whole-cohort
                                   // check; per-cutoff SRM = M5 sequential)
         expected: {arm: split}},
-  calibration: null,           // M3: always null. M4 shape (no v-bump): {fpr,
-                               // peeking_fpr, headline, matrix_rows, report_link}
+  calibration: null,           // null until `abk validate`. M4 shape (no v-bump,
+                               // WP5): {fpr, peeking_fpr, alpha, budget, headline,
+                               // report_link, matrix_rows:[{metric, method, fpr,
+                               // single_look_fpr, peeking_fpr, power, achieved_mde,
+                               // coverage, effect_exaggeration, alpha, budget,
+                               // over_budget, recommended, rationale, verdict,
+                               // status, peeking_curve:[[elapsed_days,fpr]], note}]}
   verdicts: [{metric, pair:{c,t}, verdict, rationale:[..], caveats:[..],
               significant, effect, pvalue, lo, hi, alpha, mde, min_effect,
               end_ts|null, elapsed_days, is_horizon,

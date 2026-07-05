@@ -58,8 +58,14 @@ def test_validate_report_writes_the_matrix_html(scaffolded):
     out = Path("reports") / f"{EXP}__validate.html"  # the __validate suffix, never clobbers run
     assert out.is_file()
     html = out.read_text(encoding="utf-8")
-    assert "A/A false-positive matrix" in html
-    assert "http://" not in html and "https://" not in html  # self-contained
+    # WP5: the matrix reuses the committed report bundle (D10) — the section title
+    # ships in report.js and the calibration block is baked into the payload.
+    assert "__ABK_REPORT__" in html  # the report bundle is embedded
+    assert "A/A false-positive matrix" in html  # the calibration section title (from report.js)
+    assert '"matrix_rows"' in html  # the calibration block is populated
+    # self-containment: the only http(s) is the inline SVG XML namespace (e2e precedent)
+    stripped = html.replace("http://www.w3.org", "")
+    assert "http://" not in stripped and "https://" not in stripped
     assert f"Report → reports/{EXP}__validate.html" in result.output
 
 

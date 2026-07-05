@@ -206,7 +206,7 @@ def _validate_one(
 
     if report_path is not None:
         try:
-            _emit_report(experiment.name, result, context.root, report_path)
+            _emit_report(experiment, context, tables, report_path)
         except Exception as report_error:  # never fail validate on a report
             click.echo(click.style(f"  │ Report skipped: {report_error}", fg="yellow"))
     manager.close()
@@ -225,20 +225,33 @@ def _emit_matrix(experiment: str, result) -> None:
         echo_tree(f"{experiment} · {metric}", children)
 
 
-def _emit_report(experiment: str, result, root: Path, report_path: str) -> None:
-    from abkit.utils.datetime_utils import now_utc_naive
-    from abkit.validate.report import render_validate_report
+def _emit_report(experiment, context, tables, report_path: str) -> None:
+    """Bake the self-contained readout, now carrying the A/A calibration matrix (WP5).
 
-    out = _resolve_report_path(report_path, root, experiment)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    html = render_validate_report(
-        result, generated_at=now_utc_naive().strftime("%Y-%m-%d %H:%M UTC")
+    Reuses the report bundle (D10): ``build_report_payload`` fills the ``calibration``
+    block from the ``_ab_aa_runs`` rows validate just wrote, and ``render_report_html``
+    bakes the committed ``report.js`` — one renderer, no third bundle. Best-effort: the
+    caller yellow-skips a bake failure so it never masks a successful validation."""
+    from abkit.reporting import build_report_payload, render_report_html
+    from abkit.utils.datetime_utils import now_utc_naive
+
+    payload = build_report_payload(
+        experiment,
+        tables,
+        project=context.project,
+        metric_configs=context.metrics_by_name,
+        generated_at=now_utc_naive().strftime("%Y-%m-%d %H:%M UTC"),
     )
+    out = _resolve_report_path(report_path, context.root, experiment.name)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    # atomic replace: a mid-write kill must never leave a truncated file (run.py precedent)
     tmp = out.with_suffix(out.suffix + ".tmp")
-    tmp.write_text(html, encoding="utf-8")
+    tmp.write_text(render_report_html(payload), encoding="utf-8")
     os.replace(tmp, out)
     try:
-        shown: Path | str = out.relative_to(root)
+        shown: Path | str = out.relative_to(context.root)
     except ValueError:
         shown = out
-    click.echo(click.style(f"  │ Report → {shown}", fg="cyan"))
+    cal = payload.get("calibration")
+    note = cal["headline"] if cal and cal.get("headline") else "no calibration rows"
+    click.echo(click.style(f"  │ Report → {shown}  ({note})", fg="cyan"))

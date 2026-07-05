@@ -107,3 +107,75 @@ export function makePayload(overrides = {}) {
     ...overrides,
   };
 }
+
+/**
+ * A filled M4 calibration block (the `abk validate` matrix) for the matrix-section
+ * smoke tests — one in-budget recommended cell with a peeking curve, one over-budget
+ * cell with a subsample note.
+ * @param {Partial<import('../src/shared/payload').CalibrationBlock>} [overrides]
+ * @returns {import('../src/shared/payload').CalibrationBlock}
+ */
+export function makeCalibration(overrides = {}) {
+  return {
+    fpr: 0.052,
+    peeking_fpr: 0.14,
+    alpha: 0.05,
+    budget: 0.075,
+    headline:
+      'nominal α 5.0% · single-look FPR 5.2% · peeking FPR 14.0% · 1 method(s) over budget',
+    report_link: null,
+    matrix_rows: [
+      {
+        metric: 'revenue',
+        method: 'cuped-t-test',
+        method_config_id: 'c'.repeat(16),
+        fpr: 0.052,
+        single_look_fpr: 0.052,
+        peeking_fpr: 0.14,
+        power: null,
+        achieved_mde: 0.031,
+        coverage: 0.95,
+        effect_exaggeration: null,
+        alpha: 0.05,
+        budget: 0.075,
+        over_budget: false,
+        recommended: true,
+        rationale: 'highest power among methods with FPR within budget',
+        verdict: 'cuped-t-test on revenue: well-calibrated, FPR 5.2%',
+        status: 'success',
+        iterations: 2000,
+        injected_effect: null,
+        peeking_curve: [
+          [1, 0.05],
+          [7, 0.1],
+          [14, 0.14],
+        ],
+        note: null,
+      },
+      {
+        metric: 'revenue',
+        method: 'naive-t-test',
+        method_config_id: 'd'.repeat(16),
+        fpr: 0.11,
+        single_look_fpr: 0.11,
+        peeking_fpr: 0.28,
+        power: null,
+        achieved_mde: null,
+        coverage: 0.88,
+        effect_exaggeration: 0.02,
+        alpha: 0.05,
+        budget: 0.075,
+        over_budget: true,
+        recommended: false,
+        rationale: null,
+        verdict: 'naive-t-test on revenue: FPR inflated to 11%, do not use',
+        status: 'success',
+        iterations: 2000,
+        injected_effect: null,
+        peeking_curve: null,
+        note: '5/40 looks scored (denser-early subsample)',
+      },
+    ],
+    ...overrides,
+  };
+}

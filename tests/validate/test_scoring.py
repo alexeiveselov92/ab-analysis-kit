@@ -60,6 +60,32 @@ def test_peeking_fpr_inflates_above_single_look():
     assert score.effect_exaggeration is not None and score.effect_exaggeration > 0.0
 
 
+def test_peeking_curve_is_monotone_and_ends_at_peeking_fpr():
+    panel = normal_panel(n_units=2500, n_cutoffs=20, seed=31)
+    method = create_method("t-test", alpha=ALPHA)
+    score = score_cell(panel, method, iterations=ITERS, seed_parts=SEED_PARTS)
+
+    curve = score.peeking_curve
+    assert len(curve) == len(panel.cutoffs)  # one (elapsed_days, cumulative_fpr) per look
+    # cumulative FPR is monotone non-decreasing (optional-stopping accrues, never undoes)
+    ys = [y for _x, y in curve]
+    assert all(b >= a - 1e-12 for a, b in zip(ys, ys[1:]))
+    xs = [x for x, _y in curve]
+    assert all(b >= a for a, b in zip(xs, xs[1:]))  # looks are ordered by elapsed time
+    # the final look equals the reported cumulative peeking FPR
+    assert curve[-1][1] == pytest.approx(score.peeking_fpr)
+    # and the curve's terminus exceeds its first look — the honest peeking climb
+    assert curve[-1][1] >= curve[0][1]
+
+
+def test_peeking_curve_empty_when_unscorable():
+    panel = normal_panel(n_units=3, n_cutoffs=4, seed=71)  # too small — no usable horizon
+    method = create_method("t-test", alpha=ALPHA)
+    score = score_cell(panel, method, iterations=30, seed_parts=SEED_PARTS)
+    if score.valid_iterations == 0:
+        assert score.peeking_curve == ()
+
+
 def test_injected_effect_gives_power_and_calibrated_coverage():
     panel = normal_panel(n_units=4000, n_cutoffs=1, seed=41)
     method = create_method("t-test", alpha=ALPHA)

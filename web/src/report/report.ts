@@ -51,6 +51,7 @@ import {
   token,
 } from '../shared/chart';
 import type {
+  CalibrationRow,
   MetricBlock,
   PairBlock,
   ReportPayload,
@@ -107,6 +108,8 @@ function render(payload: ReportPayload, mount: HTMLElement): void {
   root.appendChild(buildHeader(payload));
   if (payload.warnings.length > 0) root.appendChild(buildWarnings(payload.warnings));
   root.appendChild(buildVerdicts(payload));
+  const calibration = buildCalibrationSection(payload, charts);
+  if (calibration) root.appendChild(calibration);
   for (const metric of payload.metrics) {
     root.appendChild(buildMetricSection(metric, payload, charts));
   }
@@ -226,6 +229,177 @@ function buildWarnings(warnings: string[]): HTMLElement {
   const wrap = el('div', 'abk-warnings');
   for (const w of warnings) wrap.appendChild(el('div', 'abk-warning', `⚠ ${w}`));
   return wrap;
+}
+
+// ----------------------------------------------------------------------------
+// A/A calibration matrix (M4) — the `abk validate` results, aa-fpr §4
+// ----------------------------------------------------------------------------
+
+const pct = (v: number | null | undefined): string =>
+  v === null || v === undefined || Number.isNaN(v) ? '—' : `${(v * 100).toFixed(1)}%`;
+
+const CAL_COLS: string[] = [
+  'method',
+  'FPR',
+  'peeking FPR',
+  'power',
+  'achieved MDE',
+  'coverage',
+  'exaggeration',
+  'α',
+  'verdict',
+];
+
+/** The A/A matrix section — one table per metric + the recommended cell's peeking
+ * curve. Rendered only when `calibration.matrix_rows` is present (the M4 shape); the
+ * M3 empty state stays a bare "uncalibrated" chip (buildCalibrationChip). */
+function buildCalibrationSection(payload: ReportPayload, charts: Chart[]): HTMLElement | null {
+  const cal = payload.calibration;
+  const rows = cal?.matrix_rows;
+  if (!cal || !rows || rows.length === 0) return null;
+
+  const section = el('section', 'abk-calibration-matrix');
+  const head = el('div', 'abk-cal-head');
+  // this literal is the machine-checkable section title (the --report CLI test greps it)
+  head.appendChild(el('h2', 'abk-cal-title', 'A/A false-positive matrix'));
+  if (cal.headline) head.appendChild(el('div', 'abk-cal-headline', cal.headline));
+  section.appendChild(head);
+
+  // group rows by metric, preserving first-seen order (no Map iteration downlevel)
+  const order: string[] = [];
+  const byMetric: Record<string, CalibrationRow[]> = {};
+  for (const r of rows) {
+    const key = r.metric ?? '—';
+    if (!byMetric[key]) {
+      byMetric[key] = [];
+      order.push(key);
+    }
+    byMetric[key].push(r);
+  }
+  for (const metric of order) {
+    section.appendChild(buildCalibrationMetric(metric, byMetric[metric], charts));
+  }
+  return section;
+}
+
+function buildCalibrationMetric(
+  metric: string,
+  cells: CalibrationRow[],
+  charts: Chart[],
+): HTMLElement {
+  const wrap = el('div', 'abk-cal-metric');
+  wrap.appendChild(el('div', 'abk-cal-metric-name', metric));
+
+  const table = el('table', 'abk-cal-table');
+  const thead = el('tr');
+  for (const label of CAL_COLS) thead.appendChild(el('th', undefined, label));
+  table.appendChild(thead);
+
+  for (const cell of cells) {
+    const tr = el('tr');
+    if (cell.recommended) tr.classList.add('abk-cal-rec');
+    if (cell.status && cell.status !== 'success') tr.classList.add('abk-cal-failed');
+    tr.setAttribute('data-abk-calibration-row', cell.recommended ? 'recommended' : 'cell');
+
+    const methodTd = el('td');
+    methodTd.appendChild(el('span', undefined, cell.method ?? '—'));
+    if (cell.recommended) methodTd.appendChild(el('span', 'abk-cal-badge', 'Recommended'));
+    if (cell.note) methodTd.appendChild(el('div', 'abk-cal-rationale', cell.note));
+    tr.appendChild(methodTd);
+
+    // FPR coloured against the budget band (green in-budget / red over)
+    const fprCls = cell.over_budget
+      ? 'abk-cal-fpr-over'
+      : cell.fpr !== null && cell.fpr !== undefined
+        ? 'abk-cal-fpr-ok'
+        : undefined;
+    const fprTd = el('td', fprCls, pct(cell.fpr));
+    if (cell.budget !== null && cell.budget !== undefined) fprTd.title = `budget ${pct(cell.budget)}`;
+    tr.appendChild(fprTd);
+
+    tr.appendChild(el('td', undefined, pct(cell.peeking_fpr)));
+    tr.appendChild(el('td', undefined, pct(cell.power)));
+    tr.appendChild(
+      el('td', undefined, cell.achieved_mde == null ? '—' : fmtVal(cell.achieved_mde)),
+    );
+    tr.appendChild(el('td', undefined, pct(cell.coverage)));
+    tr.appendChild(
+      el('td', undefined, cell.effect_exaggeration == null ? '—' : fmtSigned(cell.effect_exaggeration)),
+    );
+    tr.appendChild(el('td', undefined, cell.alpha == null ? '—' : fmtP(cell.alpha)));
+
+    const verdictTd = el('td', 'abk-cal-verdict', cell.verdict ?? '');
+    if (cell.recommended && cell.rationale) {
+      verdictTd.appendChild(el('div', 'abk-cal-rationale', `recommended — ${cell.rationale}`));
+    }
+    tr.appendChild(verdictTd);
+
+    table.appendChild(tr);
+  }
+  wrap.appendChild(table);
+
+  // the peeking-vs-looks curve for the recommended cell (else the first with a curve)
+  const hasCurve = (c: CalibrationRow): boolean => !!c.peeking_curve && c.peeking_curve.length > 1;
+  const curveCell = cells.find((c) => c.recommended && hasCurve(c)) ?? cells.find(hasCurve);
+  if (curveCell && curveCell.peeking_curve) {
+    const curve = curveCell.peeking_curve;
+    const alpha = curveCell.alpha ?? null;
+    wrap.appendChild(
+      buildMiniPanel(
+        `peeking FPR vs looks · ${curveCell.method ?? ''}`,
+        [
+          { label: 'cumulative FPR', colorVar: '--abk-series-1' },
+          { label: 'nominal α', colorVar: '--abk-st-warn' },
+        ],
+        charts,
+        (canvas, g) => drawPeekingCurve(canvas, g, curve, alpha),
+        'optional-stopping hazard: cumulative false-positive rate as an analyst peeks at more looks',
+      ),
+    );
+  }
+  return wrap;
+}
+
+/** The cumulative peeking-FPR curve vs looks, with a dashed nominal-α reference. */
+function drawPeekingCurve(
+  canvas: HTMLCanvasElement,
+  g: CanvasRenderingContext2D,
+  curve: Array<[number, number]>,
+  alpha: number | null,
+): void {
+  const dpr = Math.max(1, window.devicePixelRatio || 1);
+  if (canvas.width === 0 || canvas.height === 0) return;
+  const xs = curve.map((p) => p[0]);
+  const ys = curve.map((p) => p[1]);
+  const finiteXs = xs.filter((x) => Number.isFinite(x));
+  const xmin = 0;
+  const xmax = Math.max(1, ...finiteXs);
+  let hi = 0;
+  for (const y of ys) if (Number.isFinite(y) && y > hi) hi = y;
+  if (alpha !== null && Number.isFinite(alpha) && alpha > hi) hi = alpha;
+  if (hi <= 0) hi = 1;
+  const dom: Domain = { xmin, xmax, vmin: 0, vmax: hi * 1.15 };
+  const sc = makeScales(canvas, MINI_MARGINS, dom, dpr);
+
+  g.fillStyle = token('--abk-chart-bg');
+  g.fillRect(0, 0, canvas.width, canvas.height);
+  drawGridAndAxes(
+    g, canvas, MINI_MARGINS, dom, sc.px, sc.py, xmin, xmax,
+    token('--abk-chart-grid'), token('--abk-muted'), dpr, fmtEd,
+  );
+
+  const r = plotRect(canvas, MINI_MARGINS, dpr);
+  g.save();
+  g.beginPath();
+  g.rect(r.left, r.top, sc.plotW(), sc.plotH());
+  g.clip();
+  if (alpha !== null && Number.isFinite(alpha)) {
+    drawHLine(g, canvas, MINI_MARGINS, dpr, sc.py, alpha, rgba(token('--abk-st-warn'), 0.85), '', [4, 3]);
+  }
+  drawSeriesDecimated(
+    g, xs, ys, xmin, xmax, r.left, sc.plotW(), sc.px, sc.py, token('--abk-series-1'), 1.75, dpr,
+  );
+  g.restore();
 }
 
 // ----------------------------------------------------------------------------
@@ -1060,6 +1234,26 @@ function injectStyle(): void {
   border-radius:6px;padding:4px 8px;margin:3px 0;}
 .${ROOT_CLASS} .abk-guardrails{margin:8px 0 0;padding-left:20px;font-size:12.5px;color:var(--abk-ink-2);}
 .${ROOT_CLASS} .abk-guardrail-regressed{color:var(--abk-st-critical);font-weight:600;}
+/* A/A calibration matrix (M4) ------------------------------------------------ */
+.${ROOT_CLASS} .abk-calibration-matrix{margin:18px 0 26px;}
+.${ROOT_CLASS} .abk-cal-head{margin-bottom:10px;}
+.${ROOT_CLASS} .abk-cal-title{font-size:16px;font-weight:700;margin:0;}
+.${ROOT_CLASS} .abk-cal-headline{margin-top:4px;font-size:12.5px;font-family:var(--abk-mono);color:var(--abk-ink-2);}
+.${ROOT_CLASS} .abk-cal-metric{margin:14px 0;}
+.${ROOT_CLASS} .abk-cal-metric-name{font-size:13px;font-weight:600;margin:0 0 6px;color:var(--abk-ink);}
+.${ROOT_CLASS} .abk-cal-table{width:100%;border-collapse:collapse;font-size:12px;font-family:var(--abk-mono);}
+.${ROOT_CLASS} .abk-cal-table th,.${ROOT_CLASS} .abk-cal-table td{border:1px solid var(--abk-border);
+  padding:5px 8px;text-align:left;vertical-align:top;}
+.${ROOT_CLASS} .abk-cal-table th{background:var(--abk-card);color:var(--abk-ink-2);font-weight:600;white-space:nowrap;}
+.${ROOT_CLASS} .abk-cal-rec{background:color-mix(in srgb, var(--abk-st-good) 8%, transparent);}
+.${ROOT_CLASS} .abk-cal-rec td{font-weight:600;}
+.${ROOT_CLASS} .abk-cal-fpr-over{color:var(--abk-st-critical);font-weight:700;}
+.${ROOT_CLASS} .abk-cal-fpr-ok{color:var(--abk-good-text);}
+.${ROOT_CLASS} .abk-cal-failed td{color:var(--abk-muted);font-style:italic;}
+.${ROOT_CLASS} .abk-cal-badge{display:inline-block;font-size:10px;padding:1px 6px;border-radius:6px;
+  background:var(--abk-st-good);color:var(--abk-card);margin-left:6px;font-weight:700;letter-spacing:0.02em;}
+.${ROOT_CLASS} .abk-cal-verdict{max-width:360px;white-space:normal;}
+.${ROOT_CLASS} .abk-cal-rationale{font-size:11px;color:var(--abk-ink-2);margin-top:2px;font-style:normal;}
 /* metric sections ------------------------------------------------------------ */
 .${ROOT_CLASS} .abk-metric{margin:26px 0;}
 .${ROOT_CLASS} .abk-metric-name-row{display:flex;align-items:baseline;gap:10px;}

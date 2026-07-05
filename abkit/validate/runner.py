@@ -179,17 +179,19 @@ def run_validation(
     by_metric: dict[str, list[CellResult]] = {}
     for cell in cells:
         by_metric.setdefault(cell.metric, []).append(cell)
-    recommended_ids: set[tuple[str, str]] = set()
+    # (metric, method_config_id) -> the ACTUAL selection rationale (in-budget max-power
+    # OR the over-budget fallback warning) so the report never contradicts the verdict.
+    recommended: dict[tuple[str, str], str] = {}
     for metric_name, metric_cells in by_metric.items():
         rec_id, rationale = _select_recommended(metric_cells)
         if rec_id is not None:
-            recommended_ids.add((metric_name, rec_id))
+            recommended[(metric_name, rec_id)] = rationale
             log.append(
                 DecisionEntry("select", f"{metric_name}: {rationale}", {"method_config_id": rec_id})
             )
 
     cells = [
-        _mark_recommended(cell, (cell.metric, cell.method_config_id) in recommended_ids)
+        _mark_recommended(cell, recommended.get((cell.metric, cell.method_config_id)))
         for cell in cells
     ]
 
@@ -285,6 +287,8 @@ def _score_one(
         "valid_iterations": score.valid_iterations,
         "single_look_fpr": score.fpr,
         "peeking_fpr": score.peeking_fpr,
+        # (elapsed_days, cumulative_fpr) per look — the peeking-vs-looks curve (R10)
+        "peeking_curve": [list(point) for point in score.peeking_curve],
         "warnings": list(score.warnings),
     }
     return CellResult(
@@ -303,12 +307,19 @@ def _score_one(
     )
 
 
-def _mark_recommended(cell: CellResult, recommended: bool) -> CellResult:
-    if cell.recommended == recommended:
-        return cell
+def _mark_recommended(cell: CellResult, rationale: str | None) -> CellResult:
+    """Flag the recommended cell, storing the ACTUAL ``_select_recommended`` rationale.
+
+    ``rationale`` is the real selection reason — the in-budget max-power line OR the
+    over-budget "highest-power fallback (use with caution)" warning — never a hardcode,
+    so the report's Recommended row can't claim an over-budget fallback was "in budget"
+    (WP5 review finding). ``None`` means this cell is not the recommendation.
+    """
     from dataclasses import replace
 
-    if recommended:
-        details = {**cell.details, "recommended_rationale": "highest power among in-budget methods"}
+    if rationale is not None:
+        details = {**cell.details, "recommended_rationale": rationale}
         return replace(cell, recommended=True, details=details)
-    return replace(cell, recommended=recommended)
+    if cell.recommended:
+        return replace(cell, recommended=False)
+    return cell

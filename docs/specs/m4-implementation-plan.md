@@ -48,17 +48,18 @@ commit per WP.
 
 ## 0. Progress & resume note (2026-07-05)
 
-**WP1–WP4 shipped and merged to `main`** (PR #6); **WP5–WP7 remain** (M4 is NOT yet
-complete — do not flip CLAUDE.md / rules / ROADMAP to "M4 shipped" until WP7).
+**WP1–WP5 done** (WP1–WP4 merged in PR #6; WP5 on `claude/m4-wp5-report`); **WP6–WP7
+remain** (M4 is NOT yet complete — do not flip CLAUDE.md / rules / ROADMAP to "M4
+shipped" until WP7).
 
 | WP | Status | Lands in |
 |---|---|---|
 | WP1 engine core | ✅ done | `abkit/validate/{_types,panel,inject,resample,scoring}.py`; `tests/validate/test_{inject,resample,scoring}.py` |
 | WP2 load stage | ✅ done | `abkit/validate/load.py`; `tests/validate/test_load.py`; `seed_null_events` in `tests/_helpers/synthetic_ab.py` |
 | WP3 runner + persist | ✅ done | `abkit/validate/{runner,result,run_id,persistence}.py`; `tests/validate/test_{runner,persistence}.py` |
-| WP4 CLI + lock | ✅ done | `abkit/cli/commands/validate.py`, `abkit/cli/main.py` (registration), `abkit/cli/commands/unlock.py` (validate-lock); `abkit/validate/report.py` (minimal HTML); `tests/cli/test_validate_command.py` |
-| WP5 report+payload+budget | ⏳ next | see WP5 below |
-| WP6 Auto mode | ⏳ pending | see WP6 |
+| WP4 CLI + lock | ✅ done | `abkit/cli/commands/validate.py`, `abkit/cli/main.py` (registration), `abkit/cli/commands/unlock.py` (validate-lock); `tests/cli/test_validate_command.py` |
+| WP5 report+payload+budget | ✅ done | `abkit/reporting/calibration.py` (block builder) + `builder.py` (fill); `validate.py` `_emit_report` reuses the report bundle (standalone `validate/report.py` **retired**, D10); `scoring.py`+`runner.py` (the `peeking_curve`); `metric_config.py`+`recompute.py` (`aa_fpr_budget`, D12); `web/src/{shared/payload.ts,report/report.ts}` + rebuilt `report.js`; tests: `tests/reporting/test_{calibration,builder}.py`, `tests/config/test_metric_config.py`, `tests/validate/test_scoring.py`, `tests/tuning/test_recompute.py`, `web/test/{fixtures,smoke}.mjs` |
+| WP6 Auto mode | ⏳ next | see WP6 |
 | WP7 e2e + review + docs | ⏳ pending | see WP7 |
 
 **How `abk validate` works today** (the vertical slice): `abk validate --select <exp>
@@ -66,8 +67,10 @@ complete — do not flip CLAUDE.md / rules / ROADMAP to "M4 shipped" until WP7).
 [--scoring fpr|power|mde] [--report] [--force]` → loads the experiment's own cohort
 per cutoff, permutes units into placebo arms, scores FPR/peeking/power/coverage/
 exaggeration per (metric × declared method), writes `_ab_aa_runs` rows at the effective
-per-comparison alpha, and lights the D3 explore chip. `--report` writes a minimal
-self-contained HTML matrix (WP5 upgrades to the committed bundle).
+per-comparison alpha, and lights the D3 explore chip. `--report` bakes a self-contained
+HTML page **reusing the committed report bundle** (WP5, D10): the payload `calibration`
+block carries the headline, the per-method matrix (budget-coloured FPR, the Recommended
+row + rationale, verdicts), and the recommended cell's cumulative peeking-FPR curve.
 
 **Two corrections settled while implementing** (already folded into the D-log): **D3**
 peeking FPR is the naive **optional-stopping** hazard (not the readout's stabilization-
@@ -88,12 +91,27 @@ via the numpy-2.5 PEP-695 stub mis-anchored to `metric_config.py:48` (CI-tolerat
 run `mypy --python-version 3.12` to check new files). Run the suite with `--no-cov` for
 speed. Donor autotune scaffolding: `/home/aleksei/wsl_analytics/detektkit/detectkit/autotune/`.
 
-**WP5 first steps:** the report/explore payload `calibration` slot is `None` at
-`reporting/builder.py:448` with the M4 shape reserved (`web/src/shared/payload.ts:129`);
-`resolve_fpr_budget` (recompute.py:235) already reserves the metric-override arm
-(`MetricConfig.aa_fpr_budget` to add). Decide (D10) whether to reuse the report bundle
-(`web/src/report/report.ts:207`) or add a `web/src/validate` bundle — the plan settled
-on **reuse** (no third bundle) to avoid touching all six CI/packaging gates.
+**WP5 as-built (done):** the block builder is `abkit/reporting/calibration.py`
+(`build_calibration_block(aa_rows)` → the payload block; picks the **latest invocation**
+by `run_id` run-stamp prefix so a matrix is never a mix of runs); `builder.py` fills it
+guarded by `aa_runs_table_exists()` (decoupled from `_ab_results` — a validate-only
+project still shows its matrix); the scorer's new `peeking_curve` (one cumulative-FPR
+point per grid look, ending at `peeking_fpr`) is threaded through `runner.py` `details`.
+The report section is `report.ts#buildCalibrationSection` (+ `drawPeekingCurve`, reusing
+`chart.ts` primitives + the `--abk-st-*` tokens — no new hex). `abk validate --report`
+now calls `build_report_payload` + `render_report_html` directly (no `validate/html.py`;
+the standalone `validate/report.py` was retired). **CI note (latent, pre-existing):** the
+freshness gate `git status --porcelain -- 'abkit/*/assets/'` matches nothing in this git
+(pathspec `*` doesn't span `/`) — a silent no-op; committed bundles are still kept fresh
+by hand. Worth fixing in WP7's CI sync (`'abkit/**/assets/'` or per-dir).
+
+**WP6 first steps:** the reserved 501 `POST /validate` (`tuning/server.py`) becomes
+`_run_validate` (own manager, `request_lock`-serialized, request_id stale-drop,
+`'validate'` `_ab_tasks` lock, `ensure_tables`) running the WP3 runner at a reduced-N
+`ValidateSettings`, then mutating the one-time `session.aa_rows` snapshot in place so the
+live chip greens without an explore restart (D11). The client Auto handler
+(`web/src/explore/explore.ts:1574`) re-seeds knobs + re-renders the chip from a structured
+reply. The Apply gate is unchanged.
 
 ---
 
@@ -631,4 +649,26 @@ one `fix(m4)` commit.
 
 ## 5. Adversarial review record (M4 exit gate)
 
-_Appended at M4 close (WP7), the M1/M2/M3 pattern._
+_The full 7-lens record is appended at M4 close (WP7). Per-WP review notes accrue here._
+
+### WP5 review (2026-07-05) — 5 lenses (block-builder, scorer-curve, TS-report,
+contract-lockstep, integration/invariants), each finding adversarially verified
+(refute-by-default). **1 confirmed of 1 raw finding; 4 lenses clean.** Fixed in the WP5
+review-closure commit:
+
+- **F1 (low, fixed) — the Recommended-row rationale was hardcoded.**
+  `_mark_recommended` stamped `details["recommended_rationale"] = "highest power among
+  in-budget methods"` unconditionally, but `_select_recommended` returns a distinct
+  **over-budget fallback** rationale ("…highest-power fallback (use with caution)") when
+  no method is in budget — which was only logged, never persisted. So a report where every
+  method is over budget badged the fallback cell "Recommended" with a rationale claiming it
+  was "within budget", contradicting the same row's red FPR + "do not use" verdict. Fix:
+  thread the actual `_select_recommended` rationale through `_mark_recommended` (now
+  `(cell, rationale: str | None)`); regression test
+  `test_mark_recommended_carries_the_actual_rationale_not_a_hardcode`.
+
+The verified-clean lenses confirmed: the `peeking_curve` endpoint equals the reported
+`peeking_fpr` by construction and is monotone/deterministic; the Python block ↔
+`payload.ts` ↔ `report.ts` field contract is in lockstep (fractions throughout, ×100 only
+renderer-side); the persisted `budget`-in-`details` fallback is correct; `_emit_report`
+reuses the bundle without regression; no dangling `render_validate_report` reference.

@@ -235,9 +235,10 @@ class RecomputeResult:
 def resolve_fpr_budget(
     project: ProjectConfig, alpha: float, metric: MetricConfig | None = None
 ) -> float:
-    """metric override (future seam) → project ``aa_fpr_budget`` → ``α × 1.5``
-    (aa-false-positive-matrix.md §4.1). One resolver, never a hardcode."""
-    del metric  # the metric-level override field does not exist yet (M4+)
+    """metric ``aa_fpr_budget`` → project ``aa_fpr_budget`` → ``α × 1.5``
+    (aa-false-positive-matrix.md §4.1; D12). One resolver, never a hardcode."""
+    if metric is not None and metric.aa_fpr_budget is not None:
+        return float(metric.aa_fpr_budget)
     budget = project.statistics.aa_fpr_budget
     return float(budget) if budget is not None else alpha * 1.5
 
