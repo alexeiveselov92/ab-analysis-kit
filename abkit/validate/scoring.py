@@ -168,16 +168,15 @@ def score_cell(
         # ── Null pass over the grid ──────────────────────────────────────────
         sig_stream: list[tuple[float, tuple[bool, int], float]] = []  # (elapsed, sig, effect)
         horizon_control: ArmStats | None = None
-        horizon_pooled_mean = math.nan
         horizon_sig: tuple[bool, int] | None = None
 
         for k, cut in enumerate(panel.cutoffs):
             pos_a, pos_b = present_positions(mask, cut.unit_idx)
             arm_a = build_arm(
-                panel.input_kind, cut.values, cut.denominator, panel.covariate, cut.unit_idx, pos_a
+                panel.input_kind, cut.values, cut.secondary, panel.covariate, cut.unit_idx, pos_a
             )
             arm_b = build_arm(
-                panel.input_kind, cut.values, cut.denominator, panel.covariate, cut.unit_idx, pos_b
+                panel.input_kind, cut.values, cut.secondary, panel.covariate, cut.unit_idx, pos_b
             )
             if arm_a is None or arm_b is None:
                 if k == horizon_pos:
@@ -193,7 +192,6 @@ def score_cell(
             if k == horizon_pos:
                 horizon_control = arm_a
                 horizon_sig = sig
-                horizon_pooled_mean = float(np.mean(cut.values))
 
         # Single-look FPR + achieved MDE need a usable horizon.
         if horizon_sig is not None and horizon_control is not None:
@@ -217,10 +215,10 @@ def score_cell(
             cut = panel.cutoffs[horizon_pos]
             pos_a, pos_b = present_positions(mask, cut.unit_idx)
             arm_a = build_arm(
-                panel.input_kind, cut.values, cut.denominator, panel.covariate, cut.unit_idx, pos_a
+                panel.input_kind, cut.values, cut.secondary, panel.covariate, cut.unit_idx, pos_a
             )
             arm_b = build_arm(
-                panel.input_kind, cut.values, cut.denominator, panel.covariate, cut.unit_idx, pos_b
+                panel.input_kind, cut.values, cut.secondary, panel.covariate, cut.unit_idx, pos_b
             )
             if arm_a is not None and arm_b is not None:
                 if injection_clamped(arm_b, inject_effect) and not clamp_warned:
@@ -235,7 +233,9 @@ def score_cell(
                     coverage_n += 1
                     if sig[0]:
                         power_hits += 1
-                    truth = _injected_truth(method, inject_effect, horizon_pooled_mean)
+                    # absolute-effect truth anchors on the control point estimate
+                    # (value_1) — correct units for sample/fraction/ratio alike.
+                    truth = _injected_truth(method, inject_effect, result.value_1)
                     if result.left_bound <= truth <= result.right_bound:
                         coverage_hits += 1
 
@@ -291,13 +291,14 @@ def _first_significant_look(
     return None
 
 
-def _injected_truth(method: BaseMethod, delta: float, pooled_mean: float) -> float:
+def _injected_truth(method: BaseMethod, delta: float, control_estimate: float) -> float:
     """The true effect a multiplicative δ induces, in the method's estimand units (D2).
 
-    Relative test_type → δ exactly (δ *is* the estimand). Absolute → δ·μ where μ is
-    the pooled horizon mean (a tighter anchor for the true mean than either arm).
+    Relative test_type → δ exactly (δ *is* the estimand). Absolute → δ·μ̂ where μ̂ is
+    the control arm's point estimate (``value_1``) — in the effect's units for every
+    metric kind (mean / proportion / ratio).
     """
     test_type = method.test_type if "test_type" in method.params else "relative"
     if test_type == "relative":
         return float(delta)
-    return float(delta) * pooled_mean
+    return float(delta) * control_estimate

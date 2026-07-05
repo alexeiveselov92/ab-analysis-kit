@@ -31,11 +31,12 @@ class PanelCutoff:
     #: Global unit indices present by this cutoff (into ``[0, PlaceboPanel.n_units)``).
     unit_idx: IntArray
     #: Primary per-unit value aligned to ``unit_idx`` — the metric value for a
-    #: sample/CUPED metric, the numerator for a ratio metric, or the 0/1 outcome
-    #: for a fraction metric.
+    #: sample/CUPED metric, the per-unit numerator for a ratio metric, or the
+    #: per-unit success count for a fraction metric.
     values: FloatArray
-    #: Per-unit denominator aligned to ``unit_idx`` — ratio metrics only, else None.
-    denominator: FloatArray | None = None
+    #: Per-unit secondary array aligned to ``unit_idx`` — the denominator for a
+    #: ratio metric, the trials (``nobs``) for a fraction metric, else None.
+    secondary: FloatArray | None = None
 
 
 @dataclass(frozen=True)

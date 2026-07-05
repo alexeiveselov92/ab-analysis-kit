@@ -58,11 +58,17 @@ def normal_panel(
 
 
 def fraction_panel(*, n_units: int, seed: int, base_rate: float = 0.2) -> PlaceboPanel:
-    """A single-cutoff Bernoulli A/A panel (0/1 outcomes) for the z-test path."""
+    """A single-cutoff Bernoulli A/A panel (0/1 outcomes, nobs=1) for the z-test path."""
     rng = np.random.default_rng(seed)
     outcomes = (rng.random(n_units) < base_rate).astype(np.float64)
     unit_idx = np.arange(n_units)
-    cutoff = PanelCutoff(elapsed_days=14.0, is_horizon=True, unit_idx=unit_idx, values=outcomes)
+    cutoff = PanelCutoff(
+        elapsed_days=14.0,
+        is_horizon=True,
+        unit_idx=unit_idx,
+        values=outcomes,
+        secondary=np.ones(n_units),  # one trial per unit
+    )
     return PlaceboPanel(
         n_units=n_units,
         cutoffs=(cutoff,),

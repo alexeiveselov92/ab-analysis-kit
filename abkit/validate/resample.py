@@ -58,7 +58,7 @@ def present_positions(mask: np.ndarray, unit_idx: np.ndarray) -> tuple[np.ndarra
 def build_arm(
     input_kind: str,
     values: np.ndarray,
-    denominator: np.ndarray | None,
+    secondary: np.ndarray | None,
     covariate: np.ndarray | None,
     unit_idx: np.ndarray,
     pos: np.ndarray,
@@ -70,21 +70,24 @@ def build_arm(
     Returns ``None`` when the arm is too small to score (``< MIN_ARM_UNITS``) — a
     gap, not a zero. ``covariate`` is indexed by *global* unit id
     (``unit_idx[pos]``) since it is a fixed per-unit constant; the value arrays are
-    indexed by cutoff position (``pos``).
+    indexed by cutoff position (``pos``). ``secondary`` is the per-unit trials
+    (fraction) or denominator (ratio).
     """
     if pos.size < MIN_ARM_UNITS:
         return None
     arm_values = values[pos]
     if input_kind == "fraction":
-        # 0/1 outcomes → (successes, trials); round guards float accumulation.
+        if secondary is None:
+            raise ValueError("fraction input_kind requires an nobs (trials) array")
+        # per-unit (successes, trials) summed into the arm's proportion suffstats
         return Fraction(
-            count=float(np.rint(arm_values.sum())), nobs=float(arm_values.size), name=name
+            count=float(arm_values.sum()), nobs=float(secondary[pos].sum()), name=name
         )
     if input_kind == "ratio":
-        if denominator is None:
+        if secondary is None:
             raise ValueError("ratio input_kind requires a denominator array")
         return RatioSufficientStats.from_ratio_sample(
-            RatioSample(arm_values, denominator[pos], name=name)
+            RatioSample(arm_values, secondary[pos], name=name)
         )
     cov = None if covariate is None else covariate[unit_idx[pos]]
     return SufficientStats.from_sample(Sample(arm_values, cov_array=cov, name=name))

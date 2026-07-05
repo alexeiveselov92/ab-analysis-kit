@@ -129,11 +129,22 @@ def seed_cohort(warehouse: SyntheticWarehouse, n_per_arm: int = 120) -> None:
         warehouse.cohort.append((f"t{i:03d}", "treatment", START + timedelta(hours=1)))
 
 
-def seed_all_events(warehouse: SyntheticWarehouse, days: int = 4) -> None:
+def seed_null_events(warehouse: SyntheticWarehouse, days: int = 4) -> None:
+    """A/A twin of :func:`seed_all_events`: identical shape, NO treatment lift.
+
+    With no true effect, a placebo re-split has an analytically exact FPR ≈ α — the
+    ground-truth fixture for the ``abk validate`` scorer (m4 WP2/WP7).
+    """
+    seed_all_events(warehouse, days=days, treatment_lift=1.0)
+
+
+def seed_all_events(
+    warehouse: SyntheticWarehouse, days: int = 4, treatment_lift: float = 1.25
+) -> None:
     """Deterministic per-unit daily values with a treatment lift everywhere."""
     for unit, variant, _ in warehouse.cohort:
         idx = int(unit[1:])
-        lift = 1.25 if variant == "treatment" else 1.0
+        lift = treatment_lift if variant == "treatment" else 1.0
         base = 1.0 + (idx % 7) * 0.5
         for day in range(days):
             ts = START + timedelta(days=day, hours=12)
