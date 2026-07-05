@@ -17,9 +17,11 @@
 > stub/the report `calibration:null` slot all reserved). Five spec↔spec / spec↔code
 > tensions the plan must resolve, each settled in a D-item: (1) the §3 "sequential
 > side-by-side" column requires a stats engine that lands only in M5 → **D8**;
-> (2) "the actual readout decision rule" is self-contradictory for peeking (the
-> as-built readout *refuses* pre-horizon WIN/LOSE, which would zero the peeking FPR
-> by construction) → **D3**; (3) `aa-fpr` §7's column names diverge from the shipped
+> (2) "the actual readout decision rule ('CI excludes zero and stabilized')" is
+> self-defeating for peeking — the as-built readout *refuses* pre-horizon WIN/LOSE and
+> requires trailing-window stabilization-persistence, which is the *defense* against
+> peeking (empirically a peeking FPR at/below the single-look rate), the opposite of
+> the hazard the column must expose → **D3** (optional-stopping); (3) `aa-fpr` §7's column names diverge from the shipped
 > `_ab_aa_runs` model → **D15** (as-built wins, spec amended); (4) the `(experiment,
 > run_id)` PK under `ReplacingMergeTree` collapses a matrix written under one shared
 > `run_id` → **D4**; (5) ROADMAP's "composed-FDR empirical validation (stays
@@ -57,12 +59,16 @@ persists" contract (runner.py:1–13).
 
 | Source | Target | Verdict |
 |---|---|---|
-| `detectkit/autotune/_base.py:78–107` (`_AutoTuneBase`: `decision_log`, memoized `evaluate`/`safe_evaluate`, `evaluated_ids`, `AutoTuneError`) | `abkit/validate/_base.py` (`_ValidateBase`, `ValidateError`) | ⟲ (rename) |
-| `detectkit/autotune/_types.py` (`DecisionEntry`) | `abkit/validate/_types.py` | ⟲ |
-| — (the placebo permutation + inverse-Chan split) | `abkit/validate/resample.py` | **NEW** |
+| `detectkit/autotune/_types.py` (`DecisionEntry`) + `_base.py::AutoTuneError` | `abkit/validate/_types.py` (`DecisionEntry`, `ValidateError`) | ⟲ (rename) |
+| — (the placebo panel contract) | `abkit/validate/panel.py` (`PlaceboPanel`, `PanelCutoff`) | **NEW** |
+| — (the placebo permutation + arm build) | `abkit/validate/resample.py` | **NEW** |
 | — (suffstats effect injection algebra) | `abkit/validate/inject.py` | **NEW** |
-| — (FPR / peeking / power / coverage / exaggeration from `TestResult` streams) | `abkit/validate/scoring.py` | **NEW** (donor `scoring.py` MCC/F-β/AUC skipped; keep only its pure-numpy no-sklearn discipline) |
-| `abkit/stats/{samples,accumulate,rng,power,srm,factory}.py` | reused, never modified | — |
+| — (FPR / peeking / power / coverage / exaggeration from `TestResult` streams) | `abkit/validate/scoring.py` (`CellScore`, `score_cell`) | **NEW** (donor `scoring.py` MCC/F-β/AUC skipped; keep only its pure-numpy no-sklearn discipline) |
+| `abkit/stats/{samples,rng,power,factory}.py` | reused, never modified | — |
+
+_(Scope note: the donor `_AutoTuneBase` decision-log/eval-cache state-holder moves to
+**WP3** where the runner actually uses it — WP1 ships only the pure numeric primitives
++ `DecisionEntry`/`ValidateError`, keeping the PR the "numeric heart".)_
 
 **Hotspots (from the stats-seams survey):**
 - **Placebo split, fixed across the grid.** One iteration = one unit-level
@@ -85,21 +91,19 @@ persists" contract (runner.py:1–13).
   "MDE unreachable", never crash. Frozen dataclasses (`JointMoments`,
   `RatioSufficientStats`) → construct new instances, never mutate. Injection lives in
   `abkit/validate/`, **not** `abkit.stats` (purity invariant; test_purity.py).
-- **Scoring primitives** consume the shipped `TestResult` (result.py:30–53): FPR
-  counts `reject` (the shipped `pvalue<alpha` rule — the same significance test the
-  readout uses). The peeking pass reuses the shipped stabilization **rule** — but
-  `readout.py`'s trailing-window consistent-sign scan is inline in `_pair_verdict`
-  (readout.py:596–633) and `evaluate()` is the heavy full engine that *refuses*
-  pre-horizon (which peeking must not do, D3). So this WP **extracts** that scan into a
-  shared pure helper (`abkit/pipeline/readout.py::stabilized(window, direction)` or
-  similar) that both `_pair_verdict` and the validate peeking scorer call — a pure
-  refactor, zero behavior change, covered by the existing readout tests plus a new
-  equivalence test. CI coverage separately counts `left_bound ≤ truth ≤ right_bound`;
-  **NaN-bound degenerate cutoffs** (zero/negative variance, effects.py:101–125) are
-  tallied in their own bucket, never as clean non-rejections (silent FPR deflation).
-  The injected-truth estimand is **per test_type** (D2): relative → `δ` exactly;
-  absolute → `δ·mean_control(cutoff)` (drifts over the grid). Effect-exaggeration =
-  `(effect_at_first_rejection − truth)/truth` conditional on any early stop.
+- **Scoring primitives** consume the shipped `TestResult` (result.py:30–53). The
+  significance primitive is **CI-excludes-zero** (the readout's `_build_sig_map` rule,
+  readout.py:195–205 — `left_bound>0` or `right_bound<0`; ≡ `reject` for the normal
+  family). Single-look **FPR** = CI-excludes-zero at the horizon cutoff;
+  **cumulative-peeking FPR** = CI-excludes-zero at *any* look across the grid (optional
+  stopping — D3; no stabilization-persistence, so it exposes the peeking hazard rather
+  than the readout's defense; `pipeline/readout.py` is left untouched). CI **coverage**
+  separately counts `left_bound ≤ truth ≤ right_bound` at the horizon.
+  **NaN-bound degenerate cutoffs** (zero/negative variance, effects.py:101–125) and
+  arms below 2 units are tallied in their own bucket, never as clean non-rejections
+  (silent FPR deflation). The injected-truth estimand is **per test_type** (D2):
+  relative → `δ` exactly; absolute → `δ·μ̂_pooled(horizon)`. Effect-exaggeration =
+  mean `|effect|` at the first crossing (winner's curse against a true effect of zero).
 - **Determinism (D13).** Every placebo seed is `derive_seed(...)` over row identity
   (rng.py:24–34, known-answer pinned) — never RNG-global, never wall-clock. A
   separate derived stream seeds the bootstrap `n_samples` param (WP3 opt-in). The
@@ -491,7 +495,7 @@ that implements them (house rule, m2/m3-plan).
 
 **D2 — Effect injection: multiplicative at the suffstats level; the coverage estimand is per test_type.** Inject `y→y·(1+δ)` into one arm by scaling `(mean, m2·(1+δ)², cross_c·(1+δ))` — exact, numpy-only, purity-safe, and `corr_coef`-invariant so CUPED needs no special case. `Fraction` scales `count` clamped to `≤nobs` (else "MDE unreachable"). The injected **truth** for CI coverage and winner's-curse is `δ` for relative test_type (δ *is* the estimand) and `δ·mean_control(cutoff)` for absolute test_type (it drifts over the grid) — the scorer parameterizes truth by the method's `test_type`. Injection lives in `abkit/validate/inject.py`, never in `abkit.stats` (purity).
 
-**D3 — The peeking decision rule: stabilization on, demotion gaps honored, pre-horizon refusal OFF, SRM n/a; spec amendment to aa-fpr §3.** "The actual readout decision rule" is self-contradictory for peeking: the as-built readout *refuses* pre-horizon WIN/LOSE (data-contract §1 / m3 D5(d)), so running placebos through the literal readout would zero the pre-horizon peeking FPR — but the peeking FPR exists precisely to quantify the analyst who eyeballs the chart *despite* the refusal. Pinned composition for the peeking column: **stabilization ON** (the shipped trailing-`stabilization_days` consistent-sign rule — extracted from `_pair_verdict`, readout.py:596–633, into a shared pure helper both callers use, WP1 — never look-count), **demotion gaps honored** (insufficient_data cutoffs are gaps, never zeros), **pre-horizon refusal OFF** (this column measures peeking-despite-refusal; note `readout.evaluate()` itself refuses pre-horizon, so the peeking scorer calls the extracted stabilization helper, not the full engine), **SRM n/a** (placebo splits are balanced by construction; a degenerate split is a gap, not a rejection), the significance primitive per cutoff is the shipped `TestResult.reject` (`p<alpha` — what the readout uses), and NaN-bound degenerate cutoffs are a separate bucket. The single-look FPR (horizon cutoff only, refusal ON) is reported beside the peeking FPR so the jump is visible (R10). aa-fpr §3 amended in the WP2/WP3 PR.
+**D3 — The peeking FPR is the naive optional-stopping hazard, not the stabilized rule; pre-horizon refusal OFF; spec amendment to aa-fpr §3.** "The actual readout decision rule" is self-contradictory for peeking: the as-built readout *refuses* pre-horizon WIN/LOSE (data-contract §1 / m3 D5(d)) and, past the horizon, requires the full trailing-window stabilization-persistence. Running placebos through the *literal* readout therefore gives a peeking FPR at or **below** the single-look rate (empirically ~3% vs ~5% at α=0.05) — because the stabilization-persistence requirement is the tool's *defense* against peeking, stricter than one look, the opposite of what the column must show. But the peeking FPR exists to quantify the *hazard*: the analyst who eyeballs the daily cumulative chart and stops the first time the CI clears zero, *despite* the refusal. So the pinned composition is: **optional stopping** — the peeking FPR is the share of placebos whose CI **excludes zero at *any* subsampled cutoff** (the readout's `_build_sig_map` significance primitive, readout.py:195–205 — `left_bound>0` or `right_bound<0`, either direction; ≡ `reject` for the normal family, so z-test/bootstrap edge cases follow the readout not the raw p-value); **pre-horizon refusal OFF** (the horizon look is included, so peeking ≥ single-look by construction — a monotone, honest jump); **demotion gaps honored** (an arm too small or NaN-bound cutoff is a gap, never a false zero, tallied separately); **SRM n/a** (placebo splits are balanced by construction). The **single-look FPR** (horizon cutoff only) is reported *beside* the peeking FPR so the jump is visible (R10); empirically single-look tracks α (~5%) while peeking climbs 15%→31% as the grid densifies from 5 to 40 looks — the spec's "nominal α 5%, real peeking FPR 14%" story, and sequential (M5) is what brings it back toward α. The stabilized-with-persistence rule remains the *official* readout verdict (unchanged, `pipeline/readout.py` untouched); it is deliberately **not** what the peeking column measures. Effect-exaggeration-at-stop = the |effect| at the first crossing (winner's curse against a true effect of zero). aa-fpr §3 amended in the WP2/WP3 PR to pin this composition and correct the "and stabilized" wording.
 
 **D4 — `run_id` per cell: `{run_stamp}:{cell_hash}`; the shipped PK is kept.** The `(experiment, run_id)` PK under `ReplacingMergeTree(created_at)` collapses a matrix written under one shared `run_id`. Resolution: `cell_hash = compute_run_id(metric, method_config_id, mode, alpha)` (deterministic, no wall clock — donor `config_emitter` pattern), `run_stamp = compute_run_id(frozen now_utc_naive, selection inputs)` per invocation; `run_id = f"{run_stamp}:{cell_hash}"`. Distinct per (invocation, cell) → no collapse, full never-pruned audit history retained, and `find_calibration` still resolves the newest `created_at` among matching `(metric, method_config_id, alpha)` rows. No schema change (the PK stays); `aa-fpr §7`'s "one row per cell" is honored by the id, not a PK widening.
 
