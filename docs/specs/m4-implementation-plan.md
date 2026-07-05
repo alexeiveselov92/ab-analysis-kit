@@ -46,6 +46,57 @@ commit per WP.
 
 ---
 
+## 0. Progress & resume note (2026-07-05)
+
+**WP1–WP4 shipped and merged to `main`** (PR #6); **WP5–WP7 remain** (M4 is NOT yet
+complete — do not flip CLAUDE.md / rules / ROADMAP to "M4 shipped" until WP7).
+
+| WP | Status | Lands in |
+|---|---|---|
+| WP1 engine core | ✅ done | `abkit/validate/{_types,panel,inject,resample,scoring}.py`; `tests/validate/test_{inject,resample,scoring}.py` |
+| WP2 load stage | ✅ done | `abkit/validate/load.py`; `tests/validate/test_load.py`; `seed_null_events` in `tests/_helpers/synthetic_ab.py` |
+| WP3 runner + persist | ✅ done | `abkit/validate/{runner,result,run_id,persistence}.py`; `tests/validate/test_{runner,persistence}.py` |
+| WP4 CLI + lock | ✅ done | `abkit/cli/commands/validate.py`, `abkit/cli/main.py` (registration), `abkit/cli/commands/unlock.py` (validate-lock); `abkit/validate/report.py` (minimal HTML); `tests/cli/test_validate_command.py` |
+| WP5 report+payload+budget | ⏳ next | see WP5 below |
+| WP6 Auto mode | ⏳ pending | see WP6 |
+| WP7 e2e + review + docs | ⏳ pending | see WP7 |
+
+**How `abk validate` works today** (the vertical slice): `abk validate --select <exp>
+[--method <m>] [--metric <m>] [--iterations N] [--inject-effect <pct>]
+[--scoring fpr|power|mde] [--report] [--force]` → loads the experiment's own cohort
+per cutoff, permutes units into placebo arms, scores FPR/peeking/power/coverage/
+exaggeration per (metric × declared method), writes `_ab_aa_runs` rows at the effective
+per-comparison alpha, and lights the D3 explore chip. `--report` writes a minimal
+self-contained HTML matrix (WP5 upgrades to the committed bundle).
+
+**Two corrections settled while implementing** (already folded into the D-log): **D3**
+peeking FPR is the naive **optional-stopping** hazard (not the readout's stabilization-
+persistence rule — that measures the *defense* and prints below the single-look rate);
+`pipeline/readout.py` is left untouched. **Panel** `PanelCutoff.denominator` became a
+general `secondary` array (ratio denominator OR fraction per-unit `nobs`), and the
+absolute-effect coverage truth anchors on the control point estimate (`value_1`).
+
+**Worked-example candidate for WP7 (aa-fpr §8):** the shared `CONVERSION` fixture
+(nobs>1 per unit) makes a naive z-test's FPR **inflate** under placebo — the exact
+"naive proportions test on clustered data" story. (Note: the shared `CTR` fixture is
+degenerate over a 4-day window — its per-unit ratio is constant — so it is not usable
+for a ratio calibration example without new data.)
+
+**Environment notes for the next session:** use `.venv/bin/python` (the repo `.venv`
+has statsmodels/pydantic/click; system `python3` does not). `mypy` fails on clean HEAD
+via the numpy-2.5 PEP-695 stub mis-anchored to `metric_config.py:48` (CI-tolerated;
+run `mypy --python-version 3.12` to check new files). Run the suite with `--no-cov` for
+speed. Donor autotune scaffolding: `/home/aleksei/wsl_analytics/detektkit/detectkit/autotune/`.
+
+**WP5 first steps:** the report/explore payload `calibration` slot is `None` at
+`reporting/builder.py:448` with the M4 shape reserved (`web/src/shared/payload.ts:129`);
+`resolve_fpr_budget` (recompute.py:235) already reserves the metric-override arm
+(`MetricConfig.aa_fpr_budget` to add). Decide (D10) whether to reuse the report bundle
+(`web/src/report/report.ts:207`) or add a `web/src/validate` bundle — the plan settled
+on **reuse** (no third bundle) to avoid touching all six CI/packaging gates.
+
+---
+
 ## 1. Work packages in strict dependency order
 
 ### WP1 — `abkit/validate/` engine core: placebo split + effect injection + scoring (pure, NEW)
