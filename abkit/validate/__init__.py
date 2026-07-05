@@ -15,6 +15,9 @@ from __future__ import annotations
 
 from abkit.validate._types import DecisionEntry, ValidateError
 from abkit.validate.panel import PanelCutoff, PlaceboPanel
+from abkit.validate.persistence import aa_run_records
+from abkit.validate.result import AaValidateResult, CellResult
+from abkit.validate.runner import ValidateSettings, enumerate_cells, run_validation
 from abkit.validate.scoring import CellScore, score_cell
 
 __all__ = [
@@ -24,4 +27,10 @@ __all__ = [
     "PlaceboPanel",
     "CellScore",
     "score_cell",
+    "AaValidateResult",
+    "CellResult",
+    "ValidateSettings",
+    "enumerate_cells",
+    "run_validation",
+    "aa_run_records",
 ]
