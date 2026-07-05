@@ -9,8 +9,13 @@ outdated ``request_id``s BEFORE and AFTER acquiring the compute lock);
 ``POST /reload`` executes the confirmed Tier-R actions (its OWN manager
 inside the serialized handler — DB-API connections are not thread-safe) and
 streams a run-log through ``server.echo`` (``/recompute`` stays silent — per-
-knob terminal streaming is spam); ``POST /validate`` is the reserved M4 slot
-(501); ``POST /apply`` is the only terminal action — it enforces the
+knob terminal streaming is spam); ``POST /validate`` is Auto mode (M4 WP6) —
+a reduced-N server-side ``abk validate`` (its OWN manager + the out-of-band
+``'validate'`` ``_ab_tasks`` lock, ``request_lock``-serialized, request_id
+stale-dropping) that refreshes ``session.aa_rows`` in place so the live D3
+chip greens without an explore restart, and returns the recommended knob state
+per metric for the client to re-seed from; ``POST /apply`` is the only terminal
+action — it enforces the
 calibration gate server-side (``confirm_uncalibrated`` required while the
 knob state's D3 lookup is not green), writes through the WP5 seam, echoes the
 ``orphaned`` block for the CLI epilogue, and shuts the server down from a
@@ -175,7 +180,7 @@ class _Handler(BaseHTTPRequestHandler):
         elif parsed.path == "/reload":
             self._handle_reload(srv, body)
         elif parsed.path == "/validate":
-            self._reply_error(501, "Auto mode requires `abk validate` (M4)")
+            self._handle_validate(srv, body)
         elif parsed.path == "/apply":
             self._handle_apply(srv, body)
         else:
@@ -265,6 +270,46 @@ class _Handler(BaseHTTPRequestHandler):
                 self._reply_error(400, f"reload failed: {exc}")
                 return
         self._reply_json(_result_json(result, request_id))
+
+    def _handle_validate(self, srv: _ExploreServer, body: bytes) -> None:
+        """Auto mode (WP6, D11): a reduced-N server-side ``abk validate`` that
+        refreshes the live session's calibration in place, then answers with the
+        recommended knob state per metric so the client re-seeds + re-renders the
+        chip. Serialized under the request lock (its own manager, its own
+        ``'validate'`` lock), stale-dropping like ``/recompute`` and ``/reload``.
+        The Apply gate is unchanged — Auto only populates rows."""
+        if (
+            srv.session is None
+            or srv.manager_factory is None
+            or not srv.metric_sql_by_name
+            or not srv.metrics_by_name
+        ):
+            self._reply_error(400, "Auto mode is unavailable for this session")
+            return
+        try:
+            request = json.loads(body.decode("utf-8"))
+            raw_id = (request or {}).get("request_id")
+            request_id = (
+                int(raw_id) if isinstance(raw_id, int) and not isinstance(raw_id, bool) else None
+            )
+        except Exception as exc:
+            self._reply_error(400, f"invalid validate request: {exc}")
+            return
+        if srv.check_stale(request_id):
+            self._reply_json({"stale": True, "request_id": request_id}, code=409)
+            return
+        with srv.request_lock:
+            if srv.is_stale(request_id):
+                self._reply_json({"stale": True, "request_id": request_id}, code=409)
+                return
+            try:
+                reply = _run_validate(srv)
+            except Exception as exc:
+                srv.echo(f"VALIDATE: failed — {exc}")
+                self._reply_error(400, f"validate failed: {exc}")
+                return
+        reply["request_id"] = request_id
+        self._reply_json(reply)
 
     def _handle_apply(self, srv: _ExploreServer, body: bytes) -> None:
         """The only terminal action: gate → WP5 seam → reply → self-shutdown.
@@ -551,6 +596,123 @@ def _run_reload(srv: _ExploreServer, metric: str, knobs: KnobState) -> Recompute
         manager.close()
     srv.echo(f"RELOAD {experiment}/{metric}: done — recomputing")
     return engine.recompute(metric, knobs)
+
+
+#: Auto mode runs synchronously inside the HTTP handler, so it uses a reduced
+#: iteration count and a smaller peeking-grid cap than the ``abk validate`` CLI
+#: defaults (2000 / 100). Its FPR is a fast estimate that may legitimately
+#: differ from the full-population CLI run (aa-fpr §5 vs §6 — disclosed in the
+#: UX); the CLI is the source of truth for a final calibration decision.
+AUTO_ITERATIONS = 400
+AUTO_GRID_CAP = 24
+
+
+def _run_validate(srv: _ExploreServer) -> dict[str, Any]:
+    """The Auto-mode reduced validate: score the declared comparisons over a few
+    hundred placebo splits, persist the ``_ab_aa_runs`` rows, refresh the live
+    ``session.aa_rows`` snapshot in place (D11 — the chip greens without a
+    restart), and return the recommended knob state + refreshed calibration per
+    metric. Runs inside the request lock with its OWN manager and its OWN
+    out-of-band ``'validate'`` lock (never the run pipeline's lock, D5)."""
+    from abkit.compute.recompute_backend import RecomputeBackend
+    from abkit.database.internal_tables import InternalTablesManager
+    from abkit.utils.datetime_utils import now_utc_naive
+    from abkit.utils.json_utils import json_loads
+    from abkit.validate import ValidateSettings, aa_run_records, run_validation
+
+    session = cast(ExploreSession, srv.session)
+    factory = cast(Callable[[], Any], srv.manager_factory)
+    metric_sqls = cast("dict[str, str]", srv.metric_sql_by_name)
+    metrics_by_name = cast("dict[str, MetricConfig]", srv.metrics_by_name)
+    experiment = session.experiment
+
+    settings = ValidateSettings(iterations=AUTO_ITERATIONS, mode="fpr", grid_cap=AUTO_GRID_CAP)
+    srv.echo(
+        f"VALIDATE {experiment.name}: {settings.iterations} placebo splits/cell "
+        f"(Auto — a reduced estimate; run `abk validate` for the full population)"
+    )
+
+    # The manager's WHOLE lifetime is under the outer try/finally so it is closed
+    # even if acquire_lock itself raises (a transient DB error, or `_ab_tasks`
+    # absent before ensure_tables) — the /reload precedent (a raise before the
+    # inner try must not leak a connection in the long-lived server).
+    manager = factory()
+    try:
+        tables = InternalTablesManager(manager)
+        if not tables.acquire_lock(
+            experiment.name,
+            "pipeline",
+            "validate",
+            timeout_seconds=session.project.timeouts.compute,
+            force=False,
+        ):
+            raise ValueError(
+                "an `abk validate` run is already in progress for this experiment — retry shortly"
+            )
+        try:
+            tables.ensure_tables()
+            backend = RecomputeBackend(manager, experiment)
+            result = run_validation(
+                backend,
+                experiment,
+                session.project,
+                metrics_by_name,
+                metric_sqls,
+                session.grid,
+                settings,
+                now_iso=now_utc_naive().isoformat(),
+            )
+            records = aa_run_records(result)
+            for record in records:
+                tables.save_aa_run(record)
+            # D11: refresh the one-time snapshot in place so subsequent /recompute
+            # D3 lookups (find_calibration reads session.aa_rows) go green without a
+            # restart. Re-read so the LWW-stamped created_at drives the newest-wins
+            # ordering find_calibration relies on.
+            session.aa_rows = tables.get_aa_runs(experiment.name)
+            tables.release_lock(experiment.name, "pipeline", "validate", status="completed")
+        except Exception as exc:
+            # only reached AFTER a successful acquire — release the lock we hold
+            tables.release_lock(
+                experiment.name, "pipeline", "validate", status="failed", error_message=str(exc)
+            )
+            raise
+    finally:
+        manager.close()
+
+    # The recommended knob state per metric + the REFRESHED calibration (read off
+    # the just-mutated snapshot) so the client re-seeds the rail and re-renders
+    # the chip verbatim without a round-trip.
+    recommended: dict[str, Any] = {}
+    for cell in result.cells:
+        if not cell.recommended:
+            continue
+        metric_cfg = metrics_by_name.get(cell.metric)
+        budget = resolve_fpr_budget(session.project, cell.alpha, metric_cfg)
+        calibration = find_calibration(
+            session.aa_rows, cell.metric, cell.method_config_id, cell.alpha, budget=budget
+        )
+        try:
+            params = json_loads(cell.method_params)
+        except (TypeError, ValueError):
+            params = {}
+        recommended[cell.metric] = {
+            "method": {
+                "name": cell.method_name,
+                "params": params if isinstance(params, dict) else {},
+            },
+            "alpha": cell.alpha,
+            "verdict": cell.verdict,
+            "calibration": asdict(calibration),
+        }
+    srv.echo(
+        f"VALIDATE {experiment.name}: done — {len(records)} cell(s), "
+        f"{len(recommended)} metric(s) recommended"
+    )
+    return {
+        "recommended": recommended,
+        "log": [f"{entry.stage}: {entry.message}" for entry in result.decision_log],
+    }
 
 
 def _json_default(o: Any) -> Any:

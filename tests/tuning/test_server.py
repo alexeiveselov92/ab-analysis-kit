@@ -5,8 +5,9 @@ server (never handler unit-fakes), a stub-free warehouse via the shared
 synthetic harness. Pins the donor's interaction contract — token-gated POSTs,
 GET-serves-the-page-on-any-path, terminal Apply with self-shutdown proven by
 ``thread.join``, 400-keeps-serving, the server-side stale-drop, the
-calibration gate, the ``/reload`` run-log vs the silent ``/recompute``, the
-501 ``/validate`` stub, body limits, and the numpy JSON fallback.
+calibration gate, the ``/reload`` run-log vs the silent ``/recompute``, Auto
+mode's ``/validate`` in-session chip flip (WP6), body limits, and the numpy
+JSON fallback.
 """
 
 from __future__ import annotations
@@ -155,11 +156,6 @@ class TestTransport:
         status, _ = http(explore.endpoint("nope"), {})
         assert status == 404
 
-    def test_validate_is_the_reserved_501_stub(self, explore):
-        status, detail = http(explore.endpoint("validate"), {})
-        assert status == 501
-        assert "abk validate" in detail and "M4" in detail
-
     def test_json_default_numpy_and_datetime(self):
         assert _json_default(np.int64(5)) == 5
         assert _json_default(np.float64(0.5)) == 0.5
@@ -259,6 +255,90 @@ class TestReload:
             assert "unavailable" in detail
         finally:
             explore.stop()
+
+
+class TestAutoValidate:
+    """WP6/D11: Auto mode runs a reduced server-side ``abk validate``, greens the
+    live D3 chip in place (no restart), and answers with the recommended knob
+    state per metric — streaming a run-log, taking the out-of-band lock."""
+
+    def test_validate_runs_auto_and_greens_the_live_chip(self, explore):
+        # before: the chip is uncalibrated (no _ab_aa_runs rows exist yet)
+        status, reply = http(explore.endpoint("recompute"), recompute_request(request_id=1))
+        assert status == 200
+        assert reply["calibration"]["state"] == "uncalibrated"
+
+        # Auto mode: the reduced server-side validate
+        status, vreply = http(explore.endpoint("validate"), {"request_id": 2})
+        assert status == 200
+        assert vreply["request_id"] == 2
+        rec = vreply["recommended"]["arpu"]
+        assert rec["method"]["name"] == "t-test"
+        assert rec["calibration"]["state"] == "calibrated"
+        assert rec["calibration"]["fpr"] is not None
+        assert rec["calibration"]["over_budget"] is False  # a clean placebo A/A
+        assert any("VALIDATE exp_srv" in line for line in explore.echo_lines)  # streams a log
+
+        # the LIVE chip is green now, WITHOUT a restart (D11: aa_rows mutated in place)
+        status, reply = http(explore.endpoint("recompute"), recompute_request(request_id=3))
+        assert status == 200
+        assert reply["calibration"]["state"] == "calibrated"
+
+    def test_validate_lock_is_taken_and_released_so_it_reruns(self, explore):
+        status, _ = http(explore.endpoint("validate"), {"request_id": 1})
+        assert status == 200
+        # a leaked '(exp, pipeline, validate)' lock would block the second run
+        status, _ = http(explore.endpoint("validate"), {"request_id": 2})
+        assert status == 200
+
+    def test_validate_honors_the_stale_drop(self, explore):
+        status, _ = http(explore.endpoint("recompute"), recompute_request(request_id=10))
+        assert status == 200
+        status, reply = http(explore.endpoint("validate"), {"request_id": 4})
+        assert status == 409
+        assert reply["stale"] is True
+
+    def test_validate_unavailable_without_a_manager_factory(self, tmp_path):
+        explore = Explore(tmp_path)
+        try:
+            explore.server.manager_factory = None
+            status, detail = http(explore.endpoint("validate"), {"request_id": 1})
+            assert status == 400
+            assert "unavailable" in detail
+        finally:
+            explore.stop()
+
+    def test_validate_closes_the_manager_when_acquire_lock_raises(self, explore, monkeypatch):
+        # a raising acquire_lock (transient DB error / `_ab_tasks` absent) must
+        # still close the warehouse manager — no leaked connection in the
+        # long-lived server (the manager's lifetime is under the outer finally).
+        closed = []
+        monkeypatch.setattr(explore.warehouse, "close", lambda: closed.append(True))
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("db unreachable")
+
+        monkeypatch.setattr(
+            "abkit.database.internal_tables.InternalTablesManager.acquire_lock", boom
+        )
+        status, detail = http(explore.endpoint("validate"), {"request_id": 1})
+        assert status == 400
+        assert "validate failed" in detail
+        assert closed, "the manager was closed even though acquire_lock raised (no leak)"
+
+    def test_validate_does_not_weaken_the_apply_gate(self, explore):
+        # Auto populates rows but the Apply gate is unchanged (R19): an edit to a
+        # DIFFERENT (uncalibrated) method still needs confirm_uncalibrated.
+        status, _ = http(explore.endpoint("validate"), {"request_id": 1})
+        assert status == 200
+        edit = {
+            "comparisons": [
+                {"metric": "arpu", "method": {"name": "t-test", "params": {"test_type": "absolute"}}}
+            ]
+        }
+        status, detail = http(explore.endpoint("apply"), edit)
+        assert status == 409
+        assert "confirm_uncalibrated" in detail
 
 
 class TestApply:

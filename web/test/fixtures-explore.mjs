@@ -156,6 +156,35 @@ export function makeExplorePayload(overrides = {}) {
 }
 
 /**
+ * One /validate reply (server._run_validate — Auto mode, WP6).
+ * @param {number | null} requestId
+ * @param {Partial<import('../src/explore/payload').ValidateReply>} [overrides]
+ * @returns {import('../src/explore/payload').ValidateReply}
+ */
+export function makeValidateReply(requestId, overrides = {}) {
+  return {
+    request_id: requestId,
+    recommended: {
+      revenue: {
+        method: { name: 't-test', params: { test_type: 'relative' } },
+        alpha: 0.05,
+        verdict: 't-test on revenue: well-calibrated, FPR 4.9%',
+        calibration: makeCalibration({
+          state: 'calibrated',
+          fpr: 0.049,
+          calibrated_alpha: 0.05,
+          over_budget: false,
+          runs: 1,
+          headline: 'calibrated — FPR 4.9% vs nominal α=0.05',
+        }),
+      },
+    },
+    log: ['select: revenue: highest power among methods with FPR within budget'],
+    ...overrides,
+  };
+}
+
+/**
  * One /recompute reply (server._result_json — FULL key names, ms-epoch ints).
  * @param {number | null} requestId
  * @param {Partial<import('../src/explore/payload').RecomputeReply>} [overrides]

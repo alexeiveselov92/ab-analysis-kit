@@ -71,6 +71,7 @@ import type {
   RecomputeReply,
   ReplyPair,
   ReplyPoint,
+  ValidateReply,
 } from './payload';
 
 // ----------------------------------------------------------------------------
@@ -1534,7 +1535,7 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
     {
       v: 'auto',
       label: 'Auto',
-      hint: 'requires `abk validate` (M4) — the server route is reserved',
+      hint: 'run a reduced A/A validation server-side and green the calibration chip (a fast estimate — `abk validate` for the full run)',
     },
     { v: 'segment', label: 'Segment', hint: 'heterogeneous effects — deferred (D9, ROADMAP)', inert: true },
   ];
@@ -1549,7 +1550,10 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
   for (const m of MODES) {
     const b = document.createElement('button');
     b.type = 'button';
-    b.className = 'abk-mode-btn' + (m.v === 'auto' || m.inert ? ' abk-mode-disabled' : '');
+    // Auto is live only when a server route is bound (WP6); the static
+    // `--no-serve` preview keeps it greyed (validate_url null), Segment is inert.
+    const disabled = m.inert || (m.v === 'auto' && payload.validate_url === null);
+    b.className = 'abk-mode-btn' + (disabled ? ' abk-mode-disabled' : '');
     b.textContent = m.label;
     b.title = m.hint;
     b.dataset.v = m.v;
@@ -1572,16 +1576,86 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
     railTitle.textContent = RAIL_TITLES[uiMode];
   }
   function pokeValidate(): void {
-    // present-but-disabled, wired to the reserved route: surfaces the
-    // server's own 501 message so the M4 path is honest end-to-end
+    // Auto mode (WP6): a reduced server-side `abk validate` that refreshes the
+    // live session's calibration in place and answers with the recommended knob
+    // state per metric. Shares the monotonic request_id stale-drop with
+    // /recompute + /reload so a knob turn mid-validate supersedes it cleanly.
     if (payload.validate_url === null) {
-      setStat('Auto mode requires `abk validate` (M4)');
+      setStat('Auto mode needs a served session — run `abk explore` without --no-serve');
       return;
     }
-    fetch(payload.validate_url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
-      .then((r) => r.text())
-      .then((t) => setStat(t || 'Auto mode requires `abk validate` (M4)'))
-      .catch(() => setStat('Auto mode requires `abk validate` (M4)'));
+    // Flush any pending debounced /recompute FIRST (the switchMetric/runRecompute
+    // discipline): a stale timer armed by a knob edit just before this click would
+    // otherwise fire mid-validate and abort the in-flight /validate, dropping the
+    // re-seed and the chip-green. The superseded edit is intentional — adoptValidate
+    // re-seeds the rail to the recommendation and drives its own recompute (R18).
+    if (debounceTimer) {
+      window.clearTimeout(debounceTimer);
+      debounceTimer = 0;
+    }
+    requestId += 1;
+    const myId = requestId;
+    controller?.abort();
+    controller = new AbortController();
+    spinner.classList.add('on');
+    setStat('Auto: running a reduced A/A validation (fast estimate — `abk validate` for the full run)…');
+    fetch(payload.validate_url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ request_id: myId }),
+      signal: controller.signal,
+    })
+      .then((r): Promise<void> | void => {
+        if (myId !== requestId) return; // superseded by a newer request
+        if (r.status === 409) {
+          requestId = Math.max(requestId, Date.now());
+          spinner.classList.remove('on');
+          setStat('another explore tab is ahead — turn a knob to retake this one');
+          return;
+        }
+        if (!r.ok) {
+          return r.text().then((t) => {
+            throw new Error(t || `HTTP ${r.status}`);
+          });
+        }
+        return r.json().then((reply: ValidateReply) => {
+          if (myId !== requestId) return; // outdated by the time the body parsed
+          spinner.classList.remove('on');
+          adoptValidate(reply);
+        });
+      })
+      .catch((e: Error) => {
+        if (e.name === 'AbortError' || myId !== requestId) return;
+        spinner.classList.remove('on');
+        setStat(`Auto validate failed: ${e.message}`, 'err');
+      });
+  }
+
+  function adoptValidate(reply: ValidateReply): void {
+    const recommended = reply.recommended || {};
+    for (const [name, rec] of Object.entries(recommended)) {
+      if (!(name in surfaces)) continue;
+      // refresh the baked-surface calibration fallback for EVERY metric — the
+      // Apply gate and seedChipsFromSurface read it when a metric has no live
+      // reply yet, so a metric switched-to after Auto shows the green chip (D3).
+      // (A metric the user is actively editing has a live lastReply that takes
+      // precedence, so this never over-greens an uncalibrated edit.)
+      surfaces[name].calibration = rec.calibration;
+    }
+    const active = activeMetric;
+    const rec = active !== null ? recommended[active] : undefined;
+    if (active !== null && rec !== undefined) {
+      // re-seed only the VISIBLE rail to the recommendation (R18), paint the
+      // refreshed chip now, then recompute so the series repaints against the
+      // freshly-greened rows. A background metric's in-progress edit is never
+      // silently overwritten — only its calibration fact is refreshed above.
+      edited.set(active, { method: rec.method.name, params: { ...rec.method.params } });
+      buildKnobControls();
+      setCalibrationChip(rec.calibration);
+      runRecompute();
+    }
+    const parts = Object.entries(recommended).map(([name, r]) => `${name}: ${r.calibration.headline}`);
+    setStat(parts.length > 0 ? `Auto — ${parts.join(' · ')}` : 'Auto: no method could be calibrated on this data');
   }
 
   // ---- Apply ------------------------------------------------------------------------
