@@ -17,7 +17,13 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { JSDOM } from 'jsdom';
 
-import { makeExplorePayload, makeReply, makeSurface } from './fixtures-explore.mjs';
+import {
+  makeCalibration,
+  makeExplorePayload,
+  makeReply,
+  makeSurface,
+  makeValidateReply,
+} from './fixtures-explore.mjs';
 import { makePoint } from './fixtures.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -335,4 +341,165 @@ test('switching to a covariate-needing method shows the reload bar instead of re
   const reloadCall = calls.find((c) => c.url.includes('/reload'));
   assert.ok(reloadCall, '/reload dispatched');
   assert.equal(reloadCall.body.method.name, 'cuped-t-test');
+});
+
+// ---------------------------------------------------------------------------
+// Auto mode (WP6): server-side /validate, in-session chip flip, knob re-seed
+// ---------------------------------------------------------------------------
+
+test('Auto is greyed in the static preview and reports it needs a served session', () => {
+  const { mount } = renderInJsdom(makeExplorePayload()); // validate_url null
+  const autoBtn = [...mount.querySelectorAll('.abk-mode-btn')].find((b) => b.textContent === 'Auto');
+  assert.ok(autoBtn.classList.contains('abk-mode-disabled'), 'Auto greyed without a server route');
+  autoBtn.click();
+  assert.match(mount.querySelector('.abk-stat').textContent, /needs a served session/);
+});
+
+test('Auto mode validates server-side, re-seeds the rail, and greens the live chip', async () => {
+  let validated = false;
+  const { impl, calls } = fakeFetch((url, body) => {
+    if (url.includes('/validate')) {
+      validated = true; // subsequent /recompute now sees the greened rows
+      return { status: 200, json: makeValidateReply(body.request_id) };
+    }
+    return {
+      status: 200,
+      json: makeReply(body.request_id, {
+        method: String(body.method.name),
+        calibration: validated
+          ? makeCalibration({
+              state: 'calibrated',
+              fpr: 0.049,
+              calibrated_alpha: 0.05,
+              over_budget: false,
+              runs: 1,
+              headline: 'calibrated — FPR 4.9% vs nominal α=0.05',
+            })
+          : makeCalibration(),
+      }),
+    };
+  });
+  const { mount } = renderInJsdom(makeExplorePayload(liveUrls()), { fetchImpl: impl });
+  await sleep(30);
+  assert.equal(
+    mount.querySelector('.abk-calibration').getAttribute('data-abk-calibration'),
+    'uncalibrated',
+  );
+
+  // the user tunes away from the recommendation: test_type relative → absolute
+  [...mount.querySelectorAll('.abk-seg-btn')].find((b) => b.textContent === 'absolute').click();
+  await sleep(200);
+  assert.deepEqual(calls[calls.length - 1].body.method.params, { test_type: 'absolute' });
+
+  // Auto: /validate, re-seed the rail back to the recommendation, follow-up
+  // recompute, chip greens in place — no explore restart
+  const autoBtn = [...mount.querySelectorAll('.abk-mode-btn')].find((b) => b.textContent === 'Auto');
+  assert.ok(!autoBtn.classList.contains('abk-mode-disabled'), 'Auto live with a server route');
+  autoBtn.click();
+  await sleep(60);
+
+  const validateCall = calls.find((c) => c.url.includes('/validate'));
+  assert.ok(validateCall, '/validate dispatched');
+  assert.equal(typeof validateCall.body.request_id, 'number');
+  assert.ok(validateCall.body.request_id > 1e12, 'request_id shares the Date.now() stale-drop stream');
+
+  // the follow-up recompute carries the RE-SEEDED (recommended) params, not absolute
+  const lastRecompute = [...calls].reverse().find((c) => c.url.includes('/recompute'));
+  assert.deepEqual(lastRecompute.body.method.params, {}, 're-seeded to relative (default → minimal {})');
+  const relSeg = [...mount.querySelectorAll('.abk-seg-btn')].find((b) => b.textContent === 'relative');
+  assert.ok(relSeg.classList.contains('on'), 'the rail re-seeded to the recommended relative test_type');
+
+  // the D3 chip is green in-session
+  assert.equal(
+    mount.querySelector('.abk-calibration').getAttribute('data-abk-calibration'),
+    'calibrated',
+  );
+  assert.match(mount.querySelector('.abk-calibration').textContent, /calibrated — FPR 4.9%/);
+});
+
+test('Auto after a just-armed knob edit is not aborted by the stale debounce timer', async () => {
+  // F2 regression: a knob edit arms the 130ms debounce; clicking Auto within
+  // that window must flush the pending recompute so the stale timer cannot fire
+  // mid-validate and abort the in-flight /validate (which would drop the re-seed
+  // + chip-green). The fake /validate resolves AFTER the debounce and honors
+  // abort, so a regressed pokeValidate leaves the chip uncalibrated.
+  const calls = [];
+  let validated = false;
+  const impl = (url, init) => {
+    const body = JSON.parse(init.body);
+    calls.push({ url, body });
+    if (url.includes('/validate')) {
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          validated = true; // only a COMPLETED validate greens the rows
+          resolve({
+            ok: true,
+            status: 200,
+            json: () => Promise.resolve(makeValidateReply(body.request_id)),
+            text: () => Promise.resolve(''),
+          });
+        }, 250);
+        if (init.signal) {
+          init.signal.addEventListener('abort', () => {
+            clearTimeout(timer);
+            const err = new Error('aborted');
+            err.name = 'AbortError';
+            reject(err);
+          });
+        }
+      });
+    }
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve(
+          makeReply(body.request_id, {
+            method: String(body.method.name),
+            calibration: validated
+              ? makeCalibration({
+                  state: 'calibrated',
+                  fpr: 0.049,
+                  calibrated_alpha: 0.05,
+                  over_budget: false,
+                  runs: 1,
+                  headline: 'calibrated — FPR 4.9% vs nominal α=0.05',
+                })
+              : makeCalibration(),
+          }),
+        ),
+      text: () => Promise.resolve(''),
+    });
+  };
+  const { mount } = renderInJsdom(makeExplorePayload(liveUrls()), { fetchImpl: impl });
+  await sleep(30);
+  // edit a knob (arms the 130ms debounce), then click Auto within that window
+  [...mount.querySelectorAll('.abk-seg-btn')].find((b) => b.textContent === 'absolute').click();
+  [...mount.querySelectorAll('.abk-mode-btn')].find((b) => b.textContent === 'Auto').click();
+  await sleep(500); // past both the debounce (130ms) and the validate delay (250ms)
+  assert.ok(calls.some((c) => c.url.includes('/validate')), '/validate dispatched');
+  assert.equal(
+    mount.querySelector('.abk-calibration').getAttribute('data-abk-calibration'),
+    'calibrated',
+    'the validate reply was adopted (not aborted) → chip greened in place',
+  );
+  assert.match(mount.querySelector('.abk-calibration').textContent, /calibrated — FPR 4.9%/);
+});
+
+test('a stale (409) Auto validate yields quietly without greening the chip', async () => {
+  const { impl, calls } = fakeFetch((url, body) => {
+    if (url.includes('/validate')) return { status: 409, json: { stale: true, request_id: body.request_id } };
+    return { status: 200, json: makeReply(body.request_id) };
+  });
+  const { mount } = renderInJsdom(makeExplorePayload(liveUrls()), { fetchImpl: impl });
+  await sleep(30);
+  [...mount.querySelectorAll('.abk-mode-btn')].find((b) => b.textContent === 'Auto').click();
+  await sleep(40);
+  assert.ok(calls.some((c) => c.url.includes('/validate')), '/validate attempted');
+  assert.match(mount.querySelector('.abk-stat').textContent, /another explore tab is ahead/);
+  assert.equal(
+    mount.querySelector('.abk-calibration').getAttribute('data-abk-calibration'),
+    'uncalibrated',
+    'a dropped validate never greens the chip',
+  );
 });

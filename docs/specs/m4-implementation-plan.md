@@ -48,9 +48,9 @@ commit per WP.
 
 ## 0. Progress & resume note (2026-07-05)
 
-**WP1–WP5 done** (WP1–WP4 merged in PR #6; WP5 on `claude/m4-wp5-report`); **WP6–WP7
-remain** (M4 is NOT yet complete — do not flip CLAUDE.md / rules / ROADMAP to "M4
-shipped" until WP7).
+**WP1–WP6 done** (WP1–WP4 merged in PR #6; WP5 merged in PR #7; WP6 on
+`claude/m4-wp6-auto`); **WP7 remains** (M4 is NOT yet complete — do not flip
+CLAUDE.md / rules / ROADMAP to "M4 shipped" until WP7).
 
 | WP | Status | Lands in |
 |---|---|---|
@@ -59,8 +59,8 @@ shipped" until WP7).
 | WP3 runner + persist | ✅ done | `abkit/validate/{runner,result,run_id,persistence}.py`; `tests/validate/test_{runner,persistence}.py` |
 | WP4 CLI + lock | ✅ done | `abkit/cli/commands/validate.py`, `abkit/cli/main.py` (registration), `abkit/cli/commands/unlock.py` (validate-lock); `tests/cli/test_validate_command.py` |
 | WP5 report+payload+budget | ✅ done | `abkit/reporting/calibration.py` (block builder) + `builder.py` (fill); `validate.py` `_emit_report` reuses the report bundle (standalone `validate/report.py` **retired**, D10); `scoring.py`+`runner.py` (the `peeking_curve`); `metric_config.py`+`recompute.py` (`aa_fpr_budget`, D12); `web/src/{shared/payload.ts,report/report.ts}` + rebuilt `report.js`; tests: `tests/reporting/test_{calibration,builder}.py`, `tests/config/test_metric_config.py`, `tests/validate/test_scoring.py`, `tests/tuning/test_recompute.py`, `web/test/{fixtures,smoke}.mjs` |
-| WP6 Auto mode | ⏳ next | see WP6 |
-| WP7 e2e + review + docs | ⏳ pending | see WP7 |
+| WP6 Auto mode | ✅ done | `abkit/tuning/server.py` (`_handle_validate`, `_run_validate`, `AUTO_ITERATIONS`/`AUTO_GRID_CAP`), `web/src/explore/{explore.ts (pokeValidate/adoptValidate),payload.ts (ValidateReply)}` + rebuilt `explore.js`; tests: `tests/tuning/test_server.py::TestAutoValidate`, `web/test/{fixtures-explore,smoke-explore}.mjs` |
+| WP7 e2e + review + docs | ⏳ next | see WP7 |
 
 **How `abk validate` works today** (the vertical slice): `abk validate --select <exp>
 [--method <m>] [--metric <m>] [--iterations N] [--inject-effect <pct>]
@@ -672,3 +672,38 @@ The verified-clean lenses confirmed: the `peeking_curve` endpoint equals the rep
 `payload.ts` ↔ `report.ts` field contract is in lockstep (fractions throughout, ×100 only
 renderer-side); the persisted `budget`-in-`details` fallback is correct; `_emit_report`
 reuses the bundle without regression; no dangling `render_validate_report` reference.
+
+### WP6 review (2026-07-05) — 4 lenses (server correctness/concurrency, client
+re-seed/stale-drop, Python↔TS contract lockstep, integration/invariants+tests), each
+finding adversarially verified (refute-by-default). **2 confirmed of the raw set; both
+fixed in the WP6 commit with regression tests; contract + integration lenses clean.**
+
+- **F1 (medium, fixed) — the Auto validate manager leaked on an acquire-raises path.**
+  `_run_validate` opened `manager = factory()` *outside* the try/finally, so if
+  `tables.acquire_lock()` **raised** (a transient DB error, or `_ab_tasks` absent before
+  `ensure_tables()`) rather than returning `False`, `manager.close()` never ran — a leaked
+  warehouse connection in the long-lived explore server (the inline close only fired on the
+  `False` branch). Fix: the manager's whole lifetime is now under an outer `try/finally:
+  manager.close()` (the `/reload` precedent); the lock-held `False` path raises *inside* the
+  outer try so it too closes without touching `release_lock`. Regression:
+  `test_validate_closes_the_manager_when_acquire_lock_raises` (monkeypatched raising
+  `acquire_lock` + a close spy).
+- **F2 (medium, fixed) — a stale debounce timer could abort the in-flight Auto validate.**
+  `pokeValidate()` did not flush a pending debounced `/recompute`, so a knob edit ~130 ms
+  before the Auto click left a timer that fired mid-validate, called `controller.abort()`
+  (which held the *validate* AbortController), and dropped the reply — the re-seed and the
+  chip-green never happened, leaving the D3 chip uncalibrated despite the click. Fix:
+  `pokeValidate` now clears `debounceTimer` first (the `switchMetric`/`runRecompute`
+  discipline); the superseded edit is intentional (adoptValidate re-seeds + drives its own
+  recompute, R18). Regression: `web/test/smoke-explore.mjs` "Auto after a just-armed knob
+  edit is not aborted by the stale debounce timer" (a delayed, abort-honoring fake
+  `/validate` — proven to fail without the fix).
+
+The verified-clean lenses confirmed: the reply dict ↔ `payload.ts`
+`ValidateReply`/`ValidateRecommendation` ↔ `explore.ts` `adoptValidate` field/type/units
+contract is in lockstep (alpha a fraction, `calibration` the full 9-field
+`CalibrationStatus`, `method.params` a dict); the effective alpha the rows are written at
+matches the alpha the chip looks up (both through `comparison_alpha ∘ effective_alphas`, so
+`find_calibration` reads `calibrated`, not `alpha_mismatch`); R17 (in-session flip), R18
+(re-seed + green), and R19 (Apply gate unchanged) hold, each with a test that proves the
+claim rather than passing vacuously.

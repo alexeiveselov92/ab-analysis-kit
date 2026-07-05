@@ -203,6 +203,31 @@ export interface StaleReply {
 }
 
 // ----------------------------------------------------------------------------
+// /validate reply (Auto mode — server _run_validate, WP6)
+// ----------------------------------------------------------------------------
+
+/** One metric's Auto-mode recommendation: the knob state to re-seed the rail
+ * with + the REFRESHED calibration (read off the just-mutated session.aa_rows
+ * so the chip greens without an explore restart, D11). Keep in lockstep with
+ * abkit/tuning/server.py `_run_validate`. */
+export interface ValidateRecommendation {
+  method: { name: string; params: Record<string, unknown> };
+  /** the effective per-comparison alpha the FPR was measured at */
+  alpha: number;
+  verdict: string;
+  calibration: CalibrationStatus;
+}
+
+/** The POST /validate reply (Auto mode): the recommended knob state + refreshed
+ * calibration per metric, plus the decision log. */
+export interface ValidateReply {
+  /** echoed; null if none was sent */
+  request_id: number | null;
+  recommended: Record<string, ValidateRecommendation>;
+  log: string[];
+}
+
+// ----------------------------------------------------------------------------
 // /apply (server._handle_apply — request and 200 reply)
 // ----------------------------------------------------------------------------
 
