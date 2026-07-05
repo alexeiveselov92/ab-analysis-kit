@@ -1,10 +1,10 @@
 # abkit architecture — as built
 
 > The contributor/assistant condensation of the system **as it exists in code**.
-> Reflects: **M1 + M2 + M3 shipped** (`__version__ = 0.0.1.dev0`; M3's WP9
+> Reflects: **M1 + M2 + M3 + M4 shipped** (`__version__ = 0.0.1.dev0`; M3's WP9
 > testcontainers hardening deferred to a Docker-equipped environment).
 > Design contracts for what is being *built next* live in [docs/specs/](../../docs/specs/)
-> (canonical for M3+ work); this file must never claim unbuilt code exists.
+> (canonical for M5+ work); this file must never claim unbuilt code exists.
 > Keep in sync with `docs/` on every milestone (and with the `init-claude`
 > payload once it exists — M6).
 
@@ -45,11 +45,17 @@ abkit/
   pipeline/              # ✅ M2: driver (lock→load→SRM→plan→compute→persist),
                          #   analyze, enrich, _types; worker pool
   reporting/             # ✅ M3: builder (the §5.3 terse payload + verdicts),
-    assets/report.js     #   html_report (hardened bake), the committed bundle
+    assets/report.js     #   html_report (hardened bake), the committed bundle;
+                         #   ✅ M4: calibration.py (the payload calibration block)
   tuning/                # ✅ M3: session (bounded Tier-S cache), recompute
     assets/explore.js    #   (Tiers E/α/S/R + D3 calibration), config_writer
-                         #   (Apply seam + .history + orphans), server (WP6),
-                         #   payload (explore block), html (page bake)
+                         #   (Apply seam + .history + orphans), server (WP6:
+                         #   ✅ M4 POST /validate Auto mode), payload, html
+  validate/              # ✅ M4: the pure A/A engine (panel/resample/inject/
+                         #   scoring), load (placebo panel + denser-early grid
+                         #   subsample), runner (cell enum + effective alpha +
+                         #   select + verdicts), persistence/result/run_id
+                         #   (per-cell _ab_aa_runs rows, D4), _types
   stats/                 # ✅ M1: the pure numpy core (details below)
   utils/                 # stdlib-only: json_utils (canonical hash path),
                          #   datetime_utils (naive-UTC), env_interpolation
@@ -63,13 +69,16 @@ tests/
   core/ config/ database/ loaders/ pipeline/ cli/ e2e/   # M2
   reporting/ tuning/     # M3 (+ cli/test_explore_command.py, the report/
                          #   explore e2e gates in tests/e2e/)
+  validate/              # M4 (+ cli/test_validate_command.py, the validate-
+                         #   matrix exit-gate e2e in tests/e2e/)
   _helpers/fake_db.py    # in-memory manager with SQL-backend semantics
-  _helpers/synthetic_ab.py  # SyntheticWarehouse (3 metric kinds, shuffle mode)
+  _helpers/synthetic_ab.py  # SyntheticWarehouse (3 metric kinds, shuffle mode,
+                         #   seed_null_events — the exact-null A/A fixture)
 ```
 
-Not yet present (M4+): `validate/` (A/A engine), `stats/sequential/`,
-`compute/incremental_backend`. M3's WP9 (PG/MySQL testcontainers + the
-two-process lock race) is deferred to a Docker-equipped environment.
+Not yet present (M5+): `stats/sequential/`, `compute/incremental_backend`.
+M3's WP9 (PG/MySQL testcontainers + the two-process lock race) is deferred to a
+Docker-equipped environment.
 
 ### M2 pipeline facts an assistant must know
 
@@ -106,8 +115,9 @@ two-process lock race) is deferred to a Docker-equipped environment.
   `tuning/payload.py`) — keep `explore.ts#effectiveAlpha` and that block in
   lockstep (pinned by `tests/tuning/test_explore_bundle.py`).
 - **The D3 calibration gate** keys by `(metric, method_config_id, EFFECTIVE
-  alpha)`; with `_ab_aa_runs` empty (until M4) every Apply takes the
-  `confirm_uncalibrated` path — server-enforced, client-mirrored.
+  alpha)`; on an empty `_ab_aa_runs` every Apply takes the `confirm_uncalibrated`
+  path — server-enforced, client-mirrored. `abk validate` / Auto mode (M4)
+  populate the rows that flip the chip to `calibrated`.
 - **Committed bundles are build artifacts:** edit `web/src/**`, run
   `cd web && npm run build`, commit the changed `abkit/*/assets/*.js` in the
   same PR (CI diffs freshness, greps the §4 marker classes
@@ -117,6 +127,43 @@ two-process lock race) is deferred to a Docker-equipped environment.
 - **request_id stale-drop:** ids are a single global on the server; the client
   seeds from `Date.now()` (and re-seeds after a two-tab 409) — never restart
   the counter at 0/1.
+
+### M4 validate facts an assistant must know
+
+- **`abkit/validate/` is I/O-pure like the runner:** the engine (`panel/resample/
+  inject/scoring`) touches only `abkit.stats`; `load.py` reads the warehouse through
+  the backend loaders and **never writes** (a placebo split is in-memory only — a
+  persisted shuffle would clobber the real `_ab_exposures`); the CLI takes the lock
+  and persists.
+- **Placebo source = the experiment's own pooled cohort, label-permuted (D1)** over
+  the real one-enumeration grid (`generate_grid` — same as driver/explore). Permuting
+  unit→arm labels destroys any true effect ⇒ an exact null. Seeds are
+  `derive_seed("aa", experiment, metric, method_config_id, iteration)` — byte-repro,
+  no wall-clock (D13); FPR numbers are a deterministic, golden-style invariant.
+- **Peeking FPR is the optional-stopping hazard, NOT the readout rule (D3):** the
+  share of placebos whose CI **excludes zero at any look** (readout `_build_sig_map`
+  significance, pre-horizon refusal OFF, horizon included ⇒ peeking ≥ single-look).
+  The stabilized-with-persistence readout rule is the *defense* and is deliberately
+  **not** what this column measures; `pipeline/readout.py` is untouched. The
+  single-look FPR (horizon only) is reported beside it.
+- **One row per cell at the EFFECTIVE alpha (D4/D16):** `run_id =
+  "{run_stamp}:{cell_hash}"` (no `ReplacingMergeTree` collapse); the persisted `alpha`
+  is `comparison_alpha ∘ effective_alphas` (the SAME resolver the chip/Apply use) — a
+  re-derivation would fail `find_calibration`'s `isclose` and read `alpha_mismatch`.
+  `--scoring` sets only the Recommended-row objective (the `mode` column); FPR always
+  computes so the chip can light. Two-tier: main vs secondary metrics land at
+  different alphas.
+- **The matrix report reuses the report bundle (D10) — no third JS bundle:** the
+  payload `calibration` block (`reporting/calibration.py`, guarded by
+  `aa_runs_table_exists()`) fills the reserved slot; `report.ts#buildCalibrationSection`
+  renders it; band colors reuse the `--abk-st-*` status tokens (no new hex). Rebuild +
+  commit `report.js` on any `web/src/report/**` edit (CI freshness gate — pathspec
+  `:(glob)abkit/*/assets/**`).
+- **Auto mode mutates `session.aa_rows` in place (D11):** `POST /validate`
+  (`tuning/server.py`, own manager under an OUTER try/finally, `'validate'` lock,
+  request_id stale-drop, reduced N) greens the live chip without an explore restart;
+  the Apply gate is unchanged. Bootstrap A/A stayed an opt-in follow-up (D7);
+  sidedness/winsorization are arbitrated-not-implemented (D14).
 
 ## The stats core (`abkit.stats`) — the implemented system
 
@@ -187,17 +234,22 @@ identity param orphans the prior results series.
 - Stratification uses Hamilton apportionment; Poisson bootstrap is mean-only
   (guarded); zero denominators → NaN + warning (H5), never an exception.
 
-## M4+ targets (being built next — specs are canonical)
+## M5+ targets (being built next — specs are canonical)
 
-The A/A matrix / `abk validate` (M4), sequential (M5), init-claude + docs
-site (M6). Read before coding:
+Sequential analysis + the planner (M5), init-claude + docs site (M6). M5 also
+completes the two A/A columns deferred from M4: the `sequential.enabled`
+side-by-side peeking FPR (D8) and the full composed-FDR/FWER sweep over the
+multi-metric family (D9). Read before coding:
 
-- The A/A FPR matrix → [aa-false-positive-matrix.md](../../docs/specs/aa-false-positive-matrix.md)
+- Sequential + planner → [cumulative-intervals.md §6](../../docs/specs/cumulative-intervals.md),
+  [statistics-changes.md](../../docs/specs/statistics-changes.md)
+- The A/A matrix contracts (the M4 as-built + the M5 deferrals) → [aa-false-positive-matrix.md](../../docs/specs/aa-false-positive-matrix.md)
 - The blocking must-fix checklist → [quorum-review.md](../../docs/specs/quorum-review.md)
 - The cockpit & readout as-built contracts → [data-contract-and-reporting.md §5](../../docs/specs/data-contract-and-reporting.md),
   [cli-and-dx.md §2](../../docs/specs/cli-and-dx.md)
 - The implementation records → [m2-implementation-plan.md](../../docs/specs/m2-implementation-plan.md),
-  [m3-implementation-plan.md](../../docs/specs/m3-implementation-plan.md)
+  [m3-implementation-plan.md](../../docs/specs/m3-implementation-plan.md),
+  [m4-implementation-plan.md](../../docs/specs/m4-implementation-plan.md)
 
 ## Invariants (do not violate)
 

@@ -65,8 +65,9 @@ Any deviation from the captured baseline (`docs/specs/statistics-baseline.md`):
 2. Record the deviation in `docs/specs/statistics-changes.md` (what, why,
    expected numeric impact).
 3. Entry in `CHANGELOG.md`.
-4. A/A validation (once `abk validate` exists — M4; until then, the golden and
-   calibration-smoke tests are the gate).
+4. A/A validation through `abk validate` (shipped in M4): run the matrix on the
+   affected method + metric and confirm FPR ≈ α / power holds. The golden tests
+   still pin the baseline in parallel.
 
 Golden tests pin the **baseline**, not your improvement: a deliberate deviation
 gets a *new* test; the baseline reproduction stays intact behind its original

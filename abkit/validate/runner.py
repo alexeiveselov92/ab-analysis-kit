@@ -18,7 +18,8 @@ from abkit.config.method_config import MethodConfig
 from abkit.config.metric_config import MetricConfig
 from abkit.config.project_config import ProjectConfig
 from abkit.pipeline.analyze import comparison_alpha, effective_alphas
-from abkit.stats.exceptions import QuarantinedMethodError
+from abkit.stats.exceptions import StatsError
+from abkit.stats.registry import get_method_class
 from abkit.validate._types import DecisionEntry, ValidateError
 from abkit.validate.load import DEFAULT_GRID_CAP, load_placebo_panel
 from abkit.validate.panel import PlaceboPanel
@@ -71,19 +72,67 @@ def _share_a(experiment: ExperimentConfig) -> float:
     return 0.5
 
 
+def _method_fits(
+    method: MethodConfig, metric: MetricConfig | None, log: list[DecisionEntry] | None
+) -> bool:
+    """D6: an extra ``--method`` must match the metric's ``input_kind``, not be paired,
+    and not be quarantined/unknown — else it can never score in A/A (placebo arms are
+    unpaired). Skip-and-log rather than enqueue a doomed cell that persists as a
+    confusing ``status='failed'`` row (m4 exit-gate review). Mirrors the knob-surface
+    filter (recompute.py ``knob_surface``)."""
+    if metric is None:
+        return True  # a missing metric is reported downstream by the runner
+    try:
+        method_cls = get_method_class(method.name)
+    except StatsError as exc:  # quarantined or unknown
+        if log is not None:
+            log.append(DecisionEntry("enumerate", f"--method {method.name!r} skipped: {exc}"))
+        return False
+    if method_cls.input_kind != metric.type or method_cls.is_paired:
+        if log is not None:
+            reason = "paired" if method_cls.is_paired else f"needs {method_cls.input_kind}"
+            log.append(
+                DecisionEntry(
+                    "enumerate",
+                    f"--method {method.name!r} skipped for {metric.name!r} "
+                    f"({metric.type} metric): {reason}",
+                )
+            )
+        return False
+    return True
+
+
 def enumerate_cells(
     experiment: ExperimentConfig,
     project: ProjectConfig,
+    metrics: dict[str, MetricConfig] | None = None,
     extra_methods: list[MethodConfig] | None = None,
+    log: list[DecisionEntry] | None = None,
 ) -> list[_CellSpec]:
-    """One cell per (declared comparison) + optional extra methods on each metric (D6)."""
+    """One cell per declared comparison + compatible extra methods on each metric (D6).
+
+    Extra ``--method`` methods are filtered per metric (``_method_fits``) and de-duped
+    against cells already enqueued for that metric (same ``method_config_id``), so a
+    ``--method`` that repeats a declared method — or can't run on the metric — never
+    produces a duplicate or a doomed cell."""
     alphas = effective_alphas(experiment, project)
     cells: list[_CellSpec] = []
+    seen: set[tuple[str, str]] = set()
+
+    def _add(metric_name: str, comparison: ComparisonConfig, method: MethodConfig, alpha: float):
+        key = (metric_name, method.method_config_id)
+        if key in seen:
+            return
+        seen.add(key)
+        cells.append(_CellSpec(metric_name, comparison, method, alpha))
+
     for comparison in experiment.comparisons:
         alpha = comparison_alpha(comparison, alphas)
-        cells.append(_CellSpec(comparison.metric, comparison, comparison.method, alpha))
+        _add(comparison.metric, comparison, comparison.method, alpha)
+        metric = metrics.get(comparison.metric) if metrics else None
         for method in extra_methods or []:
-            cells.append(_CellSpec(comparison.metric, comparison, method, alpha))
+            if _method_fits(method, metric, log):
+                _add(comparison.metric, comparison, method, alpha)
     return cells
 
 
@@ -148,7 +197,7 @@ def run_validation(
     one load. ``metric_filter`` restricts scoring to a single metric (``--metric``).
     """
     log: list[DecisionEntry] = []
-    specs = enumerate_cells(experiment, project, extra_methods)
+    specs = enumerate_cells(experiment, project, metrics, extra_methods, log)
     if metric_filter is not None:
         specs = [s for s in specs if s.metric == metric_filter]
     share_a = _share_a(experiment)
@@ -262,7 +311,10 @@ def _score_one(
             inject_effect=settings.inject_effect,
             target_power=settings.target_power,
         )
-    except (ValidateError, QuarantinedMethodError, KeyError, ValueError) as exc:
+    except (ValidateError, StatsError, KeyError, ValueError) as exc:
+        # StatsError covers QuarantinedMethodError AND the bootstrap-family / degenerate
+        # SampleValidationError — a single unscoreable cell fails only ITS row (R37),
+        # never aborting the whole experiment's matrix (m4 exit-gate review, F1).
         log.append(DecisionEntry("score", f"{spec.metric}/{spec.method.name}: failed — {exc}"))
         return CellResult(
             **base,

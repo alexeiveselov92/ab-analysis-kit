@@ -216,10 +216,18 @@ function buildCalibrationChip(payload: ReportPayload): HTMLElement {
     chip.setAttribute('data-abk-calibration', 'empty');
     return chip;
   }
+  // A non-null block with no measured FPR means every cell failed — the A/A matrix
+  // ran but nothing is calibrated, so it must NOT read as the green "calibrated"
+  // success state (m4 exit-gate review). Only a finite FPR earns the green chip.
+  if (typeof cal.fpr !== 'number') {
+    chip.textContent = cal.headline || 'A/A ran — no method measurable';
+    chip.setAttribute('data-abk-calibration', 'failed');
+    return chip;
+  }
   const headline =
     (typeof cal.headline === 'string' && cal.headline) ||
-    (typeof cal.fpr === 'number' ? `calibrated / FPR=${(cal.fpr * 100).toFixed(1)}%` : null);
-  chip.textContent = headline || 'calibration available';
+    `calibrated / FPR=${(cal.fpr * 100).toFixed(1)}%`;
+  chip.textContent = headline;
   chip.classList.add('abk-calibrated');
   chip.setAttribute('data-abk-calibration', 'present');
   return chip;

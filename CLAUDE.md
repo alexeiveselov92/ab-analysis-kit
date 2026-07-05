@@ -22,7 +22,7 @@ The as-built condensation for contributors/assistants (detectkit-style):
 Design contracts for what is being *built next* stay in [docs/specs/](docs/specs/)
 (canonical for M2+ work — table below). Keep rules ↔ docs in sync per milestone.
 
-## Status: M1 + M2 + M3 shipped; next up M4
+## Status: M1 + M2 + M3 + M4 shipped; next up M5
 
 **Done — M1, the pure statistical core** (`abkit.stats`, importable standalone;
 see [ROADMAP.md](ROADMAP.md) for the deferred-cleanup list): data model with the
@@ -57,14 +57,34 @@ bundles and CI freshness/marker/token gates; 1250+ tests incl. the report and
 explore-session e2e gates. Deferred: WP9 testcontainers hardening (needs
 Docker), D9 Segment mode, D12 sidedness/winsorization (M4 change control).
 
+**Done — M4, `abk validate` — the A/A false-positive matrix** (see
+[ROADMAP.md](ROADMAP.md) M4 and
+[m4-implementation-plan.md](docs/specs/m4-implementation-plan.md) for the
+record, incl. the §5 adversarial-review log): the pure `abkit/validate/` engine
+(placebo label-permutation splits over the experiment's own pooled cohort;
+single-look + honest cumulative-**peeking** FPR — the optional-stopping hazard,
+not the readout's stabilized defense; power/achieved-MDE/coverage/exaggeration),
+`_ab_aa_runs` persistence (per-cell `run_id`, effective two-tier alphas), the
+recommendation + plain-language verdicts + budget-band matrix UX, the `abk
+validate` CLI (own out-of-band lock, non-zero exit, `--report` reusing the
+committed report bundle), the `metric.aa_fpr_budget` override, and **Auto mode**
+(server-side `POST /validate` greens the live explore chip in place). The
+exit-gate e2e proves the three classic failures in Binomial bands
+([tests/e2e/test_validate_matrix.py]); zero method-math changes (no
+`ALGORITHM_VERSION` bump). Deferred to M5: the sequential side-by-side column
+(D8) and the full composed-FDR sweep (D9); sidedness/winsorization stay a named
+future stats-core change the harness arbitrates (D14).
+
 **Decided** (recorded in the specs + CHANGELOG): sub-day cumulative intervals
 ([cumulative-intervals.md §6](docs/specs/cumulative-intervals.md)); CUPED
 covariate = fixed whole-day lookback implemented as the pre-period second
 render ([declarative-config.md §3](docs/specs/declarative-config.md)); Jinja
 built-ins win over context; CLI exits non-zero on failure.
 
-**Next — M4** (`abk validate` — the A/A FPR matrix). The source of truth is
-[docs/specs/](docs/specs/). Read the relevant spec before writing code:
+**Next — M5** (sequential analysis + the planner + composed corrections: `stats/
+sequential/` mSPRT/alpha-spending, `abk plan`, the A/A matrix's sequential
+side-by-side column + the full composed-FDR sweep deferred from M4). The source of
+truth is [docs/specs/](docs/specs/). Read the relevant spec before writing code:
 
 | If you're working on… | Read |
 |---|---|
