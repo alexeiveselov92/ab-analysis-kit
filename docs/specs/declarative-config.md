@@ -215,6 +215,10 @@ Tested, fail-fast, two-level:
 - `is_main_metric` / `is_guardrail` not both true; at least one main metric;
 - assignment SQL selects `unit_key`, `variant`, `exposure_ts`;
 - `expected_split` variants ⊆ `assignment.variants`;
+- **metric `aa_fpr_budget`** (optional; M4/D12) — a fraction in `(0, 1]`; the
+  per-metric A/A false-positive budget the validate matrix colours this metric
+  against, overriding `project.statistics.aa_fpr_budget` (resolution:
+  metric → project → `α × 1.5`, `resolve_fpr_budget`);
 - **cadence & looks** (cumulative-intervals.md §6): cadence parses to whole
   seconds ≥ 1s; schedule segments strictly coarsening with increasing `until`;
   planned looks > `max_looks` (project default 5000) → **error** (the only hard

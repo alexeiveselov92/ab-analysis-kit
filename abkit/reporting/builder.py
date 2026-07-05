@@ -41,6 +41,7 @@ from abkit.config.project_config import ProjectConfig
 from abkit.core.period_planner import generate_grid
 from abkit.database.internal_tables import InternalTablesManager
 from abkit.pipeline.readout import ExperimentReadout, PairVerdict, evaluate, srm_summary
+from abkit.reporting.calibration import build_calibration_block
 from abkit.utils.datetime_utils import to_naive_utc
 from abkit.utils.json_utils import json_loads
 
@@ -387,6 +388,15 @@ def build_report_payload(
         for comparison in experiment.comparisons
     ]
 
+    # calibration block (M4): the latest `abk validate` matrix for this experiment,
+    # read-only (never creates schema — the `aa_runs_table_exists` guard). Independent
+    # of `_ab_results` (a validate-only project still shows its matrix). `null` until
+    # the first validate run, so the chip reads the M3 "uncalibrated" empty state
+    # (data-contract §5.3; the M4 shape lands without a payload v-bump).
+    calibration = None
+    if tables.aa_runs_table_exists():
+        calibration = build_calibration_block(tables.get_aa_runs(experiment.name))
+
     warnings = list(readout.warnings)
     for metric_name, dropped in stale_by_metric.items():
         warnings.append(
@@ -445,9 +455,10 @@ def build_report_payload(
                 for variant, split in experiment.assignment.expected_split.items()
             },
         },
-        # null until M4; the M4 shape (fpr, peeking_fpr, headline, matrix_rows,
-        # report_link) is documented in §5.3 so M4 fills it without a v-bump
-        "calibration": None,
+        # the latest A/A validate matrix (M4); null until first `abk validate`.
+        # The M4 shape (fpr, peeking_fpr, headline, matrix_rows, report_link) fills
+        # in without a payload v-bump (§5.3; every field renderer-side optional).
+        "calibration": calibration,
         "verdicts": [_verdict_to_payload(v) for v in readout.verdicts],
         "metrics": metrics,
         "look": {"n": len(informative_cutoffs), "planned": len(grid)},

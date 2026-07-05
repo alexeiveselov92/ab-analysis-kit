@@ -613,6 +613,29 @@ class TestCalibration:
         )
         assert resolve_fpr_budget(project, 0.05) == 0.06
 
+    def test_budget_resolver_metric_override_wins(self):
+        """The metric arm (D12): metric.aa_fpr_budget beats project + the α rule."""
+        from abkit.config import MetricConfig
+
+        metric = MetricConfig(
+            name="arpu",
+            type="sample",
+            columns={"variant": "g", "value": "v"},
+            query="SELECT 1",
+            aa_fpr_budget=0.09,
+        )
+        # metric override beats the project default and the α×1.5 fallback
+        project = ProjectConfig.model_validate(
+            {"name": "p", "default_profile": "dev", "statistics": {"aa_fpr_budget": 0.06}}
+        )
+        assert resolve_fpr_budget(project, 0.05, metric) == 0.09
+        assert resolve_fpr_budget(PROJECT, 0.05, metric) == 0.09
+        # a metric with no override falls through to the project/α rule
+        plain = MetricConfig(
+            name="ctr", type="sample", columns={"variant": "g", "value": "v"}, query="SELECT 1"
+        )
+        assert resolve_fpr_budget(PROJECT, 0.05, plain) == pytest.approx(0.075)
+
     def test_engine_keys_the_chip_by_the_live_knob_state(self, warehouse, tables):
         experiment = make_experiment("exp_chip", "arpu", {"name": "t-test", "params": {}})
         run_pipeline(warehouse, tables, experiment)

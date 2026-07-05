@@ -80,6 +80,22 @@ number change).
     three-comparison fixture (`0.05 → 0.025`), not a structural equality.
 
 ### Added
+- **M4 WP5 — the A/A calibration matrix report + payload block + metric budget**
+  (per [`docs/specs/m4-implementation-plan.md`](docs/specs/m4-implementation-plan.md)
+  WP5/D10/D12): `abk validate --report` now bakes a self-contained matrix page
+  by **reusing the committed report bundle** (no third JS bundle) — the report/
+  explore payload's reserved `calibration` block is filled from the latest
+  `_ab_aa_runs` invocation (`abkit/reporting/calibration.py`), so the offline
+  readout and the live explore chip both surface the *"nominal α X%, real peeking
+  FPR Y%"* headline, the per-method matrix (FPR coloured against the
+  `aa_fpr_budget` band, the **Recommended** row + rationale, plain-language
+  verdicts), and the recommended cell's cumulative peeking-FPR-vs-looks curve.
+  The scorer now emits that monotone `peeking_curve` (one point per grid look,
+  ending at the reported peeking FPR — the "peeking is the product" visual).
+  Adds `MetricConfig.aa_fpr_budget` (a fraction in `(0, 1]`) completing the
+  `resolve_fpr_budget` chain (metric → project → `α × 1.5`). No payload version
+  bump; no statistical-number change (goldens untouched). The standalone WP4
+  matrix template is retired in favour of the shared bundle.
 - **M3 WP7 — the explore cockpit client** (per
   [`docs/specs/m3-implementation-plan.md`](docs/specs/m3-implementation-plan.md)
   WP7; data-contract §5.1 as amended by D9/D12): the browser half of

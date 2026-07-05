@@ -59,6 +59,11 @@ class CellScore:
     #: Cumulative-peeking FPR: share of null iterations whose CI excludes zero at ANY
     #: look across the grid (optional stopping — the peeking hazard, aa-fpr §3 / D3).
     peeking_fpr: float | None
+    #: The peeking curve — one ``(elapsed_days, cumulative_fpr)`` point per grid look,
+    #: cumulative_fpr = share of iterations that have first-crossed significance by that
+    #: look (monotone non-decreasing; the final look equals ``peeking_fpr``). Empty when
+    #: no iteration was scorable. THIS is the "nominal α vs real peeking FPR" story (R10).
+    peeking_curve: tuple[tuple[float, float], ...]
     #: Power at the horizon under the injected effect, or None when no injection.
     power: float | None
     #: CI coverage of the injected truth at the horizon, or None when no injection.
@@ -160,13 +165,16 @@ def score_cell(
     exagg_values: list[float] = []
     mde_values: list[float] = []
     clamp_warned = False
+    # per-grid-look tally of iterations whose FIRST significant crossing lands at that
+    # look — cumulative-summed into the peeking curve after the loop (D3).
+    first_cross_at_look = [0] * len(panel.cutoffs)
 
     for i in range(iterations):
         seed = derive_seed(*seed_parts, i)
         mask = placebo_mask(panel.n_units, share_a, seed)
 
         # ── Null pass over the grid ──────────────────────────────────────────
-        sig_stream: list[tuple[float, tuple[bool, int], float]] = []  # (elapsed, sig, effect)
+        sig_stream: list[tuple[int, tuple[bool, int], float]] = []  # (look_idx, sig, effect)
         horizon_control: ArmStats | None = None
         horizon_sig: tuple[bool, int] | None = None
 
@@ -188,7 +196,7 @@ def score_cell(
                 if k == horizon_pos:
                     degenerate_horizon += 1
                 continue
-            sig_stream.append((cut.elapsed_days, sig, result.effect))
+            sig_stream.append((k, sig, result.effect))
             if k == horizon_pos:
                 horizon_control = arm_a
                 horizon_sig = sig
@@ -205,10 +213,12 @@ def score_cell(
         # Cumulative-peeking FPR: optional stopping — the first look whose CI excludes
         # zero (a false winner under the A/A null). The horizon look is included, so
         # peeking is monotonically ≥ the single-look FPR.
-        first_call_effect = _first_significant_look(sig_stream)
-        if first_call_effect is not None:
+        first_call = _first_significant_look(sig_stream)
+        if first_call is not None:
+            first_idx, first_effect = first_call
             peek_hits += 1
-            exagg_values.append(abs(first_call_effect))
+            first_cross_at_look[first_idx] += 1
+            exagg_values.append(abs(first_effect))
 
         # ── Injected pass (horizon only — fixed-horizon power/coverage) ──────
         if inject_effect is not None and horizon_control is not None:
@@ -241,6 +251,16 @@ def score_cell(
 
     fpr = single_look_hits / valid_iterations if valid_iterations else None
     peeking_fpr = peek_hits / valid_iterations if valid_iterations else None
+    # cumulative first-crossings per look ÷ valid_iterations — monotone, ending at
+    # peeking_fpr (the horizon look). Empty when nothing was scorable.
+    peeking_curve: tuple[tuple[float, float], ...] = ()
+    if valid_iterations:
+        cumulative = 0
+        curve: list[tuple[float, float]] = []
+        for k, cut in enumerate(panel.cutoffs):
+            cumulative += first_cross_at_look[k]
+            curve.append((float(cut.elapsed_days), cumulative / valid_iterations))
+        peeking_curve = tuple(curve)
     power = power_hits / coverage_n if coverage_n else None
     coverage = coverage_hits / coverage_n if coverage_n else None
     achieved_mde = float(np.mean(mde_values)) if mde_values else None
@@ -264,6 +284,7 @@ def score_cell(
         degenerate_horizon=degenerate_horizon,
         kept_grid_points=panel.kept_grid_points,
         total_grid_points=panel.total_grid_points,
+        peeking_curve=peeking_curve,
         warnings=tuple(warnings),
     )
 
@@ -277,17 +298,18 @@ def _horizon_index(panel: PlaceboPanel) -> int:
 
 
 def _first_significant_look(
-    sig_stream: list[tuple[float, tuple[bool, int], float]],
-) -> float | None:
-    """The effect at the first informative cutoff whose CI excludes zero (D3).
+    sig_stream: list[tuple[int, tuple[bool, int], float]],
+) -> tuple[int, float] | None:
+    """The first informative cutoff whose CI excludes zero (D3).
 
     Optional stopping: the naive peeker stops the first time the chart's CI clears
-    zero, in whichever direction. Returns that cutoff's effect (for the winner's
+    zero, in whichever direction. Returns ``(grid_look_index, effect)`` at that
+    crossing (the index feeds the cumulative peeking curve; the effect the winner's
     curse), or ``None`` if the placebo never crosses significance across the grid.
     """
-    for _elapsed, sig, effect in sig_stream:
+    for look_idx, sig, effect in sig_stream:
         if sig[0]:
-            return effect
+            return (look_idx, effect)
     return None
 
 

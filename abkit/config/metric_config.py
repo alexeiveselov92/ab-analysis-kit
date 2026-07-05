@@ -94,6 +94,13 @@ class MetricConfig(BaseModel):
         description="Inline SQL query",
     )
     query_file: Path | None = Field(default=None, description="Path to SQL file")
+    # A/A false-positive budget the validate matrix colours THIS metric against; overrides
+    # the project default (declarative-config.md §8; resolve_fpr_budget metric arm, D12).
+    aa_fpr_budget: float | None = Field(
+        default=None,
+        description="Per-metric A/A false-positive budget (fraction in (0, 1]); "
+        "overrides project statistics.aa_fpr_budget for this metric",
+    )
 
     @field_validator("name")
     @classmethod
@@ -110,6 +117,14 @@ class MetricConfig(BaseModel):
                 f"Metric name is longer than {MAX_METRIC_NAME_LENGTH} characters "
                 "(the storage key budget)"
             )
+        return v
+
+    @field_validator("aa_fpr_budget")
+    @classmethod
+    def validate_aa_fpr_budget(cls, v: float | None) -> float | None:
+        """A fraction in (0, 1] (mirrors project statistics.aa_fpr_budget)."""
+        if v is not None and not 0.0 < v <= 1.0:
+            raise ValueError(f"aa_fpr_budget must be a fraction in (0, 1], got {v}")
         return v
 
     @field_validator("tags")

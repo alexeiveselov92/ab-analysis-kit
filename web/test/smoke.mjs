@@ -17,7 +17,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { JSDOM } from 'jsdom';
 
-import { makePayload, makePoint } from './fixtures.mjs';
+import { makeCalibration, makePayload, makePoint } from './fixtures.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const BUNDLE = readFileSync(
@@ -168,4 +168,39 @@ test('calibration block tolerates the M4 shape', () => {
   const chip = mount.querySelector('.abk-calibration');
   assert.equal(chip.getAttribute('data-abk-calibration'), 'present');
   assert.match(chip.textContent, /FPR 6\.2%/);
+  // no matrix_rows -> the chip lights but the full matrix section stays absent
+  assert.ok(!mount.querySelector('.abk-calibration-matrix'), 'no matrix without rows');
+});
+
+test('the A/A calibration matrix renders rows, budget colouring, and the recommended cell', () => {
+  const payload = makePayload({ calibration: makeCalibration() });
+  const { mount } = renderInJsdom(payload);
+
+  const section = mount.querySelector('.abk-calibration-matrix');
+  assert.ok(section, 'the matrix section is present');
+  assert.match(section.querySelector('.abk-cal-title').textContent, /A\/A false-positive matrix/);
+  assert.match(section.querySelector('.abk-cal-headline').textContent, /peeking FPR 14\.0%/);
+
+  const rows = section.querySelectorAll('[data-abk-calibration-row]');
+  assert.equal(rows.length, 2, 'one row per scored cell');
+
+  // the recommended cell is marked + badged + sorts first
+  const rec = section.querySelector('[data-abk-calibration-row="recommended"]');
+  assert.ok(rec, 'the recommended row is tagged');
+  assert.ok(rec.classList.contains('abk-cal-rec'));
+  assert.match(rec.querySelector('.abk-cal-badge').textContent, /Recommended/);
+  assert.match(rec.textContent, /highest power among methods with FPR within budget/);
+  assert.match(rec.querySelector('.abk-cal-fpr-ok').textContent, /5\.2%/); // in budget -> green
+
+  // the over-budget cell is coloured critical and shows its subsample note
+  const over = section.querySelector('.abk-cal-fpr-over');
+  assert.ok(over, 'the over-budget FPR cell is flagged');
+  assert.match(over.textContent, /11\.0%/);
+  assert.match(section.textContent, /5\/40 looks scored/);
+  assert.match(section.textContent, /do not use/);
+
+  // the chip mirrors the headline (calibrated, not the empty state)
+  const chip = mount.querySelector('.abk-calibration');
+  assert.equal(chip.getAttribute('data-abk-calibration'), 'present');
+  assert.match(chip.textContent, /peeking FPR 14\.0%/);
 });

@@ -285,6 +285,8 @@ def _score_one(
         "valid_iterations": score.valid_iterations,
         "single_look_fpr": score.fpr,
         "peeking_fpr": score.peeking_fpr,
+        # (elapsed_days, cumulative_fpr) per look — the peeking-vs-looks curve (R10)
+        "peeking_curve": [list(point) for point in score.peeking_curve],
         "warnings": list(score.warnings),
     }
     return CellResult(

@@ -127,14 +127,53 @@ export interface SrmBlock {
 }
 
 /**
+ * One scored A/A matrix cell — the renderer projection of an `_ab_aa_runs` row
+ * (abkit/reporting/calibration.py `_matrix_row`, lockstep). Every field optional/
+ * nullable so a schema addition never breaks an older bundle.
+ */
+export interface CalibrationRow {
+  metric?: string | null;
+  method?: string | null;
+  method_config_id?: string | null;
+  /** single-look (horizon) FPR — the official fixed-horizon rate */
+  fpr?: number | null;
+  single_look_fpr?: number | null;
+  /** cumulative optional-stopping FPR over the grid (the peeking hazard) */
+  peeking_fpr?: number | null;
+  power?: number | null;
+  achieved_mde?: number | null;
+  coverage?: number | null;
+  effect_exaggeration?: number | null;
+  /** nominal per-comparison alpha this cell was scored at */
+  alpha?: number | null;
+  /** the aa_fpr_budget the cell is coloured against */
+  budget?: number | null;
+  over_budget?: boolean;
+  recommended?: boolean;
+  /** why this cell was recommended (in-budget max-power selection, R14) */
+  rationale?: string | null;
+  verdict?: string | null;
+  status?: string | null;
+  iterations?: number | null;
+  injected_effect?: number | null;
+  /** (elapsed_days, cumulative_fpr) per grid look — the peeking-vs-looks curve */
+  peeking_curve?: Array<[number, number]> | null;
+  /** subsample disclosure ("K/total looks scored"), when the grid was downsampled */
+  note?: string | null;
+}
+
+/**
  * M3: always null. The M4 shape lands without a version bump, so the report
- * consumes it tolerantly (every field optional).
+ * consumes it tolerantly (every field optional). `matrix_rows` present ⇒ the
+ * report renders the A/A calibration matrix section; the chip reads `headline`.
  */
 export interface CalibrationBlock {
   fpr?: number | null;
   peeking_fpr?: number | null;
+  alpha?: number | null;
+  budget?: number | null;
   headline?: string | null;
-  matrix_rows?: unknown[];
+  matrix_rows?: CalibrationRow[];
   report_link?: string | null;
 }
 

@@ -115,6 +115,24 @@ class TestNameAndTags:
             make("sample", {"variant": "g", "value": "v"}, tags=["a", "a"])
 
 
+class TestAaFprBudget:
+    """The per-metric A/A budget override (M4/D12; declarative-config §8)."""
+
+    def test_default_is_none(self):
+        assert make("sample", {"variant": "g", "value": "v"}).aa_fpr_budget is None
+
+    def test_accepts_a_fraction(self):
+        assert make("sample", {"variant": "g", "value": "v"}, aa_fpr_budget=0.08).aa_fpr_budget == 0.08
+
+    def test_accepts_upper_bound_one(self):
+        assert make("sample", {"variant": "g", "value": "v"}, aa_fpr_budget=1.0).aa_fpr_budget == 1.0
+
+    @pytest.mark.parametrize("bad", [0.0, -0.1, 1.5])
+    def test_rejects_out_of_range(self, bad):
+        with pytest.raises(ValidationError, match="aa_fpr_budget must be a fraction"):
+            make("sample", {"variant": "g", "value": "v"}, aa_fpr_budget=bad)
+
+
 class TestFromYaml:
     def test_round_trip(self, tmp_path):
         (tmp_path / "arpu.yml").write_text(

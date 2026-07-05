@@ -187,6 +187,12 @@ class StubTables:
     def get_exposure_counts(self, experiment, until=None):
         return {}
 
+    def aa_runs_table_exists(self) -> bool:
+        return False
+
+    def get_aa_runs(self, experiment):
+        return []
+
     def list_method_config_ids(self, experiment, metric=None):
         return {}
 
@@ -336,6 +342,67 @@ class TestPayloadShape:
 
         bare = build_report_payload(experiment, tables)
         assert bare["metrics"][0]["description"] is None
+
+
+class TestCalibrationBlock:
+    """The M4 `calibration` payload fill from `_ab_aa_runs` (WP5)."""
+
+    def _save_aa_run(self, tables, experiment, **overrides):
+        mcid = experiment.comparisons[0].method.method_config_id
+        record = {
+            "experiment": experiment.name,
+            "run_id": "stamp0:cellA",
+            "metric": "revenue",
+            "method_name": "t-test",
+            "method_params": "{}",
+            "method_config_id": mcid,
+            "mode": "fpr",
+            "iterations": 2000,
+            "alpha": 0.05,
+            "injected_effect": None,
+            "fpr": 0.052,
+            "peeking_fpr": 0.13,
+            "power": None,
+            "achieved_mde": None,
+            "coverage": 0.95,
+            "effect_exaggeration": None,
+            "verdict": "t-test on revenue: well-calibrated, FPR 5.2%",
+            "details": '{"single_look_fpr": 0.052, "peeking_fpr": 0.13, '
+            '"peeking_curve": [[1.0, 0.05], [14.0, 0.13]], "budget": 0.075, '
+            '"recommended": true, "kept_grid_points": 14, "total_grid_points": 14}',
+            "status": "success",
+            "error_message": "",
+        }
+        record.update(overrides)
+        tables.save_aa_run(record)
+
+    def test_null_until_validate_runs(self, tables):
+        experiment = make_experiment()
+        seed_series(tables, experiment)
+        # no _ab_aa_runs table yet -> the chip's empty state
+        assert build_report_payload(experiment, tables)["calibration"] is None
+
+    def test_fills_from_persisted_aa_runs(self, tables):
+        experiment = make_experiment()
+        seed_series(tables, experiment)
+        tables.ensure_tables()
+        self._save_aa_run(tables, experiment)
+
+        cal = build_report_payload(experiment, tables)["calibration"]
+        assert cal is not None
+        assert cal["fpr"] == 0.052
+        assert "nominal α 5.0%" in cal["headline"]
+        (row,) = cal["matrix_rows"]
+        assert row["method"] == "t-test"
+        assert row["over_budget"] is False
+        assert row["recommended"] is True
+        assert row["peeking_curve"] == [[1.0, 0.05], [14.0, 0.13]]
+
+    def test_empty_table_stays_null(self, tables):
+        experiment = make_experiment()
+        seed_series(tables, experiment)
+        tables.ensure_tables()  # table exists but holds no rows
+        assert build_report_payload(experiment, tables)["calibration"] is None
 
 
 class TestSeriesSelection:
