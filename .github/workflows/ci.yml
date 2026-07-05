@@ -113,14 +113,16 @@ jobs:
           done
 
       - name: Python-side placeholder hexes stay inside the brand-token layer
-        # html_report.py's page shell + favicon are the only hexes outside
+        # the report + explore page shells/favicons are the only hexes outside
         # web/src/shared/chart.ts TOKEN_FALLBACKS — every one must appear
         # there so an M6 palette swap cannot silently miss them
         run: |
-          for hex in $(grep -oiE '(#|%23)[0-9a-f]{6}' abkit/reporting/html_report.py \
-                        | sed -E 's/^(#|%23)//' | sort -u); do
-            grep -qi "#$hex" web/src/shared/chart.ts \
-              || { echo "hex #$hex in html_report.py is not in TOKEN_FALLBACKS"; exit 1; }
+          for shell in abkit/reporting/html_report.py abkit/tuning/html.py; do
+            for hex in $(grep -oiE '(#|%23)[0-9a-f]{6}' "$shell" \
+                          | sed -E 's/^(#|%23)//' | sort -u); do
+              grep -qi "#$hex" web/src/shared/chart.ts \
+                || { echo "hex #$hex in $shell is not in TOKEN_FALLBACKS"; exit 1; }
+            done
           done
 
       - name: jsdom smoke suite over the committed bundle
@@ -154,7 +156,7 @@ jobs:
         run: mypy abkit
         continue-on-error: true  # mypy strict mode is aspirational; do not block PRs yet
 
-      - name: Wheel ships the committed report bundle
+      - name: Wheel ships the committed bundles
         # the real packaging gate (WP3 review finding): the source-tree tests
         # cannot catch a wheel that silently drops package-data
         run: |
@@ -164,5 +166,6 @@ jobs:
           wheel = glob.glob("/tmp/wheelhouse/ab_analysis_kit-*.whl")[0]
           names = zipfile.ZipFile(wheel).namelist()
           assert "abkit/reporting/assets/report.js" in names, names
-          print("wheel contains abkit/reporting/assets/report.js")
+          assert "abkit/tuning/assets/explore.js" in names, names
+          print("wheel contains the report + explore bundles")
           EOF

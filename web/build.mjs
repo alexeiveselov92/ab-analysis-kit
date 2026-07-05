@@ -31,7 +31,14 @@ const BUNDLES = [
     // stable machine-checkable peeking-honesty markers (data-contract §4)
     markers: ['abk-prehorizon', 'abk-insufficient', 'abk-srm-fail'],
   },
-  // WP7 adds: src/explore/ → abkit/tuning/assets/explore.js (__ABK_EXPLORE__)
+  {
+    entry: path.join(here, 'src', 'explore', 'explore.ts'),
+    outFile: path.join(REPO, 'abkit', 'tuning', 'assets', 'explore.js'),
+    global: '__ABK_EXPLORE__',
+    // the same §4 peeking-honesty markers as the report bundle — the CI
+    // marker step greps every abkit/*/assets/*.js for all three
+    markers: ['abk-prehorizon', 'abk-insufficient', 'abk-srm-fail'],
+  },
 ];
 
 /**

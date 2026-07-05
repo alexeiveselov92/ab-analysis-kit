@@ -157,11 +157,16 @@ staleness is visible.*
   its shrinking CI as time accrues), with pinned live chips — estimated lift, CI
   half-width, p-value, current power, **A/A calibration (real α)**, and the **SRM
   flag**.
-- **Side rail (mode-aware, Basic/Advanced disclosure):** `test_type`, alpha +
-  one/two-sided, CUPED on/off + covariate + lookback, stratification keys, bootstrap
-  iters, correction, winsorization, analysis unit. Every change live-recomputes via
+- **Side rail (mode-aware, Basic/Advanced disclosure):** `test_type`, alpha,
+  CUPED on/off + covariate + lookback, stratification keys, bootstrap
+  iters, correction, analysis unit (preview-only). Every change live-recomputes via
   the **Python `from_suffstats` path** (one source of truth for the math; no JS
-  stats fork, no DB round-trip).
+  stats fork, no DB round-trip). *(Amended per m3-implementation-plan.md D12:
+  sidedness and winsorization are struck from the M3 rail — neither exists in
+  the shipped stats core (p-values are hardcoded two-sided; no winsor param),
+  and the rail is auto-derived from `param_specs`, so faking either would
+  special-case UI against math that isn't there. Both are queued behind M4
+  change control — see ROADMAP.)*
 - **Calibration is always visible (must-fix):** the A/A real-α chip is in the
   cockpit, not a separate command; **Apply is gated/confirmed** when the active
   params have not passed `validate`, so an analyst can't ship a mis-calibrated
