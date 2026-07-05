@@ -144,77 +144,80 @@ def _validate_one(
         ],
     )
 
+    # the manager's whole lifetime is under an OUTER try/finally so a raise anywhere —
+    # incl. acquire_lock itself before the inner try — never leaks the warehouse
+    # connection into the (potentially long-lived) caller (m4 exit-gate review).
     manager = context.manager_factory(profile)()
-    tables = InternalTablesManager(manager)
-    if not tables.acquire_lock(
-        experiment.name,
-        "pipeline",
-        "validate",
-        timeout_seconds=context.project.timeouts.compute,
-        force=force,
-    ):
-        manager.close()
-        echo_noop(experiment.name, "validate lock held (use --force or `abk unlock`)")
-        return "locked"
-
-    renderer = StageLogRenderer(titles=_VALIDATE_STAGE_TITLES)
     try:
-        tables.ensure_tables()
-        backend = RecomputeBackend(manager, experiment)
-        grid = generate_grid(
-            experiment.start_date,
-            experiment.end_date,
-            experiment.cadence_segments(),
-            tz=experiment.timezone,
-        )
-        renderer("load", f"cohort over {len(grid.cutoffs)} cutoffs")
-        extra_methods = [MethodConfig(name=name) for name in method_names]
-        metric_sqls = {cfg.name: cfg.get_query_text(context.root) for _, cfg in context.metrics}
-        settings = ValidateSettings(
-            iterations=iterations, inject_effect=inject_effect, mode=scoring
-        )
-        renderer("resample", f"{iterations} placebo splits/cell")
+        tables = InternalTablesManager(manager)
+        if not tables.acquire_lock(
+            experiment.name,
+            "pipeline",
+            "validate",
+            timeout_seconds=context.project.timeouts.compute,
+            force=force,
+        ):
+            echo_noop(experiment.name, "validate lock held (use --force or `abk unlock`)")
+            return "locked"
 
-        result = run_validation(
-            backend,
-            experiment,
-            context.project,
-            context.metrics_by_name,
-            metric_sqls,
-            grid,
-            settings,
-            now_iso=now_utc_naive().isoformat(),
-            extra_methods=extra_methods,
-            metric_filter=metric_filter,
-        )
-        renderer("score", f"{len(result.cells)} cell(s)")
-
-        records = aa_run_records(result)
-        for record in records:
-            tables.save_aa_run(record)
-        renderer("persist", f"{len(records)} _ab_aa_runs row(s)")
-
-        _emit_matrix(experiment.name, result)
-        tables.release_lock(experiment.name, "pipeline", "validate", status="completed")
-    except BaseException as exc:  # incl. KeyboardInterrupt/SystemExit — never strand the lock
-        tables.release_lock(
-            experiment.name, "pipeline", "validate", status="failed", error_message=str(exc)
-        )
-        echo_error(experiment.name, f"validate failed: {exc}")
-        manager.close()
-        if not isinstance(exc, Exception):
-            # a signal / interpreter exit still propagates — but with the lock RELEASED,
-            # never stranded for the 2h compute timeout (driver.py:229–236 precedent).
-            raise
-        return "failed"
-
-    if report_path is not None:
+        renderer = StageLogRenderer(titles=_VALIDATE_STAGE_TITLES)
         try:
-            _emit_report(experiment, context, tables, report_path)
-        except Exception as report_error:  # never fail validate on a report
-            click.echo(click.style(f"  │ Report skipped: {report_error}", fg="yellow"))
-    manager.close()
-    return "completed"
+            tables.ensure_tables()
+            backend = RecomputeBackend(manager, experiment)
+            grid = generate_grid(
+                experiment.start_date,
+                experiment.end_date,
+                experiment.cadence_segments(),
+                tz=experiment.timezone,
+            )
+            renderer("load", f"cohort over {len(grid.cutoffs)} cutoffs")
+            extra_methods = [MethodConfig(name=name) for name in method_names]
+            metric_sqls = {cfg.name: cfg.get_query_text(context.root) for _, cfg in context.metrics}
+            settings = ValidateSettings(
+                iterations=iterations, inject_effect=inject_effect, mode=scoring
+            )
+            renderer("resample", f"{iterations} placebo splits/cell")
+
+            result = run_validation(
+                backend,
+                experiment,
+                context.project,
+                context.metrics_by_name,
+                metric_sqls,
+                grid,
+                settings,
+                now_iso=now_utc_naive().isoformat(),
+                extra_methods=extra_methods,
+                metric_filter=metric_filter,
+            )
+            renderer("score", f"{len(result.cells)} cell(s)")
+
+            records = aa_run_records(result)
+            for record in records:
+                tables.save_aa_run(record)
+            renderer("persist", f"{len(records)} _ab_aa_runs row(s)")
+
+            _emit_matrix(experiment.name, result)
+            tables.release_lock(experiment.name, "pipeline", "validate", status="completed")
+        except BaseException as exc:  # incl. KeyboardInterrupt/SystemExit — never strand the lock
+            tables.release_lock(
+                experiment.name, "pipeline", "validate", status="failed", error_message=str(exc)
+            )
+            echo_error(experiment.name, f"validate failed: {exc}")
+            if not isinstance(exc, Exception):
+                # a signal / interpreter exit still propagates — but with the lock RELEASED,
+                # never stranded for the 2h compute timeout (driver.py:229–236 precedent).
+                raise
+            return "failed"
+
+        if report_path is not None:
+            try:
+                _emit_report(experiment, context, tables, report_path)
+            except Exception as report_error:  # never fail validate on a report
+                click.echo(click.style(f"  │ Report skipped: {report_error}", fg="yellow"))
+        return "completed"
+    finally:
+        manager.close()
 
 
 def _emit_matrix(experiment: str, result) -> None:

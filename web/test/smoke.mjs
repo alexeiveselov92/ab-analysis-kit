@@ -172,6 +172,47 @@ test('calibration block tolerates the M4 shape', () => {
   assert.ok(!mount.querySelector('.abk-calibration-matrix'), 'no matrix without rows');
 });
 
+test('an all-failed A/A matrix does not read as green "calibrated"', () => {
+  // every cell failed -> build_calibration_block still returns a non-null block with
+  // fpr=null; the chip must NOT claim the green success state (m4 exit-gate review).
+  const calibration = makeCalibration({
+    fpr: null,
+    peeking_fpr: null,
+    headline: 'nominal α 5.0% · single-look FPR —',
+    matrix_rows: [
+      {
+        metric: 'revenue',
+        method: 'quarantined-method',
+        method_config_id: 'e'.repeat(16),
+        fpr: null,
+        single_look_fpr: null,
+        peeking_fpr: null,
+        power: null,
+        achieved_mde: null,
+        coverage: null,
+        effect_exaggeration: null,
+        alpha: 0.05,
+        budget: 0.075,
+        over_budget: false,
+        recommended: false,
+        rationale: null,
+        verdict: 'quarantined-method on revenue: failed (…)',
+        status: 'failed',
+        iterations: 2000,
+        injected_effect: null,
+        peeking_curve: null,
+        note: null,
+      },
+    ],
+  });
+  const { mount } = renderInJsdom(makePayload({ calibration }));
+  const chip = mount.querySelector('.abk-calibration');
+  assert.equal(chip.getAttribute('data-abk-calibration'), 'failed');
+  assert.ok(!chip.classList.contains('abk-calibrated'), 'no green success class when nothing measured');
+  // the matrix section still renders so the analyst sees WHICH cells failed
+  assert.ok(mount.querySelector('.abk-calibration-matrix'), 'failed rows stay visible');
+});
+
 test('the A/A calibration matrix renders rows, budget colouring, and the recommended cell', () => {
   const payload = makePayload({ calibration: makeCalibration() });
   const { mount } = renderInJsdom(payload);

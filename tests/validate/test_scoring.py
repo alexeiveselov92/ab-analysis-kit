@@ -164,3 +164,30 @@ def test_zero_trial_fraction_arm_is_a_gap_not_a_crash():
     assert score.valid_iterations == 0  # every cutoff is a gap
     assert score.degenerate_horizon > 0
     assert score.fpr is None
+
+
+def test_ratio_delta_absolute_coverage_is_calibrated():
+    """m4 exit-gate round-2: ratio-delta DOES expose test_type=absolute, so its truth
+    must anchor on the FIXED pooled ratio (mean_num/mean_den) — not the noisy realized
+    control ratio value_1, which the round-1 F2 fix missed for the ratio kind."""
+    rng = np.random.default_rng(7)
+    n = 4000
+    den = rng.uniform(5.0, 15.0, size=n)
+    num = den * 0.3 + rng.normal(0.0, 1.0, size=n)  # per-unit ratio ≈ 0.3
+    unit_idx = np.arange(n)
+    cutoff = PanelCutoff(
+        elapsed_days=14.0, is_horizon=True, unit_idx=unit_idx, values=num, secondary=den
+    )
+    panel = PlaceboPanel(
+        n_units=n,
+        cutoffs=(cutoff,),
+        covariate=None,
+        input_kind="ratio",
+        kept_grid_points=1,
+        total_grid_points=1,
+    )
+    method = create_method("ratio-delta", alpha=ALPHA, params={"test_type": "absolute"})
+    score = score_cell(panel, method, iterations=4000, seed_parts=SEED_PARTS, inject_effect=0.15)
+    assert score.coverage is not None
+    # the value_1 anchor biases this to ~0.93; the fixed pooled-ratio anchor restores ~0.95
+    assert 0.94 < score.coverage < 0.965

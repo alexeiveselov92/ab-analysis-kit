@@ -774,3 +774,49 @@ mutates `session.aa_rows` in place, honors request_id stale-drop, and leaves the
 gate unchanged (Auto-mode). The refuted item: the CLI's `manager` leak if `acquire_lock`
 itself *raises* (outside the try) — the driver has the identical shape, so it is a
 consistent, pre-existing pattern, not a WP4 regression (recorded, not fixed here).
+
+### WP7 / M4 exit-gate review — ROUND 2 (2026-07-05) — 5 lenses (data-assembly load/
+panel/grid, the CUPED/covariate path, fix-verification of the round-1 patches, the
+report-TS render, enumerate/concurrency), refute-by-default. Prompted by "chase every
+defect": a second pass over the areas round 1 under-covered, plus a re-verify of the
+round-1 fixes. **4 raw findings; 3 CONFIRMED, all fixed with regression tests; 1
+refuted (a covariate-cache-by-name — the config validator forbids two lookbacks per
+metric); the CUPED-covariate lens was clean.** Also folded in: the round-1 refuted
+manager-leak (fixed here — the whole manager lifetime is now under an OUTER try/finally
+in `_validate_one`, closing on an `acquire_lock` raise; regression
+`test_manager_closed_even_when_acquire_lock_raises`).
+
+- **R2-1 (medium, fixed) — the round-1 F2 fix was incomplete for `ratio-delta` absolute.**
+  `_point_estimate` returned `None` for a `RatioSufficientStats` arm, so `ratio-delta`
+  with `test_type='absolute'` (a real, live branch — the "unreachable" comments F2 wrote
+  were false) fell back to the biased `value_1` anchor, leaving the exact ~2pp coverage
+  bias F2 claimed to close (Monte-Carlo 0.9375 vs 0.9495). Fix: `_point_estimate` now
+  returns the pooled ratio `mean_num/mean_den` (guarding a non-finite denominator), and
+  the false comments are corrected. Regression:
+  `test_ratio_delta_absolute_coverage_is_calibrated` (0.94 < coverage < 0.965).
+- **R2-2 (low, fixed) — the calibration chip read green "calibrated" on an all-failed
+  matrix.** Round-1 F1 made an all-failed matrix a reachable persisted state (per-cell
+  failure no longer aborts), and `build_calibration_block` returns a non-null block for
+  it; `buildCalibrationChip` added `abk-calibrated` (the green `--abk-st-good` success
+  border) on any non-null block. Fix: the chip only earns green when `typeof cal.fpr ===
+  'number'`; a non-null block with no measured FPR renders a neutral
+  `data-abk-calibration='failed'` state (the matrix section still shows *which* cells
+  failed). `report.js` rebuilt + committed. Regression: `web/test/smoke.mjs` "an
+  all-failed A/A matrix does not read as green calibrated".
+- **R2-3 (medium, fixed) — `enumerate_cells` applied no D6 `--method` filter.** The plan
+  D6 requires `--method` be filtered by `input_kind == metric.type`, `not is_paired`, and
+  quarantined-skipped; the code fanned every `--method` across every metric unfiltered.
+  Post-F1 those doomed cells no longer crash but persist as confusing `status='failed'`
+  rows (a z-test on a sample metric; a paired method — which can NEVER score in A/A;
+  a quarantined method). Fix: `enumerate_cells` now takes `metrics` + `log`, resolves each
+  extra method's class via the registry, and skip-and-logs any incompatible / paired /
+  quarantined / duplicate method (`_method_fits`, mirroring `knob_surface`). Regression:
+  `test_enumerate_filters_incompatible_extra_methods_and_dedups`.
+
+Verified-clean / refuted in round 2: the CUPED covariate is correctly indexed by global
+unit id in both passes incl. the F2 pooled arm; the placebo pooling preserves canonical
+unit order and the denser-early subsample always retains the horizon; the manager
+try/finally never double-closes and always releases the lock before close. None of the
+round-2 fixes touch method math — no `ALGORITHM_VERSION` bump. The two review rounds
+together fixed **8 distinct defects** (5 round-1 + the manager leak + 2 medium round-2),
+each with a regression test; a third pass would be the loop-until-dry stopping point.

@@ -37,7 +37,7 @@ import numpy as np
 from abkit.stats.base import BaseMethod
 from abkit.stats.power import cuped_adjusted_std, get_fraction_mde, get_ttest_mde
 from abkit.stats.rng import derive_seed
-from abkit.stats.samples import Fraction, SufficientStats
+from abkit.stats.samples import Fraction, RatioSufficientStats, SufficientStats
 from abkit.validate._types import ValidateError
 from abkit.validate.inject import inject_multiplicative, injection_clamped
 from abkit.validate.panel import PlaceboPanel
@@ -159,8 +159,8 @@ def score_cell(
     # split-invariant estimate of the shared population mean — the pooled point
     # estimate over ALL present horizon units, computed once. Anchoring on the
     # realized control mean (value_1) instead biases coverage low, because value_1
-    # co-varies with the effect estimate (m4 exit-gate review, F2). None for a
-    # degenerate horizon or the ratio family (whose absolute path is unreached).
+    # co-varies with the effect estimate (m4 exit-gate review, F2). None only for a
+    # degenerate horizon or a non-finite pooled ratio (then the caller falls back).
     horizon_pooled: float | None = None
     if inject_effect is not None:
         hc = panel.cutoffs[horizon_pos]
@@ -336,16 +336,18 @@ def _first_significant_look(
 
 
 def _point_estimate(arm: object) -> float | None:
-    """The arm's scalar point estimate: mean (sample), proportion (fraction).
+    """The arm's scalar point estimate: mean (sample), proportion (fraction), ratio.
 
-    Returns ``None`` for the ratio family — whose absolute-effect path is unreached
-    (``ratio-delta`` has no ``test_type`` param, so it scores relative), leaving the
-    caller to fall back to the control estimate.
+    ``ratio-delta`` DOES expose ``test_type`` and a live ``absolute`` branch, so the
+    ratio kind is anchored too (the pooled ``mean_num/mean_den``). Returns ``None`` on a
+    non-finite pooled ratio (zero denominator) so the caller falls back safely.
     """
     if isinstance(arm, Fraction):
         return float(arm.prop)
     if isinstance(arm, SufficientStats):
         return float(arm.mean)
+    if isinstance(arm, RatioSufficientStats):
+        return float(arm.ratio) if math.isfinite(arm.ratio) else None
     return None
 
 

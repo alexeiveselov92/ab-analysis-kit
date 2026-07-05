@@ -134,3 +134,24 @@ def test_baseexception_releases_the_validate_lock(scaffolded, monkeypatch):
     second = runner.invoke(cli, ["validate", "--select", EXP, "--iterations", "50"])
     assert second.exit_code == 0, second.output
     assert _aa_rows(scaffolded)  # it acquired the free lock and wrote rows
+
+
+def test_manager_closed_even_when_acquire_lock_raises(scaffolded, monkeypatch):
+    """m4 exit-gate review: a raise in acquire_lock (before the inner try) must still
+    close the warehouse manager — the OUTER try/finally, never a leaked connection."""
+    closed = {"n": 0}
+    real_close = scaffolded.close
+
+    def counting_close():
+        closed["n"] += 1
+        return real_close()
+
+    monkeypatch.setattr(scaffolded, "close", counting_close)
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("lock backend unreachable")
+
+    monkeypatch.setattr(InternalTablesManager, "acquire_lock", boom)
+    result = runner.invoke(cli, ["validate", "--select", EXP, "--iterations", "20"])
+    assert result.exit_code != 0  # the raise propagated (a real harness failure)
+    assert closed["n"] >= 1  # …but the manager was closed in the finally — no leak
