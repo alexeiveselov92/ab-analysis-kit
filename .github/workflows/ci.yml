@@ -96,9 +96,11 @@ jobs:
       - name: Committed assets are fresh
         # porcelain (not `git diff`) so a rebuilt-but-never-committed NEW
         # asset (the WP7 explore.js scenario) fails too, not only drift in
-        # tracked files
+        # tracked files. MUST use the ':(glob)' pathspec magic: a plain
+        # 'abkit/*/assets/' pathspec's `*` does NOT span '/', so it silently
+        # matches nothing and the gate becomes a no-op (M4 WP5 finding).
         run: |
-          status=$(git status --porcelain -- 'abkit/*/assets/')
+          status=$(git status --porcelain -- ':(glob)abkit/*/assets/**')
           if [ -n "$status" ]; then
             echo "committed assets drifted from web/ sources:"; echo "$status"; exit 1
           fi
