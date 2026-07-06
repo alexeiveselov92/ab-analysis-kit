@@ -48,6 +48,14 @@ number change).
   respect the pre-horizon peeking guard via `is_horizon`/`ci_kind`; handle NULLs).
   Guarded by `tests/reporting/test_bi_examples.py`, which fails if a recipe drifts
   from the real `_ab_results` schema. Docs/SQL only — no runtime code.
+- **M6 WP6 — Prefect deployment scaffold.** `abk init` now also scaffolds
+  `runners/prefect.yaml` (a Prefect 3 project-deploy config — `prefect deploy --all`
+  schedules the daily `abk run`) beside the existing `runners/prefect_flow.py`.
+  Documents the `tag:actual` convention the daily job relies on (tag live experiments
+  `actual`; the demo is tagged `example` so the schedule skips it) and pins the
+  targeted Prefect major. The `[orchestration]`/`[all]` extras now require
+  `prefect>=3.0` to match the scaffolded syntax (abkit still never imports prefect).
+  Scaffold test asserts the deployment is valid YAML and the flow parses.
 - **M5 — sequential analysis, the always-valid CI, `abk plan`, composed corrections.** Opt-in
   (`sequential: {enabled: true}`, **default off** — the fixed-horizon series is
   byte-identical, no `ALGORITHM_VERSION` bump, goldens untouched). Landed so far
