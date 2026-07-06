@@ -377,9 +377,12 @@ def build_report_payload(
 
     # SRM block — CURRENT experiment health, window-independent (§6 "SRM loud"):
     # flag/pvalue come from the latest persisted row overall (not the latest
-    # *charted* row), so a pinned/empty replay never silences a failing gate,
-    # and they stay coherent with the whole-cohort observed counts below. M2
-    # SRM is one whole-experiment check (per-cutoff SRM = M5 sequential).
+    # *charted* row), so a pinned/empty replay never silences a failing gate.
+    # `observed` is the whole-cohort current split; at daily+ (χ²) it is the
+    # gate's own input, while below 1d (the anytime e-process, WP5) the flag is
+    # the latest look's running verdict — so a since-rebalanced sub-day cohort
+    # can read "FAILED" with a now-even split (an imbalance WAS detected). The
+    # chip names the gate via `srm.kind` so this reads correctly, not as χ².
     srm_flag, srm_pvalue = srm_summary(experiment, declared_rows)
     observed_counts: dict[str, int] = {}
     if ready and tables.exposures_table_exists():
@@ -458,6 +461,10 @@ def build_report_payload(
                 variant: float(split)
                 for variant, split in experiment.assignment.expected_split.items()
             },
+            # which gate produced flag/pvalue, so the chip names the right test:
+            # χ² at daily+, the anytime-valid e-process below 1d (WP5). Not
+            # persisted, so derived from the current cadence (statistics-changes §4.2).
+            "kind": "sequential_multinomial" if experiment.is_sub_day() else "chi2",
         },
         # the latest A/A validate matrix (M4); null until first `abk validate`.
         # The M4 shape (fpr, peeking_fpr, headline, matrix_rows, report_link) fills

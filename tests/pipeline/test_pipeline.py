@@ -454,6 +454,84 @@ class TestTimezoneDates:
         assert str(last["end_date"]) == "2024-07-05"
 
 
+def seed_subday_cohort(warehouse: SyntheticWarehouse) -> None:
+    """A 60/40 imbalance accruing 150 control + 100 treatment per 6h look.
+
+    Cumulative counts at the 06:00/12:00/18:00/24:00 boundaries are
+    150/100, 300/200, 450/300, 600/400 — the anytime-valid gate trips at look
+    2 under the strict 0.001 gate, not look 1 (the truthful as-of series)."""
+    warehouse.cohort = []
+    warehouse.events = []
+    for batch in range(4):  # exposed at 03:00, 09:00, 15:00, 21:00
+        expose = START + timedelta(hours=3 + 6 * batch)
+        for i in range(150):
+            unit = f"c{batch}_{i}"
+            warehouse.cohort.append((unit, "control", expose))
+            warehouse.events.append((unit, "control", expose + timedelta(minutes=30), 1.0))
+        for i in range(100):
+            unit = f"t{batch}_{i}"
+            warehouse.cohort.append((unit, "treatment", expose))
+            warehouse.events.append((unit, "treatment", expose + timedelta(minutes=30), 1.1))
+
+
+class TestSubDaySrmGate:
+    """M5 WP5: below 1d the SRM gate is the anytime-valid multinomial e-process,
+    stamped PER LOOK; daily & coarser keep the whole-cohort χ² broadcast."""
+
+    def _subday_experiment(self) -> ExperimentConfig:
+        return make_experiment(
+            start_date="2024-07-01", end_date="2024-07-01", cadence="6h", data_lag="1h"
+        )
+
+    def test_subday_uses_anytime_gate_stamped_per_look(self, tables):
+        warehouse = SyntheticWarehouse()
+        seed_subday_cohort(warehouse)
+        outcome = run(warehouse, tables, experiment=self._subday_experiment())
+        assert outcome.status == "completed", outcome.error
+        assert outcome.srm_flagged is True  # the latest look's running verdict
+        # the loud line names the sequential gate, not χ²
+        assert any("anytime e=" in w for w in outcome.warnings)
+        assert not any("chi2" in w for w in outcome.warnings)
+
+        rows = sorted(tables.load_results("signup_test"), key=lambda r: r["end_ts"])
+        assert len(rows) == 4  # one pair × 4 sub-day looks
+        # the truthful as-of series: look 1 quiet (150/100, e≈12 < 1000), then trips
+        assert [r["srm_flag"] for r in rows] == [False, True, True, True]
+        assert [r["decision_blocked"] for r in rows] == [False, True, True, True]
+        assert all(r["srm_pvalue"] is not None for r in rows)  # never dropped
+
+    def test_subday_balanced_never_flags(self, tables):
+        warehouse = SyntheticWarehouse()
+        # equal 150/150 per look ⇒ a perfectly balanced cumulative stream
+        for batch in range(4):
+            expose = START + timedelta(hours=3 + 6 * batch)
+            for arm in ("control", "treatment"):
+                for i in range(150):
+                    unit = f"{arm[0]}{batch}_{i}"
+                    warehouse.cohort.append((unit, arm, expose))
+                    warehouse.events.append((unit, arm, expose + timedelta(minutes=30), 1.0))
+        outcome = run(warehouse, tables, experiment=self._subday_experiment())
+        assert outcome.status == "completed", outcome.error
+        assert outcome.srm_flagged is False
+        rows = tables.load_results("signup_test")
+        assert rows and not any(r["srm_flag"] for r in rows)
+
+    def test_daily_keeps_chi_square_broadcast(self, warehouse, tables):
+        """A daily experiment (default cadence) with a blatant imbalance stays
+        on the χ² gate: the loud line reads 'chi2' and every row shares it."""
+        warehouse.cohort = [c for c in warehouse.cohort if not c[0].startswith("t")][:150]
+        for i in range(15):  # 150 vs 15 — a blatant SRM
+            warehouse.cohort.append((f"t{i}", "treatment", START + timedelta(hours=1)))
+        warehouse.events = []
+        seed_events(warehouse)
+        outcome = run(warehouse, tables)  # default daily cadence
+        assert outcome.srm_flagged is True
+        assert any("chi2" in w for w in outcome.warnings)
+        assert not any("anytime e=" in w for w in outcome.warnings)
+        rows = tables.load_results("signup_test")
+        assert rows and all(r["srm_flag"] for r in rows)  # one whole-run gate, broadcast
+
+
 class TestSrmZeroArm:
     def test_missing_arm_flags_srm_instead_of_crashing(self, warehouse, tables):
         """Review finding: a declared variant with ZERO exposures is the worst

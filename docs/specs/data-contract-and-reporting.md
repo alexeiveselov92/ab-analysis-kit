@@ -317,9 +317,12 @@ SRM is the safest A/B guardrail and must be **loud** where analysts actually loo
 - **Sub-day cadence:** checking χ² at every cutoff is itself peeking on the SRM
   test (false alarms on a hard gate are expensive), so at `cadence < 1d` the
   gate switches to the **anytime-valid sequential multinomial test**
-  (Lindon & Malek, NeurIPS 2022) — valid at every look by construction (M5 WP5).
-  This is also sub-day cadence's headline genuine payoff: catching assignment bugs
-  within hours instead of days.
+  (Lindon & Malek, NeurIPS 2022) — valid at every look by construction (**shipped,
+  M5 WP5**; math in statistics-changes.md §4.2). Dispatched on
+  `experiment.is_sub_day()`, one verdict per look off the cumulative as-of exposure
+  counts (the truthful as-of series the M2 whole-cohort broadcast deferred). This is
+  also sub-day cadence's headline genuine payoff: catching assignment bugs within
+  hours instead of days.
 
 ## 7. Trajectory to a full app
 

@@ -62,7 +62,19 @@ number change).
     (plan D9): daily & coarser keep the χ² gate (bounded looks on a ~3.3σ hard gate ⇒
     negligible peeking inflation); only sub-day (a follow-up) swaps to the anytime-valid
     multinomial test.
-    *(Still landing: sub-day sequential SRM, `abk plan`, and the composed-FDR sweep.)*
+  - **Sub-day anytime-valid SRM (WP5)** — below 1d cadence the SRM gate swaps from χ²
+    to an anytime-valid Dirichlet-multinomial e-process (Lindon & Malek 2022;
+    [`statistics-changes.md §4.2`](docs/specs/statistics-changes.md)): a dense sub-day
+    cadence would peek the χ² hard gate dozens of times a day → false alarms, whereas the
+    e-process is valid at every look by construction. Dispatched on
+    `experiment.is_sub_day()` (daily & coarser are unchanged). One verdict **per look**,
+    stamped from the cumulative as-of exposure counts (`get_exposure_count_stream`) — the
+    truthful as-of series the M2 whole-cohort broadcast deferred — and it runs even on
+    demoted rows. Default prior is the paper's uniform `Dir(1,…,1)`; the anytime
+    false-alarm rate holds ≤ α for any fixed prior. It is an additive gate, not a
+    registered method: **no `ALGORITHM_VERSION` bump, goldens untouched**, no schema change
+    (reuses `srm_flag`/`srm_pvalue`).
+    *(Still landing: `abk plan` and the composed-FDR sweep.)*
 - **M4 — `abk validate`, the A/A false-positive matrix.** The trust artifact that
   answers "is this method actually calibrated on this data, or does it lie about its
   α?" (docs/specs/aa-false-positive-matrix.md; the implementation record is

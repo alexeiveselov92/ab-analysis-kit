@@ -130,6 +130,12 @@ export interface SrmBlock {
   /** whole-cohort exposure counts, declared arms zero-filled */
   observed: Record<string, number>;
   expected: Record<string, number>;
+  /**
+   * which gate produced flag/pvalue: "chi2" (daily+) or
+   * "sequential_multinomial" (the anytime-valid e-process below 1d, WP5). Names
+   * the test in the chip; optional so an older bundle defaults to χ².
+   */
+  kind?: string;
 }
 
 /**

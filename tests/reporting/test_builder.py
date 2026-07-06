@@ -653,7 +653,16 @@ class TestVerdictsAndSrm:
         assert payload["srm"]["expected"] == {"control": 0.5, "treatment": 0.5}
         # no exposures seeded: declared variants are zero-filled like the driver
         assert payload["srm"]["observed"] == {"control": 0, "treatment": 0}
+        assert payload["srm"]["kind"] == "chi2"  # daily cadence ⇒ the χ² gate (WP5)
         assert payload["metrics"][0]["pairs"][0]["series"][-1]["blk"] == 1
+
+    def test_srm_block_kind_is_sequential_below_1d(self, tables):
+        """WP5: a sub-day experiment's SRM block names the anytime-valid gate, so
+        the chip does not mislabel the e-process verdict as χ²."""
+        experiment = make_experiment(cadence="6h", data_lag=0)
+        seed_series(tables, experiment, srm_flag=True, srm_pvalue=0.0004)
+        payload = build_report_payload(experiment, tables)
+        assert payload["srm"]["kind"] == "sequential_multinomial"
 
     def seed_exposures(self, tables, experiment):
         units = [
@@ -768,6 +777,7 @@ class TestEmptyContract:
             "pvalue": None,
             "observed": {"control": 0, "treatment": 0},
             "expected": {"control": 0.5, "treatment": 0.5},
+            "kind": "chi2",  # daily cadence ⇒ the χ² gate (WP5)
         }
         (metric,) = payload["metrics"]
         assert metric["name"] == "revenue"
