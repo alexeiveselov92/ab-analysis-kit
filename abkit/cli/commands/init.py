@@ -324,7 +324,9 @@ experiment analysis (YAML + SQL) over your warehouse.
 - `metrics/` — the reusable metric library (YAML + SQL)
 - `sql/` — shared SQL files (assignment sources, metric queries)
 - `seed/` — the synthetic example dataset
-- `runners/` — orchestration examples (Prefect)
+- `runners/` — orchestration examples: a Prefect flow (`prefect_flow.py`) + a
+  Prefect 3 deployment (`prefect.yaml`, `prefect deploy --all`). Tag live
+  experiments `actual` so the daily job recomputes them.
 
 ## Domain rules worth knowing
 
@@ -338,12 +340,20 @@ experiment analysis (YAML + SQL) over your warehouse.
 """
 
 PREFECT_FLOW = '''\
-"""Prefect orchestration example: recompute all actual experiments daily.
+"""Prefect orchestration example: recompute all live experiments daily.
 
 The CLI is the unit of automation — a Prefect task simply shells out to
 ``abk run``; locks are self-healing for unattended runs and failures exit
-non-zero. Requires ``pip install prefect`` (abkit itself never imports it).
+non-zero. abkit itself never imports prefect; install it separately with
+``pip install "ab-analysis-kit[orchestration]"`` (Prefect 3).
 
+This flow selects ``tag:actual`` — experiments whose YAML ``tags:`` list contains
+``actual``. TAG YOUR LIVE EXPERIMENTS ``actual`` so this picks them up (the
+scaffolded example is tagged ``example`` on purpose, so the daily job does not
+run the demo). Deploy it with the committed ``runners/prefect.yaml``:
+
+    prefect deploy --all           # reads runners/prefect.yaml
+    # or, ad hoc:
     prefect deploy runners/prefect_flow.py:abkit_daily --cron "0 6 * * *"
 """
 
@@ -365,6 +375,31 @@ def abkit_daily() -> None:
 if __name__ == "__main__":
     abkit_daily()
 '''
+
+# A committed Prefect 3 project-deployment config so a scheduled recompute is one
+# `prefect deploy` away (cli-and-dx.md §3). Prefect is not imported by abkit and the
+# scaffold cannot be CI-round-tripped like the YAML configs are, so the file pins the
+# Prefect major it targets. The flow stays a thin `abk run` shell (version-robust).
+PREFECT_YAML = """\
+# prefect.yaml — Prefect 3 project deployment for {project_name}.
+# Targets Prefect 3 (`pip install "ab-analysis-kit[orchestration]"`). The
+# `abk` CLI is the unit of automation; this only schedules `abk run`.
+#   prefect deploy --all
+name: {project_name}
+prefect-version: 3.0.0
+
+deployments:
+  - name: abkit-daily
+    entrypoint: runners/prefect_flow.py:abkit_daily
+    description: Recompute all experiments tagged `actual`, daily at 06:00 UTC.
+    # Tag your LIVE experiments `actual` (the scaffolded example is `example`, so
+    # this job skips the demo). Adjust the cron / work pool to your infra.
+    schedules:
+      - cron: "0 6 * * *"
+        timezone: "UTC"
+    work_pool:
+      name: default-process-pool
+"""
 
 PROFILES_BY_DB = {
     "clickhouse": PROFILES_CLICKHOUSE,
@@ -389,6 +424,7 @@ def run_init(project_name: str, target_dir: str, db_type: str = "clickhouse") ->
         "sql/example_assignment.sql": ASSIGNMENT_SQL,
         "seed/seed_dataset.clickhouse.sql": SEED_CLICKHOUSE,
         "runners/prefect_flow.py": PREFECT_FLOW,
+        "runners/prefect.yaml": PREFECT_YAML.format(project_name=project_name),
     }
 
     for rel_path, content in files.items():

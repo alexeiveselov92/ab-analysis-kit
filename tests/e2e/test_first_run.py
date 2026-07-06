@@ -139,8 +139,30 @@ class TestInitScaffold:
             "sql/example_assignment.sql",
             "seed/seed_dataset.clickhouse.sql",
             "runners/prefect_flow.py",
+            "runners/prefect.yaml",
         ):
             assert (tmp_path / "demo" / rel).exists(), rel
+
+    def test_prefect_deployment_scaffold_is_valid(self, tmp_path, monkeypatch):
+        """The Prefect scaffold parses (abkit never imports prefect — parse-only)."""
+        import ast
+
+        import yaml
+
+        monkeypatch.chdir(tmp_path)
+        assert runner.invoke(cli, ["init", "demo"]).exit_code == 0
+        runners = tmp_path / "demo" / "runners"
+
+        # The flow is valid Python without prefect installed.
+        ast.parse((runners / "prefect_flow.py").read_text())
+
+        # The deployment is valid YAML targeting Prefect 3 with the daily deployment.
+        dep = yaml.safe_load((runners / "prefect.yaml").read_text())
+        assert str(dep["prefect-version"]).startswith("3")
+        names = [d["name"] for d in dep["deployments"]]
+        assert "abkit-daily" in names
+        entry = dep["deployments"][0]["entrypoint"]
+        assert entry == "runners/prefect_flow.py:abkit_daily"
 
     def test_refuses_existing_directory(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)

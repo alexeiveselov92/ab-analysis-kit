@@ -45,15 +45,16 @@ postgres = ["psycopg2-binary>=2.9.0"]
 mysql = ["pymysql>=1.0.0"]
 all-db = ["clickhouse-driver>=0.2.0", "psycopg2-binary>=2.9.0", "pymysql>=1.0.0"]
 
-# Orchestration (the CLI is the unit of automation; abk itself never imports prefect)
-orchestration = ["prefect>=2.0"]
+# Orchestration (the CLI is the unit of automation; abk itself never imports prefect).
+# Prefect 3 — the scaffolded runners/prefect.yaml uses the Prefect 3 project-deploy syntax.
+orchestration = ["prefect>=3.0"]
 
 # All runtime extras
 all = [
     "clickhouse-driver>=0.2.0",
     "psycopg2-binary>=2.9.0",
     "pymysql>=1.0.0",
-    "prefect>=2.0",
+    "prefect>=3.0",
 ]
 
 # Development dependencies
