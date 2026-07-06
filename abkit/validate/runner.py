@@ -21,9 +21,10 @@ from abkit.pipeline.analyze import comparison_alpha, effective_alphas
 from abkit.stats.exceptions import StatsError
 from abkit.stats.registry import get_method_class
 from abkit.validate._types import DecisionEntry, ValidateError
+from abkit.validate.family import FamilyMember, sweep_family
 from abkit.validate.load import DEFAULT_GRID_CAP, load_placebo_panel
 from abkit.validate.panel import PlaceboPanel
-from abkit.validate.result import AaValidateResult, CellResult
+from abkit.validate.result import AaValidateResult, CellResult, FamilyResult
 from abkit.validate.run_id import run_stamp
 from abkit.validate.scoring import CellScore, score_cell
 
@@ -244,6 +245,12 @@ def run_validation(
         for cell in cells
     ]
 
+    # The composed multi-metric FWER/FDR sweep (D9) — only when the whole declared family
+    # was scored (a --metric filter or a single comparison has no family to compose).
+    family = None
+    if metric_filter is None:
+        family = _run_family_sweep(experiment, project, panel_cache, share_a, settings, log)
+
     return AaValidateResult(
         experiment=experiment.name,
         run_stamp=run_stamp(
@@ -257,6 +264,96 @@ def run_validation(
         ),
         cells=tuple(cells),
         decision_log=tuple(log),
+        family=family,
+    )
+
+
+def _family_verdict(score, budget: float | None) -> str:
+    """A plain-language composed-family verdict (aa-fpr §4.3, generalized to the family)."""
+    if score.fwer is None:
+        return "composed family: could not measure family-wise error (degenerate splits)"
+    band = f" (budget {budget:.1%})" if budget is not None else ""
+    state = "within budget" if not score.over_budget else "OVER budget — do not trust the family"
+    fdr_txt = "—" if score.fdr is None else f"{score.fdr:.1%}"
+    return (
+        f"composed {score.correction} over {score.n_metrics} metrics: family-wise error "
+        f"{score.fwer:.1%}{band} {state}; FDR {fdr_txt}"
+    )
+
+
+def _run_family_sweep(
+    experiment: ExperimentConfig,
+    project: ProjectConfig,
+    panel_cache: dict[tuple[str, object], PlaceboPanel],
+    share_a: float,
+    settings: ValidateSettings,
+    log: list[DecisionEntry],
+) -> FamilyResult | None:
+    """Score the composed FWER/FDR over the declared comparison family (D9/WP8).
+
+    Reuses the panels the per-cell pass already loaded (``panel_cache``); a comparison
+    whose panel failed to load is dropped with a log entry. Runs the complete-null sweep
+    (no injection) at each comparison's effective two-tier alpha under the experiment's
+    correction, so FWER (any false rejection) and FDR (mean FDP) coincide by construction.
+    """
+    alphas = effective_alphas(experiment, project)
+    correction = experiment.correction or project.statistics.correction
+    members: list[FamilyMember] = []
+    for comparison in experiment.comparisons:
+        panel = panel_cache.get((comparison.metric, comparison.method.covariate_lookback))
+        if panel is None:
+            log.append(
+                DecisionEntry(
+                    "family", f"{comparison.metric}: no panel loaded — excluded from family"
+                )
+            )
+            continue
+        alpha = comparison_alpha(comparison, alphas)
+        members.append(
+            FamilyMember(
+                metric=comparison.metric,
+                panel=panel,
+                method=comparison.method.bind(alpha=alpha),
+                alpha=alpha,
+                planted=False,
+            )
+        )
+    if len(members) < 2:
+        log.append(DecisionEntry("family", "fewer than two scorable metrics — no family sweep"))
+        return None
+
+    budget = _budget(project, alphas.alpha, None)
+    try:
+        score = sweep_family(
+            members,
+            correction=correction,
+            iterations=settings.iterations,
+            share_a=share_a,
+            seed_parts=("aa-family", experiment.name),
+            inject_effect=None,
+            budget=budget,
+        )
+    except (ValidateError, StatsError) as exc:
+        log.append(DecisionEntry("family", f"family sweep failed — {exc}"))
+        return None
+
+    verdict = _family_verdict(score, budget)
+    log.append(DecisionEntry("family", verdict))
+    return FamilyResult(
+        correction=score.correction,
+        n_metrics=score.n_metrics,
+        n_null_metrics=score.n_null_metrics,
+        metrics=tuple(m.metric for m in members),
+        iterations=score.iterations,
+        valid_iterations=score.valid_iterations,
+        fwer=score.fwer,
+        fdr=score.fdr,
+        any_rejection_rate=score.any_rejection_rate,
+        budget=budget,
+        over_budget=score.over_budget,
+        alpha=alphas.alpha,
+        verdict=verdict,
+        warnings=score.warnings,
     )
 
 

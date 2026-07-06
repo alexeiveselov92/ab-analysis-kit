@@ -290,3 +290,50 @@ test('the A/A calibration matrix renders rows, budget colouring, and the recomme
   assert.equal(chip.getAttribute('data-abk-calibration'), 'present');
   assert.match(chip.textContent, /peeking FPR 14\.0%/);
 });
+
+test('the composed FWER/FDR family band renders above the matrix (D9/WP8)', () => {
+  const calibration = makeCalibration({
+    family: {
+      correction: 'bonferroni',
+      fwer: 0.048,
+      fdr: 0.048,
+      budget: 0.075,
+      over_budget: false,
+      n_metrics: 3,
+      n_null_metrics: 3,
+      metrics: ['revenue', 'signups', 'retention'],
+      iterations: 2000,
+      valid_iterations: 2000,
+      verdict: 'composed bonferroni over 3 metrics: family-wise error 4.8% (budget 7.5%) within budget; FDR 4.8%',
+    },
+  });
+  const { mount } = renderInJsdom(makePayload({ calibration }));
+  const band = mount.querySelector('.abk-cal-family');
+  assert.ok(band, 'the composed-family band is present');
+  assert.equal(band.getAttribute('data-abk-family'), 'ok');
+  assert.match(band.querySelector('.abk-cal-family-title').textContent, /Composed multiple testing · bonferroni · 3 metrics/);
+  assert.match(band.textContent, /family-wise error/);
+  assert.match(band.textContent, /4\.8%/);
+  assert.match(band.textContent, /false-discovery rate/);
+  assert.match(band.querySelector('.abk-cal-family-verdict').textContent, /within budget/);
+});
+
+test('an over-budget composed family is flagged critical', () => {
+  const calibration = makeCalibration({
+    family: {
+      correction: 'bonferroni',
+      fwer: 0.12,
+      fdr: 0.12,
+      budget: 0.075,
+      over_budget: true,
+      n_metrics: 3,
+      metrics: ['a', 'b', 'c'],
+      verdict: 'composed bonferroni over 3 metrics: family-wise error 12.0% OVER budget',
+    },
+  });
+  const { mount } = renderInJsdom(makePayload({ calibration }));
+  const band = mount.querySelector('.abk-cal-family');
+  assert.equal(band.getAttribute('data-abk-family'), 'over');
+  assert.ok(band.querySelector('.abk-cal-fpr-over'), 'the FWER stat is coloured critical');
+  assert.match(band.textContent, /12\.0%/);
+});

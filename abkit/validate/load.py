@@ -157,4 +157,7 @@ def load_placebo_panel(
         input_kind=input_kind,
         kept_grid_points=kept,
         total_grid_points=total,
+        # the sorted horizon unit ids at each global index — the composed family sweep
+        # (D9/WP8) aligns ONE shared unit→arm assignment across metrics through these.
+        unit_ids=np.asarray(global_units, dtype=object),
     )

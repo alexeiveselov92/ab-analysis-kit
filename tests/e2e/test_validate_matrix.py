@@ -175,16 +175,24 @@ class TestValidateMatrixExitGate:
     def test_rows_carry_the_as_built_columns_at_the_effective_alpha(self, gate):
         """D15 column set + D-critical: the persisted alpha is the chip-lookup alpha."""
         records = aa_run_records(gate["result"])
-        assert len(records) == 3
+        # 3 per-metric cells + the composed-family sentinel row (D9/WP8)
+        cells = [r for r in records if r["metric"] != "__family__"]
+        family = [r for r in records if r["metric"] == "__family__"]
+        assert len(cells) == 3 and len(family) == 1
         for record in records:
             assert set(AA_RUN_COLUMNS).issubset(record)  # save_aa_run requires every key
-        assert len({r["run_id"] for r in records}) == 3  # unique per (invocation, cell)
+        assert len({r["run_id"] for r in records}) == len(records)  # unique per (invocation, row)
         alphas = gate["alphas"]
-        by_metric = {r["metric"]: r for r in records}
+        by_metric = {r["metric"]: r for r in cells}
         for comparison in gate["experiment"].comparisons:
             expected = comparison_alpha(comparison, alphas)
             # exact equality ⇒ find_calibration's isclose(rel 1e-9) resolves, not alpha_mismatch
             assert by_metric[comparison.metric]["alpha"] == expected
+        # the sentinel carries the composed FWER/FDR in its details (D9)
+        import json
+
+        fam = json.loads(family[0]["details"])["family"]
+        assert fam["n_metrics"] == 3 and fam["fwer"] is not None and fam["fwer"] == fam["fdr"]
 
     def test_chip_flips_from_uncalibrated_to_calibrated_with_budget_verdict(self, gate):
         """D3: rows light the chip; the broken cell reads over-budget, the good ones don't."""

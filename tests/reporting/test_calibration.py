@@ -193,3 +193,70 @@ def test_nan_and_null_scrubbed():
     assert cell["fpr"] is None
     assert cell["power"] is None
     assert cell["coverage"] is None
+
+
+def family_sentinel(
+    *,
+    run_stamp: str = "stamp0",
+    fwer: float | None = 0.048,
+    fdr: float | None = 0.048,
+    budget: float | None = 0.075,
+    over_budget: bool = False,
+    correction: str = "bonferroni",
+    n_metrics: int = 3,
+    created_at: datetime = datetime(2026, 7, 5, 12, 0, 0),
+) -> dict:
+    """A composed-family sentinel row (validate/persistence.py FAMILY_METRIC)."""
+    details = {
+        "family": {
+            "correction": correction,
+            "n_metrics": n_metrics,
+            "n_null_metrics": n_metrics,
+            "metrics": [f"m{i}" for i in range(n_metrics)],
+            "iterations": 2000,
+            "valid_iterations": 2000,
+            "fwer": fwer,
+            "fdr": fdr,
+            "any_rejection_rate": fwer,
+            "budget": budget,
+            "over_budget": over_budget,
+            "warnings": [],
+        }
+    }
+    row = aa_row(run_stamp=run_stamp, cell="family", metric="__family__", created_at=created_at)
+    row["method_config_id"] = "__composed__"
+    row["method_name"] = "composed-fdr"
+    row["verdict"] = f"composed {correction} over {n_metrics} metrics: family-wise error"
+    row["details"] = json_dumps_sorted(details)
+    row["fpr"] = None
+    return row
+
+
+def test_family_sentinel_extracted_and_excluded_from_matrix():
+    block = build_calibration_block(
+        [aa_row(metric="arpu"), aa_row(metric="conversion", cell="cellB"), family_sentinel()]
+    )
+    assert block is not None
+    fam = block["family"]
+    assert fam is not None
+    assert fam["fwer"] == 0.048 and fam["fdr"] == 0.048 and fam["budget"] == 0.075
+    assert fam["correction"] == "bonferroni" and fam["n_metrics"] == 3
+    assert not fam["over_budget"]
+    # the sentinel never appears as a matrix row (only the two real metrics do)
+    metrics = {r["metric"] for r in block["matrix_rows"]}
+    assert metrics == {"arpu", "conversion"}
+    assert "__family__" not in metrics
+
+
+def test_over_budget_family_flagged():
+    block = build_calibration_block(
+        [aa_row(), family_sentinel(fwer=0.12, fdr=0.12, over_budget=True)]
+    )
+    assert block["family"]["over_budget"] is True
+    assert block["family"]["fwer"] == 0.12
+
+
+def test_no_family_block_when_no_sentinel():
+    block = build_calibration_block([aa_row()])
+    assert block is not None
+    assert block["family"] is None

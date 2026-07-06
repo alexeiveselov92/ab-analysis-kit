@@ -24,6 +24,10 @@ from typing import Any
 
 from abkit.utils.json_utils import json_loads
 
+#: The composed-family sentinel row's reserved metric (validate/persistence.py
+#: ``FAMILY_METRIC``) — extracted into its own ``family`` block, never a matrix row.
+_FAMILY_METRIC = "__family__"
+
 
 def _num(value: Any) -> float | None:
     """A stored Nullable number → float, or ``None`` for NULL / NaN / ±inf."""
@@ -156,6 +160,18 @@ def build_calibration_block(aa_rows: list[dict], *, report_link: str | None = No
     stamp = _run_stamp(newest)
     invocation = [row for row in aa_rows if _run_stamp(row) == stamp]
 
+    # The composed-family sentinel (D9) is not a per-method cell — pull it into its own
+    # block and keep it out of the per-metric matrix.
+    family = _family_block(next((r for r in invocation if r.get("metric") == _FAMILY_METRIC), None))
+    invocation = [row for row in invocation if row.get("metric") != _FAMILY_METRIC]
+    if not invocation:
+        # a family-only invocation is degenerate; nothing to render as a matrix
+        return (
+            None
+            if family is None
+            else {"family": family, "matrix_rows": [], "report_link": report_link}
+        )
+
     matrix_rows = [_matrix_row(row) for row in invocation]
     # sort for a stable, readable matrix: by metric, recommended first, then FPR
     matrix_rows.sort(
@@ -178,5 +194,32 @@ def build_calibration_block(aa_rows: list[dict], *, report_link: str | None = No
         "budget": lead["budget"],
         "headline": _headline(matrix_rows, lead),
         "matrix_rows": matrix_rows,
+        "family": family,
         "report_link": report_link,
+    }
+
+
+def _family_block(sentinel: dict | None) -> dict | None:
+    """The composed FWER/FDR sweep (D9) → the renderer ``family`` block, or ``None``.
+
+    Reads the numbers from the sentinel row's ``details.family`` (numerics are stored
+    there, not in the NULL cell columns). None-safe — a pre-WP8 matrix has no sentinel.
+    """
+    if sentinel is None:
+        return None
+    fam = _details(sentinel).get("family")
+    if not isinstance(fam, dict):
+        return None
+    return {
+        "correction": fam.get("correction"),
+        "fwer": _num(fam.get("fwer")),
+        "fdr": _num(fam.get("fdr")),
+        "budget": _num(fam.get("budget")),
+        "over_budget": bool(fam.get("over_budget", False)),
+        "n_metrics": fam.get("n_metrics"),
+        "n_null_metrics": fam.get("n_null_metrics"),
+        "metrics": fam.get("metrics") if isinstance(fam.get("metrics"), list) else [],
+        "iterations": fam.get("iterations"),
+        "valid_iterations": fam.get("valid_iterations"),
+        "verdict": sentinel.get("verdict") or "",
     }

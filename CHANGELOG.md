@@ -88,7 +88,23 @@ number change).
     variance (ρ is not persisted per row) as a flagged conservative upper bound. **Runtime
     / ASN** (days-to-N from an arrival rate + the sequential design's average sample
     number) are a named **M6** deferral.
-    *(Still landing: the composed multi-metric FDR/FWER sweep.)*
+  - **The composed multi-metric FWER/FDR family sweep (D9, WP7+WP8)** — M4 validated only
+    the per-cell peeking FPR at the correct two-tier alphas; D9 closes the family-level
+    loop. The read-time composed rule (two-tier Bonferroni ∘ Benjamini-Hochberg) is
+    extracted from the readout's inline `_build_sig_map` into one shared pure helper
+    (`stats.correction.composed_significance`, WP7) that the readout and the sweep both
+    apply — a behavior-preserving refactor (goldens untouched, verdict-snapshot pinned).
+    `abk validate` then runs the sweep: each iteration draws **one** unit→arm assignment
+    over the **union** of the metrics' cohorts (the real single-assignment semantics; no
+    imputation — a unit absent from a metric doesn't contribute), scores every metric at
+    its horizon, and tallies the empirical **family-wise error rate** (any false rejection)
+    and **false-discovery rate** (mean false fraction among rejections). On the placebo
+    (complete) null FWER and FDR coincide by construction and sit at ≈α; a planted true
+    effect in one metric leaves the null metrics' family error controlled. Persisted as one
+    sentinel `_ab_aa_runs` row (`metric='__family__'`, numbers in `details`) — no schema
+    change, never lights the per-cell calibration chip — and surfaced as a composed-family
+    band above the report's A/A matrix (`report.js` rebuilt). Fixed-horizon only;
+    sequential × composed is a named **M6** follow-up.
 - **M4 — `abk validate`, the A/A false-positive matrix.** The trust artifact that
   answers "is this method actually calibrated on this data, or does it lie about its
   α?" (docs/specs/aa-false-positive-matrix.md; the implementation record is

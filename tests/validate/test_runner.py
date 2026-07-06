@@ -201,6 +201,72 @@ def test_run_validation_scores_cells_and_marks_one_recommended():
     )
 
 
+def _seeded_warehouse():
+    warehouse = SyntheticWarehouse()
+    seed_cohort(warehouse, n_per_arm=160)
+    seed_null_events(warehouse)
+    return warehouse
+
+
+def test_run_validation_scores_the_composed_family(monkeypatch):
+    """D9/WP8: a multi-metric run also produces the composed FWER/FDR family sweep."""
+    warehouse = _seeded_warehouse()
+    experiment = _two_tier_experiment()  # arpu + conversion + ctr
+    backend = RecomputeBackend(warehouse, experiment)
+    result = run_validation(
+        backend,
+        experiment,
+        PROJECT,
+        METRICS,
+        {name: cfg.get_query_text(None) for name, cfg in METRICS.items()},
+        _grid(experiment),
+        ValidateSettings(iterations=300),
+        now_iso=NOW_ISO,
+    )
+    assert result.family is not None
+    fam = result.family
+    assert fam.correction == "bonferroni"
+    assert fam.n_metrics >= 2 and fam.n_null_metrics == fam.n_metrics  # a null sweep
+    assert fam.fwer is not None and 0.0 <= fam.fwer <= 1.0
+    assert fam.fdr == fam.fwer  # complete-null identity
+    assert "composed" in fam.verdict
+
+
+def test_metric_filter_skips_the_family_sweep():
+    warehouse = _seeded_warehouse()
+    experiment = _two_tier_experiment()
+    backend = RecomputeBackend(warehouse, experiment)
+    result = run_validation(
+        backend,
+        experiment,
+        PROJECT,
+        METRICS,
+        {name: cfg.get_query_text(None) for name, cfg in METRICS.items()},
+        _grid(experiment),
+        ValidateSettings(iterations=300),
+        now_iso=NOW_ISO,
+        metric_filter="arpu",  # a single-metric view has no family to compose
+    )
+    assert result.family is None
+
+
+def test_single_comparison_has_no_family():
+    warehouse = _seeded_warehouse()
+    experiment = make_experiment("aa_solo", "arpu", {"name": "t-test"})
+    backend = RecomputeBackend(warehouse, experiment)
+    result = run_validation(
+        backend,
+        experiment,
+        PROJECT,
+        METRICS,
+        {name: cfg.get_query_text(None) for name, cfg in METRICS.items()},
+        _grid(experiment),
+        ValidateSettings(iterations=300),
+        now_iso=NOW_ISO,
+    )
+    assert result.family is None  # one declared comparison ⇒ no family
+
+
 def test_enumerate_filters_incompatible_extra_methods_and_dedups():
     """m4 exit-gate round-2 (D6): a --method must match the metric's input_kind, not be
     paired, not be quarantined, and never duplicate a declared cell — else it enqueues a

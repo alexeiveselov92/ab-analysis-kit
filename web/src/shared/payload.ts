@@ -193,6 +193,22 @@ export interface CalibrationRow {
  * consumes it tolerantly (every field optional). `matrix_rows` present ⇒ the
  * report renders the A/A calibration matrix section; the chip reads `headline`.
  */
+/** The composed multi-metric FWER/FDR sweep (D9/WP8) — the family-level loop that the
+ * per-cell peeking FPR does not close. Rendered as a small band above the matrix. */
+export interface CalibrationFamily {
+  correction?: string | null;
+  fwer?: number | null;
+  fdr?: number | null;
+  budget?: number | null;
+  over_budget?: boolean;
+  n_metrics?: number | null;
+  n_null_metrics?: number | null;
+  metrics?: string[];
+  iterations?: number | null;
+  valid_iterations?: number | null;
+  verdict?: string | null;
+}
+
 export interface CalibrationBlock {
   fpr?: number | null;
   peeking_fpr?: number | null;
@@ -200,6 +216,7 @@ export interface CalibrationBlock {
   budget?: number | null;
   headline?: string | null;
   matrix_rows?: CalibrationRow[];
+  family?: CalibrationFamily | null;
   report_link?: string | null;
 }
 
