@@ -20,7 +20,7 @@ Ported from detectkit's lazy-import Click group (shared flag vocabulary:
 | `abk run --select <exp> [--steps validate,plan,load,compute] [--from/--to] [--full-refresh] [--profile] [--report]` | The pipeline: validate → plan → maintain unit-state → load → SRM → compute → persist → optional HTML readout. Streams `VALIDATE → PLAN → STATE → LOAD → SRM → COMPUTE → RESULT`. *(The readout surface is `--report` — tri-state: bare → `reports/<exp>.html`, a directory → `<dir>/<exp>.html`, a `.html` path → that file; emitted best-effort per experiment after its pipeline, even with zero pending cutoffs. A former `readout` `--steps` token was never wired and is superseded by `--report` — m3-implementation-plan.md D8.)* |
 | `abk explore --select <exp> [--metric <m>] [--no-serve] [--no-open]` | **PRIORITY:** the localhost cockpit — live `method_params` tuning + the stabilization chart + always-visible A/A calibration + write-back |
 | `abk validate --select <exp> [--method <m>] [--metric <m>] [--iterations N] [--inject-effect <pct>] [--scoring fpr\|power\|mde] [--report] [--force]` | The A/A false-positive + power matrix (incl. honest peeking FPR) → `_ab_aa_runs` + recommendation. Streams `LOAD → RESAMPLE → SCORE → PERSIST` — a **distinct** stage vocabulary from `abk run`'s config-lint `VALIDATE` step (`--steps validate`): the two never share copy (the word "validate" is deliberately not reused between the config gate and the A/A matrix). Its own out-of-band lock (`process_type='validate'`, D5), cleared by `abk unlock`; exits non-zero on any cell/harness failure; `--report` is best-effort. `--method` (not `--select`) is the method-grid axis (§below). |
-| `abk plan --select <exp> [--metric <m>] [--mde <pct>] [--power 0.8] [--alpha 0.05]` | Pre-launch power / sample-size / runtime planner (no detectkit analog) |
+| `abk plan --select <exp> [--metric <m>] [--mde <pct>] [--power 0.8] [--alpha 0.05] [--baseline <metric>:mean=..,std=..,n=..]` | Pre-launch power / sample-size planner (no detectkit analog). **Read-only** (no lock, no `_ab_*` writes). Reports required-N / achievable-MDE / achieved-power at the effective two-tier alpha + the projected look count & cost shape; refuses ratio/bootstrap methods it cannot size honestly. **runtime/ASN → M6** (see amendment below). |
 | `abk clean --select <exp> \| --orphaned-experiments [--execute] [--yes]` | Config-hash drift GC (prune `_ab_results` rows whose `method_config_id` the YAML no longer produces; purge removed experiments). Dry-run by default |
 | `abk unlock --select <exp> [--profile]` | Clear stale run locks (verbatim from detectkit) |
 | `abk test-report <exp> [--profile]` | Send a mock readout through configured channels (connectivity/format check) |
@@ -35,6 +35,23 @@ fix ("experiment name X collides with experiments/Y.yml" vs "metric name X colli
 with metrics/Z.yml — metric and experiment names share one namespace"). The
 two-level selector semantics are documented in `cli.md` because detectkit users will
 assume the one-level model.
+
+### `abk plan` scope amendment (M5 WP6; m5-implementation-plan.md D10)
+
+The `abk plan` row's word **"runtime"** — days-to-N from a unit-arrival rate, and the
+sequential design's expected/average sample number (ASN) — is **deferred to M6**: it
+needs an arrival-rate source the pipeline does not yet capture. M5 ships the **sizing**
+planner only: required-N / achievable-MDE / achieved-power (at the effective two-tier
+alpha), the projected look count, and the compute cost shape — all read-only. Baseline
+per-arm moments come from the latest persisted `_ab_results` row for the control/first-
+treatment pair (a `--baseline <metric>:mean=..,std=..,n=..` / `:prop=..,n=..` override
+sizes a greenfield experiment; without either, that comparison is reported as
+un-sizable, not guessed). The target MDE defaults to the comparison's `min_effect`. Only
+the closed-form power families are sized: **ratio** metrics and **bootstrap/resampling**
+methods have no versioned power formula and are refused (SKIPPED, never invented math);
+CUPED is sized on the raw persisted variance (the covariate correlation is not persisted
+per row) as a flagged conservative upper bound. A by-design refusal exits zero; a genuine
+harness failure (bad selection / `--baseline` / warehouse error) exits non-zero.
 
 ## 2. The explore cockpit (priority interface)
 

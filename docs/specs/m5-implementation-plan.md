@@ -11,8 +11,34 @@
 
 ## 0. Progress & resume note (2026-07-06)
 
-**Status: WP1 + WP2 + WP3 (all 3 parts) + WP4 + WP5 shipped; WP6 / WP7→WP8
-(independent tracks) + WP9 exit gate remain.** WP5 = the sub-day anytime-valid SRM:
+**Status: WP1 + WP2 + WP3 (all 3 parts) + WP4 + WP5 + WP6 shipped; WP7→WP8
+(the composed-FDR track) + WP9 exit gate remain.** WP6 = the read-only `abk plan`
+sizing planner: `abkit/planning/` (a pure `sizing.py` over `abkit.stats.power` +
+`__init__`) and `abkit/cli/commands/plan.py` (registered in `main.py`). It echoes the
+projected look count + cost shape from the shared `generate_grid`, then per comparison
+reports required-N / achievable-MDE / achieved-power at the **effective two-tier alpha**
+(re-resolved off a `--alpha`-overridden config copy so the correction still divides it)
+from the latest persisted `_ab_results` control/first-treatment moments — a `--baseline
+<metric>:mean=..,std=..,n=..` override sizes a greenfield experiment, the target MDE
+defaults to `min_effect`. **Refusal dispatch is declarative** (D10, invariant 3): paired
+→ refused; a `seed` ParamSpec (resampling) → refused; `input_kind == 'ratio'` → refused;
+`requires_covariate` (CUPED) → sized on raw variance with a flagged note. **Strictly
+read-only** (D11) — no lock (the `test_plan_is_read_only` test holds the run lock and
+proves plan ignores it), its own manager closed in `finally`, no `_ab_*` writes. Runtime
+/ ASN deferred to M6 with the `cli-and-dx.md §1` amendment. Tests:
+`tests/planning/test_sizing.py` (25: power-module KAT + required-N round-trip + the
+`--baseline` grammar + the infeasible/zero-effect ∞ guards) and
+`tests/cli/test_plan_command.py` (12: sizes-after-run, look-count == `generate_grid`,
+read-only, refuse-if-no-baseline, `--baseline` override, ratio/bootstrap dispatch
+refusal, the infeasible-target ∞ render, the multi-arm first-pair-only warning). Full
+suite 1529 passed / 1 skipped; ruff+black clean; goldens untouched, no
+`ALGORITHM_VERSION` moved. **Adversarial review (1 round, 4 lenses, refute-by-default):
+one CONFIRMED bug (from 4 angles) FIXED** — the required-N solves crashed the whole
+experiment's plan (`int(round(<non-scalar NaN>))` / statsmodels "cannot detect
+effect-size 0") on an infeasible fraction target (`prop·(1+mde) ≥ 1`) or a zero-baseline
+relative sample target, instead of the ∞/"underpowered" the tool's own `is_powered`/
+`_fmt_n` already render; the guard lives in the WP6 wrapper (`size_comparison`), never
+in golden-pinned `power.py`. WP5 = the sub-day anytime-valid SRM:
 below 1d cadence (`experiment.is_sub_day()`) the χ² gate — which would peek the strict
 0.001 hard gate dozens of times a day — swaps to the Dirichlet-multinomial e-process
 (Lindon & Malek 2022; `abkit/stats/srm.py::sequential_multinomial_srm`,
@@ -405,7 +431,7 @@ false-alarm KAT; daily is unchanged; `statistics-changes.md §4` carries it.
 
 ---
 
-### WP6 — `abk plan` — read-only pre-launch power/sizing planner — independent (CLI + pure engine, NEW)
+### WP6 — `abk plan` — read-only pre-launch power/sizing planner — independent (CLI + pure engine, NEW) ✅ DONE
 
 **Goal:** a pre-launch command that reports required-N / achievable-MDE /
 achieved-power at the configured α, plus the projected **look count** and **cost &
