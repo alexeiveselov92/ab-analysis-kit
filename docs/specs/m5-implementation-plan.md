@@ -726,5 +726,68 @@ asserted — §6.5). Recorded in `statistics-changes.md §4` once WP2 fixes it.
 
 ## 5. Adversarial review record (M5 exit gate)
 
-_TBD at WP9 — ≥2 full rounds (round-1 → fixes → round-2 re-review), both recorded
-here, per the M4 lesson._
+Two full rounds over the integrated M5 (5 lenses round 1 / 3 round 2, refute-by-default,
+a second independent verifier per finding). Per-WP reviews were run + recorded at each WP
+(WP6 = 1 confirmed/fixed; WP7 snapshot-pinned; WP8 = 0 findings); this §5 records the
+milestone-level exit gate.
+
+**Round 1 — 7 raised → 5 distinct confirmed (1 flagged by two lenses), 1 refuted. All
+fixed:**
+
+1. **[medium] FLAT under sequential leaked fixed-horizon power** (`readout.py`). The
+   all-quiet FLAT branch compared `min_effect` against the persisted **fixed** MDE while
+   the reported CI is the wider always-valid interval — an over-confident FLAT. **Fix:**
+   for an `always_valid` latest row, gate FLAT on the always-valid **half-width**
+   `(right−left)/2 ≤ min_effect` (INCONCLUSIVE otherwise); fixed rows keep the MDE gate.
+   Pinned by `test_readout_sequential.py::TestFlatUnderSequentialUsesTheAlwaysValidInterval`.
+2. **[medium] the D9 family FWER budget false-flagged the default two-tier Bonferroni**
+   (`runner.py::_run_family_sweep`). Two-tier Bonferroni protects the main tier and the
+   secondary tier each at α, so a correctly-configured multi-metric family's whole-family
+   FWER is ≈2α — judged against the single-cell α×1.5 it read "OVER budget". **Fix:** anchor
+   the budget to the composed rule's **nominal rate** `1−∏(1−αᵢ)` × the `aa_fpr_budget`
+   headroom, so "over budget" flags a miscalibrated *method* (clustering), not a loose
+   correction. Pinned by `test_family_sweep.py::test_two_tier_members_are_within_the_nominal_family_budget`
+   + `test_runner.py::test_family_budget_is_anchored_to_the_nominal_rate_not_a_single_cell`.
+3. **[medium] `abk plan` enumerated an unbounded grid** (`plan.py`). It called
+   `generate_grid` without `limit`, so a pathological sub-day grid would OOM in the
+   read-only planner (which skips the config-lint that catches it in `run`). **Fix:**
+   `limit=project.limits.max_looks` + `GridLimitExceeded → ClickException` (fail fast).
+   Pinned by `test_plan_command.py::test_plan_grid_over_max_looks_fails_fast`.
+4. **[low] stale τ² comment** (`scoring.py:88`, flagged by 2 lenses) — "anchored to the
+   horizon" → "first usable look (D-Seq-anchor)".
+5. **[low] ROADMAP wording** — "auto-recommended below 1d" → the trigger is the look
+   count (`warn_looks`), not the time unit. The "sit at ≈α" family claims in
+   `aa-fpr §8.1` + `CHANGELOG` corrected to the nominal composed rate (≈2α).
+
+Refuted (1): a claim that the sub-day SRM initialises `running_max_log_bf` to `−inf`
+incorrectly — the e-process BF₀=1 is handled; the first real BF is max'd in correctly.
+
+**Round 2 — re-review of the patched tree — 7 raised → 2 confirmed, 5 refuted. Both
+fixed. (Round 2 earned its keep: it caught an incomplete round-1 fix — the M4 lesson.)**
+
+1. **[medium] round-1 Fix 2 was INCOMPLETE for BH** (`runner.py`). The nominal-rate budget
+   anchored to the Bonferroni composition `1−∏(1−αᵢ)` *unconditionally*, but
+   `benjamini_hochberg` controls the complete-null family FWER at ≈α (FWER==FDR≈α), so the
+   BH budget came out ~n× too lenient — a miscalibrated BH method would read within budget
+   (a regression vs the pre-fix α×1.5). **Fix:** make the anchor correction-aware — BH →
+   `max(member.alpha) × headroom` (≈α×1.5); Bonferroni/none → the composition rate. Pinned
+   by `test_runner.py::test_bh_family_budget_anchors_to_member_level_not_the_composition`.
+2. **[low] a persistently-gapped family member was silent** (`family.py`). A member whose
+   cohort is too small to ever split ≥2 units/arm scores in 0 iterations yet rode in
+   `n_metrics` + the "composed over N metrics" verdict as if validated. **Fix:** track
+   per-member scorable-iteration counts and emit a warning naming any member scored in 0
+   iterations. Pinned by `test_family_sweep.py::test_persistently_gapped_member_is_warned_not_silent`.
+
+Refuted (5), each with recorded reasoning — the load-bearing ones: the explore power chip
+computing fixed-horizon power beside an always-valid CI is **not** an incomplete Fix 1 (no
+always-valid power analog exists in `abkit.stats`; the chip is honestly labelled
+informational; the on-screen verdict is the baked readout verdict, already correctly
+INCONCLUSIVE after Fix 1); the family sweep reporting a **fixed-horizon** composed FWER/FDR
+for a `sequential.enabled` experiment is the **documented** M6 deferral (sequential ×
+composed), disclosed in `aa-fpr §8.1`; the sub-day SRM running-max e-value < 1 at early
+null looks is correct (Ville's inequality bounds the *supremum*, not every look). Also
+cleaned up: with Fix 3's `generate_grid(limit=…)` the `looks > max_looks` warning in
+`plan._emit_plan` became unreachable → removed.
+
+**Exit-gate outcome:** goldens untouched, no `ALGORITHM_VERSION` moved, `abkit.stats`
+purity intact; full suite green after both rounds' fixes.

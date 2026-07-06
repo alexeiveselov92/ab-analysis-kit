@@ -182,12 +182,16 @@ def sweep_family(
     fdp_sum = 0.0
     valid_iterations = 0
     clamp_warned = False
+    # per-member scorable-iteration counts: a member whose cohort is too small to ever
+    # split ≥2 units/arm is a persistent gap — it must not silently ride in the family
+    # verdict as if it were validated (M5 exit-gate round-2 finding).
+    member_scored = [0] * len(members)
 
     for i in range(iterations):
         union_mask = placebo_mask(n_union, share_a, derive_seed(*seed_parts, i))
         inputs: list[SignificanceInput] = []
         scorable = False
-        for member, pos in zip(members, member_union_pos, strict=True):
+        for j, (member, pos) in enumerate(zip(members, member_union_pos, strict=True)):
             if (
                 member.planted
                 and inject_effect is not None
@@ -202,6 +206,7 @@ def sweep_family(
             marginal = _member_marginal(member, union_mask[pos], inject_effect)
             if marginal.left_bound is not None or marginal.pvalue is not None:
                 scorable = True
+                member_scored[j] += 1
             inputs.append(marginal)
         if not scorable:
             continue
@@ -216,6 +221,15 @@ def sweep_family(
         if total:
             any_rej_hits += 1
         fdp_sum += (len(false_rejections) / total) if total else 0.0
+
+    # surface any member that never scored — it contributes 0 to the family error yet
+    # rides in n_metrics/the verdict, which would otherwise overstate coverage silently.
+    for member, scored in zip(members, member_scored, strict=True):
+        if scored == 0:
+            warnings.append(
+                f"metric '{member.metric}': scored in 0/{iterations} iterations "
+                "(cohort too small to split ≥2 units/arm) — excluded from the family error"
+            )
 
     if valid_iterations == 0:
         return FamilyScore(

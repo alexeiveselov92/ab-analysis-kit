@@ -232,6 +232,71 @@ def test_run_validation_scores_the_composed_family(monkeypatch):
     assert "composed" in fam.verdict
 
 
+def test_family_budget_is_anchored_to_the_nominal_rate_not_a_single_cell():
+    """M5 exit-gate round-1 fix: the family FWER budget scales with the composed rule's
+    nominal rate (≈Σα over the members), so it exceeds a single cell's α×1.5 — otherwise
+    the default two-tier Bonferroni multi-metric family false-reads over budget."""
+    from abkit.tuning.recompute import resolve_fpr_budget
+
+    warehouse = _seeded_warehouse()
+    experiment = _two_tier_experiment()  # 3 comparisons
+    backend = RecomputeBackend(warehouse, experiment)
+    result = run_validation(
+        backend,
+        experiment,
+        PROJECT,
+        METRICS,
+        {name: cfg.get_query_text(None) for name, cfg in METRICS.items()},
+        _grid(experiment),
+        ValidateSettings(iterations=300),
+        now_iso=NOW_ISO,
+    )
+    single_cell = resolve_fpr_budget(PROJECT, 0.05, None)  # the old (wrong) family budget
+    assert result.family is not None
+    assert result.family.budget > single_cell  # family-scaled, not one cell's α×1.5
+
+
+def test_bh_family_budget_anchors_to_member_level_not_the_composition():
+    """M5 exit-gate round-2 fix: BH controls the complete-null family FWER at ≈α, so its
+    budget must NOT scale with the Bonferroni composition (≈Σα) — otherwise a miscalibrated
+    BH method is under-flagged. The BH budget stays ≈ max-member-α × headroom."""
+    warehouse = _seeded_warehouse()
+    experiment = ExperimentConfig.model_validate(
+        {
+            "name": "bh_family",
+            "start_date": "2024-07-01",
+            "end_date": "2024-07-04",
+            "unit_key": "user_id",
+            "alpha": 0.05,
+            "correction": "benjamini_hochberg",
+            "assignment": {
+                "query": "SELECT user_id, variant, exposure_ts FROM assignments",
+                "variants": ["control", "treatment"],
+                "expected_split": {"control": 0.5, "treatment": 0.5},
+            },
+            "comparisons": [
+                {"metric": "arpu", "is_main_metric": True, "method": {"name": "t-test"}},
+                {"metric": "conversion", "method": {"name": "z-test"}},
+                {"metric": "ctr", "method": {"name": "ratio-delta"}},
+            ],
+        }
+    )
+    backend = RecomputeBackend(warehouse, experiment)
+    result = run_validation(
+        backend,
+        experiment,
+        PROJECT,
+        METRICS,
+        {name: cfg.get_query_text(None) for name, cfg in METRICS.items()},
+        _grid(experiment),
+        ValidateSettings(iterations=300),
+        now_iso=NOW_ISO,
+    )
+    assert result.family is not None
+    # member-level: max α (0.05) × 1.5 = 0.075, NOT the 3-metric composition ≈0.21
+    assert result.family.budget < 0.10
+
+
 def test_metric_filter_skips_the_family_sweep():
     warehouse = _seeded_warehouse()
     experiment = _two_tier_experiment()

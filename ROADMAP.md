@@ -131,23 +131,37 @@ definition-of-done includes the relevant
   change with the full obligations (identity impact, `statistics-changes.md` entry, A/A
   validation *through this harness*) — a named future change, not a milestone gap.
 
-## M5 — Sequential analysis + planner + corrections
-- `sequential/` (mSPRT always-valid + alpha-spending), opt-in; `ci_kind`/`is_horizon`
-  in the contract. `abk plan` (pre-launch power/sizing). ~~Benjamini-Hochberg
-  read-time~~ *(pulled forward to M3 WP1: `pipeline/readout.py` rescoring —
-  an M2-accepted `correction: benjamini_hochberg` would otherwise verdict at
-  the wrong alpha)*.
-- **The A/A matrix's `sequential.enabled` side-by-side column (from M4/D8):** once
-  the sequential engine exists, `abk validate` renders the same metric's always-valid
-  peeking FPR beside the fixed-horizon one, so the analyst sees the CI brought back to
-  ≈ α — the honest completion of the peeking story.
-- **The full composed multiple-testing FDR/FWER empirical validation (from M4/D9):**
-  the composed Bonferroni × read-time BH × peeking sweep over the *multi-metric* family
-  (M4 validated only the per-cell peeking FPR at the correct two-tier alphas).
-- Sub-day cadence constraints (cumulative-intervals.md §6): `always_valid` is the
-  auto-recommended scheme below `1d`; `alpha_spending` requires a pre-committed
-  small look grid and is a config error at sub-day cadence; anytime-valid
-  sequential multinomial SRM (Lindon & Malek) replaces per-cutoff χ² below `1d`.
+## M5 — Sequential analysis + planner + corrections ✅ SHIPPED
+The implementation record + decisions are in
+[m5-implementation-plan.md](docs/specs/m5-implementation-plan.md); the math in
+[statistics-changes.md §4](docs/specs/statistics-changes.md).
+- **`stats/sequential/`** — an opt-in (`sequential: {enabled: true}`, **default off**,
+  byte-identical fixed path) asymptotic Gaussian **confidence sequence** (Waudby-Smith &
+  Ramdas), computed as a pure MODE transform over the fixed `(effect, SE)`, never a method
+  plugin. Rows carry `ci_kind='always_valid'`; the readout calls WIN/LOSE pre-horizon only
+  under it; the toggle self-invalidates (a bare `abk run` re-plans the series). ~~alpha-
+  spending / group-sequential~~ → **M6** (a `scheme: alpha_spending` config error names it).
+- **The A/A matrix's `sequential.enabled` side-by-side column (D8):** `abk validate`
+  renders the always-valid peeking FPR + power + CI-width beside the fixed ones — the CI
+  brought back to ≈ α, the honest completion of the peeking story.
+- **The composed multiple-testing FDR/FWER empirical validation (D9):** the read-time
+  composed rule (two-tier Bonferroni ∘ BH) is one shared helper (`stats.correction.
+  composed_significance`); `abk validate` sweeps the empirical **FWER + FDR** over the
+  multi-metric family (one shared union-cohort assignment per iteration). Fixed-horizon
+  only; ~~sequential × composed~~ → **M6**.
+- **`abk plan`** — the read-only pre-launch power/sizing planner (required-N / achievable-
+  MDE / achieved-power at the effective two-tier alpha + look count & cost). ~~runtime /
+  ASN~~ → **M6**.
+- **Sub-day** (cumulative-intervals.md §6): the config lint recommends `always_valid` when
+  the planned **look count** exceeds `warn_looks` (the dangerous variable is the look
+  count, not the time unit — dense sub-day grids trip it first); `alpha_spending` is a
+  config error at sub-day cadence; the anytime-valid sequential multinomial SRM (Lindon &
+  Malek) replaces per-cutoff χ² below `1d`.
+- Benjamini-Hochberg read-time was *pulled forward to M3 WP1* (`pipeline/readout.py`
+  rescoring — an M2-accepted `correction: benjamini_hochberg` would otherwise verdict at
+  the wrong alpha).
+- **Deferred to M6** (named): `alpha_spending`/group-sequential, the A/A sequential ×
+  composed sweep, `abk plan` runtime/ASN.
 
 ## M6 — DX, docs, orchestration, release
 - `abk init-claude` + packaged `.claude` assets (rules + 7 skills);

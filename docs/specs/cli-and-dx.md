@@ -53,6 +53,24 @@ CUPED is sized on the raw persisted variance (the covariate correlation is not p
 per row) as a flagged conservative upper bound. A by-design refusal exits zero; a genuine
 harness failure (bad selection / `--baseline` / warehouse error) exits non-zero.
 
+A transcript over the scaffolded example (after one `abk run` has persisted the moments):
+
+```
+$ abk plan --select example_signup_test --mde 0.05
+  ┌─ example_signup_test: plan · α raw=0.05 → per-comparison 0.05 · power 0.80
+  │   example_signup_cr [main · z-test · relative] — baseline prop=0.2 · n=300/300 trials (persisted @ …)
+  │     target MDE 5.00% → required 25,580/arm ✗ underpowered · power@MDE 0.06 · achievable MDE 49.26%
+  │   example_arpu [secondary · cuped-t-test · relative] — baseline mean=62.86 std=42 · n=300/300 (persisted @ …)
+  │     target MDE 5.00% → required 2,804/arm ✗ underpowered · power@MDE 0.15 · achievable MDE 15.31%
+  │     ⚠ sized on RAW variance — CUPED (ρ not persisted) lowers required-N further
+  └─ looks: 14 planned · cadence 1d · horizon 2024-07-15 · ~28 _ab_results rows/full-refresh
+Done. 1 experiment(s) planned
+```
+
+The effective **per-comparison alpha** (two-tier resolved) heads the tree; each line
+reports required-N (vs the current N → powered/underpowered), the achievable MDE at the
+current size, and achieved power; a ratio/bootstrap comparison reads `SKIPPED: …` instead.
+
 ## 2. The explore cockpit (priority interface)
 
 The detectkit-`tune` port — see [data-contract-and-reporting.md §5](data-contract-and-reporting.md).

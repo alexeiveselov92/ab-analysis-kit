@@ -1,10 +1,10 @@
 # abkit architecture — as built
 
 > The contributor/assistant condensation of the system **as it exists in code**.
-> Reflects: **M1 + M2 + M3 + M4 shipped** (`__version__ = 0.0.1.dev0`; M3's WP9
+> Reflects: **M1 + M2 + M3 + M4 + M5 shipped** (`__version__ = 0.0.1.dev0`; M3's WP9
 > testcontainers hardening deferred to a Docker-equipped environment).
 > Design contracts for what is being *built next* live in [docs/specs/](../../docs/specs/)
-> (canonical for M5+ work); this file must never claim unbuilt code exists.
+> (canonical for M6+ work); this file must never claim unbuilt code exists.
 > Keep in sync with `docs/` on every milestone (and with the `init-claude`
 > payload once it exists — M6).
 
@@ -30,7 +30,8 @@ Donor codebase: `/home/aleksei/wsl_analytics/detektkit` (import package
 abkit/
   __init__.py            # __version__ (single source; numpy-free import path)
   cli/                   # ✅ M2: main (lazy Click group), _output (tree style),
-    commands/            #   init (runnable example + seed), run, unlock, clean
+    commands/            #   init/run/unlock/clean (M2), explore (M3), validate (M4),
+                         #   ✅ M5: plan (read-only pre-launch power/sizing)
   core/                  # ✅ M2: interval (N{s,m,h,d,w}), models (TableModel +
                          #   version_column LWW), period_planner (THE grid — one
                          #   enumeration for validator gates AND the anti-join)
@@ -55,8 +56,13 @@ abkit/
                          #   scoring), load (placebo panel + denser-early grid
                          #   subsample), runner (cell enum + effective alpha +
                          #   select + verdicts), persistence/result/run_id
-                         #   (per-cell _ab_aa_runs rows, D4), _types
+                         #   (per-cell _ab_aa_runs rows, D4), _types;
+                         #   ✅ M5: family (D9 composed FWER/FDR union-cohort sweep)
+  planning/              # ✅ M5: sizing (pure required-N/MDE/power over stats.power) —
+                         #   the `abk plan` engine; read-only, refuses ratio/bootstrap
   stats/                 # ✅ M1: the pure numpy core (details below)
+    sequential/          # ✅ M5: the always-valid confidence sequence
+                         #   (confidence_sequence, mixture τ², apply.to_always_valid)
   utils/                 # stdlib-only: json_utils (canonical hash path),
                          #   datetime_utils (naive-UTC), env_interpolation
 web/                     # ✅ M3: the dev-only TS toolchain (never wheel-shipped)
@@ -71,12 +77,15 @@ tests/
                          #   explore e2e gates in tests/e2e/)
   validate/              # M4 (+ cli/test_validate_command.py, the validate-
                          #   matrix exit-gate e2e in tests/e2e/)
+  stats/sequential/ planning/  # ✅ M5 (+ validate/test_family_sweep.py,
+                         #   pipeline/test_correction_rule.py, cli/test_plan_command.py,
+                         #   the sequential-matrix exit-gate e2e in tests/e2e/)
   _helpers/fake_db.py    # in-memory manager with SQL-backend semantics
   _helpers/synthetic_ab.py  # SyntheticWarehouse (3 metric kinds, shuffle mode,
                          #   seed_null_events — the exact-null A/A fixture)
 ```
 
-Not yet present (M5+): `stats/sequential/`, `compute/incremental_backend`.
+Not yet present (v2): `compute/incremental_backend`.
 M3's WP9 (PG/MySQL testcontainers + the two-process lock race) is deferred to a
 Docker-equipped environment.
 
@@ -234,22 +243,31 @@ identity param orphans the prior results series.
 - Stratification uses Hamilton apportionment; Poisson bootstrap is mean-only
   (guarded); zero denominators → NaN + warning (H5), never an exception.
 
-## M5+ targets (being built next — specs are canonical)
+## M5 as built + M6 targets (specs are canonical)
 
-Sequential analysis + the planner (M5), init-claude + docs site (M6). M5 also
-completes the two A/A columns deferred from M4: the `sequential.enabled`
-side-by-side peeking FPR (D8) and the full composed-FDR/FWER sweep over the
-multi-metric family (D9). Read before coding:
+**M5 shipped** (the implementation record is
+[m5-implementation-plan.md](../../docs/specs/m5-implementation-plan.md)): the always-valid
+sequential engine (`stats/sequential/`, opt-in `ci_kind='always_valid'`), the readout under
+sequential + weekly-cycle chip, the sub-day anytime-valid multinomial SRM (Lindon & Malek),
+`abk plan` (`planning/`), and the two A/A columns deferred from M4 — the `sequential.enabled`
+side-by-side peeking FPR (D8) and the composed FWER/FDR sweep over the multi-metric family
+(D9, via the shared `stats.correction.composed_significance`). **Named M6 deferrals:**
+`alpha_spending`/group-sequential (a `scheme: alpha_spending` config error names it), the
+A/A **sequential × composed** sweep, and `abk plan` **runtime/ASN**.
 
-- Sequential + planner → [cumulative-intervals.md §6](../../docs/specs/cumulative-intervals.md),
-  [statistics-changes.md](../../docs/specs/statistics-changes.md)
-- The A/A matrix contracts (the M4 as-built + the M5 deferrals) → [aa-false-positive-matrix.md](../../docs/specs/aa-false-positive-matrix.md)
+**M6 next** — init-claude + the docs site. Read before coding:
+
+- The M5 as-built + the math → [m5-implementation-plan.md](../../docs/specs/m5-implementation-plan.md),
+  [statistics-changes.md §4](../../docs/specs/statistics-changes.md),
+  [cumulative-intervals.md §6](../../docs/specs/cumulative-intervals.md)
+- The A/A matrix contracts (M4 + M5 as-built + M6 deferrals) → [aa-false-positive-matrix.md](../../docs/specs/aa-false-positive-matrix.md)
 - The blocking must-fix checklist → [quorum-review.md](../../docs/specs/quorum-review.md)
 - The cockpit & readout as-built contracts → [data-contract-and-reporting.md §5](../../docs/specs/data-contract-and-reporting.md),
   [cli-and-dx.md §2](../../docs/specs/cli-and-dx.md)
-- The implementation records → [m2-implementation-plan.md](../../docs/specs/m2-implementation-plan.md),
-  [m3-implementation-plan.md](../../docs/specs/m3-implementation-plan.md),
-  [m4-implementation-plan.md](../../docs/specs/m4-implementation-plan.md)
+- The implementation records → [m2](../../docs/specs/m2-implementation-plan.md),
+  [m3](../../docs/specs/m3-implementation-plan.md),
+  [m4](../../docs/specs/m4-implementation-plan.md),
+  [m5](../../docs/specs/m5-implementation-plan.md)
 
 ## Invariants (do not violate)
 

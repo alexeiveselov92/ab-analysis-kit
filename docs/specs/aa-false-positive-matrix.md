@@ -195,9 +195,42 @@ Reading it — the three classic failures the matrix exists to catch:
    first time the CI clears zero is running 14 correlated looks. That optional-stopping
    FPR is **12.7%** — over budget on a method that passes every single-look check. FPR
    alone would green-light it; the peeking column is what exposes the trap. Sequential
-   analysis (M5) is what brings this back toward α without changing the fixed-horizon
-   default (§3, D8).
+   analysis brings this back toward α without changing the fixed-horizon default (§3, D8).
 
 The **Recommended** row and its one-line rationale, the budget-band colors, and this
 peeking headline ("nominal α 5%, real peeking FPR 12.7%") are what `abk validate
 --report` renders and the explore calibration chip surfaces live (§4, §5).
+
+### 8.1 The sequential column (D8) and the composed family (D9) — shipped in M5
+
+With `sequential: {enabled: true}` on a sequential-eligible method, `abk validate` adds
+the always-valid twin **beside** the fixed peeking column (never asserting it, only
+measuring — §6.5). The always-valid confidence sequence widens the CI (~1.55× at the
+horizon) so it is peeking-valid at *every* look, which is exactly what pulls the
+optional-stopping hazard back to ≈α:
+
+| metric (kind) | method | peeking FPR (fixed) | peeking (always-valid) | CI width fixed → AV |
+|---|---|---|---|---|
+| `ctr` (ratio) | `ratio-delta` | **12.7%** ⚠ | **≈5%** ✅ | ×1.55 |
+
+That is the honest completion of the peeking story: the fixed column *diagnoses* the
+optional-stopping trap; the always-valid column *is* the defense, at the cost of a wider
+interval. (Pinned by the D8 headline test in `tests/validate/test_scoring.py`; the report
+renders it as a "peeking (AV)" column + a second green curve.)
+
+**The composed family (D9).** Per-cell FPR is necessary but not sufficient: an experiment
+runs a *family* of metrics under a shared assignment, corrected by two-tier Bonferroni
+(compute-time) ∘ Benjamini-Hochberg (read-time). `abk validate` sweeps the empirical
+**family-wise error rate** (any false rejection across the family) and **false-discovery
+rate** (mean false fraction among rejections) over one shared union-cohort placebo
+assignment per iteration, under the *same* composed rule the readout applies. On the
+placebo (complete) null the two coincide by construction (every rejection is false), and
+they sit at the composed rule's **nominal rate** — ≈α *per tier*, so ≈2α whole-family
+under the default two-tier Bonferroni (which protects the main tier and the secondary
+tier each at α, by design). The budget is therefore anchored to that nominal rate (× the
+`aa_fpr_budget` headroom), so "over budget" means the **methods** are miscalibrated
+(clustering / variance underestimation — the family analog of the §8 z-test), not that
+the correction is loose. A planted true effect in one metric leaves the null metrics'
+family error controlled (the D12 story, pinned by `tests/validate/test_family_sweep.py`).
+It is one sentinel `_ab_aa_runs` row and a composed-family band above the report matrix.
+**Sequential × composed is an M6 follow-up** (the sweep is fixed-horizon in M5).

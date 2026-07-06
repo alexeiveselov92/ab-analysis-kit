@@ -132,3 +132,60 @@ class TestWeeklyCyclePct:
         verdict = single_verdict(experiment, rows)
         assert verdict.verdict == "INCONCLUSIVE"
         assert verdict.weekly_cycle_pct is None
+
+
+def _seq_flat_experiment():
+    return make_experiment(
+        sequential={"enabled": True},
+        comparisons=[
+            {
+                "metric": "revenue",
+                "is_main_metric": True,
+                "min_effect": 0.05,
+                "method": {"name": "t-test"},
+            }
+        ],
+    )
+
+
+class TestFlatUnderSequentialUsesTheAlwaysValidInterval:
+    """M5 exit-gate round-1 fix: FLAT's 'adequately powered' claim must be judged against
+    the wider always-valid interval actually reported, not the fixed-horizon MDE (which
+    ``pair_mde`` leaves untouched on an always-valid row)."""
+
+    def test_wide_always_valid_ci_is_inconclusive_despite_a_small_fixed_mde(self):
+        experiment = _seq_flat_experiment()
+        # all-quiet; the persisted (fixed) MDE 0.02 <= min_effect 0.05 would have called
+        # FLAT under the old rule, but the always-valid half-width is 0.06 > 0.05.
+        rows = make_series(
+            experiment,
+            ci_kind="always_valid",
+            effect=0.001,
+            left_bound=-0.06,
+            right_bound=0.06,
+            pvalue=0.8,
+            reject=False,
+            mde_1=0.02,
+            mde_2=0.02,
+        )
+        verdict = single_verdict(experiment, rows)
+        assert verdict.verdict == "INCONCLUSIVE"
+        assert "always-valid" in joined(verdict.rationale)
+        assert "half-width" in joined(verdict.rationale)
+
+    def test_tight_always_valid_ci_is_flat(self):
+        experiment = _seq_flat_experiment()
+        rows = make_series(
+            experiment,
+            ci_kind="always_valid",
+            effect=0.001,
+            left_bound=-0.04,
+            right_bound=0.04,  # half-width 0.04 <= min_effect 0.05
+            pvalue=0.8,
+            reject=False,
+            mde_1=0.02,
+            mde_2=0.02,
+        )
+        verdict = single_verdict(experiment, rows)
+        assert verdict.verdict == "FLAT"
+        assert "always-valid interval rules out" in joined(verdict.rationale)

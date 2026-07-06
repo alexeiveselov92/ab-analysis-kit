@@ -674,6 +674,35 @@ def _pair_verdict(
             "cannot distinguish flat from underpowered (set comparisons[].min_effect)"
         )
         return build("INCONCLUSIVE", latest)
+    # Under the always-valid mode the reported interval IS the (wider) confidence
+    # sequence, so FLAT's "adequately powered" claim must be judged against the interval
+    # we actually show — not the fixed-horizon MDE, which `pair_mde` leaves untouched on
+    # an always-valid row and which understates the anytime width (~1.55× at horizon).
+    # Judging FLAT on the fixed MDE would leak fixed-horizon power into a wider-CI
+    # inference (M5 exit-gate round-1 finding). The half-width is directly on the row.
+    latest_ci_kind = str(latest.get("ci_kind") or "fixed") if latest else "fixed"
+    if latest_ci_kind == "always_valid":
+        lo, hi = _num(latest.get("left_bound")), _num(latest.get("right_bound"))
+        av_half = (hi - lo) / 2.0 if lo is not None and hi is not None else None
+        if av_half is None:
+            rationale.append(
+                "CI includes zero across the window but the always-valid interval is "
+                "unavailable — FLAT is not callable"
+            )
+            return build("INCONCLUSIVE", latest)
+        if av_half <= min_effect:
+            rationale.append(
+                f"CI includes zero across the trailing {stabilization_days:g}-day window "
+                f"and the always-valid interval rules out a meaningful effect "
+                f"(half-width {av_half:.4g} <= min_effect {min_effect:g})"
+            )
+            return build("FLAT", latest)
+        rationale.append(
+            f"underpowered under the always-valid CI: half-width {av_half:.4g} > "
+            f"min_effect {min_effect:g} — keep running (INCONCLUSIVE, not FLAT)"
+        )
+        return build("INCONCLUSIVE", latest)
+
     mde_value, mde_reason = pair_mde(latest)
     if mde_value is None:
         rationale.append(

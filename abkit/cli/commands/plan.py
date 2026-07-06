@@ -25,7 +25,7 @@ import click
 from abkit.cli._output import echo_done, echo_error, echo_tree
 from abkit.cli.commands._context import load_project_context
 from abkit.config import select_experiments
-from abkit.core.period_planner import generate_grid
+from abkit.core.period_planner import GridLimitExceeded, generate_grid
 from abkit.pipeline import comparison_alpha, effective_alphas
 from abkit.planning.sizing import (
     FRACTION,
@@ -116,13 +116,23 @@ def _plan_one(
                 f"(have: {configured})"
             )
 
-    # look-count + cost shape from the one shared enumeration (§6.4)
-    grid = generate_grid(
-        experiment.start_date,
-        experiment.end_date,
-        experiment.cadence_segments(),
-        tz=experiment.timezone,
-    )
+    # look-count + cost shape from the one shared enumeration (§6.4). Bound it by
+    # max_looks like the run planner so a pathological sub-day grid fails fast instead of
+    # OOM-enumerating in this read-only command (plan skips the config-lint that would
+    # otherwise catch it — M5 exit-gate round-1 finding).
+    try:
+        grid = generate_grid(
+            experiment.start_date,
+            experiment.end_date,
+            experiment.cadence_segments(),
+            tz=experiment.timezone,
+            limit=project.limits.max_looks,
+        )
+    except GridLimitExceeded as exc:
+        raise click.ClickException(
+            f"{experiment.name}: planned looks exceed max_looks="
+            f"{project.limits.max_looks} — coarsen the cadence or raise the limit ({exc})"
+        ) from exc
     looks = len(grid)
     pairs = int(n_comparisons(len(experiment.assignment.variants), 1))
     rows_per_refresh = looks * pairs * len(experiment.comparisons)
@@ -371,10 +381,7 @@ def _emit_plan(experiment, project, alphas, power, looks, grid, rows_per_refresh
             f"{looks} looks > warn_looks={warn_looks} without sequential.enabled — "
             "peeking inflates the false-positive rate (enable sequential or coarsen cadence)"
         )
-    if looks > project.limits.max_looks:
-        warnings.append(
-            f"{looks} looks > max_looks={project.limits.max_looks} — `abk run` will reject this grid"
-        )
+    # (a grid over max_looks never reaches here — generate_grid(limit=…) fails fast above)
 
     echo_tree(header, children, warnings=warnings or None)
 

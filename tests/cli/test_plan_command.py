@@ -157,6 +157,18 @@ def test_plan_infeasible_target_renders_infinity_not_crash(project):
     assert "∞ (underpowered)" in result.output
 
 
+def test_plan_grid_over_max_looks_fails_fast(project):
+    # M5 exit-gate round-1 fix: plan bounds generate_grid by max_looks so a pathological
+    # grid fails fast (like `abk run`) instead of OOM-enumerating in this read-only command.
+    from pathlib import Path
+
+    proj = Path("abkit_project.yml")
+    proj.write_text(proj.read_text() + "\nlimits:\n  max_looks: 5\n", encoding="utf-8")
+    result = runner.invoke(cli, ["plan", "--select", EXP, "--mde", "0.05"])
+    assert result.exit_code != 0
+    assert "max_looks" in result.output
+
+
 def test_plan_malformed_baseline_exits_nonzero(project):
     result = runner.invoke(cli, ["plan", "--select", EXP, "--baseline", "garbage"])
     assert result.exit_code != 0
