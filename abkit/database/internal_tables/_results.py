@@ -91,6 +91,46 @@ class _ResultsMixin(_InternalTablesBase):
                 cutoffs.add(ts)
         return cutoffs
 
+    def series_pair_ci_kinds(
+        self, experiment: str, metric: str, method_config_id: str
+    ) -> dict[tuple[str, str], set[str]]:
+        """Per-pair DISTINCT ``ci_kind`` among the NON-DEMOTED rows of a series.
+
+        The planner's sequential-mode self-invalidation (M5 WP3, plan B4):
+        ``sequential.enabled``/``ci_kind`` are deliberately excluded from
+        ``method_config_id`` (D7 — toggling must not orphan the series), so the
+        anti-join alone would treat a mode flip as "already computed" and skip
+        it, leaving stale ``ci_kind='fixed'`` rows. The driver compares this
+        persisted map against the mode THIS run stamps and forces a re-plan on a
+        mismatch.
+
+        Keyed **per (name_1, name_2)** because the first-usable-look τ² anchor
+        (D-Seq-anchor) can legitimately leave a pair that first becomes usable
+        AFTER the anchor cutoff ``fixed`` while another pair is ``always_valid``
+        — a series-wide aggregate would false-positive on that. Demoted rows
+        (``insufficient_data`` — no CI, always stamped ``'fixed'``) are excluded
+        so a small-sample early cutoff never reads as a mode mismatch. Deduped
+        (FINAL on ClickHouse).
+        """
+        full_table_name = self._manager.get_full_table_name(TABLE_RESULTS, use_internal=True)
+        query = f"""
+        SELECT DISTINCT name_1, name_2, ci_kind, insufficient_data
+        FROM {full_table_name}{self._manager.final_modifier}
+        WHERE experiment = %(e)s
+          AND metric = %(m)s
+          AND method_config_id = %(mc)s
+        """
+        rows = self._manager.execute_query(
+            query, {"e": experiment, "m": metric, "mc": method_config_id}
+        )
+        pairs: dict[tuple[str, str], set[str]] = {}
+        for row in rows:
+            if row.get("insufficient_data"):
+                continue
+            pair = (row.get("name_1"), row.get("name_2"))
+            pairs.setdefault(pair, set()).add(row.get("ci_kind") or "fixed")
+        return pairs
+
     def list_method_config_ids(
         self, experiment: str, metric: str | None = None
     ) -> dict[tuple[str, str], int]:

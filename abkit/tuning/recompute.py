@@ -46,7 +46,7 @@ from __future__ import annotations
 import math
 import warnings as _warnings
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Literal
 
@@ -72,6 +72,7 @@ from abkit.stats import (
 )
 from abkit.stats.base import BaseMethod, ParamSpec
 from abkit.stats.power import get_cuped_ttest_power, get_fraction_power, get_ttest_power
+from abkit.stats.sequential import mixture_tau2, se_from_ci_length, to_always_valid
 from abkit.tuning.session import ComparisonSeries, ExploreSession
 from abkit.utils.json_utils import json_loads
 
@@ -598,6 +599,25 @@ class RecomputeEngine:
         for row in series.rows:
             pair_rows.setdefault((row["name_1"], row["name_2"]), []).append(row)
 
+        # M5 WP3c: the cockpit is a READ-VIEW over persisted rows (D2), so it must
+        # never mix CI vocabularies within a pair's series. A pair is widened into
+        # the always-valid CI live iff its BAKED rows are already always_valid —
+        # NOT off config.sequential (which only governs the next `abk run`). This
+        # reproduces the baked per-pair vocabulary exactly: the multi-pair case
+        # where the driver's first-usable-look anchor left a late-usable pair fixed,
+        # and a config toggle not yet applied by a re-run (either direction). Gated
+        # on the LIVE method's declarative supports_sequential — a knob switch to a
+        # percentile-CI method (bootstrap) can never be widened.
+        av_pairs: set[tuple[str, str]] = set()
+        if method_cls.supports_sequential:
+            for pair, rows in pair_rows.items():
+                if any(
+                    r.get("ci_kind") == "always_valid" and not r.get("insufficient_data")
+                    for r in rows
+                ):
+                    av_pairs.add(pair)
+
+        seq_reload_needed = False
         pairs: list[PairRecompute] = []
         for (name_1, name_2), rows in pair_rows.items():
             points: list[ExplorePoint] = []
@@ -607,8 +627,18 @@ class RecomputeEngine:
                 )
                 if point is not None:
                     points.append(point)
+            if (name_1, name_2) in av_pairs:
+                points, dropped = self._sequentialize_points(points, knobs.alpha)
+                seq_reload_needed = seq_reload_needed or dropped
             chips = self._chips(series, points, method_cls, probe.params, knobs, name_1)
             pairs.append(PairRecompute(name_1=name_1, name_2=name_2, points=points, chips=chips))
+
+        if seq_reload_needed:
+            engine_warnings.append(
+                "alpha recompute is unavailable for some cutoffs under the sequential "
+                "mode (their always-valid CI cannot be re-derived by α-inversion) — "
+                "use Reload to recompute them"
+            )
 
         calibration = find_calibration(
             session.aa_rows,
@@ -720,6 +750,67 @@ class RecomputeEngine:
             # same-identity knob state — there is no number to mislabel.
             return self._baseline_point(row)
         return None
+
+    def _sequentialize_points(
+        self, points: list[ExplorePoint], alpha: float
+    ) -> tuple[list[ExplorePoint], bool]:
+        """Widen ONE always-valid pair's reconstructed points into the CS (M5 WP3c).
+
+        Called only for pairs the baked series persisted as ``always_valid`` (the
+        caller's ``av_pairs`` gate). Freeze τ² from the first look with a usable fixed
+        CI — mirroring ``driver._sequential_tau2``'s D-Seq-anchor via the SAME
+        ``se_from_ci_length``/``mixture_tau2`` helpers — then widen every reconstructed
+        (Tier E/S) point with ``to_always_valid``. For fully Tier-E-reconstructable
+        families (t/z/ratio) the recovered fixed CI equals the pipeline's pre-widening
+        CI, so the configured knob state reproduces the baked always-valid bounds. (A
+        partially-cached CUPED default may anchor τ² a look later than the pipeline —
+        its uncached first look has no ``result`` to invert — still a valid confidence
+        sequence, never a vocabulary mix.)
+
+        - **Tier E/S** points carry the raw fixed ``result`` → widened.
+        - **Baseline** points are persisted pass-throughs already carrying the mode's
+          bounds (this pair is always_valid) → left untouched.
+        - **α-inverted** (``tier='approx'``) points recovered their SE from an
+          already-widened persisted CI, so they cannot be honestly widened → dropped
+          (returns ``dropped=True`` so the caller surfaces a Reload hint), never shown
+          as a silent fixed CI on a sequential chart.
+
+        Returns ``(points, dropped_any_approx)``. When no look has a usable fixed CI
+        (τ² undefined — e.g. an all-baseline CUPED pair) the points are passed through:
+        baseline points already carry the persisted always-valid bounds.
+        """
+        tau2: float | None = None
+        for point in points:
+            if point.result is None:
+                continue
+            se = se_from_ci_length(point.result.ci_length, alpha)
+            if math.isfinite(se) and se > 0.0:
+                tau2 = mixture_tau2(se * se, alpha)
+                break
+
+        out: list[ExplorePoint] = []
+        dropped = False
+        for point in points:
+            if point.result is not None:
+                if tau2 is None:
+                    out.append(point)  # degenerate everywhere; nothing to widen
+                    continue
+                av = to_always_valid(point.result, tau2, alpha)
+                out.append(
+                    replace(
+                        point,
+                        left_bound=_clean(av.left_bound),
+                        right_bound=_clean(av.right_bound),
+                        pvalue=_clean(av.pvalue),
+                        reject=bool(av.reject),
+                        result=av,
+                    )
+                )
+            elif point.tier == "approx":
+                dropped = True  # α-inversion is not valid vocabulary under sequential
+            else:
+                out.append(point)  # baseline pass-through — already always-valid
+        return out, dropped
 
     def _baseline_point(self, row: dict) -> ExplorePoint:
         reject = row.get("reject")
