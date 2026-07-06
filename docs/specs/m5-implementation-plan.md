@@ -11,12 +11,14 @@
 
 ## 0. Progress & resume note (2026-07-06)
 
-**Status: WP1 shipped (the sequential engine); WP2 next.** `abkit/stats/sequential/`
-(`confidence_sequence.py` + `mixture.py`), `TestResult.ci_kind`, the
-`supports_sequential` capability flag, 81 new tests (KAT + anytime-coverage sim +
-purity), and the `statistics-changes.md §4.1` entry are in; 606 stats/golden tests
-stay green (no existing number moved), ruff/black clean. Branch `claude/m5-plan` off
-`main`
+**Status: WP1 + WP2 shipped; WP3 next.** WP1 = the sequential engine
+(`abkit/stats/sequential/`, `TestResult.ci_kind`, `supports_sequential`, 81 tests,
+`statistics-changes.md §4.1`). WP2 = the A/A D8 column end-to-end across all three
+surfaces (scorer + `_ab_aa_runs` persistence + report/chip), incl. the headline
+peeking→always-valid recovery test, the byte-identity parity test (one engine + one
+τ² helper), and the rebuilt `report.js`. Goldens untouched, no `ALGORITHM_VERSION`
+moved, ruff/black + web tsc/jsdom clean. **WP2 is the validation gate — it is green,
+so WP3 (activation) may proceed.** Branch `claude/m5-plan` off `main`
 (all of M4 merged; working tree was clean at cut). This plan was produced by a
 design workflow (6 parallel spec+code readers → a synthesizer → 3 adversarial
 critics under refute-by-default) whose critics found six real defects in the
@@ -146,7 +148,7 @@ change-controlled here; existing methods keep `ALGORITHM_VERSION=1`.
 
 ---
 
-### WP2 — A/A matrix D8: the sequential side-by-side peeking-FPR column — **validation gates activation** (engine + persistence, A)
+### WP2 — A/A matrix D8: the sequential side-by-side peeking-FPR column — **validation gates activation** (engine + persistence, A) ✅ DONE
 
 **Goal:** run the WP1 transform over the M4 placebo panel to measure the
 always-valid **peeking FPR** beside the fixed one, and — because §6.5 says
