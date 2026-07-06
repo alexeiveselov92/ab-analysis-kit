@@ -322,7 +322,31 @@ def _run_family_sweep(
         log.append(DecisionEntry("family", "fewer than two scorable metrics — no family sweep"))
         return None
 
-    budget = _budget(project, alphas.alpha, None)
+    # Judge the empirical family FWER against the composed rule's OWN nominal rate, not a
+    # single-cell α×1.5. Two-tier Bonferroni protects the main tier at α and the secondary
+    # tier at α (collectively), so a correctly-configured multi-metric family sits at its
+    # nominal composed rate 1−∏(1−αᵢ) ≈ Σαᵢ (≈2α under the default) — comparing that to α
+    # would falsely flag the default setup as over budget (M5 exit-gate round-1 finding).
+    # Anchoring the budget to the nominal rate makes "over budget" mean the METHODS are
+    # miscalibrated (clustering / variance underestimation — the D9 purpose), independent
+    # of how tight the correction is; a broken method still trips it, a loose-but-honest
+    # `correction: none` does not.
+    per_cell_budget = _budget(project, alphas.alpha, None)
+    headroom = per_cell_budget / alphas.alpha if alphas.alpha else 1.5
+    if correction == "benjamini_hochberg":
+        # BH controls the complete-null family error at ≈ the members' level (FWER==FDR≈α
+        # under the complete null — test_null_bh_controls_fdr_near_nominal), NOT the
+        # Bonferroni composition ≈Σα. Anchoring to the composition rate would leave the
+        # BH budget ~n× too lenient and under-flag a miscalibrated method (M5 exit-gate
+        # round-2 finding); anchor to the members' level instead.
+        nominal_family = max(member.alpha for member in members)
+    else:
+        # Bonferroni / none: the complete-null family FWER is the composed nominal rate.
+        nominal_family = 1.0
+        for member in members:
+            nominal_family *= 1.0 - member.alpha
+        nominal_family = 1.0 - nominal_family
+    budget = min(1.0, nominal_family * headroom)
     try:
         score = sweep_family(
             members,

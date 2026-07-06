@@ -85,7 +85,8 @@ class CellScore:
     # computed off the always-valid CI (sequential.sequentialize over the SAME
     # per-look (effect, SE)). None when the method is ineligible
     # (supports_sequential=False) or τ² could not be anchored. ──
-    #: The frozen per-cell mixture variance τ² (provenance; anchored to the horizon).
+    #: The frozen per-cell mixture variance τ² (provenance; anchored to the first usable
+    #: look — D-Seq-anchor, matching driver._sequential_tau2 for the D4 parity requirement).
     tau2: float | None = None
     #: Single-look FPR at the horizon under the always-valid CI (should sit near α).
     fpr_sequential: float | None = None

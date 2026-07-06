@@ -22,7 +22,7 @@ The as-built condensation for contributors/assistants (detectkit-style):
 Design contracts for what is being *built next* stay in [docs/specs/](docs/specs/)
 (canonical for M2+ work — table below). Keep rules ↔ docs in sync per milestone.
 
-## Status: M1 + M2 + M3 + M4 shipped; next up M5
+## Status: M1 + M2 + M3 + M4 + M5 shipped; next up M6
 
 **Done — M1, the pure statistical core** (`abkit.stats`, importable standalone;
 see [ROADMAP.md](ROADMAP.md) for the deferred-cleanup list): data model with the
@@ -71,9 +71,24 @@ committed report bundle), the `metric.aa_fpr_budget` override, and **Auto mode**
 (server-side `POST /validate` greens the live explore chip in place). The
 exit-gate e2e proves the three classic failures in Binomial bands
 ([tests/e2e/test_validate_matrix.py]); zero method-math changes (no
-`ALGORITHM_VERSION` bump). Deferred to M5: the sequential side-by-side column
-(D8) and the full composed-FDR sweep (D9); sidedness/winsorization stay a named
-future stats-core change the harness arbitrates (D14).
+`ALGORITHM_VERSION` bump). The sequential side-by-side column (D8) and the composed-FDR
+sweep (D9) **shipped in M5**; sidedness/winsorization stay a named future stats-core
+change the harness arbitrates (D14).
+
+**Done — M5, sequential analysis + the planner + composed corrections** (see
+[ROADMAP.md](ROADMAP.md) M5 and
+[m5-implementation-plan.md](docs/specs/m5-implementation-plan.md) for the record):
+the opt-in always-valid **confidence sequence** (`abkit/stats/sequential/`, a pure MODE
+transform over the fixed `(effect, SE)`; `ci_kind='always_valid'`; default-off byte parity
+so no `ALGORITHM_VERSION` moved), the readout calling WIN/LOSE pre-horizon only under it +
+the weekly-cycle chip, the **toggle self-invalidation** (a bare `abk run` re-plans the
+series), the sub-day anytime-valid **multinomial SRM** (Lindon & Malek) below 1d, `abk
+plan` (read-only pre-launch power/sizing, `abkit/planning/`), the A/A **D8** sequential
+side-by-side peeking column, and the **D9** composed multi-metric FWER/FDR sweep (via the
+shared `stats.correction.composed_significance` extracted from the readout). Adversarially
+reviewed per WP + a ≥2-round exit gate; 1550+ tests incl. the sequential-matrix e2e.
+**Named M6 deferrals:** `alpha_spending`/group-sequential, the A/A sequential × composed
+sweep, `abk plan` runtime/ASN.
 
 **Decided** (recorded in the specs + CHANGELOG): sub-day cumulative intervals
 ([cumulative-intervals.md §6](docs/specs/cumulative-intervals.md)); CUPED
@@ -81,10 +96,10 @@ covariate = fixed whole-day lookback implemented as the pre-period second
 render ([declarative-config.md §3](docs/specs/declarative-config.md)); Jinja
 built-ins win over context; CLI exits non-zero on failure.
 
-**Next — M5** (sequential analysis + the planner + composed corrections: `stats/
-sequential/` mSPRT/alpha-spending, `abk plan`, the A/A matrix's sequential
-side-by-side column + the full composed-FDR sweep deferred from M4). The source of
-truth is [docs/specs/](docs/specs/). Read the relevant spec before writing code:
+**Next — M6** (DX, docs, orchestration, release: `abk init-claude` + packaged `.claude`
+assets, the single-source docs site, Prefect scaffolding, BI reference dashboards, the
+PyPI release). The source of truth is [docs/specs/](docs/specs/). Read the relevant spec
+before writing code:
 
 | If you're working on… | Read |
 |---|---|

@@ -14,7 +14,7 @@ number change).
 ## [Unreleased]
 
 ### Added
-- **M5 (in progress) — sequential analysis, the always-valid CI.** Opt-in
+- **M5 — sequential analysis, the always-valid CI, `abk plan`, composed corrections.** Opt-in
   (`sequential: {enabled: true}`, **default off** — the fixed-horizon series is
   byte-identical, no `ALGORITHM_VERSION` bump, goldens untouched). Landed so far
   (implementation record: [`m5-implementation-plan.md`](docs/specs/m5-implementation-plan.md);
@@ -99,8 +99,11 @@ number change).
     imputation — a unit absent from a metric doesn't contribute), scores every metric at
     its horizon, and tallies the empirical **family-wise error rate** (any false rejection)
     and **false-discovery rate** (mean false fraction among rejections). On the placebo
-    (complete) null FWER and FDR coincide by construction and sit at ≈α; a planted true
-    effect in one metric leaves the null metrics' family error controlled. Persisted as one
+    (complete) null FWER and FDR coincide by construction, at the composed rule's nominal
+    rate (≈α per tier, so ≈2α whole-family under the default two-tier Bonferroni); the
+    budget is anchored to that nominal rate so "over budget" flags a miscalibrated method
+    (clustering), not a loose correction. A planted true effect in one metric leaves the
+    null metrics' family error controlled. Persisted as one
     sentinel `_ab_aa_runs` row (`metric='__family__'`, numbers in `details`) — no schema
     change, never lights the per-cell calibration chip — and surfaced as a composed-family
     band above the report's A/A matrix (`report.js` rebuilt). Fixed-horizon only;

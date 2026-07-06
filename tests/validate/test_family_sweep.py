@@ -61,6 +61,27 @@ def test_null_bh_controls_fdr_near_nominal():
     assert s.fwer == pytest.approx(s.fdr, abs=1e-12)  # complete-null identity holds for BH too
 
 
+def test_two_tier_members_are_within_the_nominal_family_budget():
+    """M5 exit-gate round-1 fix: the DEFAULT two-tier Bonferroni puts the main tier and
+    the secondary tier each at α (they are NOT budget-shared), so a calibrated two-metric
+    family sits at its nominal composed rate ≈2α, not α. Judged against the single-cell
+    α×1.5 it would falsely read over-budget; anchored to the nominal rate it does not."""
+    members = _null_members(2, ALPHA)  # both at the full α — the runner's two-tier reality
+    nominal = 1.0 - (1.0 - ALPHA) ** 2  # ≈ 0.0975
+    budget = nominal * 1.5  # the runner's headroom over the family's own nominal rate
+    s = sweep_family(
+        members,
+        correction="bonferroni",
+        iterations=5000,
+        share_a=0.5,
+        seed_parts=("tt",),
+        budget=budget,
+    )
+    assert 0.07 < s.fwer < 0.12  # ≈ nominal 0.0975
+    assert not s.over_budget  # within the nominal-anchored budget (the old α×1.5 would trip)
+    assert s.fwer > ALPHA * 1.5  # and it genuinely exceeds the old single-cell budget
+
+
 # ── a planted effect leaves the null metrics controlled (D12) ────────────────────
 
 
@@ -141,6 +162,23 @@ def test_panel_without_unit_ids_raises():
         sweep_family(
             [broken, m[1]], correction="none", iterations=10, share_a=0.5, seed_parts=("x",)
         )
+
+
+def test_persistently_gapped_member_is_warned_not_silent():
+    """M5 exit-gate round-2 fix: a member whose cohort is too small to ever split ≥2
+    units/arm scores in 0 iterations — it must be named in the warnings, never ride
+    silently in the 'over N metrics' verdict as if validated."""
+    big = normal_panel(n_units=3000, n_cutoffs=1, seed=11, mu=50.0, sigma=10.0, unit_offset=0)
+    tiny = normal_panel(n_units=3, n_cutoffs=1, seed=12, mu=50.0, sigma=10.0, unit_offset=9000)
+    members = [
+        FamilyMember("big", big, _ttest(ALPHA / 2), ALPHA / 2),
+        FamilyMember("tiny", tiny, _ttest(ALPHA / 2), ALPHA / 2),
+    ]
+    s = sweep_family(
+        members, correction="bonferroni", iterations=500, share_a=0.5, seed_parts=("g",)
+    )
+    assert s.valid_iterations == 500  # the big metric is always scorable
+    assert any("tiny" in w and "scored in 0" in w for w in s.warnings)
 
 
 def test_all_planted_warns_and_zero_error():
