@@ -6,9 +6,9 @@ driver is required until a command actually needs one. Failures exit NON-ZERO
 — the CLI is the Prefect unit of automation (a deliberate, recorded deviation
 from the detectkit donor's swallow-and-return-0 behaviour).
 
-Surface: ``init``, ``run``, ``unlock``, ``clean`` (M2) + ``explore`` (M3).
-The remaining commands (``validate``, ``plan``, ``init-claude``,
-``test-report``) land per ROADMAP.md M4–M6.
+Surface: ``init``, ``run``, ``unlock``, ``clean`` (M2) + ``explore`` (M3) +
+``validate`` (M4) + ``plan`` (M5). The remaining commands (``init-claude``,
+``test-report``) land per ROADMAP.md M6.
 """
 
 from __future__ import annotations
@@ -230,6 +230,56 @@ def validate(
     run_validate(
         select, method, metric, iterations, inject_effect, scoring, report_path, force, profile
     )
+
+
+@cli.command()
+@click.option(
+    "--select",
+    "-s",
+    multiple=True,
+    help="Experiment selector: name, path glob, tag:<tag>, or * (repeatable; default all)",
+)
+@click.option("--metric", help="Plan only this comparison (default: every declared comparison)")
+@click.option(
+    "--mde",
+    type=float,
+    default=None,
+    help="Target minimum detectable effect (units of the comparison's effect; "
+    "default: the comparison's min_effect)",
+)
+@click.option("--power", type=float, default=None, help="Target power (default: project default)")
+@click.option(
+    "--alpha",
+    type=float,
+    default=None,
+    help="Experiment-level significance before correction (default: experiment/project alpha)",
+)
+@click.option(
+    "--baseline",
+    multiple=True,
+    help="Baseline moments override for a metric with no persisted data: "
+    "'<metric>:mean=..,std=..,n=..' (sample) or '<metric>:prop=..,n=..' (fraction); repeatable",
+)
+@click.option("--profile", help="Profile name (default: profiles.yml default_profile)")
+def plan(
+    select: tuple[str, ...],
+    metric: str | None,
+    mde: float | None,
+    power: float | None,
+    alpha: float | None,
+    baseline: tuple[str, ...],
+    profile: str | None,
+) -> None:
+    """Pre-launch power / sizing planner (read-only — no lock, no writes).
+
+    Reports required sample size, achievable MDE, and achieved power per comparison
+    from the latest persisted baseline moments (or a `--baseline` override), plus the
+    projected look count and cost shape. Refuses what it cannot size honestly (ratio /
+    bootstrap methods). Runtime / ASN estimation lands in M6.
+    """
+    from abkit.cli.commands.plan import run_plan
+
+    run_plan(select, metric, mde, power, alpha, baseline, profile)
 
 
 @cli.command()

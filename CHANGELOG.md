@@ -74,7 +74,21 @@ number change).
     false-alarm rate holds ≤ α for any fixed prior. It is an additive gate, not a
     registered method: **no `ALGORITHM_VERSION` bump, goldens untouched**, no schema change
     (reuses `srm_flag`/`srm_pvalue`).
-    *(Still landing: `abk plan` and the composed-FDR sweep.)*
+  - **`abk plan` — the read-only pre-launch power/sizing planner (WP6)** —
+    `abk plan --select <exp> [--metric <m>] [--mde <pct>] [--power] [--alpha] [--baseline]`
+    reports, per comparison, the **required sample size** to detect a target MDE, the
+    **achievable MDE** at the current size, and the **achieved power** — at the effective
+    two-tier alpha — plus the projected **look count** and cost shape from the same
+    `generate_grid` enumeration `run`/config-lint use. Baseline moments come from the
+    latest persisted `_ab_results` per-arm stats (a `--baseline metric:mean=..,std=..,n=..`
+    override sizes a greenfield experiment); the target MDE defaults to the comparison's
+    `min_effect`. **Strictly read-only** — no lock, no `_ab_*` writes. Refuses what it
+    cannot size honestly: **ratio** and **bootstrap/resampling** methods have no versioned
+    power formula (SKIPPED, never invented math), and CUPED is sized on the raw persisted
+    variance (ρ is not persisted per row) as a flagged conservative upper bound. **Runtime
+    / ASN** (days-to-N from an arrival rate + the sequential design's average sample
+    number) are a named **M6** deferral.
+    *(Still landing: the composed multi-metric FDR/FWER sweep.)*
 - **M4 — `abk validate`, the A/A false-positive matrix.** The trust artifact that
   answers "is this method actually calibrated on this data, or does it lie about its
   α?" (docs/specs/aa-false-positive-matrix.md; the implementation record is
