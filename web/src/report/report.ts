@@ -463,6 +463,16 @@ function buildVerdictCard(v: VerdictBlock): HTMLElement {
   const head = el('div', 'abk-verdict-head');
   head.appendChild(el('span', 'abk-verdict-word', v.verdict));
   head.appendChild(el('span', 'abk-verdict-target', `${v.metric} — ${v.pair.c} vs ${v.pair.t}`));
+  // §6.5 representativeness chip: an early decisive verdict covers < one weekly
+  // cycle. Promoted from a caveat bullet to a glanceable chip (WP4); the full
+  // "day-of-week" sentence stays in the tooltip + is filtered from the list below.
+  if (v.weekly_cycle_pct != null) {
+    const pct = Math.round(v.weekly_cycle_pct * 100);
+    const chip = el('span', 'abk-chip abk-weekly-chip', `covers ${pct}% of a weekly cycle`);
+    chip.setAttribute('data-abk-weekly', '1');
+    chip.title = 'day-of-week effects may not be represented';
+    head.appendChild(chip);
+  }
   card.appendChild(head);
 
   const stats = el('div', 'abk-verdict-stats');
@@ -488,9 +498,15 @@ function buildVerdictCard(v: VerdictBlock): HTMLElement {
     for (const r of v.rationale) ul.appendChild(el('li', undefined, r));
     card.appendChild(ul);
   }
-  if (v.caveats.length > 0) {
+  // The weekly-cycle caveat is promoted to the chip above, so drop it here to
+  // avoid saying the same thing twice; every other caveat still renders.
+  const caveats =
+    v.weekly_cycle_pct != null
+      ? v.caveats.filter((c) => !c.includes('of a weekly cycle'))
+      : v.caveats;
+  if (caveats.length > 0) {
     const ul = el('ul', 'abk-caveats');
-    for (const c of v.caveats) ul.appendChild(el('li', 'abk-caveat', `⚠ ${c}`));
+    for (const c of caveats) ul.appendChild(el('li', 'abk-caveat', `⚠ ${c}`));
     card.appendChild(ul);
   }
   if (v.guardrails.length > 0) {
@@ -1233,6 +1249,9 @@ function injectStyle(): void {
   color:var(--abk-card);font-weight:700;}
 .${ROOT_CLASS} .abk-calibration{border-style:dashed;}
 .${ROOT_CLASS} .abk-calibrated{border-style:solid;border-color:var(--abk-st-good);}
+.${ROOT_CLASS} .abk-weekly-chip{padding:2px 9px;font-size:11px;align-self:center;
+  border-color:var(--abk-st-warn);color:var(--abk-ink);
+  background:color-mix(in srgb, var(--abk-st-warn) 12%, transparent);}
 /* warnings / notes ---------------------------------------------------------- */
 .${ROOT_CLASS} .abk-warnings{margin:10px 0;}
 .${ROOT_CLASS} .abk-warning{font-size:12px;color:var(--abk-ink);

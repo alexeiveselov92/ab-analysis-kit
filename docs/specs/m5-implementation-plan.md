@@ -11,7 +11,24 @@
 
 ## 0. Progress & resume note (2026-07-06)
 
-**Status: WP1 + WP2 + WP3 (all 3 parts) shipped; WP4 next.** WP1 = the sequential
+**Status: WP1 + WP2 + WP3 (all 3 parts) + WP4 shipped; WP5 next.** WP4 = the readout
+under sequential: the pre-horizon withholding branch (`readout.py`) refuses
+WIN/LOSE/FLAT before the planned horizon only when the persisted row's `ci_kind ==
+'fixed'`, so an `always_valid` row reads early; an early decisive verdict now names
+its own justification in the rationale ("called before the planned horizon under an
+always-valid confidence sequence — peeking-safe by construction"), and the M3
+placeholder wording ("sequential CIs land in M5") is replaced by the shipped-toggle
+message. The weekly-cycle representativeness caveat is promoted to a structured
+`PairVerdict.weekly_cycle_pct` (baked by `reporting/builder.py`) that
+`report.ts#buildVerdictCard` renders as a chip on the verdict card (`report.js`
+rebuilt + committed; the human caveat string is kept in the data for CLI/BI/JSON and
+filtered from the report's caveat list to avoid duplication). The daily-SRM-under-
+sequential posture (plan D9) is recorded in `data-contract-and-reporting.md §6`: daily
+& coarser keep χ² (bounded looks on a 3.3σ hard gate ⇒ negligible peeking inflation);
+only sub-day (WP5) swaps to the anytime multinomial. No `ALGORITHM_VERSION` moved,
+goldens untouched. Tests: `tests/pipeline/test_readout_sequential.py`,
+`tests/reporting/test_builder.py` (chip bake), `web/test/smoke.mjs` (chip render +
+caveat filter). WP1 = the sequential
 engine (`abkit/stats/sequential/`, `TestResult.ci_kind`, `supports_sequential`, 81
 tests, `statistics-changes.md §4.1`). WP2 = the A/A D8 column end-to-end (scorer +
 `_ab_aa_runs` persistence + report/chip), incl. the peeking→always-valid recovery test,
@@ -291,7 +308,7 @@ mixes CI vocabularies; disabled path is byte-identical (goldens green).
 
 ---
 
-### WP4 — readout under sequential: lift pre-horizon withholding for always-valid, caveat chip, daily-SRM decision (S)
+### WP4 — readout under sequential: lift pre-horizon withholding for always-valid, caveat chip, daily-SRM decision (S) — **DONE**
 
 **Goal:** let the readout call WIN/LOSE/FLAT pre-horizon **only** when
 `ci_kind=='always_valid'`, with the representativeness caveat surfaced, and decide

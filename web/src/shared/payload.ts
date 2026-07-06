@@ -114,6 +114,12 @@ export interface VerdictBlock {
   end_ts: number | null;
   elapsed_days: number | null;
   is_horizon: boolean;
+  /**
+   * Weekly-cycle coverage fraction (elapsed / 7d) on a decisive verdict called
+   * before one full weekly cycle, else null — rendered as a representativeness
+   * chip (§6.5). Optional so older baked payloads type-check.
+   */
+  weekly_cycle_pct?: number | null;
   guardrails: GuardrailNote[];
 }
 

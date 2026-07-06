@@ -178,6 +178,10 @@ def _verdict_to_payload(verdict: PairVerdict) -> dict:
         "end_ts": _ms(verdict.end_ts) if verdict.end_ts is not None else None,
         "elapsed_days": _num_or_none(verdict.elapsed_days),
         "is_horizon": bool(verdict.is_horizon),
+        # §6.5 representativeness chip: the weekly-cycle coverage fraction on an
+        # early decisive verdict (null otherwise); the report promotes it to a
+        # rendered chip rather than leaving it a caveat bullet.
+        "weekly_cycle_pct": _num_or_none(verdict.weekly_cycle_pct),
         "guardrails": [
             {
                 "metric": g.metric,

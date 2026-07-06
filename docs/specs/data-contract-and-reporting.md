@@ -129,7 +129,9 @@ The daily cumulative chart inherently peeks. The contract makes this **visible**
   band crossing zero 40 times *looks like* information); `insufficient_data`
   segments are greyed with counts+SRM only; a WIN/LOSE called before
   `min(7d, horizon)` — even under sequential — carries a "covers X% of a weekly
-  cycle" representativeness caveat; stabilization is judged over *elapsed time*,
+  cycle" representativeness signal (the readout exposes it as a structured
+  `weekly_cycle_pct` and the HTML report promotes it to a chip on the verdict
+  card — M5 WP4, plan D13); stabilization is judged over *elapsed time*,
   never look count (or hourly grids would "stabilize" in 6 hours).
 
 ## 5. Reporting — the priority local interface
@@ -304,11 +306,19 @@ SRM is the safest A/B guardrail and must be **loud** where analysts actually loo
 - **HTML report & explore:** a red SRM gate chip; `decision_blocked` set.
 - **BI:** ship an optional panel; document that a plain dashboard won't show
   `srm_flag` and that the CLI/HTML report is the canonical gate surface.
+- **Daily & coarser (incl. under `sequential.enabled`) keep the χ² gate (M5 WP4
+  decision, plan D9).** A sequential-enabled *daily* experiment does peek the χ²
+  SRM across daily looks, but the gate runs at α=0.001 (a ~3.3σ hard gate) over a
+  bounded daily look count, so the peeking inflation is negligible — swapping the
+  daily gate to an anytime-valid test would trade a real, understood guardrail for
+  a marginal correction. The always-valid *effect* CIs and the SRM *gate* are
+  decoupled by design: only the effect readout goes anytime-valid under sequential;
+  SRM stays χ² at daily-and-coarser cadence.
 - **Sub-day cadence:** checking χ² at every cutoff is itself peeking on the SRM
   test (false alarms on a hard gate are expensive), so at `cadence < 1d` the
   gate switches to the **anytime-valid sequential multinomial test**
-  (Lindon & Malek, NeurIPS 2022) — valid at every look by construction. This is
-  also sub-day cadence's headline genuine payoff: catching assignment bugs
+  (Lindon & Malek, NeurIPS 2022) — valid at every look by construction (M5 WP5).
+  This is also sub-day cadence's headline genuine payoff: catching assignment bugs
   within hours instead of days.
 
 ## 7. Trajectory to a full app

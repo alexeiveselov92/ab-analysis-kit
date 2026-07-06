@@ -51,8 +51,18 @@ number change).
     those cutoffs are dropped with a Reload hint rather than shown as a silent fixed CI;
     a switch to a sequential-ineligible method (bootstrap) turns the mode off. Server-only
     — no bundle change (the client draws whatever bounds the reply carries).
-    *(Still landing: the readout's early-verdict relaxation, sub-day sequential SRM,
-    `abk plan`, and the composed-FDR sweep.)*
+  - **The readout reads always-valid rows early (WP4)** — the pre-horizon withholding
+    that refuses WIN/LOSE/FLAT before the planned horizon now lifts for a row whose
+    persisted `ci_kind` is `always_valid` (a fixed row is still withheld). An early
+    decisive verdict names its own justification ("called before the planned horizon
+    under an always-valid confidence sequence — peeking-safe by construction"). The
+    "covers X% of a weekly cycle" representativeness caveat on a sub-week verdict is
+    promoted from a caveat bullet to a structured `weekly_cycle_pct` rendered as a chip
+    on the HTML report's verdict card. The daily-SRM posture under sequential is settled
+    (plan D9): daily & coarser keep the χ² gate (bounded looks on a ~3.3σ hard gate ⇒
+    negligible peeking inflation); only sub-day (a follow-up) swaps to the anytime-valid
+    multinomial test.
+    *(Still landing: sub-day sequential SRM, `abk plan`, and the composed-FDR sweep.)*
 - **M4 — `abk validate`, the A/A false-positive matrix.** The trust artifact that
   answers "is this method actually calibrated on this data, or does it lie about its
   α?" (docs/specs/aa-false-positive-matrix.md; the implementation record is
