@@ -145,9 +145,9 @@ class TestSubDayGates:
                 )
             )
 
-    def test_alpha_spending_deferred_to_m6(self):
-        # M5 ships always_valid only; alpha_spending is a config error at ANY cadence.
-        with pytest.raises(ValidationError, match="M6"):
+    def test_alpha_spending_not_implemented(self):
+        # always_valid is the only supported scheme; alpha_spending is a config error at ANY cadence.
+        with pytest.raises(ValidationError, match="not implemented"):
             ExperimentConfig.model_validate(
                 base_payload(sequential={"enabled": True, "scheme": "alpha_spending"})
             )

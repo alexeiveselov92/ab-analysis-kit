@@ -153,8 +153,9 @@ class SequentialConfig(BaseModel):
         # is friendlier than a bare enum error.
         if self.scheme == "alpha_spending":
             raise ValueError(
-                "scheme: alpha_spending (group-sequential) is planned for M6 — "
-                "use scheme: always_valid (the mSPRT/asymptotic always-valid mode)"
+                "scheme: alpha_spending (group-sequential) is not implemented — "
+                "a future item, no version promise; use scheme: always_valid "
+                "(the mSPRT/asymptotic always-valid mode)"
             )
         return self
 

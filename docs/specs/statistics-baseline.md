@@ -74,7 +74,7 @@ effect_distribution  # optional scipy frozen dist, for plotting
 ```
 
 This maps 1:1 onto the results table / dashboard contract — see
-[data-contract-and-dashboard.md](data-contract-and-dashboard.md).
+[data-contract-and-reporting.md](data-contract-and-reporting.md).
 
 ---
 
