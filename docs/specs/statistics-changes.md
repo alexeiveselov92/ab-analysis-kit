@@ -124,6 +124,54 @@ Defaults stay baseline-faithful; these are additive.
 - **BCa bootstrap**, **Mann-Whitney**, **cluster-robust SE** (analysis-unit ≠
   randomization-unit) — candidate methods, each one `BaseMethod` class.
 
+### 4.1 Sequential always-valid CIs — as built (M5 WP1)
+
+The always-valid family shipped in M5 is an **asymptotic Gaussian confidence
+sequence** (Waudby-Smith & Ramdas 2021 — the Robbins/Howard normal mixture applied
+to the estimate), **not** the exact finite-sample Robbins/Howard mSPRT. The reason
+is architectural: the pure `abkit.stats` core exposes a per-look `(effect, SE)`
+sufficient statistic, not the raw observation stream an exact mSPRT needs (which
+would have to be threaded through the core *and* every backend loader). Decision
+recorded in [m5-implementation-plan.md](m5-implementation-plan.md) D2.
+
+- **It is a MODE transform, not a method.** `sequential.enabled: true` wraps
+  whichever bound method is configured; there is no registry entry and nothing
+  special-cases a name (invariant 3). Eligibility is the declarative
+  `BaseMethod.supports_sequential` flag (True for the symmetric-normal parametric
+  family; **False** for bootstrap — its percentile CI is asymmetric, so the SE is
+  not recoverable by CI-inversion).
+- **SE by CI-inversion** (`sequential.se_from_ci_length`): every parametric method
+  builds `ci_length = 2·norm.ppf(1−α/2)·SE`, so `SE = ci_length / (2·norm.ppf(1−α/2))`.
+  This preserves the delta-method covariance already baked into `ci_length`
+  (relative / CUPED / ratio-delta) and never re-derives arm variances — the naive
+  per-arm rebuild would drop the covariance term and silently miscalibrate.
+- **The interval.** With `V = SE²` and a fixed mixing variance `τ²`, the two-sided
+  CS half-width is
+  `r = sqrt( (2·V·(V+τ²)/τ²) · ( ln(1/α) + 0.5·ln((V+τ²)/V) ) )`, from inverting the
+  normal-mixture likelihood ratio `Λ(θ₀) = sqrt(V/(V+τ²))·exp(τ²(θ̂−θ₀)²/(2V(V+τ²)))`
+  (a non-negative martingale under θ₀ ⇒ Ville's inequality ⇒ simultaneous coverage
+  ≥ 1−α at every look). The always-valid p-value is the dual `min(1, 1/Λ(0))`, so
+  `p ≤ α` iff the interval excludes zero. Always strictly wider than the fixed CI.
+- **The mixture variance τ² is fixed-by-policy** (`sequential.mixture_tau2`), anchored
+  to the horizon estimator variance: `τ² = u*(α)·V_horizon`, where `u*` solves the
+  width-at-horizon stationarity condition `u = 2·ln(1/α) + ln(1+u)` (e.g. `u* ≈ 8.2`
+  at α=0.05 ⇒ ~2.15·SE at the horizon vs the fixed 1.96·SE, a ~10% anytime price).
+  **Validity holds for any fixed positive τ²** — Ville needs a prior fixed in advance
+  — so the choice only sets where the sequence is tightest, and τ² is anchored to the
+  design-time horizon, never to the current look. The *numeric* τ² policy is
+  **A/A-arbitrated** by the D8 column (WP2): the peeking FPR must return to ≈α at
+  acceptable power (measured side-by-side, never asserted — cumulative-intervals §6.5).
+- **The guarantee wording:** finite-sample-exact *if* the estimate were exactly
+  Gaussian with known V; **asymptotic-anytime** in practice. Never claimed as exact
+  mSPRT. The coverage test is a large-n Monte-Carlo within a documented tolerance
+  band (`tests/stats/sequential/test_coverage.py`).
+- **Change-control.** Default off ⇒ **no existing method's number moves**; no
+  `ALGORITHM_VERSION` bump on any registered method; golden tests untouched. The
+  transform is not a registered method, so its versioning is this entry + the
+  sequential-mode provenance the pipeline persists (a τ²-policy change forces a
+  re-plan, D7) — never a silent CI move. `alpha_spending` (group-sequential) is
+  **deferred to M6**; `scheme: alpha_spending` is a config error in M5.
+
 ## 5. CUPED covariate window — DECIDED: fixed lookback (2026-07)
 
 The legacy CUPED covariate uses a **growing** symmetric pre-window. The choice was

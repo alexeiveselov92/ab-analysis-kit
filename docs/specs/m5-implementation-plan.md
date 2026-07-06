@@ -11,7 +11,12 @@
 
 ## 0. Progress & resume note (2026-07-06)
 
-**Status: planning complete, no code yet.** Branch `claude/m5-plan` off `main`
+**Status: WP1 shipped (the sequential engine); WP2 next.** `abkit/stats/sequential/`
+(`confidence_sequence.py` + `mixture.py`), `TestResult.ci_kind`, the
+`supports_sequential` capability flag, 81 new tests (KAT + anytime-coverage sim +
+purity), and the `statistics-changes.md §4.1` entry are in; 606 stats/golden tests
+stay green (no existing number moved), ruff/black clean. Branch `claude/m5-plan` off
+`main`
 (all of M4 merged; working tree was clean at cut). This plan was produced by a
 design workflow (6 parallel spec+code readers → a synthesizer → 3 adversarial
 critics under refute-by-default) whose critics found six real defects in the
@@ -62,7 +67,7 @@ bar carried over from M4.
 
 ## 1. Work packages in strict dependency order
 
-### WP1 — `abkit/stats/sequential/` engine: the always-valid confidence sequence (pure, NEW)
+### WP1 — `abkit/stats/sequential/` engine: the always-valid confidence sequence (pure, NEW) ✅ DONE
 
 **Goal:** a pure, I/O-free module that turns a fixed-horizon `(effect, SE)` into
 an **asymptotic Gaussian confidence sequence** (always-valid CI + always-valid
@@ -72,8 +77,8 @@ existing numbers move (invariant 2).
 
 | Source | Target | Verdict |
 |---|---|---|
-| — (the asymptotic CS radius, WSR 2021 / GAVI) | `abkit/stats/sequential/confidence_sequence.py` (`sequentialize(effect, se, info_n, tau2, alpha) -> (lo, hi, av_pvalue)`) | **NEW** |
-| — (the mixture-variance policy τ²(info_n, α)) | `abkit/stats/sequential/mixture.py` (`mixture_tau2(info_n, alpha)` — the ONE source of τ², shared by pipeline + A/A) | **NEW** |
+| — (the asymptotic CS radius, WSR 2021 / GAVI) | `abkit/stats/sequential/confidence_sequence.py` (`sequentialize(effect, se, tau2, alpha) -> (lo, hi, av_pvalue)` + `se_from_ci_length(ci_length, alpha)`) | **NEW ✅** |
+| — (the mixture-variance policy τ²) | `abkit/stats/sequential/mixture.py` (`mixture_tau2(horizon_variance, alpha)` — the ONE source of τ², shared by pipeline + A/A) | **NEW ✅** |
 | `abkit/stats/result.py` (`TestResult`) | `+ ci_kind: str = "fixed"` field (additive; `to_dict` picks it up via `fields()`) | A |
 | `abkit/stats/base.py:244-253` (declarative capability attrs) | `+ supports_sequential: ClassVar[bool] = True` (bootstrap/paired-without-SE families set False) | A |
 | `abkit/stats/effects.py` (`normal_test`, `norm.ppf`) | read-only — the fixed CI whose `ci_length` we invert | — |
@@ -89,17 +94,20 @@ existing numbers move (invariant 2).
   re-derives arm variances. A KAT pins that the recovered SE round-trips the
   fixed CI at rel-1e-9, and that on a fixed method the sequential CI **contains**
   the fixed CI (always-valid ⇒ wider) at the same look.
-- **The estimator is an asymptotic CS, named honestly (B6).** `sequentialize`
-  computes the GAVI radius `r(t) = SE · sqrt( (info_n·SE⁻² + 1)/(info_n·SE⁻²)² ·
-  ( -W( -α²/(...)) ... ) )` — the exact closed form is pinned in the WP1
-  docstring against the WSR normal-mixture CS with mixture variance τ² =
-  `mixture_tau2(info_n, α)`; `[effect − r, effect + r]` is the always-valid CI and
-  the always-valid p-value is its dual. The guarantee is documented as
-  **asymptotic-anytime** (holds as n→∞; the coverage sim is large-n with a stated
-  tolerance band, never a finite-sample exact assertion).
-- **τ² is fixed-by-policy, from ONE helper (B4/D4/D5).** `mixture_tau2` anchors
-  the mixture variance to the horizon information `info_n` (so the CS is tightest
-  where the analyst expects to stop). It is **not** user-facing config (kept out
+- **The estimator is an asymptotic CS, named honestly (B6).** With `V = SE²` and
+  fixed mixture variance τ², `sequentialize` computes the normal-mixture radius
+  `r = sqrt( (2·V·(V+τ²)/τ²) · ( ln(1/α) + 0.5·ln((V+τ²)/V) ) )` (inverting the
+  mixture LR `Λ(θ₀)=sqrt(V/(V+τ²))·exp(τ²(θ̂−θ₀)²/(2V(V+τ²)))`, a martingale ⇒
+  Ville); `[effect − r, effect + r]` is the always-valid CI and the always-valid
+  p-value is its dual `min(1, 1/Λ(0))` (`p ≤ α` iff 0 excluded). The guarantee is
+  documented as **asymptotic-anytime** (finite-sample if the estimate were exactly
+  Gaussian; the coverage sim is large-n with a stated tolerance band, never a
+  finite-sample exact assertion).
+- **τ² is fixed-by-policy, from ONE helper (B4/D4/D5).** `mixture_tau2(horizon_
+  variance, α) = u*(α)·horizon_variance`, `u*` solving the width-at-horizon
+  stationarity `u = 2·ln(1/α) + ln(1+u)` (so the CS is tightest at the planned
+  horizon; validity holds for any fixed positive τ²). It is **not** user-facing
+  config (kept out
   of `SequentialConfig`); it lives in the pure core and is called identically by
   the pipeline activation (WP3) and the A/A column (WP2) — otherwise the A/A
   validates a different estimator than ships (the WP2 byte-identity test pins
@@ -107,7 +115,7 @@ existing numbers move (invariant 2).
   + the mode-provenance re-plan (WP3), never a silent CI move.
 - **Purity (B2).** `abkit/stats/sequential/` imports only numpy/scipy + stdlib +
   `abkit.stats.*`; **no pydantic/config type crosses the boundary** — the engine
-  takes plain primitives (`scheme: str`, `info_n: float`, `alpha: float`).
+  takes plain primitives (`effect`/`se`/`tau2`/`alpha` floats).
   `analyze.py` (the impure layer) does the `SequentialConfig → primitives`
   translation. `tests/stats/test_purity.py` gains explicit coverage that
   importing `abkit.stats.sequential` pulls in no forbidden module.
@@ -119,17 +127,18 @@ existing numbers move (invariant 2).
 
 **Tests:** `tests/stats/sequential/test_confidence_sequence.py` (KAT: recovered
 SE round-trips the fixed CI at rel-1e-9; the CS strictly contains the fixed CI;
-KAT radius vs hand-computed WSR constants for planted `(effect, SE, info_n)`);
+KAT radius vs a hand-computed normal-mixture constant; p ≤ α ⇔ 0 excluded);
 `test_coverage.py` (large-n Monte-Carlo: anytime coverage ≥ 1−α across a
 **data-dependent** look schedule within a documented tolerance band — the
-peeking property, asymptotic); `test_mixture.py` (τ² policy KAT, monotone in
-`info_n`); purity extension in `tests/stats/test_purity.py`. Golden tests
-**untouched** (default-off parity, invariant 2).
+peeking property, asymptotic); `test_mixture.py` (τ² policy KAT: `u*` fixed-point,
+linear in `horizon_variance`); purity extension in `tests/stats/test_purity.py`.
+Golden tests **untouched** (default-off parity, invariant 2). **✅ 81 sequential
+tests + 606 stats/golden green; ruff/black clean.**
 
-**DoD:** `sequentialize(effect, se, info_n, tau2, alpha) -> (lo, hi, av_pvalue)`
+**DoD:** ✅ `sequentialize(effect, se, tau2, alpha) -> (lo, hi, av_pvalue)`
 is pure, deterministic, primitive-only, and produces an always-valid CI that
 provably contains the fixed CI; τ² comes from the one shared `mixture_tau2`
-helper; `TestResult.ci_kind` exists; `statistics-changes.md §4` carries the new
+helper; `TestResult.ci_kind` exists; `statistics-changes.md §4.1` carries the new
 family (asymptotic-anytime, opt-in, no existing `ALGORITHM_VERSION` moved).
 
 **Must-fixes discharged:** *never change a number silently* — new family is
@@ -509,7 +518,7 @@ WP7 (extract composed rule) ── independent (M4 only) ──▶ WP8 (A/A D9 f
   delta-method covariance already baked into `ci_length`; method-agnostic; never
   re-derives arm variances. Rejected: rebuilding SE from per-arm std/size (drops the
   covariance term for relative/CUPED/ratio-delta — B3).
-- **D4 — τ² is fixed-by-policy from one shared helper** (`mixture_tau2(info_n, α)`),
+- **D4 — τ² is fixed-by-policy from one shared helper** (`mixture_tau2(horizon_variance, α)`),
   anchored to horizon information N, called identically by pipeline (WP3) and A/A
   (WP2). Not user-facing config. A future τ² change is a `statistics-changes.md §4`
   entry **and** triggers the mode-provenance re-plan (D7) — never a silent CI move.

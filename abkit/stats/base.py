@@ -251,6 +251,12 @@ class BaseMethod(ABC):
     #: Needs a per-unit ``cov_array`` on both samples (CUPED / post-normed) —
     #: the explore Tier-S gate reads this instead of guessing from param names.
     requires_covariate: ClassVar[bool] = False
+    #: Eligible for the M5 always-valid sequential transform. True requires a
+    #: symmetric normal fixed CI, whose SE is recoverable by CI-inversion
+    #: (``sequential.se_from_ci_length``); the pipeline dispatches on this flag
+    #: instead of name-checking. Bootstrap percentile CIs are asymmetric → the
+    #: bootstrap base sets this False (docs/specs/m5-implementation-plan.md D1).
+    supports_sequential: ClassVar[bool] = True
 
     def __init__(self, alpha: float = 0.05, **params: Any) -> None:
         if not 0.0 < alpha < 1.0:
