@@ -14,6 +14,17 @@ number change).
 ## [Unreleased]
 
 ### Added
+- **M6 WP4 — BI reference queries + dashboards (`docs/examples/bi/`).** Connect
+  Grafana / Lightdash / Metabase / Superset to the `_ab_results` contract table:
+  `queries.sql` (8 tool-agnostic recipes — headline scoreboard, the effect+CI
+  stabilization chart, raw/CUPED arm values, significance-vs-effective-alpha,
+  MDE/power, cross-experiment board, freshness, config-drift detector),
+  `srm_panel.sql` (the SRM validity guard), one importable `grafana_dashboard.json`
+  (ClickHouse), and a README documenting the five hard invariants (read `FINAL`;
+  group by `method_config_id`; compare to the row's two-tier `alpha` not 0.05;
+  respect the pre-horizon peeking guard via `is_horizon`/`ci_kind`; handle NULLs).
+  Guarded by `tests/reporting/test_bi_examples.py`, which fails if a recipe drifts
+  from the real `_ab_results` schema. Docs/SQL only — no runtime code.
 - **M5 — sequential analysis, the always-valid CI, `abk plan`, composed corrections.** Opt-in
   (`sequential: {enabled: true}`, **default off** — the fixed-horizon series is
   byte-identical, no `ALGORITHM_VERSION` bump, goldens untouched). Landed so far
