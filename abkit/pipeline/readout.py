@@ -51,7 +51,7 @@ from typing import Any, Literal
 
 from abkit.config.experiment_config import ComparisonConfig, ExperimentConfig
 from abkit.config.project_config import ProjectConfig
-from abkit.stats.correction import benjamini_hochberg
+from abkit.stats.correction import SignificanceInput, composed_significance
 from abkit.stats.exceptions import UnknownMethodError
 from abkit.stats.power import get_fraction_mde, get_ttest_mde
 from abkit.stats.registry import get_method_class
@@ -184,48 +184,45 @@ def _informative(row: dict) -> bool:
     return _num(row.get("left_bound")) is not None and _num(row.get("right_bound")) is not None
 
 
+def _sig_input(row: dict) -> SignificanceInput:
+    """Adapt a persisted ``_ab_results`` row to the shared composed-rule primitive."""
+    return SignificanceInput(
+        left_bound=_num(row.get("left_bound")),
+        right_bound=_num(row.get("right_bound")),
+        pvalue=_num(row.get("pvalue")),
+        effect=_num(row.get("effect")),
+        alpha=_num(row.get("alpha")),
+    )
+
+
 def _build_sig_map(rows: Sequence[dict], correction: str) -> dict[_RowKey, _Sig]:
     """Per-row significance under the experiment's correction scheme.
 
-    Bonferroni/none: the CI already reflects the stored effective alpha —
-    significance is "the CI excludes zero" (≡ the stored ``reject``).
-    Benjamini-Hochberg: adjusted per cutoff across every informative row at
-    that ``end_ts`` (metrics × pairs — mirroring the compute-time
-    ``n_comparisons`` convention), compared against the stored raw alpha.
+    Delegates the composed multiple-testing rule to the shared
+    ``stats.correction.composed_significance`` (WP7) so the readout and the A/A
+    composed FWER/FDR sweep apply ONE rule. Bonferroni/none: the CI already
+    reflects the stored effective alpha ⇒ significance is "the CI excludes zero"
+    (per-row, no cross-row interaction). Benjamini-Hochberg: the family is one
+    cadence cutoff's informative rows (metrics × pairs — the compute-time
+    ``n_comparisons`` convention), adjusted then compared against the stored raw
+    alpha.
     """
     sig: dict[_RowKey, _Sig] = {}
     informative = [row for row in rows if _informative(row)]
 
     if correction != "benjamini_hochberg":
-        for row in informative:
-            left = _num(row.get("left_bound"))
-            right = _num(row.get("right_bound"))
-            if left is not None and left > 0:
-                sig[_row_key(row)] = _Sig(True, 1)
-            elif right is not None and right < 0:
-                sig[_row_key(row)] = _Sig(True, -1)
-            else:
-                sig[_row_key(row)] = _Sig(False, 0)
+        outcomes = composed_significance([_sig_input(row) for row in informative], correction)
+        for row, outcome in zip(informative, outcomes, strict=True):
+            sig[_row_key(row)] = _Sig(outcome.significant, outcome.sign)
         return sig
 
     by_cutoff: dict[Any, list[dict]] = {}
     for row in informative:
-        if _num(row.get("pvalue")) is None:
-            sig[_row_key(row)] = _Sig(False, 0)
-            continue
         by_cutoff.setdefault(row["end_ts"], []).append(row)
     for cutoff_rows in by_cutoff.values():
-        adjusted = benjamini_hochberg([_num(row["pvalue"]) for row in cutoff_rows])
-        for row, adj in zip(cutoff_rows, adjusted, strict=False):
-            alpha = _num(row.get("alpha"))
-            effect = _num(row.get("effect"))
-            significant = alpha is not None and float(adj) < alpha
-            sign = 0
-            if significant and effect is not None and effect != 0:
-                sign = 1 if effect > 0 else -1
-            if significant and sign == 0:
-                significant = False
-            sig[_row_key(row)] = _Sig(significant, sign)
+        outcomes = composed_significance([_sig_input(row) for row in cutoff_rows], correction)
+        for row, outcome in zip(cutoff_rows, outcomes, strict=True):
+            sig[_row_key(row)] = _Sig(outcome.significant, outcome.sign)
     return sig
 
 

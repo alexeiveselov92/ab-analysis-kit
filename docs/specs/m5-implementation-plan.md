@@ -11,8 +11,18 @@
 
 ## 0. Progress & resume note (2026-07-06)
 
-**Status: WP1 + WP2 + WP3 (all 3 parts) + WP4 + WP5 + WP6 shipped; WP7→WP8
-(the composed-FDR track) + WP9 exit gate remain.** WP6 = the read-only `abk plan`
+**Status: WP1 + WP2 + WP3 (all 3 parts) + WP4 + WP5 + WP6 + WP7 shipped; WP8
+(the composed-FDR family sweep) + WP9 exit gate remain.** WP7 = the
+behavior-preserving extraction of the composed multiple-testing rule (two-tier
+Bonferroni ∘ read-time Benjamini-Hochberg) out of the readout's inline
+`_build_sig_map` into a pure shared helper `stats/correction.py::composed_significance`
+(over a `SignificanceInput`/`Significance` primitive), so WP8's family sweep and the
+readout apply ONE rule. The readout now adapts each persisted row to a `SignificanceInput`
+and delegates per cutoff (BH) / over all informative rows (Bonferroni/none); zero verdict
+change — the unchanged `test_readout.py::TestBenjaminiHochberg` verdict tests are the
+snapshot pin, and `tests/pipeline/test_correction_rule.py` pins the helper against a
+faithful transcription of the pre-extraction inline rule over a matrix. No
+`ALGORITHM_VERSION` moved, goldens untouched. WP6 = the read-only `abk plan`
 sizing planner: `abkit/planning/` (a pure `sizing.py` over `abkit.stats.power` +
 `__init__`) and `abkit/cli/commands/plan.py` (registered in `main.py`). It echoes the
 projected look count + cost shape from the shared `generate_grid`, then per comparison
@@ -474,7 +484,7 @@ explicit M6 deferral in the decision log + `cli-and-dx.md`.
 
 ---
 
-### WP7 — extract the composed-correction rule from the readout into a shared helper — independent, M4-only (refactor, A)
+### WP7 — extract the composed-correction rule from the readout into a shared helper — independent, M4-only (refactor, A) ✅ DONE
 
 **Goal:** a behavior-preserving extraction of the composed multiple-testing rule
 (config-time two-tier Bonferroni ∘ read-time Benjamini-Hochberg) from the readout's
