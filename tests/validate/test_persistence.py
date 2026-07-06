@@ -64,6 +64,17 @@ def test_records_have_every_column_and_unique_run_ids(warehouse):
     assert result.run_stamp in records[0]["run_id"]
 
 
+def test_sequential_columns_persist_end_to_end(warehouse):
+    # the t-test is sequential-eligible → the D8 always-valid column reaches the row
+    experiment = make_experiment("aa_seq", "arpu", {"name": "t-test"})
+    record = aa_run_records(_run(experiment, warehouse))[0]
+    assert record["tau2"] is not None and record["tau2"] > 0.0
+    assert record["fpr_sequential"] is not None
+    assert record["peeking_fpr_sequential"] is not None
+    assert record["ci_width"] is not None and record["ci_width_sequential"] is not None
+    assert record["ci_width_sequential"] > record["ci_width"]  # the anytime price, persisted
+
+
 def test_persisted_alpha_byte_matches_effective_alpha(warehouse):
     experiment = make_experiment("aa_alpha", "arpu", {"name": "t-test"}, alpha=0.05)
     result = _run(experiment, warehouse)

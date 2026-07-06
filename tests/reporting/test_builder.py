@@ -366,6 +366,14 @@ class TestCalibrationBlock:
             "achieved_mde": None,
             "coverage": 0.95,
             "effect_exaggeration": None,
+            "tau2": None,
+            "fpr_sequential": None,
+            "peeking_fpr_sequential": None,
+            "power_sequential": None,
+            "coverage_sequential": None,
+            "effect_exaggeration_sequential": None,
+            "ci_width": None,
+            "ci_width_sequential": None,
             "verdict": "t-test on revenue: well-calibrated, FPR 5.2%",
             "details": '{"single_look_fpr": 0.052, "peeking_fpr": 0.13, '
             '"peeking_curve": [[1.0, 0.05], [14.0, 0.13]], "budget": 0.075, '

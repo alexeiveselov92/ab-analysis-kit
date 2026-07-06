@@ -341,6 +341,10 @@ def _score_one(
         "peeking_fpr": score.peeking_fpr,
         # (elapsed_days, cumulative_fpr) per look — the peeking-vs-looks curve (R10)
         "peeking_curve": [list(point) for point in score.peeking_curve],
+        # M5 D8: the always-valid twin curve + scalar (None-safe; empty when no column)
+        "single_look_fpr_sequential": score.fpr_sequential,
+        "peeking_fpr_sequential": score.peeking_fpr_sequential,
+        "peeking_curve_sequential": [list(point) for point in score.peeking_curve_sequential],
         "warnings": list(score.warnings),
     }
     return CellResult(
@@ -356,6 +360,14 @@ def _score_one(
         recommended=False,
         details=details,
         status="success",
+        tau2=score.tau2,
+        fpr_sequential=score.fpr_sequential,
+        peeking_fpr_sequential=score.peeking_fpr_sequential,
+        power_sequential=score.power_sequential,
+        coverage_sequential=score.coverage_sequential,
+        effect_exaggeration_sequential=score.effect_exaggeration_sequential,
+        ci_width=score.ci_width,
+        ci_width_sequential=score.ci_width_sequential,
     )
 
 
