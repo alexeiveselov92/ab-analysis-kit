@@ -14,6 +14,17 @@ number change).
 ## [Unreleased]
 
 ### Added
+- **M6 WP2 — `abk init-claude` + packaged Claude Code context.** New command that
+  installs AI-assistant context into a user's abkit project (idempotent,
+  version-stamped, re-runnable after upgrade): a marker-delimited managed block in
+  `CLAUDE.md` (existing content preserved; a stale versioned marker is refreshed in
+  place), the 9 reference rules under `.claude/rules/ab-analysis-kit/`
+  (overview, cli, project, experiments, metrics, methods, explore, validate, plan),
+  and the 7 `abk-*` skills under `.claude/skills/` (setup-project, new-experiment,
+  new-metric, explore, validate, plan, feedback). The source tree ships in the wheel
+  (`abkit/cli/assets/claude/**`) and is read via `importlib.resources`. Ported from
+  the detectkit donor (cli-and-dx.md §5); mechanism domain-agnostic, content authored
+  for A/B analysis and fact-checked against the M5 as-built engine.
 - **M5 — sequential analysis, the always-valid CI, `abk plan`, composed corrections.** Opt-in
   (`sequential: {enabled: true}`, **default off** — the fixed-horizon series is
   byte-identical, no `ALGORITHM_VERSION` bump, goldens untouched). Landed so far

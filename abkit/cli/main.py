@@ -7,8 +7,8 @@ driver is required until a command actually needs one. Failures exit NON-ZERO
 from the detectkit donor's swallow-and-return-0 behaviour).
 
 Surface: ``init``, ``run``, ``unlock``, ``clean`` (M2) + ``explore`` (M3) +
-``validate`` (M4) + ``plan`` (M5). The remaining commands (``init-claude``,
-``test-report``) land per ROADMAP.md M6.
+``validate`` (M4) + ``plan`` (M5) + ``init-claude`` (M6). The remaining command
+(``test-report``) lands later in M6.
 """
 
 from __future__ import annotations
@@ -58,6 +58,25 @@ def init(project_name: str, target_dir: str, db_type: str) -> None:
     from abkit.cli.commands.init import run_init
 
     run_init(project_name, target_dir, db_type=db_type)
+
+
+@cli.command(name="init-claude")
+@click.option(
+    "--target-dir",
+    "-d",
+    default=".",
+    help="Directory to install the Claude context into (default: current directory)",
+)
+def init_claude(target_dir: str) -> None:
+    """Install AI-assistant context for operating this abkit project.
+
+    Writes (idempotently) a managed block into CLAUDE.md, the reference rules
+    under .claude/rules/ab-analysis-kit/, and the abk-* skills under
+    .claude/skills/. Re-run after upgrading abkit to refresh the context.
+    """
+    from abkit.cli.commands.init_claude import run_init_claude
+
+    run_init_claude(target_dir)
 
 
 @cli.command()
