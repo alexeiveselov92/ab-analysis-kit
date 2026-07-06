@@ -90,6 +90,23 @@ test('SRM failure renders the red gate chip with the abk-srm-fail marker', () =>
   assert.match(chip.textContent, /SRM FAILED \(observed 0\.62\/0\.38 vs expected 0\.50\/0\.50, χ² p<0\.001\) — effects untrustworthy/);
 });
 
+test('sub-day SRM failure names the anytime-valid gate, not χ² (WP5)', () => {
+  const payload = makePayload({
+    srm: {
+      flag: true,
+      pvalue: 0.0004,
+      observed: { control: 5000, treatment: 5000 }, // re-balanced, yet FAILED (past imbalance)
+      expected: { control: 0.5, treatment: 0.5 },
+      kind: 'sequential_multinomial',
+    },
+  });
+  const { mount } = renderInJsdom(payload);
+  const chip = mount.querySelector('.abk-srm-fail');
+  assert.ok(chip, 'abk-srm-fail marker present');
+  assert.match(chip.textContent, /anytime-valid p<0\.001/);
+  assert.ok(!chip.textContent.includes('χ²'), 'the e-process gate is not labelled χ²');
+});
+
 test('pre-horizon latest cutoff renders the abk-prehorizon note', () => {
   const series = Array.from({ length: 5 }, (_, i) => makePoint(i + 1));
   const payload = makePayload();

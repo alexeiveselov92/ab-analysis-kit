@@ -259,7 +259,9 @@ and cost before accepting a sub-day grid; `run` warns when
 - **SRM:** χ² at every sub-day cutoff is itself peeking on the SRM test (false
   alarms on a hard gate); at `cadence < 1d` the SRM gate uses the anytime-valid
   sequential multinomial test (Lindon & Malek, NeurIPS 2022 — the Netflix/
-  Optimizely approach). → data-contract-and-reporting.md §6.
+  Optimizely approach). **Shipped (M5 WP5)**, one verdict per look off the
+  cumulative as-of exposure counts. → data-contract-and-reporting.md §6,
+  statistics-changes.md §4.2.
 - **CUPED:** sub-day cadence resolves the §5.1 pending decision to **(b) fixed
   lookback in whole days** — the legacy growing window is incoherent below a
   day (fractional `agg_dates_count`, θ jittering hourly). Lint: error on

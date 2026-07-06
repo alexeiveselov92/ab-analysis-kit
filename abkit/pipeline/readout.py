@@ -573,9 +573,14 @@ def _pair_verdict(
     # 1. SRM hard gate (§1: effects untrustworthy under a broken cohort).
     if _flag(latest.get("srm_flag")) or _flag(latest.get("decision_blocked")):
         srm_p = _num(latest.get("srm_pvalue"))
+        # Name the gate that actually ran: χ² at daily+, the anytime-valid
+        # sequential multinomial e-process below 1d (WP5). ``kind`` is not
+        # persisted, so it is derived from the current cadence (the gate that
+        # wrote these rows) — statistics-changes.md §4.2.
+        gate = "anytime-valid" if experiment.is_sub_day() else "chi-square"
         rationale.append(
             "SRM failed"
-            + (f" (chi-square p={srm_p:.3g})" if srm_p is not None else "")
+            + (f" ({gate} p={srm_p:.3g})" if srm_p is not None else "")
             + " — observed group sizes are inconsistent with expected_split; "
             "effects untrustworthy (hard gate)"
         )

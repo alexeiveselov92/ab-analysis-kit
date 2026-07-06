@@ -46,7 +46,12 @@ from abkit.stats.samples import (
     SufficientStats,
     align_paired,
 )
-from abkit.stats.srm import DEFAULT_SRM_ALPHA, SrmResult, srm_check
+from abkit.stats.srm import (
+    DEFAULT_SRM_ALPHA,
+    SrmResult,
+    sequential_multinomial_srm,
+    srm_check,
+)
 
 __all__ = [
     "AbkitStatsWarning",
@@ -83,6 +88,7 @@ __all__ = [
     "method_config_payload",
     "n_comparisons",
     "register",
+    "sequential_multinomial_srm",
     "srm_check",
     "two_tier_alphas",
 ]

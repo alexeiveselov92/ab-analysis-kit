@@ -8,12 +8,14 @@ only ``replace_exposures`` (the loader) and ``purge_experiment`` write here.
 
 from __future__ import annotations
 
+import bisect
 from datetime import datetime
 
 import numpy as np
 
 from abkit.database.internal_tables._base import _InternalTablesBase
 from abkit.database.tables import TABLE_EXPOSURES
+from abkit.utils.datetime_utils import to_naive_utc
 
 #: insert chunk size — bounds driver memory on multi-million-unit cohorts
 EXPOSURE_INSERT_CHUNK = 100_000
@@ -93,6 +95,50 @@ class _ExposuresMixin(_InternalTablesBase):
         """
         rows = self._manager.execute_query(query, {"e": experiment})
         return {row["variant"]: int(row["cnt"]) for row in rows if row.get("variant")}
+
+    def get_exposure_count_stream(
+        self, experiment: str, boundaries: list[datetime], variants: list[str]
+    ) -> list[dict[str, int]]:
+        """Cumulative per-variant unit counts as-of each look boundary.
+
+        The sub-day anytime-valid SRM (Lindon & Malek, cumulative-intervals.md
+        §6.5) needs the running count history: for each half-open cumulative
+        window ``[start, end_ts)`` the count of units first exposed BEFORE
+        ``end_ts`` (exclusive, matching the metric-load windows). Reads the
+        deduped persisted cohort ONCE and buckets in-process (one round trip,
+        not one query per look — a sub-day grid has many looks); every variant
+        in ``variants`` is zero-filled so a missing arm reads as 0 (the worst
+        SRM). Returns one dict per boundary, aligned and ascending.
+
+        (v1 reconstructs the full stream each run from ``_ab_exposures``, in
+        keeping with the recompute-not-incremental read path; a bucketed-SQL or
+        running-max-carry optimisation is a future v2.)
+        """
+        if not boundaries:
+            return []
+        full_table_name = self._manager.get_full_table_name(TABLE_EXPOSURES, use_internal=True)
+        rows = self._manager.execute_query(
+            f"SELECT variant, exposure_ts FROM {full_table_name}{self._manager.final_modifier} "
+            "WHERE experiment = %(e)s",
+            {"e": experiment},
+        )
+        # sorted exposure timestamps per declared variant; bisect_left(b) then
+        # yields exactly the count with exposure_ts < b (the exclusive edge).
+        per_variant: dict[str, list[datetime]] = {v: [] for v in variants}
+        for row in rows:
+            variant = row.get("variant")
+            timestamps = per_variant.get(variant)
+            if timestamps is None:
+                continue  # a variant not declared this run — never counted
+            ts = to_naive_utc(row.get("exposure_ts"))
+            if ts is not None:
+                timestamps.append(ts)
+        for timestamps in per_variant.values():
+            timestamps.sort()
+        return [
+            {v: bisect.bisect_left(per_variant[v], boundary) for v in variants}
+            for boundary in boundaries
+        ]
 
     def get_first_exposure_ts(self, experiment: str) -> datetime | None:
         """Earliest exposure timestamp (diagnostics/plan)."""

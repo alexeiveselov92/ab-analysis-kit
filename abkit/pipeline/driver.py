@@ -48,7 +48,13 @@ from abkit.loaders.query_template import RenderWindow, build_builtins
 from abkit.pipeline._types import STATUS_COMPLETED, STATUS_FAILED, PipelineStep, RunOutcome
 from abkit.pipeline.analyze import analyze_cutoff, comparison_alpha, effective_alphas
 from abkit.pipeline.enrich import rows_for_cutoff
-from abkit.stats import get_method_class, srm_check
+from abkit.stats import (
+    DEFAULT_SRM_ALPHA,
+    SrmResult,
+    get_method_class,
+    sequential_multinomial_srm,
+    srm_check,
+)
 from abkit.stats.sequential import mixture_tau2, se_from_ci_length
 from abkit.utils.datetime_utils import now_utc_naive
 
@@ -207,12 +213,48 @@ def run_experiment(
         outcome.exposures_loaded = sum(observed_counts.values())
 
         # ── SRM gate: blocking-but-non-dropping (§5.4) ───────────────────────
-        # Zero-fill declared variants absent from the cohort: a missing arm is
-        # the worst SRM there is — it must FLAG, not crash the chi-square.
-        observed_counts = {
-            variant: observed_counts.get(variant, 0) for variant in experiment.assignment.variants
-        }
-        srm = srm_check(observed_counts, experiment.assignment.expected_split)
+        # The watermark is needed here too: the sub-day gate evaluates every
+        # COMPLETE look (end_ts ≤ watermark). Computed once per run (never now()
+        # in SQL — §6.2).
+        watermark_ts = now - timedelta(seconds=experiment.data_lag_seconds())
+        srm_by_cutoff: dict[datetime, SrmResult] | None = None
+        if experiment.is_sub_day():
+            # Sub-day: a dense cadence peeks the χ² hard gate dozens of times a
+            # day → false alarms. Swap to the anytime-valid Dirichlet-multinomial
+            # e-process (Lindon & Malek 2022; statistics-changes.md §4.2), valid
+            # at EVERY look by construction. ONE verdict per look, stamped on
+            # that look's rows (the truthful as-of SRM, cumulative-intervals.md
+            # §6.5); the run headline is the latest complete look's running
+            # verdict. The gate is NOT gated by demotion — counts/SRM stay
+            # visible even where inference is withheld (§6.1(4)).
+            looks = [c.end_ts for c in grid.cutoffs if c.end_ts <= watermark_ts]
+            stream = tables.get_exposure_count_stream(
+                experiment.name, looks, list(experiment.assignment.variants)
+            )
+            look_results = sequential_multinomial_srm(stream, experiment.assignment.expected_split)
+            srm_by_cutoff = dict(zip(looks, look_results, strict=True))
+            srm = (
+                look_results[-1]
+                if look_results
+                # no complete look yet ⇒ nothing to gate or write; a benign ok.
+                else SrmResult(
+                    pvalue=1.0,
+                    srm_flag=False,
+                    alpha=DEFAULT_SRM_ALPHA,
+                    kind="sequential_multinomial",
+                    e_value=1.0,
+                )
+            )
+        else:
+            # Daily & coarser keep the χ² gate (a bounded daily look count on the
+            # strict 0.001 hard gate ⇒ negligible peeking inflation). Zero-fill
+            # declared variants absent from the cohort: a missing arm is the
+            # worst SRM there is — it must FLAG, not crash the chi-square.
+            observed_counts = {
+                variant: observed_counts.get(variant, 0)
+                for variant in experiment.assignment.variants
+            }
+            srm = srm_check(observed_counts, experiment.assignment.expected_split)
         outcome.srm_flagged = srm.srm_flag
         if srm.srm_flag:
             log(f"SRM   {experiment.name}: {srm.describe()}")
@@ -223,7 +265,6 @@ def run_experiment(
             return outcome
 
         # ── PLAN + COMPUTE per comparison ────────────────────────────────────
-        watermark_ts = now - timedelta(seconds=experiment.data_lag_seconds())
         backend = RecomputeBackend(manager, experiment, exposures_table=TABLE_EXPOSURES)
 
         for comparison in experiment.comparisons:
@@ -332,6 +373,11 @@ def run_experiment(
                     project,
                     sequential_tau2=sequential_tau2,
                 )
+                # sub-day stamps each look its OWN anytime-valid verdict; daily &
+                # coarser broadcast the one whole-cohort χ² gate to every row.
+                cutoff_srm = (
+                    srm_by_cutoff.get(cutoff.end_ts, srm) if srm_by_cutoff is not None else srm
+                )
                 rows = rows_for_cutoff(
                     experiment,
                     comparison,
@@ -340,7 +386,7 @@ def run_experiment(
                     cutoff,
                     grid,
                     effective_alpha,
-                    srm,
+                    cutoff_srm,
                     watermark_ts,
                     metric_query=metric_sql,
                     metric_rendered_query=backend.render(

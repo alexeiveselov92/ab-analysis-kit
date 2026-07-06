@@ -192,9 +192,12 @@ function buildSrmChip(payload: ReportPayload): HTMLElement {
       .join('/');
     const exp = payload.arms.map((arm) => (srm.expected[arm] ?? 0).toFixed(2)).join('/');
     const p = srm.pvalue === null ? 'p=—' : `p${srm.pvalue < 0.001 ? '<0.001' : '=' + fmtP(srm.pvalue)}`;
+    // name the gate that ran: χ² at daily+, the anytime-valid e-process below 1d
+    // (WP5) — for which a since-rebalanced cohort can read FAILED with an even split.
+    const gate = srm.kind === 'sequential_multinomial' ? 'anytime-valid' : 'χ²';
     chip.classList.add('abk-srm-fail');
     chip.textContent =
-      `SRM FAILED (observed ${obs} vs expected ${exp}, χ² ${p}) — effects untrustworthy`;
+      `SRM FAILED (observed ${obs} vs expected ${exp}, ${gate} ${p}) — effects untrustworthy`;
     chip.setAttribute('data-abk-srm', 'fail');
   } else if (total === 0) {
     chip.textContent = 'SRM — no exposure data';

@@ -11,7 +11,27 @@
 
 ## 0. Progress & resume note (2026-07-06)
 
-**Status: WP1 + WP2 + WP3 (all 3 parts) + WP4 shipped; WP5 next.** WP4 = the readout
+**Status: WP1 + WP2 + WP3 (all 3 parts) + WP4 + WP5 shipped; WP6 / WP7→WP8
+(independent tracks) + WP9 exit gate remain.** WP5 = the sub-day anytime-valid SRM:
+below 1d cadence (`experiment.is_sub_day()`) the χ² gate — which would peek the strict
+0.001 hard gate dozens of times a day — swaps to the Dirichlet-multinomial e-process
+(Lindon & Malek 2022; `abkit/stats/srm.py::sequential_multinomial_srm`,
+`statistics-changes.md §4.2`), valid at every look by construction. Daily & coarser are
+byte-unchanged. The verdict is stamped **per look** from the cumulative as-of exposure
+counts (`_exposures.py::get_exposure_count_stream`, exclusive `exposure_ts < end_ts`
+edge) — the truthful as-of series the M2 whole-cohort broadcast deferred; the driver
+dispatches on `is_sub_day()` and threads the per-cutoff `SrmResult` into
+`rows_for_cutoff` (the readout/report already key off the latest row per series, so no
+readout change). Default prior = the paper's uniform `Dir(1,…,1)`; the anytime
+false-alarm rate holds ≤ α for **any** fixed prior (only power depends on it), so the
+prior is a documented power knob, not an A/A-arbitrated correctness constant. Additive
+gate, not a registered method: **no `ALGORITHM_VERSION` bump, goldens untouched**, no
+schema change (reuses `srm_flag`/`srm_pvalue`). Tests: `tests/stats/test_srm_sequential.py`
+(the `BF(10,0)=1024/11` exact-rational KAT + a `gammaln` re-derivation at rel-1e-12, the
+anytime-false-alarm Binomial-band sim, planted-imbalance power, running-max stickiness),
+`tests/database/test_internal_tables.py::TestExposures` (the as-of stream), and
+`tests/pipeline/test_pipeline.py::TestSubDaySrmGate` (sub-day per-look dispatch vs daily χ²
+broadcast). Full suite green (1490 passed / 1 skipped). WP4 = the readout
 under sequential: the pre-horizon withholding branch (`readout.py`) refuses
 WIN/LOSE/FLAT before the planned horizon only when the persisted row's `ci_kind ==
 'fixed'`, so an `always_valid` row reads early; an early decisive verdict now names
@@ -348,7 +368,7 @@ the weekly-cycle chip, and the daily-SRM posture is documented.
 
 ---
 
-### WP5 — sub-day sequential-multinomial SRM (Lindon & Malek) — independent (stats + gate, A)
+### WP5 — sub-day sequential-multinomial SRM (Lindon & Malek) — independent (stats + gate, A) ✅ DONE
 
 **Goal:** below `1d` cadence, replace the per-cutoff χ² SRM (itself peeking on a
 hard gate → false alarms) with the anytime-valid sequential multinomial test
@@ -595,6 +615,23 @@ WP7 (extract composed rule) ── independent (M4 only) ──▶ WP8 (A/A D9 f
   only; daily stays χ²** (α=0.001 hard gate + bounded daily look count ⇒ negligible
   peeking inflation). Recorded in `data-contract-and-reporting.md §6`. The multinomial
   prior default is pinned in `statistics-changes.md §4`.
+- **D9a — the sub-day gate default prior is the paper's uniform `Dir(1,…,1)`** (WP5,
+  as-built). The anytime false-alarm guarantee (Ville on the mixture martingale) holds
+  for **any** fixed positive prior — only the stopping time (power) depends on it — so
+  the prior is a documented power knob, **not** an A/A-arbitrated correctness constant
+  (unlike τ², whose numeric value D8/WP2 arbitrated). No magic concentration constant is
+  invented; a mean-pinned `k·θ0` concentration is exposed as an opt-in, unused in M5.
+  The gate uses the same strict `DEFAULT_SRM_ALPHA = 0.001` as χ². Rejected: inventing a
+  concentration `k` the paper does not name. (`statistics-changes.md §4.2`.)
+- **D9b — the sub-day verdict is PER LOOK, not the M2 whole-cohort broadcast** (WP5,
+  as-built). Each cutoff's rows carry their look's running anytime verdict, stamped from
+  the cumulative as-of exposure counts (`get_exposure_count_stream` over `_ab_exposures`,
+  exclusive `exposure_ts < end_ts` — matching the metric-load windows), reconstructed in
+  full from the persisted cohort each run (recompute-not-incremental, in keeping with the
+  v1 read path). The readout/report already key SRM off the *latest* row per series, so
+  the reported status is the current anytime verdict with **no readout change**; the gate
+  runs even on demoted rows (§6.1(4)). Rejected: broadcasting the frontier verdict to all
+  rows (loses the truthful as-of history that §5.3 reserves the slot for).
 - **D10 — `abk plan` baseline moments** from the latest persisted `_ab_results`
   per-arm stats, with a `--baseline` flag fallback and a refuse-if-absent path; ratio
   metrics are refused (no unversioned ratio-power math). runtime/ASN deferred to M6

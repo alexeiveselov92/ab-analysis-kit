@@ -187,6 +187,40 @@ class TestExposures:
         tables.replace_exposures("exp1", self._cohort(3))
         assert tables.get_first_exposure_ts("exp1") == datetime(2024, 1, 1, 10, 0, 0)
 
+    def test_exposure_count_stream_asof_boundaries(self, tables):
+        """The sub-day SRM stream (WP5): cumulative counts with exposure_ts <
+        each EXCLUSIVE boundary. cohort(4) exposes control@:00/:02, treatment@:01/:03."""
+        tables.replace_exposures("exp1", self._cohort(4))
+        boundaries = [
+            datetime(2024, 1, 1, 10, 0, 0),  # exclusive: nobody yet
+            datetime(2024, 1, 1, 10, 0, 2),  # control@:00, treatment@:01
+            datetime(2024, 1, 1, 10, 0, 4),  # all four
+        ]
+        stream = tables.get_exposure_count_stream("exp1", boundaries, ["control", "treatment"])
+        assert stream == [
+            {"control": 0, "treatment": 0},
+            {"control": 1, "treatment": 1},
+            {"control": 2, "treatment": 2},
+        ]
+
+    def test_exposure_count_stream_zero_fills_missing_arm(self, tables):
+        cohort = {
+            "unit_id": np.array(["u0", "u1"], dtype=object),
+            "variant": np.array(["control", "control"], dtype=object),
+            "exposure_ts": np.array(
+                [datetime(2024, 1, 1, 10, 0, 0), datetime(2024, 1, 1, 10, 0, 1)], dtype=object
+            ),
+        }
+        tables.replace_exposures("exp1", cohort)
+        stream = tables.get_exposure_count_stream(
+            "exp1", [datetime(2024, 1, 1, 10, 0, 5)], ["control", "treatment"]
+        )
+        assert stream == [{"control": 2, "treatment": 0}]  # missing arm ⇒ 0, the worst SRM
+
+    def test_exposure_count_stream_empty_boundaries(self, tables):
+        tables.replace_exposures("exp1", self._cohort(4))
+        assert tables.get_exposure_count_stream("exp1", [], ["control", "treatment"]) == []
+
 
 class TestUnitState:
     DAY = date(2024, 1, 5)

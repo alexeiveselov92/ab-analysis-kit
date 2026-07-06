@@ -108,8 +108,10 @@ Also flagged (reproduce-for-parity, document the asymmetry):
 
 Defaults stay baseline-faithful; these are additive.
 
-- **SRM chi-square gate** — before every comparison; blocking-but-non-dropping
-  (`srm_flag`). ([data-contract-and-reporting.md](data-contract-and-reporting.md))
+- **SRM gate** — before every comparison; blocking-but-non-dropping (`srm_flag`).
+  Cadence-dispatched: χ² at daily-and-coarser, an anytime-valid sequential
+  multinomial e-process below 1d (§4.2).
+  ([data-contract-and-reporting.md](data-contract-and-reporting.md))
 - **Sequential / always-valid CIs** (mSPRT) + alpha-spending — opt-in
   (`sequential.enabled`) to make the cumulative daily series honest about peeking
   (decision Q2). Default off (legacy parity); the readout refuses pre-horizon
@@ -172,6 +174,62 @@ recorded in [m5-implementation-plan.md](m5-implementation-plan.md) D2.
   sequential-mode provenance the pipeline persists (a τ²-policy change forces a
   re-plan, D7) — never a silent CI move. `alpha_spending` (group-sequential) is
   **deferred to M6**; `scheme: alpha_spending` is a config error in M5.
+
+### 4.2 Sub-day sequential-multinomial SRM — as built (M5 WP5)
+
+The SRM gate is **cadence-dispatched** (data-contract-and-reporting.md §6,
+cumulative-intervals.md §6.5): daily-and-coarser keep the χ² goodness-of-fit
+(§4 bullet 1) — a bounded daily look count on the strict 0.001 hard gate makes
+the peeking inflation negligible — while **sub-day** (`cadence < 1d`) swaps to an
+**anytime-valid Dirichlet-multinomial e-process** (Lindon & Malek,
+*Anytime-Valid Inference for Multinomial Count Data*, NeurIPS 2022,
+arXiv:2011.03567 §2.2). A dense sub-day cadence would peek the χ² hard gate dozens
+of times a day → false SRM alarms; the e-process is valid at **every** look by
+construction. Decision recorded in [m5-implementation-plan.md](m5-implementation-plan.md)
+D9; dispatch on `ExperimentConfig.is_sub_day()`.
+
+- **It is an additive GATE, not a registered method** (invariant 3): nothing
+  special-cases a name, no `method_config_id`, and — like the χ² gate — it is
+  cadence-dispatched by the driver, never selected by config. **No
+  `ALGORITHM_VERSION` bump; golden tests untouched.**
+- **The e-value.** The null `M0` is iid `Multinomial(1, θ0)` (`θ0 =
+  expected_split`); the alternative `M1` mixes `θ ~ Dirichlet(α0)`. By conjugacy
+  the Bayes factor at cumulative counts `S = (S₁,…,S_d)` is closed-form and depends
+  on the data **only through `S`** (arrival order is irrelevant — so a stream of
+  *cumulative* per-variant count vectors is the exact input), computed in log space
+  with `gammaln` (never factorials — they overflow at A/B N). With `A0 = Σ α0,ᵢ`,
+  `N = Σ Sᵢ`:
+  `log BF = gammaln(A0) − gammaln(A0+N) + Σᵢ [ gammaln(α0,ᵢ+Sᵢ) − gammaln(α0,ᵢ) − Sᵢ·log(θ0,ᵢ) ]`.
+- **The rejection rule.** `{BFₙ}` is a non-negative martingale under `M0` with
+  `BF₀ = 1`, so by Ville's inequality `P(supₙ BFₙ ≥ 1/α) ≤ α` over **any**
+  data-dependent look schedule. The per-look verdict is the **running maximum**
+  e-value; the anytime p-value is its dual `pₙ = min(1, 1/ supₖ≤ₙ BFₖ)`
+  (non-increasing, so once the gate trips it stays tripped). The gate uses the same
+  strict `DEFAULT_SRM_ALPHA = 0.001` as χ² (`1/α = 1000`).
+- **The prior is fixed-by-policy** (`sequential_multinomial_srm(prior=…)`): the
+  default is the paper's **named** default, a **uniform `Dir(1,…,1)`** — no magic
+  concentration constant is invented. **Validity holds for ANY fixed positive
+  prior** (Ville needs a prior fixed in advance, not tuned to the data) — only the
+  stopping time (power) depends on `α0`. A mean-pinned `k·θ0` concentration is
+  exposed as an opt-in power knob (unused in M5). A future change to the default
+  prior is a change to this entry, never a silent gate move.
+- **The guarantee wording:** anytime-valid by construction; the false-alarm
+  Monte-Carlo (`tests/stats/test_srm_sequential.py`) is large-n over a
+  peek-at-every-look schedule within a Binomial band — mixture e-processes are
+  conservative, so the observed FPR sits at/below α, never materially above.
+- **False-alarm KAT (pinned to the default prior).** θ0 = ½, uniform `Beta(1,1)`,
+  counts `(10, 0)` ⇒ `BF = 1024/11 = 93.0909…` (`log BF = 4.5335765328`; anytime
+  `p = 11/1024`). It **does not** trip the strict 0.001 gate (93 < 1000) but does at
+  α=0.05 (93 > 20); the general k-variant form is pinned against a direct `gammaln`
+  re-derivation at rel-1e-12.
+- **Per-cutoff, truthful as-of.** Each look's rows carry **their** look's running
+  verdict (`srm_flag`/`srm_pvalue`/`decision_blocked`), stamped from the cumulative
+  as-of exposure counts (`get_exposure_count_stream`, reading `_ab_exposures` with an
+  exclusive `exposure_ts < end_ts` edge). The readout/report already key off the
+  latest row per series, so the reported status is the current anytime verdict. The
+  gate runs **even on demoted rows** (counts/SRM stay visible where inference is
+  withheld — cumulative-intervals §6.1(4)). No schema change (reuses the existing
+  `srm_flag`/`srm_pvalue` columns).
 
 ## 5. CUPED covariate window — DECIDED: fixed lookback (2026-07)
 
