@@ -44,6 +44,10 @@ class TestResult:
     left_bound: float
     right_bound: float
     reject: bool
+    # "fixed" (default, legacy parity) | "always_valid" (the M5 sequential mode —
+    # an always-valid confidence sequence; docs/specs/m5-implementation-plan.md D7).
+    # A row FIELD, never part of method_config_id (sequential is a mode, not identity).
+    ci_kind: str = "fixed"
     cov_value_1: float | None = None
     cov_value_2: float | None = None
     mde_1: float | None = None

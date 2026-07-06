@@ -13,7 +13,7 @@ import pytest
 
 from abkit.stats.factory import create_method
 from abkit.validate.panel import PanelCutoff, PlaceboPanel
-from abkit.validate.scoring import score_cell
+from abkit.validate.scoring import _cell_tau2, score_cell
 from tests.validate._panels import fraction_panel, normal_panel
 
 ALPHA = 0.05
@@ -164,6 +164,68 @@ def test_zero_trial_fraction_arm_is_a_gap_not_a_crash():
     assert score.valid_iterations == 0  # every cutoff is a gap
     assert score.degenerate_horizon > 0
     assert score.fpr is None
+
+
+def test_sequential_peeking_fpr_returns_to_near_alpha():
+    """The D8 headline: where the fixed peeking FPR breaks budget across a 20-look grid,
+    the always-valid peeking FPR is brought back to ~alpha (the honest completion)."""
+    panel = normal_panel(n_units=2500, n_cutoffs=20, seed=31)
+    method = create_method("t-test", alpha=ALPHA)
+    score = score_cell(panel, method, iterations=ITERS, seed_parts=SEED_PARTS)
+
+    assert score.tau2 is not None and score.tau2 > 0.0
+    assert score.peeking_fpr is not None and score.peeking_fpr_sequential is not None
+    # fixed peeking is inflated; the always-valid twin is strictly better and controlled
+    assert score.peeking_fpr > 2 * ALPHA
+    assert score.peeking_fpr_sequential < score.peeking_fpr
+    assert score.peeking_fpr_sequential <= ALPHA + _band(ALPHA, ITERS)  # ~controlled at alpha
+    # the sequential curve mirrors the fixed one's shape (one point per look, monotone)
+    curve = score.peeking_curve_sequential
+    assert len(curve) == len(panel.cutoffs)
+    ys = [y for _x, y in curve]
+    assert all(b >= a - 1e-12 for a, b in zip(ys, ys[1:], strict=False))
+    assert curve[-1][1] == pytest.approx(score.peeking_fpr_sequential)
+
+
+def test_sequential_single_look_fpr_and_width_side_by_side():
+    """The always-valid CI is wider than the fixed CI (the anytime price), so its
+    single-look FPR is <= the fixed single-look FPR at the same horizon."""
+    panel = normal_panel(n_units=4000, n_cutoffs=1, seed=11)
+    method = create_method("t-test", alpha=ALPHA)
+    score = score_cell(panel, method, iterations=ITERS, seed_parts=SEED_PARTS)
+
+    assert score.fpr is not None and score.fpr_sequential is not None
+    assert score.fpr_sequential <= score.fpr + 1e-12  # wider CI rejects no more often
+    assert score.ci_width is not None and score.ci_width_sequential is not None
+    assert score.ci_width_sequential > score.ci_width  # strictly wider (the anytime price)
+    assert 1.3 < score.ci_width_sequential / score.ci_width < 1.7  # ~1.55x at the horizon
+    # one look ⇒ peeking == single-look on both columns
+    assert score.peeking_fpr_sequential == pytest.approx(score.fpr_sequential)
+
+
+def test_sequential_power_stays_materially_above_alpha():
+    """Guard against a τ² that 'fixes' FPR by never rejecting: on a real injected
+    effect the always-valid CI still detects it (power well above α, but <= fixed)."""
+    panel = normal_panel(n_units=4000, n_cutoffs=1, seed=41)
+    method = create_method("t-test", alpha=ALPHA)
+    score = score_cell(panel, method, iterations=ITERS, seed_parts=SEED_PARTS, inject_effect=0.15)
+
+    assert score.power is not None and score.power_sequential is not None
+    assert score.power_sequential > 3 * ALPHA  # materially above alpha — not a dead test
+    assert score.power_sequential <= score.power + 1e-12  # wider CI ⇒ no more power
+    assert score.coverage_sequential is not None
+    assert score.coverage_sequential >= score.coverage  # wider CI covers at least as often
+
+
+def test_bootstrap_method_is_sequential_ineligible():
+    """supports_sequential=False (asymmetric percentile CI) ⇒ τ² is not anchored, so no
+    always-valid column. Tested at the anchor helper: score_cell's closed-form path does
+    not run bootstrap (no from_suffstats), so the guard short-circuits before any call."""
+    method = create_method("bootstrap", alpha=ALPHA, params={"n_samples": 200, "seed": 7})
+    assert method.supports_sequential is False
+    panel = normal_panel(n_units=1500, n_cutoffs=4, seed=51)
+    tau2 = _cell_tau2(panel, method, share_a=0.5, anchor_seed=1)
+    assert tau2 is None  # ineligible → no column, and from_suffstats was never invoked
 
 
 def test_ratio_delta_absolute_coverage_is_calibrated():

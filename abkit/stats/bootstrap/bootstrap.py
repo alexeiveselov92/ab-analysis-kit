@@ -71,6 +71,10 @@ class BaseBootstrapMethod(BaseMethod):
     """
 
     param_specs = BOOTSTRAP_PARAM_SPECS
+    # Percentile bootstrap CIs are asymmetric → SE is not recoverable by
+    # CI-inversion, so bootstrap methods are ineligible for the sequential
+    # transform (docs/specs/m5-implementation-plan.md D1/WP1).
+    supports_sequential = False
 
     def _validate_params(self) -> None:
         # n_samples/max_block_bytes ranges are enforced by their ParamSpec bounds.

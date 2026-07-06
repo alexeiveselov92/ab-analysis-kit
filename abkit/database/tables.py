@@ -250,6 +250,16 @@ def get_aa_runs_table_model() -> TableModel:
             ColumnDefinition("achieved_mde", "Nullable(Float64)", nullable=True),
             ColumnDefinition("coverage", "Nullable(Float64)", nullable=True),
             ColumnDefinition("effect_exaggeration", "Nullable(Float64)", nullable=True),
+            # M5 D8: the always-valid sequential column, side-by-side with the fixed
+            # measurements above (aa-false-positive-matrix.md; m5-implementation-plan §WP2).
+            ColumnDefinition("tau2", "Nullable(Float64)", nullable=True),  # frozen mixture variance
+            ColumnDefinition("fpr_sequential", "Nullable(Float64)", nullable=True),
+            ColumnDefinition("peeking_fpr_sequential", "Nullable(Float64)", nullable=True),
+            ColumnDefinition("power_sequential", "Nullable(Float64)", nullable=True),
+            ColumnDefinition("coverage_sequential", "Nullable(Float64)", nullable=True),
+            ColumnDefinition("effect_exaggeration_sequential", "Nullable(Float64)", nullable=True),
+            ColumnDefinition("ci_width", "Nullable(Float64)", nullable=True),  # fixed horizon width
+            ColumnDefinition("ci_width_sequential", "Nullable(Float64)", nullable=True),
             ColumnDefinition("verdict", "String"),
             ColumnDefinition("details", "String"),  # canonical JSON
             ColumnDefinition("status", "String"),  # success | failed

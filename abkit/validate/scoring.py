@@ -38,6 +38,7 @@ from abkit.stats.base import BaseMethod
 from abkit.stats.power import cuped_adjusted_std, get_fraction_mde, get_ttest_mde
 from abkit.stats.rng import derive_seed
 from abkit.stats.samples import Fraction, RatioSufficientStats, SufficientStats
+from abkit.stats.sequential import mixture_tau2, se_from_ci_length, sequentialize
 from abkit.validate._types import ValidateError
 from abkit.validate.inject import inject_multiplicative, injection_clamped
 from abkit.validate.panel import PlaceboPanel
@@ -79,6 +80,31 @@ class CellScore:
     degenerate_horizon: int
     kept_grid_points: int
     total_grid_points: int
+    # ── The M5 D8 always-valid sequential column (measured side-by-side, never
+    # asserted — cumulative-intervals §6.5). Same denominators as the fixed columns,
+    # computed off the always-valid CI (sequential.sequentialize over the SAME
+    # per-look (effect, SE)). None when the method is ineligible
+    # (supports_sequential=False) or τ² could not be anchored. ──
+    #: The frozen per-cell mixture variance τ² (provenance; anchored to the horizon).
+    tau2: float | None = None
+    #: Single-look FPR at the horizon under the always-valid CI (should sit near α).
+    fpr_sequential: float | None = None
+    #: Cumulative-peeking FPR under the always-valid CI — the honest completion of the
+    #: peeking story: this should return to ≈α where ``peeking_fpr`` broke budget.
+    peeking_fpr_sequential: float | None = None
+    #: The always-valid peeking curve (one point per look), for the side-by-side chart.
+    peeking_curve_sequential: tuple[tuple[float, float], ...] = ()
+    #: Power at the horizon under the always-valid CI (guards a τ² that "fixes" FPR by
+    #: never rejecting — must stay materially above α on the injected fixture).
+    power_sequential: float | None = None
+    #: Always-valid CI coverage of the injected truth at the horizon.
+    coverage_sequential: float | None = None
+    #: Winner's curse under the always-valid CI (mean |effect| at first crossing).
+    effect_exaggeration_sequential: float | None = None
+    #: Mean fixed-horizon CI width (the side-by-side baseline for the widening).
+    ci_width: float | None = None
+    #: Mean always-valid horizon CI width (the anytime price — always ≥ ``ci_width``).
+    ci_width_sequential: float | None = None
     warnings: tuple[str, ...] = field(default_factory=tuple)
 
 
@@ -96,6 +122,59 @@ def _significance(left: float, right: float) -> tuple[bool, int] | None:
     if right < 0:
         return (True, -1)
     return (False, 0)
+
+
+def _cell_tau2(
+    panel: PlaceboPanel,
+    method: BaseMethod,
+    *,
+    share_a: float,
+    anchor_seed: int,
+) -> float | None:
+    """The frozen per-cell mixture variance τ², anchored to the first usable look.
+
+    τ² MUST be a single constant for the cell (Ville's inequality needs a prior fixed
+    in advance), so it is computed ONCE — never per iteration or per look. It is
+    anchored to the **first usable grid cutoff** (D-Seq-anchor): scan looks from the
+    earliest, build the arms under a canonical anchor split, and take the first one
+    with a finite positive ``SE`` (recovered by CI-inversion); pass ``SE²`` to the
+    shared :func:`abkit.stats.sequential.mixture_tau2` (the SAME helper the pipeline
+    uses — the parity requirement). ``None`` when the method is sequential-ineligible
+    (``supports_sequential=False``) or no look is usable → the cell has no sequential
+    column. Validity is robust to the anchor; τ² only sets where the sequence is
+    tightest (here: early, aligned with the impatient-experimenter use-case).
+    """
+    if not method.supports_sequential:
+        return None
+    mask = placebo_mask(panel.n_units, share_a, anchor_seed)
+    for cut in panel.cutoffs:
+        pos_a, pos_b = present_positions(mask, cut.unit_idx)
+        arm_a = build_arm(
+            panel.input_kind, cut.values, cut.secondary, panel.covariate, cut.unit_idx, pos_a
+        )
+        arm_b = build_arm(
+            panel.input_kind, cut.values, cut.secondary, panel.covariate, cut.unit_idx, pos_b
+        )
+        if arm_a is None or arm_b is None:
+            continue
+        se = se_from_ci_length(method.from_suffstats(arm_a, arm_b).ci_length, method.alpha)
+        if math.isfinite(se) and se > 0.0:
+            return mixture_tau2(se * se, method.alpha)
+    return None
+
+
+def _always_valid_sig(
+    result: object, tau2: float, alpha: float
+) -> tuple[tuple[bool, int] | None, float]:
+    """Always-valid significance + CI width for a fixed ``TestResult`` at a look.
+
+    Recovers ``SE`` from the fixed CI (CI-inversion), widens it into the always-valid
+    interval (:func:`sequentialize`), and applies the same CI-excludes-zero primitive.
+    Returns ``(significance_or_None, ci_width)`` — width is NaN on a degenerate look.
+    """
+    se = se_from_ci_length(result.ci_length, alpha)  # type: ignore[attr-defined]
+    lo, hi, _ = sequentialize(result.effect, se, tau2, alpha)  # type: ignore[attr-defined]
+    return _significance(lo, hi), hi - lo
 
 
 def _analytic_mde(
@@ -155,6 +234,15 @@ def score_cell(
     ratio = (1.0 - share_a) / share_a  # n_treatment / n_control at the split
     warnings: list[str] = []
 
+    # τ² is frozen once for the cell (D4) — the always-valid column is measured on the
+    # SAME per-look (effect, SE) the fixed column uses, only widened. None ⇒ no column.
+    tau2 = _cell_tau2(
+        panel,
+        method,
+        share_a=share_a,
+        anchor_seed=derive_seed(*seed_parts, "tau2-anchor"),
+    )
+
     # Absolute-effect coverage anchors the injected truth (δ·μ̂) on a FIXED,
     # split-invariant estimate of the shared population mean — the pooled point
     # estimate over ALL present horizon units, computed once. Anchoring on the
@@ -189,14 +277,30 @@ def score_cell(
     # look — cumulative-summed into the peeking curve after the loop (D3).
     first_cross_at_look = [0] * len(panel.cutoffs)
 
+    # ── Parallel always-valid (sequential) tallies — same denominators as the fixed
+    # columns, populated only when τ² anchored (D8/WP2). ──
+    single_look_hits_seq = 0
+    peek_hits_seq = 0
+    power_hits_seq = 0
+    coverage_hits_seq = 0
+    exagg_values_seq: list[float] = []
+    first_cross_at_look_seq = [0] * len(panel.cutoffs)
+    width_fixed_sum = 0.0  # mean horizon CI width (fixed) — the side-by-side baseline
+    width_seq_sum = 0.0  # mean horizon CI width (always-valid) — the anytime price
+    width_n = 0
+
     for i in range(iterations):
         seed = derive_seed(*seed_parts, i)
         mask = placebo_mask(panel.n_units, share_a, seed)
 
         # ── Null pass over the grid ──────────────────────────────────────────
         sig_stream: list[tuple[int, tuple[bool, int], float]] = []  # (look_idx, sig, effect)
+        sig_stream_seq: list[tuple[int, tuple[bool, int], float]] = []  # always-valid twin
         horizon_control: ArmStats | None = None
         horizon_sig: tuple[bool, int] | None = None
+        horizon_sig_seq: tuple[bool, int] | None = None
+        horizon_width_fixed = float("nan")
+        horizon_width_seq = float("nan")
 
         for k, cut in enumerate(panel.cutoffs):
             pos_a, pos_b = present_positions(mask, cut.unit_idx)
@@ -217,6 +321,14 @@ def score_cell(
                     degenerate_horizon += 1
                 continue
             sig_stream.append((k, sig, result.effect))
+            if tau2 is not None:
+                sig_seq, width_seq = _always_valid_sig(result, tau2, method.alpha)
+                if sig_seq is not None:
+                    sig_stream_seq.append((k, sig_seq, result.effect))
+                if k == horizon_pos:
+                    horizon_sig_seq = sig_seq
+                    horizon_width_fixed = result.ci_length
+                    horizon_width_seq = width_seq
             if k == horizon_pos:
                 horizon_control = arm_a
                 horizon_sig = sig
@@ -229,6 +341,15 @@ def score_cell(
             mde = _analytic_mde(horizon_control, method, ratio=ratio, target_power=target_power)
             if mde is not None:
                 mde_values.append(mde)
+            # Always-valid single-look FPR + the width side-by-side (same valid horizon).
+            # A None seq horizon is the measure-zero SE=0 edge → counted as non-significant.
+            if tau2 is not None:
+                if horizon_sig_seq is not None and horizon_sig_seq[0]:
+                    single_look_hits_seq += 1
+                if math.isfinite(horizon_width_fixed) and math.isfinite(horizon_width_seq):
+                    width_fixed_sum += horizon_width_fixed
+                    width_seq_sum += horizon_width_seq
+                    width_n += 1
 
         # Cumulative-peeking FPR: optional stopping — the first look whose CI excludes
         # zero (a false winner under the A/A null). The horizon look is included, so
@@ -239,6 +360,16 @@ def score_cell(
             peek_hits += 1
             first_cross_at_look[first_idx] += 1
             exagg_values.append(abs(first_effect))
+
+        # The always-valid peeking twin — the honest completion: this should return to
+        # ≈α where the fixed peeking FPR broke budget.
+        if tau2 is not None:
+            first_call_seq = _first_significant_look(sig_stream_seq)
+            if first_call_seq is not None:
+                first_idx_seq, first_effect_seq = first_call_seq
+                peek_hits_seq += 1
+                first_cross_at_look_seq[first_idx_seq] += 1
+                exagg_values_seq.append(abs(first_effect_seq))
 
         # ── Injected pass (horizon only — fixed-horizon power/coverage) ──────
         if inject_effect is not None and horizon_control is not None:
@@ -270,6 +401,17 @@ def score_cell(
                     truth = _injected_truth(method, inject_effect, anchor)
                     if result.left_bound <= truth <= result.right_bound:
                         coverage_hits += 1
+                    # Always-valid power + coverage on the SAME injected result (same
+                    # coverage_n denominator; the always-valid CI must still detect a
+                    # real effect — the guard against a τ² that never rejects).
+                    if tau2 is not None:
+                        se_inj = se_from_ci_length(result.ci_length, method.alpha)
+                        lo_seq, hi_seq, _ = sequentialize(result.effect, se_inj, tau2, method.alpha)
+                        sig_seq = _significance(lo_seq, hi_seq)
+                        if sig_seq is not None and sig_seq[0]:
+                            power_hits_seq += 1
+                        if lo_seq <= truth <= hi_seq:
+                            coverage_hits_seq += 1
 
     fpr = single_look_hits / valid_iterations if valid_iterations else None
     peeking_fpr = peek_hits / valid_iterations if valid_iterations else None
@@ -288,9 +430,37 @@ def score_cell(
     achieved_mde = float(np.mean(mde_values)) if mde_values else None
     effect_exaggeration = float(np.mean(exagg_values)) if exagg_values else None
 
+    # ── Always-valid column (all None when τ² was not anchored) ──
+    has_seq = tau2 is not None
+    fpr_sequential = (
+        single_look_hits_seq / valid_iterations if (has_seq and valid_iterations) else None
+    )
+    peeking_fpr_sequential = (
+        peek_hits_seq / valid_iterations if (has_seq and valid_iterations) else None
+    )
+    power_sequential = power_hits_seq / coverage_n if (has_seq and coverage_n) else None
+    coverage_sequential = coverage_hits_seq / coverage_n if (has_seq and coverage_n) else None
+    effect_exaggeration_sequential = (
+        float(np.mean(exagg_values_seq)) if (has_seq and exagg_values_seq) else None
+    )
+    ci_width = width_fixed_sum / width_n if (has_seq and width_n) else None
+    ci_width_sequential = width_seq_sum / width_n if (has_seq and width_n) else None
+    peeking_curve_sequential: tuple[tuple[float, float], ...] = ()
+    if has_seq and valid_iterations:
+        cumulative_seq = 0
+        curve_seq: list[tuple[float, float]] = []
+        for k, cut in enumerate(panel.cutoffs):
+            cumulative_seq += first_cross_at_look_seq[k]
+            curve_seq.append((float(cut.elapsed_days), cumulative_seq / valid_iterations))
+        peeking_curve_sequential = tuple(curve_seq)
+
     if valid_iterations == 0:
         warnings.append(
             "no iteration produced a usable horizon cutoff — the population is too small to score"
+        )
+    if method.supports_sequential and not has_seq and valid_iterations:
+        warnings.append(
+            "always-valid column skipped — τ² could not be anchored (degenerate horizon)"
         )
 
     return CellScore(
@@ -307,6 +477,15 @@ def score_cell(
         kept_grid_points=panel.kept_grid_points,
         total_grid_points=panel.total_grid_points,
         peeking_curve=peeking_curve,
+        tau2=tau2,
+        fpr_sequential=fpr_sequential,
+        peeking_fpr_sequential=peeking_fpr_sequential,
+        peeking_curve_sequential=peeking_curve_sequential,
+        power_sequential=power_sequential,
+        coverage_sequential=coverage_sequential,
+        effect_exaggeration_sequential=effect_exaggeration_sequential,
+        ci_width=ci_width,
+        ci_width_sequential=ci_width_sequential,
         warnings=tuple(warnings),
     )
 

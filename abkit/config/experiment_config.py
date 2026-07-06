@@ -146,6 +146,18 @@ class SequentialConfig(BaseModel):
     enabled: bool = Field(default=False)
     scheme: SequentialScheme = Field(default="always_valid")
 
+    @model_validator(mode="after")
+    def validate_scheme(self) -> SequentialConfig:
+        # M5 ships always_valid (mSPRT/asymptotic-CS) only; group-sequential is deferred
+        # (m5-implementation-plan.md D6). The Literal keeps forward-compat; the message
+        # is friendlier than a bare enum error.
+        if self.scheme == "alpha_spending":
+            raise ValueError(
+                "scheme: alpha_spending (group-sequential) is planned for M6 — "
+                "use scheme: always_valid (the mSPRT/asymptotic always-valid mode)"
+            )
+        return self
+
 
 class ComparisonConfig(BaseModel):
     """One (metric × method) binding within an experiment.
@@ -363,12 +375,7 @@ class ExperimentConfig(BaseModel):
                 "cumulative-intervals.md §6.2). Use data_lag: 0 only if data is "
                 "truly complete in real time."
             )
-        if self.sequential.scheme == "alpha_spending":
-            raise ValueError(
-                "scheme: alpha_spending is a config error at cadence < 1d "
-                "(group-sequential assumes a small pre-committed look grid); "
-                "use scheme: always_valid (mSPRT) for sub-day peeking"
-            )
+        # (scheme: alpha_spending is rejected globally in SequentialConfig — M6 deferral.)
         return self
 
     @model_validator(mode="after")

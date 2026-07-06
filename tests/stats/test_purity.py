@@ -23,14 +23,22 @@ FORBIDDEN_TOP_LEVEL_MODULES = (
     "yaml",
 )
 
-_CHECK = (
-    "import sys; import abkit.stats; "
-    f"forbidden = set({FORBIDDEN_TOP_LEVEL_MODULES!r}); "
-    "loaded = {name.split('.')[0] for name in sys.modules}; "
-    "bad = sorted(forbidden & loaded); "
-    "assert not bad, f'abkit.stats pulled in forbidden imports: {bad}'"
-)
+
+def _check_for(module: str) -> str:
+    return (
+        f"import sys; import {module}; "
+        f"forbidden = set({FORBIDDEN_TOP_LEVEL_MODULES!r}); "
+        "loaded = {name.split('.')[0] for name in sys.modules}; "
+        "bad = sorted(forbidden & loaded); "
+        f"assert not bad, f'{module} pulled in forbidden imports: {{bad}}'"
+    )
 
 
 def test_stats_core_imports_no_forbidden_dependencies() -> None:
-    subprocess.run([sys.executable, "-c", _CHECK], check=True)
+    subprocess.run([sys.executable, "-c", _check_for("abkit.stats")], check=True)
+
+
+def test_sequential_module_imports_no_forbidden_dependencies() -> None:
+    # The M5 sequential engine takes plain primitives — no config/pydantic type may
+    # cross into abkit.stats (docs/specs/m5-implementation-plan.md D5).
+    subprocess.run([sys.executable, "-c", _check_for("abkit.stats.sequential")], check=True)

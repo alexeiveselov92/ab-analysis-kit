@@ -37,6 +37,7 @@ from abkit.stats import (
     get_method_class,
     two_tier_alphas,
 )
+from abkit.stats.sequential import to_always_valid
 
 
 class AnalyzeError(Exception):
@@ -120,12 +121,19 @@ def analyze_cutoff(
     end_ts: datetime,
     alphas: TwoTierAlphas,
     project: ProjectConfig,
+    sequential_tau2: dict[tuple[str, str], float] | None = None,
 ) -> list[PairOutcome]:
     """All pairwise variant outcomes for one (comparison, cutoff).
 
     Pairs follow the declared variant order (first = control = ``name_1``,
     baseline §5 ``combinations`` semantics). Stats-core warnings are captured
     per pair and routed into the row (plan R7), never to stderr.
+
+    ``sequential_tau2`` (M5 WP3): when the experiment's sequential mode is on,
+    ``{(name_1, name_2): tau2}`` (the frozen per-pair mixture variance, anchored to the
+    first usable look) widens each supported pair's fixed CI into the always-valid one
+    (``ci_kind='always_valid'``). ``None`` / a missing pair / a sequential-ineligible
+    method ⇒ the fixed CI is kept unchanged.
     """
     method_cls = get_method_class(comparison.method.name)
     if method_cls.is_paired:
@@ -194,6 +202,13 @@ def analyze_cutoff(
         pair_warnings = [
             str(w.message) for w in caught if issubclass(w.category, AbkitStatsWarning)
         ]
+
+        # M5 WP3: widen into the always-valid CI when the sequential mode is on and the
+        # method is eligible (a symmetric-normal fixed CI). Never re-derives a variance.
+        if sequential_tau2 is not None and method_cls.supports_sequential:
+            tau2 = sequential_tau2.get((name_1, name_2))
+            if tau2 is not None:
+                result = to_always_valid(result, tau2, alpha)
 
         outcomes.append(
             PairOutcome(

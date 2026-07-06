@@ -38,6 +38,16 @@ class CellResult:
     details: dict[str, Any]  # peeking curve, subsample note, selection rationale, warnings
     status: str = "success"  # success | failed
     error_message: str = ""
+    # M5 D8 always-valid sequential column (None when the method is sequential-ineligible
+    # or τ² could not be anchored). ``tau2`` is the frozen mixture variance (provenance).
+    tau2: float | None = None
+    fpr_sequential: float | None = None
+    peeking_fpr_sequential: float | None = None
+    power_sequential: float | None = None
+    coverage_sequential: float | None = None
+    effect_exaggeration_sequential: float | None = None
+    ci_width: float | None = None
+    ci_width_sequential: float | None = None
 
 
 @dataclass(frozen=True)

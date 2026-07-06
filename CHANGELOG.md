@@ -14,6 +14,27 @@ number change).
 ## [Unreleased]
 
 ### Added
+- **M5 (in progress) — sequential analysis, the always-valid CI.** Opt-in
+  (`sequential: {enabled: true}`, **default off** — the fixed-horizon series is
+  byte-identical, no `ALGORITHM_VERSION` bump, goldens untouched). Landed so far
+  (implementation record: [`m5-implementation-plan.md`](docs/specs/m5-implementation-plan.md);
+  math: [`statistics-changes.md §4.1`](docs/specs/statistics-changes.md)):
+  - **The always-valid confidence sequence** (`abkit/stats/sequential/`) — an
+    asymptotic Gaussian confidence sequence (Waudby-Smith & Ramdas normal mixture)
+    computed as a pure experiment-level MODE transform over the fixed `(effect, SE)`,
+    never a method plugin. SE recovered by CI-inversion (preserving the delta-method
+    covariance); the mixing variance `τ²` is anchored to the first usable look
+    (stable across runs, computable live). Rows carry `ci_kind='always_valid'`.
+  - **The A/A matrix's sequential side-by-side column (D8)** — `abk validate` now
+    measures the always-valid peeking FPR, power, and CI-width beside the fixed ones:
+    where the fixed peeking FPR breaks budget, the always-valid twin returns to ≈α (the
+    honest completion of the peeking story). Surfaced in the matrix report (a "peeking
+    (AV)" column + a second curve) and the live explore calibration chip.
+  - **Pipeline activation** — a plain `abk run` on a sequential-enabled experiment emits
+    always-valid rows. `scheme: alpha_spending` (group-sequential) is a clear
+    "planned M6" config error. *(Still landing: the toggle self-invalidation on an
+    existing experiment, explore live-recompute threading, the readout's early-verdict
+    relaxation, sub-day sequential SRM, `abk plan`, and the composed-FDR sweep.)*
 - **M4 — `abk validate`, the A/A false-positive matrix.** The trust artifact that
   answers "is this method actually calibrated on this data, or does it lie about its
   α?" (docs/specs/aa-false-positive-matrix.md; the implementation record is

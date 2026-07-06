@@ -63,6 +63,8 @@ export interface CalibrationStatus {
   alpha: number;
   fpr: number | null;
   peeking_fpr: number | null;
+  /** M5 D8 — the always-valid peeking FPR (the recovery to ~α); surfaced in `headline` */
+  peeking_fpr_sequential?: number | null;
   calibrated_alpha: number | null;
   budget: number | null;
   over_budget: boolean | null;
