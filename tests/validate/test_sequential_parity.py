@@ -54,7 +54,7 @@ def test_cell_tau2_delegates_to_the_shared_mixture_helper():
     method = create_method("t-test", alpha=ALPHA)
     anchor_seed = 999
 
-    tau2 = _cell_tau2(panel, method, horizon_pos=0, share_a=0.5, anchor_seed=anchor_seed)
+    tau2 = _cell_tau2(panel, method, share_a=0.5, anchor_seed=anchor_seed)
     arm_a, arm_b = _horizon_arms(panel, seed=anchor_seed)
     se_h = se_from_ci_length(method.from_suffstats(arm_a, arm_b).ci_length, ALPHA)
 
@@ -66,11 +66,11 @@ def test_tau2_independent_of_alpha_scale_is_documented_behaviour():
     """τ² tracks the anchor variance and α only — a sanity guard the parity rests on."""
     panel = normal_panel(n_units=4000, n_cutoffs=1, seed=11)
     method = create_method("t-test", alpha=ALPHA)
-    t1 = _cell_tau2(panel, method, horizon_pos=0, share_a=0.5, anchor_seed=1)
-    t2 = _cell_tau2(panel, method, horizon_pos=0, share_a=0.5, anchor_seed=1)
+    t1 = _cell_tau2(panel, method, share_a=0.5, anchor_seed=1)
+    t2 = _cell_tau2(panel, method, share_a=0.5, anchor_seed=1)
     assert t1 == t2  # deterministic anchor
     assert t1 is not None and t1 > 0.0
     # a different anchor split shifts τ² only slightly (validity is robust to it)
-    t3 = _cell_tau2(panel, method, horizon_pos=0, share_a=0.5, anchor_seed=2)
+    t3 = _cell_tau2(panel, method, share_a=0.5, anchor_seed=2)
     assert t3 is not None
     assert t3 == pytest.approx(t1, rel=0.25)

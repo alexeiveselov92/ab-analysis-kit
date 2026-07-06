@@ -31,7 +31,7 @@ def test_se_from_ci_length_round_trips_fixed_ci(alpha: float, var: float) -> Non
 @pytest.mark.parametrize("se", [0.05, 0.5, 3.0])
 def test_cs_strictly_contains_fixed_ci(alpha: float, effect: float, se: float) -> None:
     """The always-valid interval is wider than the fixed interval at the same look."""
-    tau2 = mixture_tau2(horizon_variance=se * se, alpha=alpha)
+    tau2 = mixture_tau2(reference_variance=se * se, alpha=alpha)
     lo, hi, _ = sequentialize(effect, se, tau2, alpha)
     z = float(sps.norm.ppf(1.0 - alpha / 2.0))
     fixed_lo, fixed_hi = effect - z * se, effect + z * se

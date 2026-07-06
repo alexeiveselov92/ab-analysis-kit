@@ -128,39 +128,39 @@ def _cell_tau2(
     panel: PlaceboPanel,
     method: BaseMethod,
     *,
-    horizon_pos: int,
     share_a: float,
     anchor_seed: int,
 ) -> float | None:
-    """The frozen per-cell mixture variance τ², anchored to the horizon (D4/WP2).
+    """The frozen per-cell mixture variance τ², anchored to the first usable look.
 
     τ² MUST be a single constant for the cell (Ville's inequality needs a prior fixed
     in advance), so it is computed ONCE — never per iteration or per look. It is
-    anchored to the horizon estimator variance: build the horizon arms under a
-    canonical anchor split, recover ``SE`` by CI-inversion, and pass ``SE²`` to the
+    anchored to the **first usable grid cutoff** (D-Seq-anchor): scan looks from the
+    earliest, build the arms under a canonical anchor split, and take the first one
+    with a finite positive ``SE`` (recovered by CI-inversion); pass ``SE²`` to the
     shared :func:`abkit.stats.sequential.mixture_tau2` (the SAME helper the pipeline
     uses — the parity requirement). ``None`` when the method is sequential-ineligible
-    (``supports_sequential=False``) or the horizon anchor is degenerate → the cell has
-    no sequential column. Validity is robust to the anchor split; τ² only sets where
-    the sequence is tightest.
+    (``supports_sequential=False``) or no look is usable → the cell has no sequential
+    column. Validity is robust to the anchor; τ² only sets where the sequence is
+    tightest (here: early, aligned with the impatient-experimenter use-case).
     """
     if not method.supports_sequential:
         return None
-    cut = panel.cutoffs[horizon_pos]
     mask = placebo_mask(panel.n_units, share_a, anchor_seed)
-    pos_a, pos_b = present_positions(mask, cut.unit_idx)
-    arm_a = build_arm(
-        panel.input_kind, cut.values, cut.secondary, panel.covariate, cut.unit_idx, pos_a
-    )
-    arm_b = build_arm(
-        panel.input_kind, cut.values, cut.secondary, panel.covariate, cut.unit_idx, pos_b
-    )
-    if arm_a is None or arm_b is None:
-        return None
-    se_h = se_from_ci_length(method.from_suffstats(arm_a, arm_b).ci_length, method.alpha)
-    if not math.isfinite(se_h) or se_h <= 0.0:
-        return None
-    return mixture_tau2(se_h * se_h, method.alpha)
+    for cut in panel.cutoffs:
+        pos_a, pos_b = present_positions(mask, cut.unit_idx)
+        arm_a = build_arm(
+            panel.input_kind, cut.values, cut.secondary, panel.covariate, cut.unit_idx, pos_a
+        )
+        arm_b = build_arm(
+            panel.input_kind, cut.values, cut.secondary, panel.covariate, cut.unit_idx, pos_b
+        )
+        if arm_a is None or arm_b is None:
+            continue
+        se = se_from_ci_length(method.from_suffstats(arm_a, arm_b).ci_length, method.alpha)
+        if math.isfinite(se) and se > 0.0:
+            return mixture_tau2(se * se, method.alpha)
+    return None
 
 
 def _always_valid_sig(
@@ -239,7 +239,6 @@ def score_cell(
     tau2 = _cell_tau2(
         panel,
         method,
-        horizon_pos=horizon_pos,
         share_a=share_a,
         anchor_seed=derive_seed(*seed_parts, "tau2-anchor"),
     )

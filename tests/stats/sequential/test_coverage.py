@@ -27,7 +27,7 @@ def test_anytime_coverage_under_null_within_band() -> None:
     rng = np.random.default_rng(20260706)
 
     # tau^2 anchored to the horizon estimator variance (known sigma=1 -> SE_h^2 = 1/n_max).
-    tau2 = mixture_tau2(horizon_variance=1.0 / n_max, alpha=alpha)
+    tau2 = mixture_tau2(reference_variance=1.0 / n_max, alpha=alpha)
 
     cum = np.cumsum(rng.standard_normal((reps, n_max)), axis=1)
     ever_excluded_zero = np.zeros(reps, dtype=bool)

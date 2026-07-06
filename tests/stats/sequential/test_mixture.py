@@ -23,8 +23,8 @@ def test_optimal_ratio_known_value_at_5pct() -> None:
 
 
 @pytest.mark.parametrize("alpha", [0.05, 0.01])
-def test_tau2_linear_in_horizon_variance(alpha: float) -> None:
-    """tau^2 = u*(alpha) * horizon_variance — linear, ratio independent of scale."""
+def test_tau2_linear_in_reference_variance(alpha: float) -> None:
+    """tau^2 = u*(alpha) * reference_variance — linear, ratio independent of scale."""
     t1 = mixture_tau2(1.0, alpha)
     t2 = mixture_tau2(7.5, alpha)
     assert t2 / t1 == pytest.approx(7.5, rel=1e-12)
@@ -32,7 +32,7 @@ def test_tau2_linear_in_horizon_variance(alpha: float) -> None:
 
 
 @pytest.mark.parametrize("bad", [0.0, -1.0, float("nan"), float("inf")])
-def test_bad_horizon_variance_raises(bad: float) -> None:
+def test_bad_reference_variance_raises(bad: float) -> None:
     with pytest.raises(ValueError):
         mixture_tau2(bad, 0.05)
 

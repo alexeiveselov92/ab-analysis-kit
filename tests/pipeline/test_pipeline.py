@@ -159,6 +159,41 @@ def run(warehouse, tables, experiment=None, metrics=None, **kwargs):
     )
 
 
+class TestSequentialActivation:
+    """M5 WP3: sequential.enabled emits always-valid rows on a plain run."""
+
+    def test_enabled_emits_always_valid_rows(self, warehouse, tables):
+        experiment = make_experiment(sequential={"enabled": True})
+        outcome = run(warehouse, tables, experiment=experiment)
+        assert outcome.status == "completed"
+        rows = tables.load_results("signup_test")
+        assert len(rows) == 5
+        assert all(r["ci_kind"] == "always_valid" for r in rows)
+
+    def test_always_valid_ci_is_wider_than_fixed_same_point(self, warehouse, tables):
+        # fixed (default) baseline
+        run(warehouse, tables)
+        fixed_h = [r for r in tables.load_results("signup_test") if r["is_horizon"]][0]
+        # a fresh warehouse+tables for the sequential run over identical data
+        wh2 = SyntheticWarehouse()
+        seed_cohort(wh2)
+        seed_events(wh2)
+        tables2 = InternalTablesManager(wh2)
+        run(wh2, tables2, experiment=make_experiment(sequential={"enabled": True}))
+        seq_h = [r for r in tables2.load_results("signup_test") if r["is_horizon"]][0]
+
+        assert fixed_h["ci_kind"] == "fixed" and seq_h["ci_kind"] == "always_valid"
+        # same point estimate, strictly wider CI (the honest anytime price)
+        assert seq_h["effect"] == pytest.approx(fixed_h["effect"])
+        assert seq_h["ci_length"] > fixed_h["ci_length"]
+
+    def test_disabled_is_byte_identical_to_fixed(self, warehouse, tables):
+        # explicit sequential:false must reproduce the default fixed series exactly
+        run(warehouse, tables, experiment=make_experiment(sequential={"enabled": False}))
+        rows = tables.load_results("signup_test")
+        assert all(r["ci_kind"] == "fixed" for r in rows)
+
+
 class TestHappyPath:
     def test_real_results_end_to_end(self, warehouse, tables):
         outcome = run(warehouse, tables)

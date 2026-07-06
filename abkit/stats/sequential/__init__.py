@@ -11,7 +11,8 @@ click type crosses the ``abkit.stats`` boundary). See:
 
 from __future__ import annotations
 
+from abkit.stats.sequential.apply import to_always_valid
 from abkit.stats.sequential.confidence_sequence import se_from_ci_length, sequentialize
 from abkit.stats.sequential.mixture import mixture_tau2
 
-__all__ = ["mixture_tau2", "se_from_ci_length", "sequentialize"]
+__all__ = ["mixture_tau2", "se_from_ci_length", "sequentialize", "to_always_valid"]

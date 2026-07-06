@@ -224,7 +224,7 @@ def test_bootstrap_method_is_sequential_ineligible():
     method = create_method("bootstrap", alpha=ALPHA, params={"n_samples": 200, "seed": 7})
     assert method.supports_sequential is False
     panel = normal_panel(n_units=1500, n_cutoffs=4, seed=51)
-    tau2 = _cell_tau2(panel, method, horizon_pos=len(panel.cutoffs) - 1, share_a=0.5, anchor_seed=1)
+    tau2 = _cell_tau2(panel, method, share_a=0.5, anchor_seed=1)
     assert tau2 is None  # ineligible → no column, and from_suffstats was never invoked
 
 

@@ -145,10 +145,12 @@ class TestSubDayGates:
                 )
             )
 
-    def test_alpha_spending_fine_at_daily(self):
-        ExperimentConfig.model_validate(
-            base_payload(sequential={"enabled": True, "scheme": "alpha_spending"})
-        )
+    def test_alpha_spending_deferred_to_m6(self):
+        # M5 ships always_valid only; alpha_spending is a config error at ANY cadence.
+        with pytest.raises(ValidationError, match="M6"):
+            ExperimentConfig.model_validate(
+                base_payload(sequential={"enabled": True, "scheme": "alpha_spending"})
+            )
 
     def test_always_valid_fine_sub_day(self):
         ExperimentConfig.model_validate(
@@ -282,8 +284,7 @@ class TestDatesAndMisc:
             ExperimentConfig.model_validate(base_payload(alpha=1.5))
 
     def test_from_yaml_file(self, tmp_path):
-        (tmp_path / "exp.yml").write_text(
-            """
+        (tmp_path / "exp.yml").write_text("""
 name: signup_test
 start_date: 2024-07-01
 end_date: 2024-07-28
@@ -296,8 +297,7 @@ comparisons:
   - metric: signup_cr
     is_main_metric: true
     method: {name: z-test, params: {test_type: relative}}
-"""
-        )
+""")
         config = ExperimentConfig.from_yaml_file(tmp_path / "exp.yml")
         assert config.name == "signup_test"
         assert config.comparisons[0].method.name == "z-test"

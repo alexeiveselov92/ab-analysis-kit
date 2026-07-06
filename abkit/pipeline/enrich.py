@@ -110,8 +110,9 @@ def rows_for_cutoff(
             "srm_pvalue": _clean(srm.pvalue),
             "decision_blocked": srm.srm_flag,
             "insufficient_data": demoted,
-            # sequence: M2 computes fixed-horizon CIs only (sequential lands M5)
-            "ci_kind": "fixed",
+            # sequence: the method stamps ci_kind ("fixed" by default, "always_valid"
+            # under the M5 sequential mode); a demoted row has no CI, so "fixed".
+            "ci_kind": result.ci_kind if result else "fixed",
             "is_horizon": cutoff.is_horizon,
             # diagnostics (plan R7 — the human-readable failure signal)
             "warnings": (

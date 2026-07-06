@@ -29,6 +29,7 @@ Generator-based RNG made the stats core process/thread-safe.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
@@ -47,7 +48,8 @@ from abkit.loaders.query_template import RenderWindow, build_builtins
 from abkit.pipeline._types import STATUS_COMPLETED, STATUS_FAILED, PipelineStep, RunOutcome
 from abkit.pipeline.analyze import analyze_cutoff, comparison_alpha, effective_alphas
 from abkit.pipeline.enrich import rows_for_cutoff
-from abkit.stats import srm_check
+from abkit.stats import get_method_class, srm_check
+from abkit.stats.sequential import mixture_tau2, se_from_ci_length
 from abkit.utils.datetime_utils import now_utc_naive
 
 LOCK_SCOPE = "pipeline"
@@ -58,6 +60,46 @@ Logger = Callable[[str], None]
 
 def _noop_log(_: str) -> None:  # pragma: no cover - trivial
     return None
+
+
+def _sequential_tau2(
+    backend,
+    experiment,
+    comparison,
+    metric,
+    metric_sql,
+    grid,
+    alphas,
+    project,
+    effective_alpha: float,
+) -> dict[tuple[str, str], float]:
+    """Per-pair mixture variance τ² from the FIRST usable grid cutoff (M5 WP3, D-Seq-anchor).
+
+    τ² is anchored to the earliest look with a usable fixed CI: scan the grid from the
+    start, running the fixed analysis (``sequential_tau2=None``), and return
+    ``{(name_1, name_2): tau2}`` from the first cutoff that yields usable pairs — stable
+    across runs (the first look is idempotent) and computable live (no horizon data
+    needed). Empty when the method is sequential-ineligible or no look is usable, so the
+    series stays fixed. One extra cutoff load per comparison per run (normally the first).
+    """
+    method_cls = get_method_class(comparison.method.name)
+    if not method_cls.supports_sequential:
+        return {}
+    for cutoff in grid.cutoffs:
+        loaded = backend.load_cutoff(comparison, metric, metric_sql, grid, cutoff)
+        outcomes = analyze_cutoff(
+            experiment, comparison, metric, loaded, cutoff.end_ts, alphas, project
+        )
+        tau2: dict[tuple[str, str], float] = {}
+        for outcome in outcomes:
+            if outcome.result is None:
+                continue
+            se = se_from_ci_length(outcome.result.ci_length, effective_alpha)
+            if math.isfinite(se) and se > 0.0:
+                tau2[(outcome.name_1, outcome.name_2)] = mixture_tau2(se * se, effective_alpha)
+        if tau2:
+            return tau2
+    return {}
 
 
 def run_experiment(
@@ -203,10 +245,33 @@ def run_experiment(
                     "show duplicate stabilization lines) — run `abk clean`"
                 )
 
+            # M5 WP3: freeze τ² once per comparison (anchored to the first usable look)
+            # so every cutoff's always-valid CI uses the same mixing prior.
+            sequential_tau2: dict[tuple[str, str], float] | None = None
+            if experiment.sequential.enabled and pending:
+                sequential_tau2 = _sequential_tau2(
+                    backend,
+                    experiment,
+                    comparison,
+                    metric,
+                    metric_sql,
+                    grid,
+                    alphas,
+                    project,
+                    effective_alpha,
+                )
+
             for cutoff in pending:
                 loaded = backend.load_cutoff(comparison, metric, metric_sql, grid, cutoff)
                 outcomes = analyze_cutoff(
-                    experiment, comparison, metric, loaded, cutoff.end_ts, alphas, project
+                    experiment,
+                    comparison,
+                    metric,
+                    loaded,
+                    cutoff.end_ts,
+                    alphas,
+                    project,
+                    sequential_tau2=sequential_tau2,
                 )
                 rows = rows_for_cutoff(
                     experiment,
