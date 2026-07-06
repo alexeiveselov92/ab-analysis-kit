@@ -155,7 +155,8 @@ recorded in [m5-implementation-plan.md](m5-implementation-plan.md) D2.
 - **The mixture variance τ² is fixed-by-policy** (`sequential.mixture_tau2`), anchored
   to the horizon estimator variance: `τ² = u*(α)·V_horizon`, where `u*` solves the
   width-at-horizon stationarity condition `u = 2·ln(1/α) + ln(1+u)` (e.g. `u* ≈ 8.2`
-  at α=0.05 ⇒ ~2.15·SE at the horizon vs the fixed 1.96·SE, a ~10% anytime price).
+  at α=0.05 ⇒ half-width `sqrt(2·h(u*))·SE ≈ 3.04·SE` at the horizon vs the fixed
+  1.96·SE, a ~1.55× anytime price — the honest cost of peeking at any time).
   **Validity holds for any fixed positive τ²** — Ville needs a prior fixed in advance
   — so the choice only sets where the sequence is tightest, and τ² is anchored to the
   design-time horizon, never to the current look. The *numeric* τ² policy is

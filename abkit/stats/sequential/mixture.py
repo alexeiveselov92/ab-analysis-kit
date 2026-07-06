@@ -35,9 +35,10 @@ def _optimal_ratio(alpha: float) -> float:
 
         u = 2 * ln(1/alpha) + ln(1 + u)
 
-    (a scalar fixed point; e.g. ``u* ~= 8.2`` at ``alpha = 0.05``, making the
-    always-valid interval ~2.15*SE at the horizon vs the fixed 1.96*SE — a ~10%
-    anytime price). Derivation recorded in docs/specs/statistics-changes.md §4.
+    (a scalar fixed point; e.g. ``u* ~= 8.2`` at ``alpha = 0.05``, where the
+    always-valid half-width is ``sqrt(2*h(u*))*SE ~= 3.04*SE`` at the horizon vs the
+    fixed ``1.96*SE`` — a ~1.55x anytime price, the honest cost of any-time peeking).
+    Derivation recorded in docs/specs/statistics-changes.md §4.
     """
     two_ln_inv_alpha = 2.0 * (-math.log(alpha))
     upper = 4.0 * (-math.log(alpha)) + 100.0  # f(upper) > 0 for any alpha in (0,1)
