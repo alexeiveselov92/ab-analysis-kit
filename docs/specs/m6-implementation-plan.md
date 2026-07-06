@@ -950,3 +950,59 @@ must be NAMED with a clean, honest error/message where a user reaches for it (WP
     adopts that (coverage gate + human review, not machine cross-generation). WP8 amends both
     specs to match. Confirm the weaker lockstep (coverage gate, not machine-sync) is acceptable,
     or require true single-source generation instead.
+
+## 8. Session handoff / next-session inputs (2026-07-06)
+
+**Merged to `main` this session** (maintainer authorized merge; branches integrated locally,
+CHANGELOG conflicts reconciled): **WP1** (#19 tooling debt + this plan), **WP2** (#20
+`abk init-claude` + 9 rules + 7 skills), **WP4** (#21 BI dashboards), **WP6** (#22 Prefect
+deploy scaffold). `main` now carries the packaged `.claude` asset tree, `docs/examples/bi/`,
+the `prefect.yaml` scaffold, and the green-pre-commit tooling fixes.
+
+### 8.1 Incorporate the Claude-design deliverables (NEW — supersedes "placeholder-only")
+
+The maintainer has **created brand + product designs in Claude design** (brand design with
+**logo**, **report designs**, and more). This changes the D-Brand posture: the site + report/
+explore surfaces are no longer "ship on neutral placeholders indefinitely" — there are **real
+design assets to pull in**. Next session:
+
+- **Gather the designs first.** Pull the Claude-design pages (via the `DesignSync` tool if it
+  resolves them, else the maintainer exports palette hex + logo SVG/PNG + report mockups).
+  Enumerate what exists: brand palette (light+dark), logo/lockups + favicon, report layout,
+  explore-cockpit layout, any channel/notification branding.
+- **Where they feed:**
+  - **D-Brand / WP7** — the real palette + logo replace the neutral `--abk-*` placeholders in
+    `brand.css` + `TOKEN_FALLBACKS` + `Logo.astro` + `public/favicon` (the logic-free swap
+    commit). The **WCAG-AA + CVD** acceptance criterion (WP7 hotspot) is checked against the
+    REAL palette now, not deferred.
+  - **Report / explore surfaces** — the report designs inform `web/src/report/**` +
+    `web/src/explore/**` (rebuild + commit the bundles per the freshness gate). Treat any
+    layout change as a `web/src/**` edit: `cd web && npm run build`, commit `abkit/*/assets/*.js`.
+  - **`abk test-report` (WP5)** channel branding — the bot name/avatar asset (D-Brand / §7#6).
+- **Add a design-source-of-truth note** to `branding-and-site.md §2/§5` (currently "finalized
+  separately in Claude design") pointing at where the finalized assets live, so the swap is
+  reproducible. Fold this spec-amendment into WP8/WP10.
+
+### 8.2 Release / "update the lib" GitHub workflow (NEXT SESSION — WP9 / G1)
+
+The maintainer wants to wire a GitHub workflow to **publish/update the library**. Current state:
+`publish.yml` already exists (tag `v*` → OIDC trusted publish to PyPI, `environment: pypi`) and
+`website.yml` exists (guarded on `website/Dockerfile`). Next session, as part of **WP9**:
+
+- Confirm/finish the **release automation**: the version bump (`0.0.1.dev0` → `0.1.0`), the
+  CHANGELOG cut, and how a tag is produced (manual `git tag v0.1.0`, a release-drafter, or a
+  `workflow_dispatch` version-bump job). Decide whether "update the lib" = the PyPI publish on
+  tag (G1), a docs-site redeploy (G2 via website.yml), or both.
+- **G1/G2 remain maintainer-gated** — the workflow may be wired, but the actual publish/deploy
+  (pushing the tag / merging `website/Dockerfile`) is a human action (§GATED, §7 Q1/Q2). Rotate
+  the pasted PyPI token first (§7 Q1).
+- Extend the wheel-namelist gate + add the `pip install ab-analysis-kit` DoD smoke (WP9 as
+  written) so the published wheel is proven to carry the WP2 assets before any tag.
+
+### 8.3 Remaining WPs (unchanged order)
+
+WP3 (docs body) → WP7 (site, now brand-informed), plus WP5 (test-report), WP8 (deferrals
+hygiene + the D2/design spec amendments), **WP-A** (`abk plan` runtime/ASN — stats-adjacent,
+do with a design pass), **WP-B** (A/A sequential×composed — stats-adjacent), then WP9 (release
+eng) and WP10 (exit gate, ≥2 adversarial rounds). WP-A/WP-B must stay stats-pure (no
+`ALGORITHM_VERSION`, goldens untouched).
