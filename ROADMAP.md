@@ -187,20 +187,25 @@ Tracked in the RU initiation spec ([docs/ru/project-initiation-spec.md](docs/ru/
 — covariate-window choice, v2 trigger threshold, docs domain confirmation, SRM
 `expected_split` source, guardrail multiplicity handling.
 
-### Tooling debt (non-blocking, discovered M3 WP2)
-- **`mypy` fails on clean HEAD** — `numpy` 2.5.0 ships PEP-695 `type X = ...`
-  stubs (Python 3.12+ syntax), but `[tool.mypy] python_version = "3.10"` makes
-  mypy reject them (`numpy/__init__.pyi: Type statement is only supported in
-  Python 3.12 and greater`; the error mis-anchors to `metric_config.py:48`).
-  Fails on **both** the pinned pre-commit mypy (v1.10.0) **and** a newer venv
-  mypy (2.1.0) — a `mirrors-mypy` bump does **not** fix it. CI tolerates it
-  (`mypy abkit` is `continue-on-error: true`), so this is local-dev friction
-  (the pre-commit `mypy` hook is red) not a CI blocker. Fix: raise mypy
-  `python_version` to `3.12`, or pin `numpy<2.5`, or exclude the numpy stubs.
-- **`black` version drift pre-commit ↔ CI** — pre-commit pins `black` 24.4.2
-  while the `[dev]` extra is `black>=23.0` (unpinned), so CI installs the latest
-  (26.x). They format some constructs differently (e.g. multi-line `write_text`
-  in `tests/config/`); `abkit/` currently agrees under both and CI only runs
-  `black --check abkit`, so CI is green today. Fix: pin `black` to one version
-  across `.pre-commit-config.yaml` and the `[dev]` extra so local and CI never
-  diverge.
+### Tooling debt (non-blocking; ~~discovered M3 WP2~~ root-caused + partly fixed M6 WP1)
+- **~~`mypy` fails on clean HEAD~~ — ROOT-CAUSED + FIXED (M6 WP1).** The real cause
+  was **not** numpy: `abkit/config/metric_config.py:48` held a stray comment
+  `# type: (required, optional)` that mypy parsed as a **PEP-484 type comment**;
+  `(required, optional)` is invalid type syntax → `Invalid syntax [syntax]`, and mypy
+  **bailed before checking anything else** (hence "errors prevented further checking"
+  and the mis-anchor). The numpy 2.5 PEP-695 stub error was real but *secondary* — it
+  only surfaced once the parser got past the comment, and `python_version = "3.12"`
+  clears it (mypy 1.10.0 parses the stubs fine at 3.12 — verified). WP1 fixes: reword
+  the comment; `python_version` → `3.12`; add `yaml.*` to `ignore_missing_imports`.
+  **Now mypy RUNS TO COMPLETION and reports ~124 real strict-mode errors** (41 arg-type,
+  38 operator, 28 no-untyped-def, …; ~half in `tuning/recompute.py` + `pipeline/readout.py`,
+  mostly `X | None` Optional-handling that the runtime guards but mypy can't prove). CI
+  keeps `mypy abkit` `continue-on-error: true` — clearing the 124 is **tracked debt**, held
+  separate from WP1 because the fixes live in numeric hot paths (a careless narrowing could
+  change a number — the cardinal sin). The pre-commit `mypy` hook stays red until then.
+- **`black` version drift pre-commit ↔ CI — FIXED (M6 WP1).** `[dev]` now pins
+  `black==24.4.2` and `mypy==1.10.0` to match `.pre-commit-config.yaml` exactly, so CI and
+  local pre-commit can no longer diverge on formatting/type results. (`abkit/` verified clean
+  under both black 24.4.2 and 26.x, so the pin caused zero reformat churn.) Minor residual:
+  `ruff` has the same latent drift shape (pre-commit `v0.4.8` vs unpinned `[dev]`) — left as
+  a small follow-up since it was not a reported debt and abkit is clean under both.

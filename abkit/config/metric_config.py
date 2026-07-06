@@ -45,7 +45,7 @@ class MetricColumnsConfig(BaseModel):
 
 #: which roles each metric type requires / permits (beyond variant/stratum)
 _TYPE_ROLES: dict[str, tuple[set[str], set[str]]] = {
-    # type: (required, optional)
+    # metric type -> (required roles, optional roles)
     "sample": ({"value"}, {"covariate"}),
     "fraction": ({"count", "nobs"}, set()),
     "ratio": ({"numerator", "denominator"}, set()),
