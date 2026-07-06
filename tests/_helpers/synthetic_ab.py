@@ -180,9 +180,10 @@ def make_experiment(
     method: dict[str, Any],
     alpha: float | None = None,
     min_effect: float | None = None,
+    sequential: dict[str, Any] | None = None,
 ) -> ExperimentConfig:
     return ExperimentConfig.model_validate(
-        experiment_payload(name, metric, method, alpha, min_effect)
+        experiment_payload(name, metric, method, alpha, min_effect, sequential)
     )
 
 
@@ -192,6 +193,7 @@ def experiment_payload(
     method: dict[str, Any],
     alpha: float | None = None,
     min_effect: float | None = None,
+    sequential: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The raw experiment document — also YAML-dumpable for Apply tests."""
     comparison: dict[str, Any] = {"metric": metric, "is_main_metric": True, "method": method}
@@ -211,6 +213,8 @@ def experiment_payload(
     }
     if alpha is not None:
         payload["alpha"] = alpha
+    if sequential is not None:
+        payload["sequential"] = sequential
     return payload
 
 

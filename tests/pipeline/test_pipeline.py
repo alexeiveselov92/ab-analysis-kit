@@ -25,6 +25,7 @@ from abkit.config import ExperimentConfig, MetricConfig, ProjectConfig
 from abkit.database.internal_tables import InternalTablesManager
 from abkit.pipeline import PipelineStep, run_experiment, run_experiments
 from abkit.pipeline.analyze import AnalyzeError, analyze_cutoff  # noqa: F401  (import check)
+from abkit.pipeline.driver import _sequential_mode_changed
 
 START = datetime(2024, 7, 1)
 
@@ -192,6 +193,84 @@ class TestSequentialActivation:
         run(warehouse, tables, experiment=make_experiment(sequential={"enabled": False}))
         rows = tables.load_results("signup_test")
         assert all(r["ci_kind"] == "fixed" for r in rows)
+
+    def test_toggle_on_reruns_fixed_series_to_always_valid(self, warehouse, tables):
+        """M5 WP3 (B4): enabling sequential on an EXISTING experiment self-invalidates.
+
+        ``sequential.enabled`` is (correctly) not in ``method_config_id``, so a
+        bare re-run would otherwise treat the series as fully computed and leave
+        the stale ``fixed`` rows. It must re-plan the whole grid in place.
+        """
+        run(warehouse, tables)  # sequential off (default) → a fixed series
+        fixed = {r["end_ts"]: r for r in tables.load_results("signup_test")}
+        assert all(r["ci_kind"] == "fixed" for r in fixed.values())
+
+        # re-run the SAME tables with sequential ON, NO --full-refresh
+        outcome = run(warehouse, tables, experiment=make_experiment(sequential={"enabled": True}))
+        assert outcome.status == "completed"
+        assert outcome.cutoffs_planned == 5  # the whole series re-planned, not skipped
+
+        rows = tables.load_results("signup_test")
+        assert len(rows) == 5
+        assert all(r["ci_kind"] == "always_valid" for r in rows)
+        for r in rows:  # same point estimate, strictly wider CI
+            f = fixed[r["end_ts"]]
+            assert r["effect"] == pytest.approx(f["effect"])
+            assert r["ci_length"] > f["ci_length"]
+
+    def test_toggle_off_reverts_always_valid_to_fixed(self, warehouse, tables):
+        run(warehouse, tables, experiment=make_experiment(sequential={"enabled": True}))
+        assert all(r["ci_kind"] == "always_valid" for r in tables.load_results("signup_test"))
+
+        outcome = run(warehouse, tables, experiment=make_experiment(sequential={"enabled": False}))
+        assert outcome.cutoffs_planned == 5  # re-planned back to fixed
+        assert all(r["ci_kind"] == "fixed" for r in tables.load_results("signup_test"))
+
+    def test_enabled_rerun_plans_zero_and_is_byte_stable(self, warehouse, tables):
+        """No infinite re-plan: a steady sequential experiment is idempotent."""
+        run(warehouse, tables, experiment=make_experiment(sequential={"enabled": True}))
+        first = tables.load_results("signup_test")
+        outcome = run(warehouse, tables, experiment=make_experiment(sequential={"enabled": True}))
+        assert outcome.cutoffs_planned == 0
+        assert outcome.results_written == 0
+
+        def strip_version(rows):
+            return [{k: v for k, v in r.items() if k != "created_at"} for r in rows]
+
+        assert strip_version(first) == strip_version(tables.load_results("signup_test"))
+
+
+class TestSequentialModeChanged:
+    """The pure toggle-self-invalidation predicate (M5 WP3 B4)."""
+
+    A = ("control", "treatment")
+    B = ("control", "variant_c")
+
+    def test_fresh_or_all_demoted_never_changes(self):
+        # no non-demoted persisted rows → nothing to flip, whatever the mode
+        assert _sequential_mode_changed({}, True, {self.A: 1.0}) is False
+        assert _sequential_mode_changed({}, False, None) is False
+
+    def test_toggle_on_from_fixed(self):
+        assert _sequential_mode_changed({self.A: {"fixed"}}, True, {self.A: 1.0}) is True
+
+    def test_toggle_off_from_always_valid(self):
+        assert _sequential_mode_changed({self.A: {"always_valid"}}, False, None) is True
+
+    def test_steady_states_do_not_change(self):
+        assert _sequential_mode_changed({self.A: {"always_valid"}}, True, {self.A: 1.0}) is False
+        assert _sequential_mode_changed({self.A: {"fixed"}}, False, None) is False
+
+    def test_later_usable_pair_left_fixed_is_not_a_toggle(self):
+        # pair B first becomes usable AFTER the anchor → no τ² → legitimately
+        # fixed while pair A is always_valid. This is the compute's own output.
+        kinds = {self.A: {"always_valid"}, self.B: {"fixed"}}
+        assert _sequential_mode_changed(kinds, True, {self.A: 1.0}) is False
+
+    def test_half_applied_toggle_self_heals(self):
+        # a pair carrying BOTH kinds (a crash mid-flip) forces a full re-plan
+        kinds = {self.A: {"fixed", "always_valid"}}
+        assert _sequential_mode_changed(kinds, True, {self.A: 1.0}) is True
 
 
 class TestHappyPath:

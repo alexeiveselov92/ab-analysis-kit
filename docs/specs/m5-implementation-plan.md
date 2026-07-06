@@ -11,7 +11,7 @@
 
 ## 0. Progress & resume note (2026-07-06)
 
-**Status: WP1 + WP2 + WP3 part 1 shipped; WP3 parts 2–3 next.** WP1 = the sequential
+**Status: WP1 + WP2 + WP3 (all 3 parts) shipped; WP4 next.** WP1 = the sequential
 engine (`abkit/stats/sequential/`, `TestResult.ci_kind`, `supports_sequential`, 81
 tests, `statistics-changes.md §4.1`). WP2 = the A/A D8 column end-to-end (scorer +
 `_ab_aa_runs` persistence + report/chip), incl. the peeking→always-valid recovery test,
@@ -19,12 +19,32 @@ the one-engine/one-τ² parity test, and the rebuilt `report.js`. **WP3 part 1**
 pipeline activation: `analyze_cutoff` widens each eligible pair via `to_always_valid`
 (`stats/sequential/apply.py`), the driver freezes per-pair τ² from the **first usable
 look** (D-Seq-anchor, below), `enrich` emits `result.ci_kind`, and `scheme:
-alpha_spending` is a "planned M6" config error. Goldens untouched, no
-`ALGORITHM_VERSION` moved, ruff/black + web tsc/jsdom clean; the full suite is green.
-**Remaining in WP3: part 2 = the toggle self-invalidation (B4 — enabling sequential on
-an EXISTING experiment silently no-ops today; WP3 part 1 works on fresh experiments),
-part 3 = explore live-recompute threading (B5).** Then WP4–WP9. Branch `claude/m5-plan`
-off `main`
+alpha_spending` is a "planned M6" config error. **WP3 part 2 (B4 — toggle
+self-invalidation):** `_results.series_pair_ci_kinds` reads the persisted per-pair
+`ci_kind` (non-demoted, FINAL); the driver's `_sequential_mode_changed` predicate
+compares it against the mode this run stamps (`always_valid` iff `seq_eligible` **and**
+the pair has a frozen τ²) and force-re-plans the series on a mismatch by dropping
+`computed` (the re-saved rows supersede the stale ones by LWW — `ci_kind` is not
+identity-bearing so the PK is stable; **no delete**, which would strand a cutoff a
+widened `data_lag` pushed past the watermark). Idempotent (a steady sequential experiment
+plans zero) and correct under the multi-pair anchor quirk (a pair usable only after the
+anchor is legitimately left fixed → no false re-plan). The catalog is **not** consulted
+(it is informational — "the pipeline never reads it back for decisions"), so the
+provenance is grounded in `_ab_results`. **WP3 part 3 (B5 — explore threading):** the
+cockpit is a read-view over persisted rows, so `recompute()` widens a pair live **iff its
+baked rows are already always_valid** (`av_pairs` off the persisted `ci_kind`) — this
+reproduces the baked per-pair vocabulary exactly, including the multi-pair anchor case and
+a not-yet-applied config toggle (either direction), and is gated on the live method's
+`supports_sequential`. `_sequentialize_points` widens each reconstructed (Tier E/S) point
+of an `av_pair` with `to_always_valid` under the first-usable-look τ²; α-inversion cutoffs
+are dropped with a Reload hint (they cannot be honestly widened from an already-widened
+persisted CI); a bootstrap knob switch turns the mode off. **Server-only — no `web/src`
+edit, no bundle rebuild** (the client draws whatever bounds the reply carries). This WP3
+completion was adversarially reviewed (3 lenses → refute-by-default verifiers); the one
+confirmed defect (a per-pair τ² anchor over-widening a pair the pipeline left fixed) is
+fixed by the persisted-`ci_kind` `av_pairs` gate and pinned by a 3-arm late-rollout e2e
+test. Goldens untouched, no `ALGORITHM_VERSION` moved, ruff/black clean; the full suite is
+green. **Next: WP4–WP9.** Branch `claude/m5-wp3-rest` off `main`
 (all of M4 merged; working tree was clean at cut). This plan was produced by a
 design workflow (6 parallel spec+code readers → a synthesizer → 3 adversarial
 critics under refute-by-default) whose critics found six real defects in the
@@ -214,7 +234,7 @@ merge until D8 is green on the seeded fixture.
 
 ---
 
-### WP3 — pipeline + explore activation: thread `ci_kind`, self-invalidate the toggle, keep the cockpit consistent (A) — ⏳ part 1/3 DONE (transform + first-look τ² + ci_kind + config); parts 2 (toggle self-invalidation) + 3 (explore threading) REMAIN
+### WP3 — pipeline + explore activation: thread `ci_kind`, self-invalidate the toggle, keep the cockpit consistent (A) — ✅ DONE (part 1 transform + first-look τ² + ci_kind + config; part 2 toggle self-invalidation B4; part 3 explore threading B5)
 
 **Goal:** make `sequential.enabled: true` actually emit always-valid rows on a bare
 `abk run` **and** in the live explore recompute — the two compute paths — without

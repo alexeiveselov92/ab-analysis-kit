@@ -32,9 +32,27 @@ number change).
     (AV)" column + a second curve) and the live explore calibration chip.
   - **Pipeline activation** — a plain `abk run` on a sequential-enabled experiment emits
     always-valid rows. `scheme: alpha_spending` (group-sequential) is a clear
-    "planned M6" config error. *(Still landing: the toggle self-invalidation on an
-    existing experiment, explore live-recompute threading, the readout's early-verdict
-    relaxation, sub-day sequential SRM, `abk plan`, and the composed-FDR sweep.)*
+    "planned M6" config error.
+  - **The toggle self-invalidates (B4)** — flipping `sequential.enabled` on an *existing*
+    experiment now re-plans the affected series in place on a bare `abk run` (no
+    `--full-refresh` needed): `sequential.enabled` is deliberately not in
+    `method_config_id`, so the planner compares the persisted per-pair `ci_kind` against
+    the mode this run stamps and forces a full recompute on a mismatch — idempotent
+    (a steady sequential experiment still plans zero) and robust to the first-usable-look
+    τ² anchor legitimately leaving a later-usable pair fixed.
+  - **Explore threading (B5)** — the live explore recompute now mirrors the baked
+    per-pair CI vocabulary so the cockpit never mixes fixed & always-valid on one chart.
+    A pair is widened live iff its **persisted** rows are already always-valid (a
+    read-view of what `abk run` stored — so the multi-pair case where the anchor left a
+    late-usable pair fixed, and a not-yet-applied config toggle, both stay consistent);
+    each widened point uses the same first-usable-look τ² (the configured knob state
+    reproduces the baked always-valid bounds — exactly for the closed-form families).
+    α-inversion cannot honestly widen an already-widened persisted CI, so under the mode
+    those cutoffs are dropped with a Reload hint rather than shown as a silent fixed CI;
+    a switch to a sequential-ineligible method (bootstrap) turns the mode off. Server-only
+    — no bundle change (the client draws whatever bounds the reply carries).
+    *(Still landing: the readout's early-verdict relaxation, sub-day sequential SRM,
+    `abk plan`, and the composed-FDR sweep.)*
 - **M4 — `abk validate`, the A/A false-positive matrix.** The trust artifact that
   answers "is this method actually calibrated on this data, or does it lie about its
   α?" (docs/specs/aa-false-positive-matrix.md; the implementation record is

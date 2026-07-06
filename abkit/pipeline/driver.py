@@ -102,6 +102,33 @@ def _sequential_tau2(
     return {}
 
 
+def _sequential_mode_changed(
+    per_pair_kinds: dict[tuple[str, str], set[str]],
+    seq_eligible: bool,
+    sequential_tau2: dict[tuple[str, str], float] | None,
+) -> bool:
+    """Does the persisted series' ``ci_kind`` disagree with the mode this run stamps?
+
+    The toggle self-invalidation predicate (M5 WP3, plan B4). Per pair, the mode
+    this run would stamp is ``always_valid`` iff the experiment's sequential mode
+    is on, the method supports it (``seq_eligible``), AND this pair has a frozen
+    τ² — i.e. it is exactly the condition under which ``analyze_cutoff`` widens
+    the pair (a pair usable only after the first-usable-look anchor is legitimately
+    left ``fixed``). Any persisted non-demoted row of a different kind means the
+    ``sequential.enabled`` toggle flipped since the series was written, so the
+    driver force-re-plans it. Idempotent: after the re-plan the persisted kinds
+    match what this same predicate expects, so the next run plans zero.
+    """
+    tau2 = sequential_tau2 or {}
+    for pair, kinds in per_pair_kinds.items():
+        if not kinds:
+            continue
+        expected = "always_valid" if (seq_eligible and pair in tau2) else "fixed"
+        if kinds != {expected}:
+            return True
+    return False
+
+
 def run_experiment(
     experiment: ExperimentConfig,
     metrics_by_name: dict[str, MetricConfig],
@@ -205,6 +232,9 @@ def run_experiment(
             metric_sql = metric.get_query_text(project_root)
             effective_alpha = comparison_alpha(comparison, alphas)
 
+            method_cls = get_method_class(comparison.method.name)
+            seq_eligible = experiment.sequential.enabled and method_cls.supports_sequential
+
             computed = tables.list_computed_cutoffs(experiment.name, metric.name, method_config_id)
             if full_refresh_window is not None:
                 tables.delete_results(
@@ -216,6 +246,51 @@ def run_experiment(
                     mutations_sync=True,
                 )
             pending = pending_cutoffs(grid, computed, watermark_ts, full_refresh_window)
+
+            # M5 WP3: freeze τ² once per comparison, anchored to the first usable
+            # look (D-Seq-anchor), so every cutoff's always-valid CI shares one
+            # mixing prior. It is computed here (not lazily) because it also
+            # classifies which pairs SHOULD be always_valid when checking the
+            # persisted series for a sequential-mode toggle. Cost: one first-look
+            # load per sequential comparison per run (the accepted anytime price).
+            sequential_tau2: dict[tuple[str, str], float] | None = None
+            if seq_eligible and (pending or computed):
+                sequential_tau2 = _sequential_tau2(
+                    backend,
+                    experiment,
+                    comparison,
+                    metric,
+                    metric_sql,
+                    grid,
+                    alphas,
+                    project,
+                    effective_alpha,
+                )
+
+            # M5 WP3 (B4): the toggle self-invalidates. ``sequential.enabled`` is
+            # (correctly) not in ``method_config_id``, so the anti-join would skip
+            # a flipped-but-fully-computed series and leave stale rows. When the
+            # persisted ci_kind disagrees with the mode this run stamps, force a
+            # re-plan of the whole series: dropping ``computed`` re-plans every
+            # complete cutoff, and the re-saved rows supersede the stale ones by LWW
+            # (same PK — ci_kind is not identity-bearing — newer ``created_at``;
+            # FINAL/argMax reads collapse to the new rows on every backend). We do
+            # NOT delete first: a delete-all would strand any cutoff that a widened
+            # ``data_lag`` pushed past the watermark this run (it would be removed
+            # but not re-planned), whereas LWW leaves such a cutoff untouched.
+            if computed and _sequential_mode_changed(
+                tables.series_pair_ci_kinds(experiment.name, metric.name, method_config_id),
+                seq_eligible,
+                sequential_tau2,
+            ):
+                computed = set()
+                pending = pending_cutoffs(grid, computed, watermark_ts, full_refresh_window)
+                log(
+                    f"MODE  {experiment.name}/{metric.name}: sequential mode changed "
+                    f"(now {'always_valid' if seq_eligible else 'fixed'}) — re-planning "
+                    "the full series"
+                )
+
             outcome.cutoffs_planned += len(pending)
             log(
                 f"PLAN  {experiment.name}/{metric.name}: {len(pending)} pending "
@@ -243,22 +318,6 @@ def run_experiment(
                     f"{experiment.name}/{metric.name}: {len(orphaned)} orphaned "
                     "method_config_id series in _ab_results (the BI chart will "
                     "show duplicate stabilization lines) — run `abk clean`"
-                )
-
-            # M5 WP3: freeze τ² once per comparison (anchored to the first usable look)
-            # so every cutoff's always-valid CI uses the same mixing prior.
-            sequential_tau2: dict[tuple[str, str], float] | None = None
-            if experiment.sequential.enabled and pending:
-                sequential_tau2 = _sequential_tau2(
-                    backend,
-                    experiment,
-                    comparison,
-                    metric,
-                    metric_sql,
-                    grid,
-                    alphas,
-                    project,
-                    effective_alpha,
                 )
 
             for cutoff in pending:
