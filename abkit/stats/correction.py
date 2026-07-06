@@ -8,6 +8,7 @@ handled honestly by ``abk validate`` and the sequential toggle, never hidden her
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -66,6 +67,78 @@ def two_tier_alphas(alpha: float, groups_count: int, metrics_count: int) -> TwoT
             None if metrics_count == 0 else adjust_alpha(alpha, groups_count, metrics_count)
         ),
     )
+
+
+@dataclass(frozen=True)
+class SignificanceInput:
+    """One comparison's read-time significance inputs for the composed rule.
+
+    Callers adapt their own objects (a persisted ``_ab_results`` row, a placebo
+    ``TestResult``) to this primitive view. Bounds/pvalue/effect/alpha are ``None``
+    when unavailable (a degenerate cutoff); the composed rule treats such members as
+    non-significant and excludes them from the BH family.
+    """
+
+    left_bound: float | None
+    right_bound: float | None
+    pvalue: float | None
+    effect: float | None
+    alpha: float | None
+
+
+@dataclass(frozen=True)
+class Significance:
+    """A member's composed-rule outcome: rejected? and the effect sign (+1/−1/0)."""
+
+    significant: bool
+    sign: int
+
+
+def composed_significance(
+    inputs: Sequence[SignificanceInput], correction: str
+) -> list[Significance]:
+    """The composed multiple-testing rule over ONE comparison family, shared by the
+    readout and the A/A family sweep (m5-implementation-plan.md WP7/D12).
+
+    Two-tier Bonferroni (and ``none``) is applied at COMPUTE time — the persisted CI
+    already carries the effective per-comparison alpha — so here the rule is simply
+    "the CI excludes zero", with the sign read off the bound. Read-time
+    Benjamini-Hochberg adjusts the family's p-values (only members with a finite
+    p-value form the family; the rest are non-significant and excluded from ``m``) and
+    rejects an adjusted p below the member's stored RAW alpha, with the sign read off
+    the effect. This is the exact rule the readout's ``_build_sig_map`` applied inline;
+    extracting it lets WP8's composed FWER/FDR sweep apply the identical rule.
+
+    The caller decides the family membership — for the readout that is one cadence
+    cutoff's rows; for the A/A sweep it is one iteration's per-metric marginals.
+    """
+    if correction != "benjamini_hochberg":
+        out: list[Significance] = []
+        for item in inputs:
+            if item.left_bound is not None and item.left_bound > 0:
+                out.append(Significance(True, 1))
+            elif item.right_bound is not None and item.right_bound < 0:
+                out.append(Significance(True, -1))
+            else:
+                out.append(Significance(False, 0))
+        return out
+
+    # Benjamini-Hochberg: only finite-p members form the family (m excludes the rest).
+    family_positions = [i for i, item in enumerate(inputs) if item.pvalue is not None]
+    results = [Significance(False, 0)] * len(inputs)
+    if not family_positions:
+        return results
+    adjusted = benjamini_hochberg([inputs[i].pvalue for i in family_positions])
+    for pos, adj in zip(family_positions, adjusted, strict=True):
+        item = inputs[pos]
+        significant = item.alpha is not None and float(adj) < item.alpha
+        sign = 0
+        if significant and item.effect is not None and item.effect != 0:
+            sign = 1 if item.effect > 0 else -1
+        if significant and sign == 0:  # a significant-but-zero-effect row cannot orient
+            significant = False
+        results[pos] = Significance(significant, sign)
+    return results
 
 
 def benjamini_hochberg(pvalues: npt.ArrayLike) -> npt.NDArray[np.float64]:

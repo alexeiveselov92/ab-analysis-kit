@@ -18,9 +18,12 @@ from abkit.stats.base import (
     method_config_payload,
 )
 from abkit.stats.correction import (
+    Significance,
+    SignificanceInput,
     TwoTierAlphas,
     adjust_alpha,
     benjamini_hochberg,
+    composed_significance,
     n_comparisons,
     two_tier_alphas,
 )
@@ -70,6 +73,8 @@ __all__ = [
     "SrmResult",
     "StatsError",
     "SufficientStats",
+    "Significance",
+    "SignificanceInput",
     "TestResult",
     "TwoTierAlphas",
     "UnknownMethodError",
@@ -77,6 +82,7 @@ __all__ = [
     "align_paired",
     "available_methods",
     "benjamini_hochberg",
+    "composed_significance",
     "compute_method_config_id",
     "create_method",
     "derive_seed",
