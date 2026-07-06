@@ -961,6 +961,22 @@ the `prefect.yaml` scaffold, and the green-pre-commit tooling fixes.
 
 ### 8.1 Incorporate the Claude-design deliverables (NEW — supersedes "placeholder-only")
 
+> **✅ DELIVERED + LANDED (2026-07-07).** The maintainer dropped four Claude Design exports
+> (Brand, Landing, Report, Explore Cockpit) into `abkit-design/` at the repo root. Decision
+> taken (maintainer delegated): they are the **finalized brand source-of-truth**, so they were
+> curated into **[`docs/design/`](../design/)** — the distilled buildable spec
+> [`brand-tokens.md`](../design/brand-tokens.md), extracted `logo/*.svg` (+ favicon), a
+> source-of-truth `README.md`, and the four faithful mockups under `mockups/`. Windows
+> `:Zone.Identifier` junk removed; `.gitignore` hardened. **The brand is now real, not
+> placeholder** — palette **Iris Violet `#6A45C4`** on detectkit's warm paper/ink, type
+> Schibsted Grotesk + JetBrains Mono, logo "Diverge", five verdict tokens (win/lose/flat/
+> inconclusive/srm), the signature stabilization-chart tokens. **D-Brand posture flips: WP7 +
+> the report/explore surface pass build DIRECTLY on `brand-tokens.md`, not neutral
+> placeholders** (the "single-file swap seam" becomes "seed the seam with the real values").
+> The mockups are Claude-Design-runtime HTML (need `support.js`) — consumers **reproduce**
+> the layout as framework-free, external-host-free bundles (invariant 6), pulling tokens from
+> `brand-tokens.md`. Accessibility (WCAG-AA both themes + CVD) is checked against the real hex.
+
 The maintainer has **created brand + product designs in Claude design** (brand design with
 **logo**, **report designs**, and more). This changes the D-Brand posture: the site + report/
 explore surfaces are no longer "ship on neutral placeholders indefinitely" — there are **real

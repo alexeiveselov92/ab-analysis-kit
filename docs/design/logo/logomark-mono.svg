@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="abkit">
+  <!-- Mono variant: ink tile, paper strokes — use where the Iris fill cannot be used
+       (single-colour print, dark chrome). See docs/design/mockups/brand.html §02. -->
+  <rect x="3" y="3" width="94" height="94" rx="26" fill="#1B1916"/>
+  <polyline points="13,50 34,50" fill="none" stroke="#FBF9F3" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <polyline points="34,50 86,27" fill="none" stroke="#FBF9F3" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <polyline points="34,50 86,61" fill="none" stroke="#FBF9F3" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="86" cy="27" r="6.5" fill="#FBF9F3"/>
+</svg>

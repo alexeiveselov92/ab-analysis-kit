@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{background:#E9E3D6;color:#1B1916;font-family:'Schibsted Grotesk',system-ui,sans-serif;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+  ::selection{background:#6A45C4;color:#FBF9F3}
+</style>
+</helmet>
+
+<div data-screen-label="Report" style="max-width:980px;margin:0 auto;padding:34px 22px 80px">
+ <div style="background:#F5F1E8;border:1px solid #DCD5C6;border-radius:18px;overflow:hidden;box-shadow:0 30px 80px -46px #1b191655">
+
+  <!-- ===== HEADER ===== -->
+  <div style="padding:30px 34px 26px;border-bottom:1px solid #E6E0D4;background:#FBF9F3">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:22px">
+      <svg width="30" height="30" viewBox="0 0 100 100"><rect x="3" y="3" width="94" height="94" rx="26" fill="#6A45C4"/><polyline points="13,50 34,50" fill="none" stroke="#FBF9F3" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/><polyline points="34,50 86,27" fill="none" stroke="#FBF9F3" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/><polyline points="34,50 86,61" fill="none" stroke="#FBF9F3" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="86" cy="27" r="6.5" fill="#FBF9F3"/></svg>
+      <span style="font-size:16px;font-weight:700;letter-spacing:-.01em">abkit</span>
+      <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#9A9384;margin-left:2px">run --report</span>
+      <span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:11px;color:#9A9384;background:#F2EEE4;border:1px solid #E6E0D4;padding:5px 11px;border-radius:20px">self-contained · offline</span>
+    </div>
+    <div style="display:flex;align-items:flex-end;justify-content:space-between;flex-wrap:wrap;gap:16px">
+      <div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:#6A45C4;font-weight:600;margin-bottom:8px">Experiment readout</div>
+        <h1 style="font-size:36px;font-weight:800;letter-spacing:-.03em;margin:0 0 8px">checkout_v2</h1>
+        <div style="font-size:14px;color:#6E675B">Does the redesigned checkout lift conversion without hurting refunds?</div>
+      </div>
+      <div style="text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;color:#6E675B;line-height:1.7">
+        <div>period · <span style="color:#1B1916">2026-06-01 → 06-30</span></div>
+        <div>horizon · <span style="color:#1B1916">day 22 (reached)</span></div>
+        <div>generated · <span style="color:#1B1916">2026-06-30 12:04Z</span></div>
+      </div>
+    </div>
+    <!-- verdict summary strip -->
+    <div style="display:flex;gap:10px;margin-top:24px;flex-wrap:wrap">
+      <span style="display:inline-flex;align-items:center;gap:7px;background:#1E9E6A;color:#FBF9F3;padding:8px 15px;border-radius:9px;font-weight:700;font-size:13.5px">checkout_conversion · WIN +4.2%</span>
+      <span style="display:inline-flex;align-items:center;gap:7px;background:#FBF3E4;color:#8A5A12;border:1px solid #EAD6A6;padding:8px 15px;border-radius:9px;font-weight:600;font-size:13.5px">revenue_per_user · inconclusive</span>
+      <span style="display:inline-flex;align-items:center;gap:7px;background:#EFF1F3;color:#4C5563;border:1px solid #D7DCE2;padding:8px 15px;border-radius:9px;font-weight:600;font-size:13.5px">refund_rate · flat (guardrail ok)</span>
+    </div>
+  </div>
+
+  <!-- ===== SRM GATE ===== -->
+  <div data-screen-label="SRM gate" style="padding:20px 34px;border-bottom:1px solid #E6E0D4;background:#EAF5EF">
+    <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+      <span style="display:inline-flex;align-items:center;gap:8px;font-weight:700;font-size:14px;color:#1E7A54"><span style="width:22px;height:22px;border-radius:50%;background:#1E9E6A;color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:13px">✓</span>SRM gate · PASS</span>
+      <span style="font-family:'JetBrains Mono',monospace;font-size:12.5px;color:#3B7A5C">observed 50.1 / 49.9 vs expected 50 / 50 · χ² p = 0.42</span>
+      <span style="margin-left:auto;font-size:12.5px;color:#3B7A5C">Assignment is balanced — effects are trustworthy.</span>
+    </div>
+  </div>
+
+  <!-- ===== MAIN METRIC ===== -->
+  <div data-screen-label="Main metric" style="padding:30px 34px;border-bottom:1px solid #E6E0D4">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+      <div style="display:flex;align-items:center;gap:10px"><span style="font-size:20px;font-weight:700;letter-spacing:-.01em">{{ main.name }}</span><span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;background:#6A45C418;color:#6A45C4;padding:3px 8px;border-radius:6px;letter-spacing:.03em">main metric</span></div>
+      <span style="display:inline-flex;align-items:center;gap:7px;background:{{ main.color }};color:#FBF9F3;padding:9px 16px;border-radius:10px;font-weight:700;font-size:14px">{{ main.badge }}</span>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 320px;gap:22px;align-items:start">
+      <!-- chart -->
+      <div style="background:#FBF9F3;border:1px solid #E6E0D4;border-radius:14px;padding:18px 20px 12px">
+        <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:6px"><span style="font-size:34px;font-weight:800;letter-spacing:-.02em;color:{{ main.color }}">{{ main.effect }}</span><span style="font-family:'JetBrains Mono',monospace;font-size:13px;color:#6E675B">{{ main.ci }}</span></div>
+        <div>{{ mainChart }}</div>
+        <div style="display:flex;justify-content:space-between;font-family:'JetBrains Mono',monospace;font-size:10px;color:#9A9384;margin-top:2px"><span>day 1</span><span>day 15</span><span>horizon</span><span>day 30</span></div>
+        <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:12px;border-top:1px solid #E6E0D4;padding-top:12px;font-size:11.5px;color:#6E675B">
+          <span style="display:inline-flex;align-items:center;gap:6px"><span style="width:14px;height:3px;border-radius:2px;background:#6A45C4"></span>effect</span>
+          <span style="display:inline-flex;align-items:center;gap:6px"><span style="width:14px;height:9px;border-radius:2px;background:#6A45C4;opacity:.18"></span>95% CI</span>
+          <span style="display:inline-flex;align-items:center;gap:6px"><span style="width:14px;border-top:2px dashed #B7AF9E"></span>zero</span>
+          <span style="display:inline-flex;align-items:center;gap:6px"><span style="width:14px;border-top:2px dashed #1E9E6A"></span>horizon</span>
+        </div>
+      </div>
+      <!-- verdict rationale + stats -->
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <div style="background:{{ main.tint }};border:1px solid {{ main.color }};border-radius:14px;padding:16px 18px">
+          <div style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:{{ main.color }};letter-spacing:.04em;margin-bottom:8px">WHY {{ main.badge }}</div>
+          <ul style="margin:0;padding-left:18px;font-size:13px;line-height:1.55;color:#4A443B">
+            <li>CI excludes zero above the line</li>
+            <li>Stable for 8 days past horizon</li>
+            <li>Powered at 0.92 for a 2% MDE</li>
+          </ul>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div style="background:#FBF9F3;border:1px solid #E6E0D4;border-radius:11px;padding:12px 14px"><div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#9A9384;text-transform:uppercase;letter-spacing:.06em">p-value</div><div style="font-size:18px;font-weight:700;margin-top:2px">{{ main.p }}</div></div>
+          <div style="background:#FBF9F3;border:1px solid #E6E0D4;border-radius:11px;padding:12px 14px"><div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#9A9384;text-transform:uppercase;letter-spacing:.06em">power</div><div style="font-size:18px;font-weight:700;margin-top:2px">{{ main.power }}</div></div>
+          <div style="background:#FBF9F3;border:1px solid #E6E0D4;border-radius:11px;padding:12px 14px"><div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#9A9384;text-transform:uppercase;letter-spacing:.06em">method</div><div style="font-size:14px;font-weight:700;margin-top:3px">{{ main.method }}</div></div>
+          <div style="background:#FBF9F3;border:1px solid #E6E0D4;border-radius:11px;padding:12px 14px"><div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#9A9384;text-transform:uppercase;letter-spacing:.06em">MDE</div><div style="font-size:18px;font-weight:700;margin-top:2px">1.4%</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- variant means table -->
+    <div style="margin-top:18px;background:#FBF9F3;border:1px solid #E6E0D4;border-radius:14px;overflow:hidden">
+      <div style="display:grid;grid-template-columns:1.4fr 1fr 1fr 1fr 1fr;font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:#9A9384;padding:11px 18px;border-bottom:1px solid #E6E0D4;background:#F2EEE4">
+        <span>variant</span><span style="text-align:right">value</span><span style="text-align:right">std</span><span style="text-align:right">n</span><span style="text-align:right">rel. lift</span>
+      </div>
+      <div style="display:grid;grid-template-columns:1.4fr 1fr 1fr 1fr 1fr;font-size:13.5px;padding:12px 18px;border-bottom:1px solid #EEE9DE;align-items:center">
+        <span style="font-weight:600;color:#6E675B">control</span><span style="text-align:right;font-family:'JetBrains Mono',monospace">11.8%</span><span style="text-align:right;font-family:'JetBrains Mono',monospace;color:#9A9384">32.3</span><span style="text-align:right;font-family:'JetBrains Mono',monospace;color:#9A9384">48,102</span><span style="text-align:right;color:#9A9384">—</span>
+      </div>
+      <div style="display:grid;grid-template-columns:1.4fr 1fr 1fr 1fr 1fr;font-size:13.5px;padding:12px 18px;align-items:center">
+        <span style="font-weight:700">treatment</span><span style="text-align:right;font-family:'JetBrains Mono',monospace;font-weight:600">12.3%</span><span style="text-align:right;font-family:'JetBrains Mono',monospace;color:#9A9384">32.8</span><span style="text-align:right;font-family:'JetBrains Mono',monospace;color:#9A9384">47,988</span><span style="text-align:right;font-weight:700;color:#1E9E6A">+4.2%</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== SECONDARY / GUARDRAIL ===== -->
+  <div data-screen-label="Other metrics" style="padding:26px 34px;border-bottom:1px solid #E6E0D4">
+    <div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#9A9384;margin-bottom:14px">Secondary &amp; guardrail metrics</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+      <sc-for list="{{ others }}" as="o" hint-placeholder-count="2">
+        <div style="background:#FBF9F3;border:1px solid #E6E0D4;border-radius:14px;padding:16px 18px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+            <div style="display:flex;align-items:center;gap:8px"><span style="font-size:15px;font-weight:700">{{ o.name }}</span><span style="{{ o.tagStyle }}">{{ o.tag }}</span></div>
+            <span style="display:inline-flex;align-items:center;gap:6px;background:{{ o.color }};color:#FBF9F3;padding:5px 11px;border-radius:8px;font-weight:700;font-size:12px">{{ o.badge }}</span>
+          </div>
+          <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:10px"><span style="font-size:24px;font-weight:800;letter-spacing:-.02em;color:{{ o.color }}">{{ o.effect }}</span><span style="font-family:'JetBrains Mono',monospace;font-size:12px;color:#6E675B">{{ o.ci }}</span></div>
+          <div>{{ o.chart }}</div>
+          <div style="display:flex;gap:16px;margin-top:10px;border-top:1px solid #E6E0D4;padding-top:10px;font-family:'JetBrains Mono',monospace;font-size:11.5px;color:#6E675B"><span>p {{ o.p }}</span><span>power {{ o.power }}</span><span>{{ o.method }}</span></div>
+          <div style="font-size:12.5px;color:#6E675B;line-height:1.5;margin-top:10px">{{ o.note }}</div>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+
+  <!-- ===== A/A CALIBRATION MATRIX ===== -->
+  <div data-screen-label="A/A matrix" style="padding:30px 34px;border-bottom:1px solid #E6E0D4;background:#FBF9F3">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:16px;margin-bottom:20px">
+      <div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#6A45C4;font-weight:600;margin-bottom:8px">abk validate</div>
+        <h2 style="font-size:24px;font-weight:800;letter-spacing:-.02em;margin:0 0 6px">A/A false-positive matrix</h2>
+        <div style="font-size:13.5px;color:#6E675B;max-width:56ch">The method's <strong style="font-weight:600">real</strong> error rate — resampling A/A through the experiment's actual cadence grid and the readout rule.</div>
+      </div>
+      <div style="display:flex;gap:22px">
+        <div><div style="font-size:26px;font-weight:800;color:#1E9E6A;letter-spacing:-.02em">4.8%</div><div style="font-size:12px;color:#9A9384">fixed-horizon α</div></div>
+        <div><div style="font-size:26px;font-weight:800;color:#E0A23B;letter-spacing:-.02em">18.3%</div><div style="font-size:12px;color:#9A9384">naïve daily-peek α</div></div>
+        <div><div style="font-size:26px;font-weight:800;color:#1E9E6A;letter-spacing:-.02em">5.1%</div><div style="font-size:12px;color:#9A9384">sequential α</div></div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1.25fr .75fr;gap:22px;align-items:center">
+      <div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px"><span style="font-size:13px;font-weight:600">observed α by method × sample size</span><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#9A9384">budget 5%</span></div>
+        {{ aaMatrix }}
+        <div style="display:flex;gap:18px;margin-top:14px;font-size:12px;color:#6E675B;flex-wrap:wrap">
+          <span style="display:inline-flex;align-items:center;gap:6px"><span style="width:12px;height:12px;border-radius:3px;background:#1E9E6A"></span>within budget</span>
+          <span style="display:inline-flex;align-items:center;gap:6px"><span style="width:12px;height:12px;border-radius:3px;background:#E0A23B"></span>elevated</span>
+          <span style="display:inline-flex;align-items:center;gap:6px"><span style="width:12px;height:12px;border-radius:3px;background:#D6453D"></span>over budget</span>
+        </div>
+      </div>
+      <div style="background:#F2EEE4;border:1px solid #E6E0D4;border-radius:12px;padding:16px 18px">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#9A9384;margin-bottom:10px">Recommendation</div>
+        <div style="font-size:14px;line-height:1.55;color:#4A443B;margin-bottom:12px">CUPED t-test at α=0.05 is <strong style="color:#1E7A54;font-weight:700">calibrated</strong> at the fixed horizon. Watching the daily series inflates α to <strong style="color:#8A5A12;font-weight:700">18.3%</strong> — enable <span style="font-family:'JetBrains Mono',monospace">sequential</span> to peek safely.</div>
+        <div style="display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600;color:#1E7A54;background:#EAF5EF;border:1px solid #B7E0CB;padding:7px 12px;border-radius:8px">✓ safe to call at horizon</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== FOOTER ===== -->
+  <div style="padding:20px 34px;display:flex;align-items:center;gap:12px;background:#FBF9F3">
+    <svg width="22" height="22" viewBox="0 0 100 100"><rect x="3" y="3" width="94" height="94" rx="26" fill="#6A45C4"/><polyline points="13,50 34,50" fill="none" stroke="#FBF9F3" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/><polyline points="34,50 86,27" fill="none" stroke="#FBF9F3" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/><polyline points="34,50 86,61" fill="none" stroke="#FBF9F3" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/><circle cx="86" cy="27" r="7" fill="#FBF9F3"/></svg>
+    <span style="font-size:13px;font-weight:700">abkit</span>
+    <span style="font-family:'JetBrains Mono',monospace;font-size:11.5px;color:#9A9384">_ab_results · method_config_id 7f3a1c · MIT</span>
+    <span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:11.5px;color:#9A9384">generated by abk run --report</span>
+  </div>
+
+ </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:980}}">
+class Component extends DCLogic {
+  chartSVG(cfg) {
+    const w = cfg.w, h = cfg.h, days = 30, horizon = 21;
+    const padL = 6, padR = 6, padT = 12, padB = 10;
+    let s = cfg.seed || 7;
+    const rnd = () => { s = (s * 1103515245 + 12345) & 0x7fffffff; return s / 0x7fffffff; };
+    const fin = cfg.effect, ciEnd = cfg.ci;
+    const effect = [], ciHalf = [];
+    for (let i = 0; i < days; i++) {
+      const t = i / (days - 1);
+      effect.push(fin * (0.35 + 0.65 * t) + (rnd() - 0.5) * 2 * cfg.spread * (1 - t * 0.82));
+      ciHalf.push(ciEnd * Math.sqrt(days / (i + 1)));
+    }
+    effect[days - 1] = fin;
+    const vmax = cfg.vmax, vmin = cfg.vmin;
+    const X = i => padL + i / (days - 1) * (w - padL - padR);
+    const Y = v => padT + (vmax - v) / (vmax - vmin) * (h - padT - padB);
+    const zeroY = Y(0);
+    const up = effect.map((v, i) => [X(i), Y(v + ciHalf[i])]);
+    const lo = effect.map((v, i) => [X(i), Y(v - ciHalf[i])]);
+    const bandD = 'M' + up.map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' L') + ' L' + lo.reverse().map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ') + ' Z';
+    const linePts = effect.map((v, i) => X(i).toFixed(1) + ',' + Y(v).toFixed(1)).join(' ');
+    const iris = '#6A45C4', E = React.createElement;
+    return E('svg', { viewBox: `0 0 ${w} ${h}`, width: '100%', style: { display: 'block' } }, [
+      E('line', { key: 'z', x1: padL, y1: zeroY, x2: w - padR, y2: zeroY, stroke: '#B7AF9E', strokeWidth: 1.4, strokeDasharray: '4 4' }),
+      E('path', { key: 'b', d: bandD, fill: iris, fillOpacity: 0.14 }),
+      E('line', { key: 'hz', x1: X(horizon), y1: padT, x2: X(horizon), y2: h - padB, stroke: '#1E9E6A', strokeWidth: 1.2, strokeDasharray: '3 4' }),
+      E('polyline', { key: 'l', points: linePts, fill: 'none', stroke: iris, strokeWidth: cfg.lw || 2.6, strokeLinecap: 'round', strokeLinejoin: 'round' }),
+      E('circle', { key: 'g', cx: X(days - 1), cy: Y(fin), r: 7, fill: iris, fillOpacity: 0.18 }),
+      E('circle', { key: 'd', cx: X(days - 1), cy: Y(fin), r: 4, fill: iris }),
+    ]);
+  }
+
+  renderVals() {
+    const main = {
+      name: 'checkout_conversion', badge: 'WIN · stabilized', color: '#1E9E6A', tint: '#EAF5EF',
+      effect: '+4.2%', ci: '95% CI [+2.7%, +5.7%]', p: '<0.001', power: '0.92', method: 'CUPED t',
+    };
+    const mainChart = this.chartSVG({ effect: 4.2, ci: 1.5, spread: 3.2, vmax: 9, vmin: -4, seed: 5, w: 600, h: 210, lw: 3 });
+
+    const others = [
+      { name: 'revenue_per_user', tag: 'secondary', tagStyle: 'font-family:JetBrains Mono,monospace;font-size:9.5px;background:#EDE7DA;color:#9A9384;padding:2px 7px;border-radius:5px;letter-spacing:.03em',
+        badge: 'INCONCLUSIVE', color: '#E0A23B', effect: '+1.9%', ci: '[−0.4, +4.2]', p: '0.11', power: '0.58', method: 'bootstrap',
+        chart: this.chartSVG({ effect: 1.9, ci: 2.3, spread: 3.8, vmax: 8, vmin: -6, seed: 11, w: 400, h: 120, lw: 2.2 }),
+        note: 'Trending up but CI still crosses zero and power < 0.8 — keep the experiment running.' },
+      { name: 'refund_rate', tag: 'guardrail', tagStyle: 'font-family:JetBrains Mono,monospace;font-size:9.5px;background:#F8EBF1;color:#B23A6B;padding:2px 7px;border-radius:5px;letter-spacing:.03em',
+        badge: 'FLAT', color: '#7A8595', effect: '+0.1%', ci: '[−0.6, +0.8]', p: '0.78', power: '0.90', method: 'two-prop z',
+        chart: this.chartSVG({ effect: 0.1, ci: 0.7, spread: 1.6, vmax: 3, vmin: -3, seed: 19, w: 400, h: 120, lw: 2.2 }),
+        note: 'No regression — the guardrail is well-powered and flat. The win does not come at the cost of refunds.' },
+    ];
+
+    // A/A matrix heatmap
+    const rows = ['t-test', 'z-test', 'CUPED', 'bootstrap', 'ratio'];
+    const cols = ['1k', '5k', '20k', '50k', 'peek'];
+    const vals = [
+      [0.061, 0.052, 0.049, 0.048, 0.183],
+      [0.058, 0.051, 0.050, 0.049, 0.176],
+      [0.064, 0.053, 0.050, 0.049, 0.181],
+      [0.072, 0.055, 0.051, 0.050, 0.191],
+      [0.069, 0.056, 0.052, 0.050, 0.188],
+    ];
+    const cellColor = v => v <= 0.055 ? '#1E9E6A' : v <= 0.09 ? '#E0A23B' : '#D6453D';
+    const E = React.createElement;
+    const aaMatrix = E('div', { style: { display: 'grid', gridTemplateColumns: '64px repeat(5,1fr)', gap: '5px', alignItems: 'center' } },
+      [E('span', { key: 'c0' }, ''), ...cols.map((c, i) => E('span', { key: 'c' + i, style: { fontFamily: "'JetBrains Mono',monospace", fontSize: '11px', color: '#9A9384', textAlign: 'center' } }, c)),
+      ...rows.flatMap((r, ri) => [
+        E('span', { key: 'r' + ri, style: { fontFamily: "'JetBrains Mono',monospace", fontSize: '11.5px', color: '#6E675B' } }, r),
+        ...cols.map((c, ci) => {
+          const v = vals[ri][ci];
+          return E('span', { key: r + ci, style: { background: cellColor(v), color: '#fff', fontFamily: "'JetBrains Mono',monospace", fontSize: '11px', fontWeight: 600, textAlign: 'center', padding: '9px 0', borderRadius: '6px' } }, v.toFixed(3));
+        })
+      ])]
+    );
+
+    return { main, mainChart, others, aaMatrix };
+  }
+}
+</script>
+</body>
+</html>

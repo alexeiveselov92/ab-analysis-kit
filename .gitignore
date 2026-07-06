@@ -41,6 +41,8 @@ htmlcov/
 *.swo
 *~
 .DS_Store
+# Windows/WSL download artifacts (NTFS alternate-data-stream markers)
+*:Zone.Identifier
 
 # Jupyter
 .ipynb_checkpoints
