@@ -208,6 +208,8 @@ class CalibrationStatus:
     alpha: float
     fpr: float | None = None
     peeking_fpr: float | None = None
+    #: M5 D8 — the always-valid peeking FPR beside the fixed one (the recovery to ~α).
+    peeking_fpr_sequential: float | None = None
     calibrated_alpha: float | None = None
     budget: float | None = None
     over_budget: bool | None = None
@@ -300,15 +302,20 @@ def find_calibration(
     newest = same_alpha[0]
     fpr = float(newest["fpr"])
     peeking = newest.get("peeking_fpr")
+    peeking_seq = newest.get("peeking_fpr_sequential")
     over = None if budget is None else fpr > budget
     headline = f"calibrated — FPR {fpr:.1%} vs nominal α={alpha:g}"
     if over:
         headline += f" (over the {budget:.1%} budget)"
+    # M5 D8: surface the always-valid recovery when peeking inflates past budget.
+    if peeking is not None and peeking_seq is not None:
+        headline += f"; peeking {float(peeking):.1%}→{float(peeking_seq):.1%} (always-valid)"
     return CalibrationStatus(
         state="calibrated",
         alpha=alpha,
         fpr=fpr,
         peeking_fpr=None if peeking is None else float(peeking),
+        peeking_fpr_sequential=None if peeking_seq is None else float(peeking_seq),
         budget=budget,
         over_budget=over,
         runs=len(same_alpha),

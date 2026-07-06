@@ -250,6 +250,7 @@ const CAL_COLS: string[] = [
   'method',
   'FPR',
   'peeking FPR',
+  'peeking (AV)',
   'power',
   'achieved MDE',
   'coverage',
@@ -326,6 +327,13 @@ function buildCalibrationMetric(
     tr.appendChild(fprTd);
 
     tr.appendChild(el('td', undefined, pct(cell.peeking_fpr)));
+    // M5 D8: the always-valid peeking twin — "—" when the method is ineligible; the
+    // widening is disclosed on hover so the ~α recovery reads as principled, not free.
+    const avTd = el('td', 'abk-cal-av', pct(cell.peeking_fpr_sequential));
+    if (cell.ci_width != null && cell.ci_width_sequential != null) {
+      avTd.title = `CI width ${fmtVal(cell.ci_width)} → ${fmtVal(cell.ci_width_sequential)} (always-valid)`;
+    }
+    tr.appendChild(avTd);
     tr.appendChild(el('td', undefined, pct(cell.power)));
     tr.appendChild(
       el('td', undefined, cell.achieved_mde == null ? '—' : fmtVal(cell.achieved_mde)),
@@ -351,17 +359,25 @@ function buildCalibrationMetric(
   const curveCell = cells.find((c) => c.recommended && hasCurve(c)) ?? cells.find(hasCurve);
   if (curveCell && curveCell.peeking_curve) {
     const curve = curveCell.peeking_curve;
+    const curveSeq =
+      curveCell.peeking_curve_sequential && curveCell.peeking_curve_sequential.length > 1
+        ? curveCell.peeking_curve_sequential
+        : null;
     const alpha = curveCell.alpha ?? null;
+    const legend = [
+      { label: 'cumulative FPR', colorVar: '--abk-series-1' },
+      { label: 'nominal α', colorVar: '--abk-st-warn' },
+    ];
+    if (curveSeq) legend.splice(1, 0, { label: 'always-valid', colorVar: '--abk-series-2' });
     wrap.appendChild(
       buildMiniPanel(
         `peeking FPR vs looks · ${curveCell.method ?? ''}`,
-        [
-          { label: 'cumulative FPR', colorVar: '--abk-series-1' },
-          { label: 'nominal α', colorVar: '--abk-st-warn' },
-        ],
+        legend,
         charts,
-        (canvas, g) => drawPeekingCurve(canvas, g, curve, alpha),
-        'optional-stopping hazard: cumulative false-positive rate as an analyst peeks at more looks',
+        (canvas, g) => drawPeekingCurve(canvas, g, curve, alpha, curveSeq),
+        curveSeq
+          ? 'optional-stopping hazard (blue) vs the always-valid CI (green), which holds the false-positive rate near α at every look'
+          : 'optional-stopping hazard: cumulative false-positive rate as an analyst peeks at more looks',
       ),
     );
   }
@@ -374,6 +390,7 @@ function drawPeekingCurve(
   g: CanvasRenderingContext2D,
   curve: Array<[number, number]>,
   alpha: number | null,
+  curveSeq: Array<[number, number]> | null = null,
 ): void {
   const dpr = Math.max(1, window.devicePixelRatio || 1);
   if (canvas.width === 0 || canvas.height === 0) return;
@@ -407,6 +424,14 @@ function drawPeekingCurve(
   drawSeriesDecimated(
     g, xs, ys, xmin, xmax, r.left, sc.plotW(), sc.px, sc.py, token('--abk-series-1'), 1.75, dpr,
   );
+  // M5 D8: overlay the always-valid curve — it holds near α while the fixed curve climbs.
+  if (curveSeq) {
+    const xsSeq = curveSeq.map((p) => p[0]);
+    const ysSeq = curveSeq.map((p) => p[1]);
+    drawSeriesDecimated(
+      g, xsSeq, ysSeq, xmin, xmax, r.left, sc.plotW(), sc.px, sc.py, token('--abk-series-2'), 1.75, dpr,
+    );
+  }
   g.restore();
 }
 

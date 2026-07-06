@@ -160,6 +160,20 @@ export interface CalibrationRow {
   peeking_curve?: Array<[number, number]> | null;
   /** subsample disclosure ("K/total looks scored"), when the grid was downsampled */
   note?: string | null;
+  // M5 D8 — the always-valid (sequential) column, side-by-side with the fixed
+  // measurements above (abkit/reporting/calibration.py `_matrix_row`, lockstep).
+  /** single-look FPR under the always-valid CI */
+  fpr_sequential?: number | null;
+  /** cumulative peeking FPR under the always-valid CI — should return to ~α */
+  peeking_fpr_sequential?: number | null;
+  power_sequential?: number | null;
+  coverage_sequential?: number | null;
+  effect_exaggeration_sequential?: number | null;
+  /** mean fixed / always-valid horizon CI width (the anytime widening) */
+  ci_width?: number | null;
+  ci_width_sequential?: number | null;
+  /** the always-valid peeking curve — flat near α where `peeking_curve` climbs */
+  peeking_curve_sequential?: Array<[number, number]> | null;
 }
 
 /**

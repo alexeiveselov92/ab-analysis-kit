@@ -68,6 +68,7 @@ def build_explore_payload(
             "state": calibration.state,
             "fpr": calibration.fpr,
             "peeking_fpr": calibration.peeking_fpr,
+            "peeking_fpr_sequential": calibration.peeking_fpr_sequential,
             "calibrated_alpha": calibration.calibrated_alpha,
             "alpha": calibration.alpha,
             "budget": calibration.budget,

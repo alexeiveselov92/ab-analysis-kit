@@ -59,6 +59,14 @@ def _pct(value: float | None) -> str:
     return "—" if value is None else f"{value * 100:.1f}%"
 
 
+def _curve(details: dict, key: str) -> list[list[float]] | None:
+    """A stored ``[[x, y], ...]`` curve → a clean float list, or ``None``."""
+    raw = details.get(key)
+    if not isinstance(raw, list) or not raw:
+        return None
+    return [[float(p[0]), float(p[1])] for p in raw if isinstance(p, (list, tuple)) and len(p) == 2]
+
+
 def _matrix_row(row: dict) -> dict:
     """One persisted ``_ab_aa_runs`` row → a renderer ``CalibrationRow``."""
     details = _details(row)
@@ -67,14 +75,7 @@ def _matrix_row(row: dict) -> dict:
     if budget is None:
         budget = _num(details.get("budget"))
     over_budget = fpr is not None and budget is not None and fpr > budget
-    curve = details.get("peeking_curve")
-    peeking_curve = None
-    if isinstance(curve, list) and curve:
-        peeking_curve = [
-            [float(p[0]), float(p[1])]
-            for p in curve
-            if isinstance(p, (list, tuple)) and len(p) == 2
-        ]
+    peeking_curve = _curve(details, "peeking_curve")
     kept = details.get("kept_grid_points")
     total = details.get("total_grid_points")
     note = None
@@ -102,6 +103,15 @@ def _matrix_row(row: dict) -> dict:
         "injected_effect": _num(row.get("injected_effect")),
         "peeking_curve": peeking_curve,
         "note": note,
+        # M5 D8 — the always-valid column, side-by-side (m5-implementation-plan §WP2)
+        "fpr_sequential": _num(row.get("fpr_sequential")),
+        "peeking_fpr_sequential": _num(row.get("peeking_fpr_sequential")),
+        "power_sequential": _num(row.get("power_sequential")),
+        "coverage_sequential": _num(row.get("coverage_sequential")),
+        "effect_exaggeration_sequential": _num(row.get("effect_exaggeration_sequential")),
+        "ci_width": _num(row.get("ci_width")),
+        "ci_width_sequential": _num(row.get("ci_width_sequential")),
+        "peeking_curve_sequential": _curve(details, "peeking_curve_sequential"),
     }
 
 
@@ -115,7 +125,11 @@ def _headline(rows: list[dict], lead: dict) -> str:
     alpha_txt = "—" if alpha is None else f"{alpha * 100:.1f}%"
     parts = [f"nominal α {alpha_txt}", f"single-look FPR {_pct(single)}"]
     if peeking is not None:
-        parts.append(f"peeking FPR {_pct(peeking)}")
+        seg = f"peeking FPR {_pct(peeking)}"
+        peeking_seq = lead.get("peeking_fpr_sequential")
+        if peeking_seq is not None:
+            seg += f" → always-valid {_pct(peeking_seq)}"  # the D8 recovery story
+        parts.append(seg)
     over = [r for r in rows if r["over_budget"]]
     if over:
         parts.append(f"{len(over)} method(s) over budget")

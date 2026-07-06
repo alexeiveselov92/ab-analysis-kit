@@ -36,6 +36,10 @@ def aa_row(
     total: int = 40,
     status: str = "success",
     created_at: datetime = datetime(2026, 7, 5, 12, 0, 0),
+    peeking_fpr_sequential: float | None = None,
+    ci_width: float | None = None,
+    ci_width_sequential: float | None = None,
+    curve_seq: list | None = None,
 ) -> dict:
     details = {
         "single_look_fpr": single_look_fpr,
@@ -46,6 +50,8 @@ def aa_row(
         "kept_grid_points": kept,
         "total_grid_points": total,
     }
+    if curve_seq is not None:
+        details["peeking_curve_sequential"] = curve_seq
     if rationale is not None:
         details["recommended_rationale"] = rationale
     return {
@@ -64,6 +70,9 @@ def aa_row(
         "achieved_mde": achieved_mde,
         "coverage": coverage,
         "effect_exaggeration": exaggeration,
+        "peeking_fpr_sequential": peeking_fpr_sequential,
+        "ci_width": ci_width,
+        "ci_width_sequential": ci_width_sequential,
         "verdict": f"{method} on {metric}: verdict",
         "budget": budget,
         "details": json_dumps_sorted(details),
@@ -75,6 +84,40 @@ def aa_row(
 
 def test_empty_rows_return_none():
     assert build_calibration_block([]) is None
+
+
+def test_sequential_column_projects_and_headline_shows_recovery():
+    """The D8 always-valid column lands in the matrix row + the headline shows the
+    peeking → always-valid recovery."""
+    block = build_calibration_block(
+        [
+            aa_row(
+                recommended=True,
+                peeking_fpr=0.14,
+                peeking_fpr_sequential=0.052,
+                ci_width=0.10,
+                ci_width_sequential=0.155,
+                curve_seq=[[1.0, 0.03], [7.0, 0.052]],
+            )
+        ]
+    )
+    assert block is not None
+    row = block["matrix_rows"][0]
+    assert row["peeking_fpr_sequential"] == 0.052
+    assert row["ci_width"] == 0.10 and row["ci_width_sequential"] == 0.155
+    assert row["peeking_curve_sequential"] == [[1.0, 0.03], [7.0, 0.052]]
+    # the headline surfaces the recovery beside the fixed peeking FPR
+    assert "peeking FPR 14.0%" in block["headline"]
+    assert "always-valid 5.2%" in block["headline"]
+
+
+def test_sequential_fields_absent_stay_none():
+    """A pre-M5 row (no sequential columns) projects the fields as None, no crash."""
+    row = build_calibration_block([aa_row()])["matrix_rows"][0]
+    assert row["peeking_fpr_sequential"] is None
+    assert row["ci_width_sequential"] is None
+    assert row["peeking_curve_sequential"] is None
+    assert "always-valid" not in build_calibration_block([aa_row()])["headline"]
 
 
 def test_single_row_projection():
@@ -112,12 +155,8 @@ def test_subsample_note_only_when_downsampled():
 
 def test_latest_invocation_only():
     """Two validate runs → only the newest run_stamp's rows appear (never a mix)."""
-    old = aa_row(
-        run_stamp="old", metric="arpu", fpr=0.20, created_at=datetime(2026, 7, 1)
-    )
-    new = aa_row(
-        run_stamp="new", metric="arpu", fpr=0.05, created_at=datetime(2026, 7, 5)
-    )
+    old = aa_row(run_stamp="old", metric="arpu", fpr=0.20, created_at=datetime(2026, 7, 1))
+    new = aa_row(run_stamp="new", metric="arpu", fpr=0.05, created_at=datetime(2026, 7, 5))
     block = build_calibration_block([new, old])  # get_aa_runs order: newest first
     assert len(block["matrix_rows"]) == 1
     assert block["matrix_rows"][0]["fpr"] == 0.05  # the new run, not the old 0.20
