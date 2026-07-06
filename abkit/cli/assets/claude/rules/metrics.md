@@ -20,7 +20,7 @@ type: sample                     # required: sample | fraction | ratio
 unit_key: user_id                # analysis unit; must match (or inherit from) the experiment
 tags: [revenue, guardrail]       # optional; `--select tag:<t>` and family selection
 columns:                         # required — map result columns to stats roles
-  variant: group                 # arm label (comes from the cohort macro)
+  variant: variant               # arm label (comes from the cohort macro)
   value:   gross_usd             # per-unit value  (type=sample)
   covariate: prev_gross_usd      # optional CUPED covariate (type=sample)
   stratum: country               # optional stratification key (any type)

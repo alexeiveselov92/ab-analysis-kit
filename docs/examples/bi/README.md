@@ -27,7 +27,7 @@ reference SQL you copy into any of them, plus one importable Grafana dashboard.
 1. **Read `FINAL` on ClickHouse.** The table is a `ReplacingMergeTree(created_at)`: a
    recomputed cutoff leaves *both* the old and new version until a background merge. A
    naive `SELECT` double-counts. Every recipe reads `FINAL` (or dedups via
-   `argMax(col, end_ts)`). On **PostgreSQL/MySQL** abkit upserts on the primary key, so
+   `argMax(col, created_at)`). On **PostgreSQL/MySQL** abkit upserts on the primary key, so
    the base table is already deduped — delete the `FINAL` keyword and the recipes work.
 2. **Group/filter by `method_config_id`.** It is a hash of the method + its identity
    params; editing a param starts a *new* series and orphans the old rows. More than one
@@ -45,7 +45,7 @@ reference SQL you copy into any of them, plus one importable Grafana dashboard.
    `mde_*`, and `srm_pvalue` are nullable — a row demoted by `insufficient_data` or blocked
    by SRM carries NULLs. Filter or coalesce; never assume non-null.
 
-## The columns you'll bind to (see the full schema in [internal-tables](../../specs/data-contract-and-reporting.md))
+## The columns you'll bind to (see the full schema in [internal-tables](../../reference/internal-tables.md))
 
 | Column(s) | Meaning |
 |---|---|

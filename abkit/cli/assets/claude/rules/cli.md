@@ -74,7 +74,7 @@ abk run [--select <exp>] [--exclude <sel>] [--steps validate,plan,load,compute] 
 ```
 
 The pipeline: **validate → plan → load → SRM → compute → persist**, streaming
-`VALIDATE → PLAN → STATE → LOAD → SRM → COMPUTE → RESULT`. It is incremental by
+`VALIDATE → PLAN → LOAD → SRM → COMPUTE → RESULT`. It is incremental by
 an anti-join — only cutoffs past the `data_lag` watermark and not already computed
 are (re)computed, so re-running is idempotent.
 
