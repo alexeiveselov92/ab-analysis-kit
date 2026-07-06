@@ -11,14 +11,20 @@
 
 ## 0. Progress & resume note (2026-07-06)
 
-**Status: WP1 + WP2 shipped; WP3 next.** WP1 = the sequential engine
-(`abkit/stats/sequential/`, `TestResult.ci_kind`, `supports_sequential`, 81 tests,
-`statistics-changes.md §4.1`). WP2 = the A/A D8 column end-to-end across all three
-surfaces (scorer + `_ab_aa_runs` persistence + report/chip), incl. the headline
-peeking→always-valid recovery test, the byte-identity parity test (one engine + one
-τ² helper), and the rebuilt `report.js`. Goldens untouched, no `ALGORITHM_VERSION`
-moved, ruff/black + web tsc/jsdom clean. **WP2 is the validation gate — it is green,
-so WP3 (activation) may proceed.** Branch `claude/m5-plan` off `main`
+**Status: WP1 + WP2 + WP3 part 1 shipped; WP3 parts 2–3 next.** WP1 = the sequential
+engine (`abkit/stats/sequential/`, `TestResult.ci_kind`, `supports_sequential`, 81
+tests, `statistics-changes.md §4.1`). WP2 = the A/A D8 column end-to-end (scorer +
+`_ab_aa_runs` persistence + report/chip), incl. the peeking→always-valid recovery test,
+the one-engine/one-τ² parity test, and the rebuilt `report.js`. **WP3 part 1** = the
+pipeline activation: `analyze_cutoff` widens each eligible pair via `to_always_valid`
+(`stats/sequential/apply.py`), the driver freezes per-pair τ² from the **first usable
+look** (D-Seq-anchor, below), `enrich` emits `result.ci_kind`, and `scheme:
+alpha_spending` is a "planned M6" config error. Goldens untouched, no
+`ALGORITHM_VERSION` moved, ruff/black + web tsc/jsdom clean; the full suite is green.
+**Remaining in WP3: part 2 = the toggle self-invalidation (B4 — enabling sequential on
+an EXISTING experiment silently no-ops today; WP3 part 1 works on fresh experiments),
+part 3 = explore live-recompute threading (B5).** Then WP4–WP9. Branch `claude/m5-plan`
+off `main`
 (all of M4 merged; working tree was clean at cut). This plan was produced by a
 design workflow (6 parallel spec+code readers → a synthesizer → 3 adversarial
 critics under refute-by-default) whose critics found six real defects in the
@@ -208,7 +214,7 @@ merge until D8 is green on the seeded fixture.
 
 ---
 
-### WP3 — pipeline + explore activation: thread `ci_kind`, self-invalidate the toggle, keep the cockpit consistent (A)
+### WP3 — pipeline + explore activation: thread `ci_kind`, self-invalidate the toggle, keep the cockpit consistent (A) — ⏳ part 1/3 DONE (transform + first-look τ² + ci_kind + config); parts 2 (toggle self-invalidation) + 3 (explore threading) REMAIN
 
 **Goal:** make `sequential.enabled: true` actually emit always-valid rows on a bare
 `abk run` **and** in the live explore recompute — the two compute paths — without
@@ -520,7 +526,17 @@ WP7 (extract composed rule) ── independent (M4 only) ──▶ WP8 (A/A D9 f
   delta-method covariance already baked into `ci_length`; method-agnostic; never
   re-derives arm variances. Rejected: rebuilding SE from per-arm std/size (drops the
   covariance term for relative/CUPED/ratio-delta — B3).
-- **D4 — τ² is fixed-by-policy from one shared helper** (`mixture_tau2(horizon_variance, α)`),
+- **D-Seq-anchor — τ² is anchored to the FIRST usable look** (maintainer-confirmed,
+  WP3). Anchoring to the horizon (statistically tightest at the planned stop) is not
+  live-computable during an ongoing experiment (the horizon is in the future) and would
+  make the pipeline and the A/A disagree; the first usable grid cutoff is **stable across
+  runs** (idempotent), **computable live**, and **tightest early** (aligned with the
+  always-valid use-case: the impatient experimenter peeks early). Both the pipeline
+  (`driver._sequential_tau2`) and the A/A (`scoring._cell_tau2`) use this rule + the
+  shared `mixture_tau2`. `mixture_tau2`'s arg was renamed `horizon_variance →
+  reference_variance`. Rejected: horizon-anchor (not live-computable; deferred to M6 with
+  `abk plan`'s planned-N), config planned-N (would block WP3 behind WP6).
+- **D4 — τ² is fixed-by-policy from one shared helper** (`mixture_tau2(reference_variance, α)`),
   anchored to horizon information N, called identically by pipeline (WP3) and A/A
   (WP2). Not user-facing config. A future τ² change is a `statistics-changes.md §4`
   entry **and** triggers the mode-provenance re-plan (D7) — never a silent CI move.
