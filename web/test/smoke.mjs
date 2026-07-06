@@ -103,6 +103,34 @@ test('pre-horizon latest cutoff renders the abk-prehorizon note', () => {
   assert.equal(mount.querySelector('[data-abk-prehorizon]').getAttribute('data-abk-prehorizon'), '1');
 });
 
+test('early decisive verdict promotes the weekly-cycle caveat to a chip (WP4 §6.5)', () => {
+  const payload = makePayload();
+  const v = payload.verdicts[0];
+  v.is_horizon = false;
+  v.weekly_cycle_pct = 5 / 7;
+  // Both caveats are present in the data; only the weekly one is promoted.
+  v.caveats = [
+    'covers 71% of a weekly cycle — day-of-week effects may not be represented',
+    'guardrail regressed — verdict kept under guardrail_policy: warn',
+  ];
+  const { mount } = renderInJsdom(payload);
+  const chip = mount.querySelector('.abk-verdict-head .abk-weekly-chip');
+  assert.ok(chip, 'weekly-cycle chip present in the verdict head');
+  assert.equal(chip.getAttribute('data-abk-weekly'), '1');
+  assert.match(chip.textContent, /covers 71% of a weekly cycle/);
+  // The promoted caveat is filtered out of the caveat list…
+  const caveatText = Array.from(mount.querySelectorAll('.abk-caveat')).map((li) => li.textContent);
+  assert.ok(!caveatText.some((t) => /of a weekly cycle/.test(t)), 'weekly caveat dropped from the list');
+  // …every other caveat still renders.
+  assert.ok(caveatText.some((t) => /guardrail regressed/.test(t)), 'non-weekly caveat kept');
+});
+
+test('a verdict without weekly_cycle_pct renders no weekly chip', () => {
+  // The default WIN fixture is at-horizon with no weekly_cycle_pct.
+  const { mount } = renderInJsdom(makePayload());
+  assert.ok(!mount.querySelector('.abk-weekly-chip'), 'no weekly chip when the field is absent');
+});
+
 test('insufficient_data cutoffs render the abk-insufficient note and grey audit rows', () => {
   const payload = makePayload();
   const series = payload.metrics[0].pairs[0].series;

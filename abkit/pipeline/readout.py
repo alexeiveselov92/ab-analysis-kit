@@ -123,6 +123,10 @@ class PairVerdict:
     significant: bool
     mde: float | None
     min_effect: float | None
+    #: Weekly-cycle coverage fraction (elapsed / 7d) when a decisive verdict is
+    #: called before one full weekly cycle, else ``None`` — the report promotes
+    #: it to a representativeness chip (§6.5). ``None`` on INCONCLUSIVE or ≥7d.
+    weekly_cycle_pct: float | None
     guardrails: tuple[GuardrailStatus, ...]
 
     def to_dict(self) -> dict[str, Any]:
@@ -514,10 +518,24 @@ def _pair_verdict(
         rationale.extend(extra_rationale)
         caveats.extend(extra_caveats)
         elapsed = _num(latest.get("elapsed_days")) if latest else None
-        if verdict != "INCONCLUSIVE" and elapsed is not None and elapsed < WEEKLY_CYCLE_DAYS:
+        decisive = verdict != "INCONCLUSIVE"
+        weekly_cycle_pct: float | None = None
+        if decisive and elapsed is not None and elapsed < WEEKLY_CYCLE_DAYS:
+            weekly_cycle_pct = elapsed / WEEKLY_CYCLE_DAYS
             caveats.append(
-                f"covers {elapsed / WEEKLY_CYCLE_DAYS:.0%} of a weekly cycle — "
+                f"covers {weekly_cycle_pct:.0%} of a weekly cycle — "
                 "day-of-week effects may not be represented"
+            )
+        # WP4 (§6.5): a decisive verdict reached *before* the planned horizon is
+        # only legitimate under an always-valid CI (fixed CIs are withheld above);
+        # name the reason so a reader isn't surprised by an early WIN/LOSE/FLAT.
+        latest_ci_kind = str(latest.get("ci_kind") or "fixed") if latest else "fixed"
+        latest_is_horizon = _flag(latest.get("is_horizon")) if latest else False
+        if decisive and not latest_is_horizon and latest_ci_kind == "always_valid":
+            rationale.append(
+                "called before the planned horizon under an always-valid "
+                "confidence sequence — peeking-safe by construction (its "
+                "cumulative-peeking FPR is measured by `abk validate`)"
             )
         key = _row_key(latest) if latest else None
         latest_sig = sig_map.get(key, _Sig(False, 0)) if key else _Sig(False, 0)
@@ -540,6 +558,7 @@ def _pair_verdict(
             significant=latest_sig.significant,
             mde=mde_value,
             min_effect=comparison.min_effect,
+            weekly_cycle_pct=weekly_cycle_pct,
             guardrails=guardrails,
         )
 
@@ -570,12 +589,15 @@ def _pair_verdict(
         rationale.append(
             f"pre-horizon: latest cutoff covers {elapsed:.1f} of {horizon_days:.1f} "
             "planned days and fixed-horizon CIs are not peeking-valid — "
-            "WIN/LOSE/FLAT withheld until the horizon (sequential CIs land in M5)"
+            "WIN/LOSE/FLAT withheld until the horizon (enable `sequential: "
+            "{enabled: true}` on a sequential-eligible method for peeking-valid "
+            "early readouts)"
         )
         if experiment.sequential.enabled:
             caveats.append(
-                "sequential.enabled is set, but these rows carry fixed CIs "
-                "(sequential math lands in M5) — the pre-horizon refusal still applies"
+                "sequential.enabled is set, but these rows carry fixed CIs — the "
+                "method is not sequential-eligible (e.g. bootstrap) or this pair had "
+                "no usable look at the τ² anchor; the pre-horizon refusal still applies"
             )
         return build("INCONCLUSIVE", latest)
 

@@ -311,6 +311,28 @@ class TestPayloadShape:
         # never one per point — 8 points would be 8+ misses if regressed
         assert after.misses - before.misses <= 2
 
+    def test_verdict_bakes_weekly_cycle_pct_on_early_always_valid(self, tables):
+        # An always-valid series ending at day 5 (pre-horizon, < one weekly
+        # cycle) → an early WIN carrying the representativeness fraction (§6.5).
+        experiment = make_experiment(sequential={"enabled": True})
+        seed_series(tables, experiment, days=5, ci_kind="always_valid")
+        payload = build_report_payload(experiment, tables)
+
+        (verdict,) = payload["verdicts"]
+        assert verdict["verdict"] == "WIN"
+        assert verdict["weekly_cycle_pct"] == pytest.approx(5.0 / 7.0)
+
+    def test_verdict_weekly_cycle_pct_null_at_full_week(self, tables):
+        # The default 14-day series is at-horizon and ≥ 7 days → the key is
+        # always present (contract), the value is null.
+        experiment = make_experiment()
+        seed_series(tables, experiment)
+        payload = build_report_payload(experiment, tables)
+
+        (verdict,) = payload["verdicts"]
+        assert "weekly_cycle_pct" in verdict
+        assert verdict["weekly_cycle_pct"] is None
+
     def test_method_block_reflects_what_ran(self, tables):
         experiment = make_experiment()
         seed_series(tables, experiment, alpha=0.01)
