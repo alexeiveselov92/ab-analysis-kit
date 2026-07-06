@@ -912,15 +912,26 @@ must be NAMED with a clean, honest error/message where a user reaches for it (WP
 
 ## 7. Open questions for the maintainer (each needs a human decision)
 
-1. **PyPI publish (G1, credential-sensitive, irreversible).** Confirm the OIDC
-   trusted-publisher + the `pypi` GitHub environment are registered on PyPI for
-   `alexeiveselov92/ab-analysis-kit` (so `publish.yml` needs no token). **Rotate/revoke
-   the placeholder-upload token pasted in chat** (MEMORY `abkit-pypi.md`). Confirm the
-   first release version is **`0.1.0`** and Development Status → **`3 - Alpha`**. Who
-   pushes the `v0.1.0` tag?
-2. **Live deploy (G2, external infra).** Is `PIPELAB_DISPATCH_TOKEN` set on this repo? Is
-   the pipelab infra wired for `ab-analysis-kit-updated` and `abkit.pipelab.dev`
-   DNS/cert? Authorize widening `website.yml` `paths:` and letting the dispatch fire.
+1. **~~PyPI publish (G1)~~ — RESOLVED (2026-07-07).** OIDC **trusted publisher registered on
+   the existing PyPI project** `ab-analysis-kit` (owner `alexeiveselov92`, workflow
+   `publish.yml`, env `pypi`) — `publish.yml` needs no token. The **`pypi` GitHub environment
+   was created** (no required reviewer → the `on: tags v*` trigger is the gate; maintainer
+   wants hands-off). Token rotation **waived** by the maintainer (never exposed outside
+   Claude; trusted publishing uses no token). Version **`0.1.0`** + Dev Status **`3 - Alpha`**
+   confirmed (WP9 bumps `__version__`). Release: after WP10 green, `git tag v0.1.0 && git push`
+   on the maintainer's go. **⚠ never tag before WP9's bump** — `0.0.1.dev0` is already uploaded,
+   so a same-version re-tag is rejected.
+2. **~~Live deploy (G2)~~ — RESOLVED (2026-07-07).** pipelab fully wired:
+   **`PIPELAB_DISPATCH_TOKEN` set** on this repo; **DNS/cert auto** (wildcard `*.pipelab.dev`
+   + Traefik on first request — nothing to do); event **`ab-analysis-kit-updated`** caught by
+   pipelab `deploy-abkit.yml` (existing `SSH_PRIVATE_KEY` + `SERVER_IP`/`DOMAIN` vars, no new
+   pipelab secrets). **Image contract `ghcr.io/alexeiveselov92/ab-analysis-kit-web:latest`** —
+   our `website.yml` already pushes exactly this tag + event (verified), so no compose change.
+   pipelab is already deployed + waiting (its shared deploy tolerated the not-yet-built image
+   gracefully). **G2 order (image-first):** WP7 merges `website/Dockerfile` → `website.yml`
+   auto-builds+pushes the GHCR image + fires the dispatch → **make the GHCR package public**
+   (one-time) → `abkit-web` comes up (next dispatch or `make abkit-update`). Path-widening
+   (`docs/**`/`.claude/rules/**`/`CHANGELOG.md`) lands with the Dockerfile.
 3. **Branding assets.** Are the finalized abkit **palette + logo/light-dark lockups +
    favicon** available from Claude design yet? Is the `DesignSync` tool the intended
    mechanism to pull them? If not ready, confirm the placeholder-then-swap strategy (WP7,
