@@ -12,6 +12,13 @@ import numpy as np
 from abkit.validate.panel import PanelCutoff, PlaceboPanel
 
 
+def _unit_ids(n_units: int, unit_offset: int) -> np.ndarray:
+    """Stable per-unit ids ``u{offset}..u{offset+n-1}`` — the composed family sweep aligns
+    its shared assignment through these (a ``unit_offset`` builds overlapping/disjoint
+    cohorts for the union-cohort test)."""
+    return np.array([f"u{unit_offset + i}" for i in range(n_units)], dtype=object)
+
+
 def normal_panel(
     *,
     n_units: int,
@@ -20,12 +27,14 @@ def normal_panel(
     mu: float = 10.0,
     sigma: float = 3.0,
     with_covariate: bool = False,
+    unit_offset: int = 0,
 ) -> PlaceboPanel:
     """A cumulative-random-walk A/A panel: unit value at cutoff k = Σ increments≤k.
 
     All units are present from the first cutoff; ``elapsed_days`` is ``1..n_cutoffs``;
     the last cutoff is the horizon. With ``with_covariate`` a correlated per-unit
     covariate is attached (fixed pre-period constant), exercising the CUPED path.
+    ``unit_offset`` shifts the unit ids (for the family sweep's union-cohort tests).
     """
     rng = np.random.default_rng(seed)
     increments = rng.normal(mu, sigma, size=(n_units, n_cutoffs))
@@ -54,10 +63,13 @@ def normal_panel(
         input_kind="sample",
         kept_grid_points=n_cutoffs,
         total_grid_points=n_cutoffs,
+        unit_ids=_unit_ids(n_units, unit_offset),
     )
 
 
-def fraction_panel(*, n_units: int, seed: int, base_rate: float = 0.2) -> PlaceboPanel:
+def fraction_panel(
+    *, n_units: int, seed: int, base_rate: float = 0.2, unit_offset: int = 0
+) -> PlaceboPanel:
     """A single-cutoff Bernoulli A/A panel (0/1 outcomes, nobs=1) for the z-test path."""
     rng = np.random.default_rng(seed)
     outcomes = (rng.random(n_units) < base_rate).astype(np.float64)
@@ -76,4 +88,5 @@ def fraction_panel(*, n_units: int, seed: int, base_rate: float = 0.2) -> Placeb
         input_kind="fraction",
         kept_grid_points=1,
         total_grid_points=1,
+        unit_ids=_unit_ids(n_units, unit_offset),
     )

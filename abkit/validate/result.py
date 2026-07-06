@@ -51,6 +51,27 @@ class CellResult:
 
 
 @dataclass(frozen=True)
+class FamilyResult:
+    """The composed multi-metric FWER/FDR family sweep (D9/WP8), persisted as a sentinel
+    ``_ab_aa_runs`` row (``metric='__family__'``) whose ``details`` carry these numbers."""
+
+    correction: str
+    n_metrics: int
+    n_null_metrics: int
+    metrics: tuple[str, ...]
+    iterations: int
+    valid_iterations: int
+    fwer: float | None  # empirical family-wise error (any false rejection)
+    fdr: float | None  # empirical false-discovery rate (mean FDP)
+    any_rejection_rate: float | None
+    budget: float | None
+    over_budget: bool
+    alpha: float  # the family-wide (pre-correction) significance the sweep ran at
+    verdict: str
+    warnings: tuple[str, ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True)
 class AaValidateResult:
     """The whole validate run for one experiment."""
 
@@ -58,3 +79,6 @@ class AaValidateResult:
     run_stamp: str
     cells: tuple[CellResult, ...]
     decision_log: tuple[DecisionEntry, ...] = field(default_factory=tuple)
+    #: The composed multi-metric FWER/FDR sweep (D9), or None when there are fewer than
+    #: two declared comparisons / a single-metric filter (no family to compose).
+    family: FamilyResult | None = None

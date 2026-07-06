@@ -11,8 +11,31 @@
 
 ## 0. Progress & resume note (2026-07-06)
 
-**Status: WP1 + WP2 + WP3 (all 3 parts) + WP4 + WP5 + WP6 + WP7 shipped; WP8
-(the composed-FDR family sweep) + WP9 exit gate remain.** WP7 = the
+**Status: WP1 + WP2 + WP3 (all 3 parts) + WP4 + WP5 + WP6 + WP7 + WP8 shipped;
+WP9 exit gate remains.** WP8 = the composed multi-metric FWER/FDR family sweep: a pure
+`abkit/validate/family.py` (`sweep_family`/`FamilyMember`/`FamilyScore`) that, per
+iteration, draws ONE unit→arm assignment over the **union** of the members' cohorts
+(aligned via the new additive `PlaceboPanel.unit_ids`, populated by `load.py` from the
+already-computed `global_units`), scores every metric at its horizon under that shared
+assignment (`present_positions`/`build_arm`, `inject_multiplicative` into the treatment
+arm for planted members), applies the WP7 `composed_significance`, and tallies empirical
+**FWER** (any false rejection; false = a rejection on a null member) + **FDR** (mean
+FDP = false/max(1,total)). Under the complete null FWER==FDR by construction; a planted
+effect leaves the null metrics controlled (D12). `runner._run_family_sweep` builds the
+family from the declared comparisons (reusing the per-cell `panel_cache`), runs the
+null sweep at each comparison's effective two-tier alpha under the experiment's
+correction, and attaches a `FamilyResult`; `persistence.py` emits ONE sentinel
+`_ab_aa_runs` row (`metric='__family__'`, `method_config_id='__composed__'`) with the
+numbers in `details` — **no schema/column change** (AA_RUN_COLUMNS is strict + auto-
+derived), never lights the D3 chip (`find_calibration` keys by a real metric), excluded
+from the report matrix by `calibration._family_block` + rendered as a composed-family
+band (`report.ts`; `report.js` rebuilt, explore.js byte-identical). Fixed-horizon only
+(sequential × composed → M6). Empirically green: NULL Bonferroni FWER≈0.050, NULL BH
+FDR≈0.048, planted → null-metric FWER≈0.038 / FDR≈0.019. Tests:
+`tests/validate/test_family_sweep.py` (9), `test_runner.py` (+3), `test_persistence.py`
+(+1), `tests/reporting/test_calibration.py` (+3), `web/test/smoke.mjs` (+2), and the M4
+exit-gate e2e updated for the sentinel. Full suite 1555 passed / 1 skipped; ruff+black
+clean, tsc clean, goldens untouched, no `ALGORITHM_VERSION` moved. WP7 = the
 behavior-preserving extraction of the composed multiple-testing rule (two-tier
 Bonferroni ∘ read-time Benjamini-Hochberg) out of the readout's inline
 `_build_sig_map` into a pure shared helper `stats/correction.py::composed_significance`
@@ -512,7 +535,7 @@ call it with zero verdict change (snapshot-pinned).
 
 ---
 
-### WP8 — A/A matrix D9: the composed multi-metric FDR/FWER empirical sweep (engine + persistence + report, A)
+### WP8 — A/A matrix D9: the composed multi-metric FDR/FWER empirical sweep (engine + persistence + report, A) ✅ DONE
 
 **Goal:** the full composed multiple-testing validation — empirical family-wise
 error (from two-tier Bonferroni) **and** false-discovery rate (from read-time BH)

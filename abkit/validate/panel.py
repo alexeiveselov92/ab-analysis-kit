@@ -57,3 +57,8 @@ class PlaceboPanel:
     input_kind: str
     kept_grid_points: int
     total_grid_points: int
+    #: The actual unit ids at global index ``i`` (sorted unit order — the horizon
+    #: universe). Lets the composed family sweep (D9/WP8) share ONE unit→arm assignment
+    #: across metrics with different cohorts (a unit's ``unit_ids[j]`` is looked up in the
+    #: family-wide union mask). ``None`` on a panel built before WP8 (defensive).
+    unit_ids: npt.NDArray | None = None

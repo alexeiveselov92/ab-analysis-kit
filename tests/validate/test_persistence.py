@@ -111,6 +111,60 @@ def test_saved_rows_flip_the_calibration_chip(warehouse):
     assert mism.state == "alpha_mismatch"
 
 
+def _multi_metric_experiment(name: str):
+    from abkit.config.experiment_config import ExperimentConfig
+
+    return ExperimentConfig.model_validate(
+        {
+            "name": name,
+            "start_date": "2024-07-01",
+            "end_date": "2024-07-04",
+            "unit_key": "user_id",
+            "alpha": 0.05,
+            "correction": "bonferroni",
+            "assignment": {
+                "query": "SELECT user_id, variant, exposure_ts FROM assignments",
+                "variants": ["control", "treatment"],
+                "expected_split": {"control": 0.5, "treatment": 0.5},
+            },
+            "comparisons": [
+                {"metric": "arpu", "is_main_metric": True, "method": {"name": "t-test"}},
+                {"metric": "conversion", "method": {"name": "z-test"}},
+            ],
+        }
+    )
+
+
+def test_family_sentinel_row_is_persisted_and_shaped(warehouse):
+    """D9/WP8: a multi-metric run appends one composed-family sentinel row whose details
+    carry the FWER/FDR, satisfying save_aa_run and never colliding with a real cell."""
+    experiment = _multi_metric_experiment("aa_family")
+    records = aa_run_records(_run(experiment, warehouse))
+    sentinels = [r for r in records if r["metric"] == "__family__"]
+    assert len(sentinels) == 1
+    sentinel = sentinels[0]
+    assert set(AA_RUN_COLUMNS).issubset(sentinel)  # save_aa_run requires every key
+    assert sentinel["method_config_id"] == "__composed__"
+    assert sentinel["fpr"] is None and sentinel["power"] is None  # numerics live in details
+    import json
+
+    fam = json.loads(sentinel["details"])["family"]
+    assert fam["n_metrics"] == 2 and fam["fwer"] is not None
+    assert fam["fwer"] == fam["fdr"]  # complete-null identity
+    # a real cell + the sentinel share the run_stamp but have distinct run_ids
+    assert len({r["run_id"] for r in records}) == len(records)
+
+    # the sentinel persists and never lights the D3 chip (it is not a real metric)
+    tables = InternalTablesManager(warehouse)
+    tables.ensure_tables()
+    for record in records:
+        tables.save_aa_run(record)
+    status = find_calibration(
+        tables.get_aa_runs("aa_family"), "__family__", "__composed__", 0.05, 0.075
+    )
+    assert status.state == "uncalibrated"
+
+
 def test_failed_cell_is_persisted_but_never_calibrates(warehouse):
     # the CTR fixture is degenerate over a 4-day window -> a status='success' row with
     # fpr=None (never counts) ; ratio-delta has no analytic MDE

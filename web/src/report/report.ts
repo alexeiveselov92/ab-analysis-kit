@@ -51,6 +51,7 @@ import {
   token,
 } from '../shared/chart';
 import type {
+  CalibrationFamily,
   CalibrationRow,
   MetricBlock,
   PairBlock,
@@ -268,7 +269,8 @@ const CAL_COLS: string[] = [
 function buildCalibrationSection(payload: ReportPayload, charts: Chart[]): HTMLElement | null {
   const cal = payload.calibration;
   const rows = cal?.matrix_rows;
-  if (!cal || !rows || rows.length === 0) return null;
+  const hasRows = !!rows && rows.length > 0;
+  if (!cal || (!hasRows && !cal.family)) return null;
 
   const section = el('section', 'abk-calibration-matrix');
   const head = el('div', 'abk-cal-head');
@@ -276,6 +278,13 @@ function buildCalibrationSection(payload: ReportPayload, charts: Chart[]): HTMLE
   head.appendChild(el('h2', 'abk-cal-title', 'A/A false-positive matrix'));
   if (cal.headline) head.appendChild(el('div', 'abk-cal-headline', cal.headline));
   section.appendChild(head);
+
+  // the composed multi-metric FWER/FDR band (D9/WP8), above the per-metric matrix
+  if (cal.family) {
+    const fam = buildCalibrationFamily(cal.family);
+    if (fam) section.appendChild(fam);
+  }
+  if (!hasRows) return section;
 
   // group rows by metric, preserving first-seen order (no Map iteration downlevel)
   const order: string[] = [];
@@ -292,6 +301,31 @@ function buildCalibrationSection(payload: ReportPayload, charts: Chart[]): HTMLE
     section.appendChild(buildCalibrationMetric(metric, byMetric[metric], charts));
   }
   return section;
+}
+
+/** The composed multi-metric FWER/FDR band (D9/WP8): the family-level loop the per-cell
+ * peeking FPR does not close. Reuses the `--abk-st-*` status tokens (no new hex). */
+function buildCalibrationFamily(family: CalibrationFamily): HTMLElement | null {
+  if (family.fwer == null && family.fdr == null) return null;
+  const wrap = el('div', 'abk-cal-family');
+  wrap.setAttribute('data-abk-family', family.over_budget ? 'over' : 'ok');
+  const n = family.n_metrics ?? (family.metrics ? family.metrics.length : 0);
+  const scheme = family.correction ?? 'composed';
+  wrap.appendChild(el('div', 'abk-cal-family-title', `Composed multiple testing · ${scheme} · ${n} metrics`));
+
+  const stats = el('div', 'abk-cal-family-stats');
+  const stat = (label: string, value: string, over?: boolean) => {
+    const s = el('span', over ? 'abk-cal-family-stat abk-cal-fpr-over' : 'abk-cal-family-stat');
+    s.appendChild(el('span', 'abk-cal-family-l', label));
+    s.appendChild(el('span', 'abk-cal-family-v', value));
+    stats.appendChild(s);
+  };
+  stat('family-wise error', pct(family.fwer), family.over_budget);
+  stat('false-discovery rate', pct(family.fdr));
+  if (family.budget != null) stat('budget', pct(family.budget));
+  wrap.appendChild(stats);
+  if (family.verdict) wrap.appendChild(el('div', 'abk-cal-family-verdict', family.verdict));
+  return wrap;
 }
 
 function buildCalibrationMetric(
@@ -1294,6 +1328,16 @@ function injectStyle(): void {
 .${ROOT_CLASS} .abk-cal-head{margin-bottom:10px;}
 .${ROOT_CLASS} .abk-cal-title{font-size:16px;font-weight:700;margin:0;}
 .${ROOT_CLASS} .abk-cal-headline{margin-top:4px;font-size:12.5px;font-family:var(--abk-mono);color:var(--abk-ink-2);}
+.${ROOT_CLASS} .abk-cal-family{margin:12px 0;padding:10px 12px;border:1px solid var(--abk-border);
+  border-radius:6px;background:var(--abk-card);}
+.${ROOT_CLASS} .abk-cal-family[data-abk-family="over"]{border-color:var(--abk-st-critical);
+  background:color-mix(in srgb, var(--abk-st-critical) 6%, transparent);}
+.${ROOT_CLASS} .abk-cal-family-title{font-size:13px;font-weight:600;color:var(--abk-ink);}
+.${ROOT_CLASS} .abk-cal-family-stats{margin-top:6px;display:flex;flex-wrap:wrap;gap:16px;
+  font-family:var(--abk-mono);font-size:12px;}
+.${ROOT_CLASS} .abk-cal-family-l{color:var(--abk-muted);margin-right:6px;}
+.${ROOT_CLASS} .abk-cal-family-v{color:var(--abk-ink);font-weight:600;}
+.${ROOT_CLASS} .abk-cal-family-verdict{margin-top:6px;font-size:12px;font-family:var(--abk-mono);color:var(--abk-ink-2);}
 .${ROOT_CLASS} .abk-cal-metric{margin:14px 0;}
 .${ROOT_CLASS} .abk-cal-metric-name{font-size:13px;font-weight:600;margin:0 0 6px;color:var(--abk-ink);}
 .${ROOT_CLASS} .abk-cal-table{width:100%;border-collapse:collapse;font-size:12px;font-family:var(--abk-mono);}
