@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{background:#E9E3D6;color:#1B1916;font-family:'Schibsted Grotesk',system-ui,sans-serif;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+  ::selection{background:#6A45C4;color:#FBF9F3}
+  input[type=range]{accent-color:#6A45C4}
+</style>
+</helmet>
+
+<div data-screen-label="Explore cockpit" style="max-width:1280px;margin:0 auto;padding:26px 22px">
+
+  <!-- browser chrome -->
+  <div style="background:#EDE7DA;border:1px solid #D8D1C2;border-radius:14px 14px 0 0;padding:11px 16px;display:flex;align-items:center;gap:12px;border-bottom:none">
+    <div style="display:flex;gap:7px"><span style="width:11px;height:11px;border-radius:50%;background:#E5675B"></span><span style="width:11px;height:11px;border-radius:50%;background:#E0A23B"></span><span style="width:11px;height:11px;border-radius:50%;background:#2E9E73"></span></div>
+    <div style="flex:1;background:#FBF9F3;border:1px solid #E0D9CA;border-radius:8px;padding:6px 14px;font-family:'JetBrains Mono',monospace;font-size:12px;color:#6E675B;display:flex;align-items:center;gap:8px"><span style="color:#1E9E6A">●</span>localhost:8713/explore/checkout_v2</div>
+    <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#9A9384">abk explore</span>
+  </div>
+
+  <!-- app shell -->
+  <div style="background:#F5F1E8;border:1px solid #D8D1C2;border-radius:0 0 14px 14px;overflow:hidden">
+
+    <!-- top bar -->
+    <div style="display:flex;align-items:center;gap:16px;padding:14px 22px;border-bottom:1px solid #E6E0D4;background:#FBF9F3">
+      <div style="display:flex;align-items:center;gap:10px">
+        <svg width="26" height="26" viewBox="0 0 100 100"><rect x="3" y="3" width="94" height="94" rx="26" fill="#6A45C4"/><polyline points="13,50 34,50" fill="none" stroke="#FBF9F3" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/><polyline points="34,50 86,27" fill="none" stroke="#FBF9F3" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/><polyline points="34,50 86,61" fill="none" stroke="#FBF9F3" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="86" cy="27" r="6.5" fill="#FBF9F3"/></svg>
+        <span style="font-size:16px;font-weight:700;letter-spacing:-.01em">explore</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;padding:6px 12px;background:#F2EEE4;border:1px solid #E6E0D4;border-radius:9px;font-size:13.5px;font-weight:600">checkout_v2<span style="color:#9A9384;font-weight:400">▾</span></div>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#9A9384;line-height:1.4">latest cutoff 2026-06-30 12:00Z<br>watermark 2026-06-30 12:00Z · fresh</div>
+      <div style="margin-left:auto;display:flex;gap:5px;background:#EDE7DA;padding:4px;border-radius:10px">
+        <sc-for list="{{ modes }}" as="md" hint-placeholder-count="4">
+          <button onClick="{{ md.onClick }}" style="{{ md.style }}">{{ md.label }}</button>
+        </sc-for>
+      </div>
+      <button onClick="{{ onApply }}" style="{{ applyStyle }}">{{ applyLabel }}</button>
+    </div>
+
+    <!-- metric tabs -->
+    <div style="display:flex;align-items:center;gap:4px;padding:10px 22px;border-bottom:1px solid #E6E0D4;background:#F5F1E8">
+      <sc-for list="{{ metricTabs }}" as="mt" hint-placeholder-count="3">
+        <button onClick="{{ mt.onClick }}" style="{{ mt.style }}"><span>{{ mt.label }}</span><span style="{{ mt.tagStyle }}">{{ mt.tag }}</span></button>
+      </sc-for>
+    </div>
+
+    <!-- body: side rail + windshield -->
+    <div style="display:grid;grid-template-columns:264px 1fr">
+
+      <!-- SIDE RAIL -->
+      <div style="border-right:1px solid #E6E0D4;background:#FBF9F3;padding:18px 18px 24px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+          <span style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#9A9384">Method params</span>
+          <div style="display:flex;gap:3px;background:#EDE7DA;padding:3px;border-radius:8px">
+            <button onClick="{{ basicTab.onClick }}" style="{{ basicTab.style }}">Basic</button>
+            <button onClick="{{ advTab.onClick }}" style="{{ advTab.style }}">Adv</button>
+          </div>
+        </div>
+
+        <!-- test_type -->
+        <div style="font-size:12px;color:#6E675B;font-weight:600;margin-bottom:8px">Test type</div>
+        <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:20px">
+          <sc-for list="{{ testTypes }}" as="tt" hint-placeholder-count="3">
+            <button onClick="{{ tt.onClick }}" style="{{ tt.style }}"><span>{{ tt.label }}</span><span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#9A9384">{{ tt.note }}</span></button>
+          </sc-for>
+        </div>
+
+        <!-- alpha -->
+        <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:6px"><span style="font-size:12px;color:#6E675B;font-weight:600">Alpha (α)</span><span style="font-family:'JetBrains Mono',monospace;font-size:12px;color:#6A45C4;font-weight:600">{{ alphaLabel }}</span></div>
+        <input type="range" min="0.01" max="0.1" step="0.01" value="{{ alpha }}" onInput="{{ onAlpha }}" style="width:100%;margin-bottom:4px">
+        <div style="display:flex;justify-content:space-between;font-family:'JetBrains Mono',monospace;font-size:9.5px;color:#B7AF9E;margin-bottom:20px"><span>0.01</span><span>0.10</span></div>
+
+        <!-- CUPED -->
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px"><div><div style="font-size:13px;font-weight:600;color:#4A443B">CUPED</div><div style="font-size:11px;color:#9A9384">variance reduction</div></div><button onClick="{{ onCuped }}" style="{{ cupedToggle }}"><span style="{{ cupedKnob }}"></span></button></div>
+
+        <!-- ADVANCED -->
+        <sc-if value="{{ showAdv }}" hint-placeholder-val="{{ true }}">
+          <div style="border-top:1px solid #E6E0D4;padding-top:16px">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px"><div><div style="font-size:13px;font-weight:600;color:#4A443B">Stratify</div><div style="font-size:11px;color:#9A9384">country · platform</div></div><button onClick="{{ onStratify }}" style="{{ stratToggle }}"><span style="{{ stratKnob }}"></span></button></div>
+            <div style="font-size:12px;color:#6E675B;font-weight:600;margin-bottom:6px">CUPED covariate</div>
+            <div style="font-size:12.5px;padding:8px 11px;border:1px solid #E6E0D4;border-radius:8px;background:#F2EEE4;color:#4A443B;margin-bottom:14px;display:flex;justify-content:space-between">pre_checkout_7d<span style="color:#9A9384">▾</span></div>
+            <div style="font-size:12px;color:#6E675B;font-weight:600;margin-bottom:6px">Bootstrap iters</div>
+            <div style="font-family:'JetBrains Mono',monospace;font-size:12px;color:#9A9384;padding:8px 11px;border:1px solid #E6E0D4;border-radius:8px;background:#F2EEE4;margin-bottom:14px">2,000</div>
+            <div style="font-size:12px;color:#6E675B;font-weight:600;margin-bottom:6px">Correction</div>
+            <div style="font-size:12.5px;padding:8px 11px;border:1px solid #E6E0D4;border-radius:8px;background:#F2EEE4;color:#4A443B;margin-bottom:6px;display:flex;justify-content:space-between">Holm<span style="color:#9A9384">▾</span></div>
+            <div style="font-size:11px;color:#9A9384;line-height:1.4">analysis unit <span style="font-family:'JetBrains Mono',monospace;color:#6E675B">user_id</span> · preview-only</div>
+          </div>
+        </sc-if>
+        <sc-if value="{{ showBasic }}" hint-placeholder-val="{{ true }}">
+          <div style="border-top:1px solid #E6E0D4;padding-top:14px;font-size:11.5px;color:#9A9384;line-height:1.5">Switch to <strong style="color:#6E675B;font-weight:600">Adv</strong> for stratification, covariate, bootstrap iters &amp; correction.</div>
+        </sc-if>
+      </div>
+
+      <!-- WINDSHIELD -->
+      <div style="padding:20px 24px 26px;background:#F5F1E8">
+
+        <!-- pinned chips -->
+        <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:18px">
+          <div style="background:#FBF9F3;border:1px solid #E6E0D4;border-radius:11px;padding:12px 14px"><div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#9A9384;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">Est. lift</div><div style="font-size:20px;font-weight:800;letter-spacing:-.01em;color:{{ cur.color }}">{{ cur.effect }}</div></div>
+          <div style="background:#FBF9F3;border:1px solid #E6E0D4;border-radius:11px;padding:12px 14px"><div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#9A9384;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">CI ±</div><div style="font-size:20px;font-weight:800;letter-spacing:-.01em">{{ cur.ciHalf }}</div></div>
+          <div style="background:#FBF9F3;border:1px solid #E6E0D4;border-radius:11px;padding:12px 14px"><div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#9A9384;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">p-value</div><div style="font-size:20px;font-weight:800;letter-spacing:-.01em">{{ cur.p }}</div></div>
+          <div style="background:#FBF9F3;border:1px solid #E6E0D4;border-radius:11px;padding:12px 14px"><div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#9A9384;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">Power</div><div style="font-size:20px;font-weight:800;letter-spacing:-.01em;color:{{ cur.powerColor }}">{{ cur.power }}</div></div>
+          <div style="background:{{ calib.bg }};border:1px solid {{ calib.border }};border-radius:11px;padding:12px 14px"><div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#9A9384;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">A/A real α</div><div style="font-size:20px;font-weight:800;letter-spacing:-.01em;color:{{ calib.color }}">{{ calib.value }}</div></div>
+          <div style="background:#FBF9F3;border:1px solid #E6E0D4;border-radius:11px;padding:12px 14px"><div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#9A9384;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">SRM</div><div style="font-size:20px;font-weight:800;letter-spacing:-.01em;color:#1E9E6A">pass</div></div>
+        </div>
+
+        <!-- chart -->
+        <div style="background:#FBF9F3;border:1px solid #E6E0D4;border-radius:14px;padding:18px 20px 14px">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:6px">
+            <div>
+              <div style="font-size:12.5px;color:#9A9384;margin-bottom:3px">{{ cur.metricName }} · cumulative effect vs control</div>
+              <div style="display:flex;align-items:baseline;gap:10px"><span style="font-size:30px;font-weight:800;letter-spacing:-.02em;color:{{ cur.color }}">{{ cur.effect }}</span><span style="font-family:'JetBrains Mono',monospace;font-size:13px;color:#6E675B">{{ cur.ci }}</span></div>
+            </div>
+            <span style="display:inline-flex;align-items:center;gap:6px;background:{{ cur.color }};color:#FBF9F3;padding:7px 14px;border-radius:9px;font-weight:700;font-size:13px;white-space:nowrap">{{ cur.badge }}</span>
+          </div>
+          <div>{{ chart }}</div>
+          <div style="display:flex;justify-content:space-between;font-family:'JetBrains Mono',monospace;font-size:10px;color:#9A9384;padding:0 2px;margin-top:2px"><span>day 1</span><span>day 11 · CUPED re-seed</span><span>horizon · day 22</span><span>day 30</span></div>
+        </div>
+
+        <!-- bottom: variant means + verdict -->
+        <div style="display:grid;grid-template-columns:1.15fr .85fr;gap:14px;margin-top:16px">
+          <div style="background:#FBF9F3;border:1px solid #E6E0D4;border-radius:14px;padding:16px 18px">
+            <div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#9A9384;margin-bottom:12px">Variant means</div>
+            <div style="display:grid;grid-template-columns:1.4fr 1fr 1fr .8fr;gap:8px 12px;font-size:13px;align-items:center">
+              <span style="font-size:11px;color:#9A9384;font-family:'JetBrains Mono',monospace"></span><span style="font-size:11px;color:#9A9384;font-family:'JetBrains Mono',monospace">value</span><span style="font-size:11px;color:#9A9384;font-family:'JetBrains Mono',monospace">std</span><span style="font-size:11px;color:#9A9384;font-family:'JetBrains Mono',monospace">n</span>
+              <span style="font-weight:600;color:#6E675B">control</span><span style="font-family:'JetBrains Mono',monospace">{{ cur.v1 }}</span><span style="font-family:'JetBrains Mono',monospace;color:#9A9384">{{ cur.sd1 }}</span><span style="font-family:'JetBrains Mono',monospace;color:#9A9384">48,102</span>
+              <span style="font-weight:600;color:#1B1916">treatment</span><span style="font-family:'JetBrains Mono',monospace;font-weight:600">{{ cur.v2 }}</span><span style="font-family:'JetBrains Mono',monospace;color:#9A9384">{{ cur.sd2 }}</span><span style="font-family:'JetBrains Mono',monospace;color:#9A9384">47,988</span>
+            </div>
+            <div style="border-top:1px solid #E6E0D4;margin-top:12px;padding-top:12px;display:flex;justify-content:space-between;align-items:center"><span style="font-size:12.5px;color:#6E675B">relative lift</span><span style="font-size:16px;font-weight:700;color:{{ cur.color }}">{{ cur.effect }}</span></div>
+          </div>
+          <div style="background:{{ cur.tint }};border:1px solid {{ cur.color }};border-radius:14px;padding:16px 18px">
+            <div style="display:inline-flex;align-items:center;gap:6px;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:{{ cur.color }};letter-spacing:.04em;margin-bottom:8px"><span style="width:8px;height:8px;border-radius:50%;background:{{ cur.color }}"></span>{{ cur.badge }}</div>
+            <div style="font-size:14px;line-height:1.5;color:#4A443B">{{ cur.rationale }}</div>
+          </div>
+        </div>
+
+        <!-- apply gate note -->
+        <div style="{{ gateNote.style }}">{{ gateNote.text }}</div>
+
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1280,&quot;height&quot;:880},&quot;metric&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;checkout&quot;,&quot;revenue&quot;,&quot;refund&quot;],&quot;default&quot;:&quot;checkout&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;State&quot;}}">
+class Component extends DCLogic {
+  state = {
+    metric: 'checkout', testType: 'cuped_t', alpha: 0.05, cuped: true, stratify: false,
+    mode: 'tune', adv: false,
+    validated: { testType: 'cuped_t', alpha: 0.05, cuped: true, stratify: false },
+  };
+
+  Phi(x) {
+    const t = 1 / (1 + 0.2316419 * Math.abs(x));
+    const d = 0.3989423 * Math.exp(-x * x / 2);
+    let p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))));
+    return x > 0 ? 1 - p : p;
+  }
+
+  zFor(a) {
+    const T = { 0.01: 2.576, 0.02: 2.326, 0.03: 2.170, 0.04: 2.054, 0.05: 1.960, 0.06: 1.881, 0.07: 1.812, 0.08: 1.751, 0.09: 1.695, 0.10: 1.645 };
+    return T[a.toFixed(2)] || 1.96;
+  }
+
+  chartSVG(cfg) {
+    const w = cfg.w, h = cfg.h, days = 30, horizon = 21;
+    const padL = 6, padR = 6, padT = 12, padB = 10;
+    let s = cfg.seed || 7;
+    const rnd = () => { s = (s * 1103515245 + 12345) & 0x7fffffff; return s / 0x7fffffff; };
+    const fin = cfg.effect, ciEnd = cfg.ci;
+    const effect = [], ciHalf = [];
+    for (let i = 0; i < days; i++) {
+      const t = i / (days - 1);
+      const conv = fin * (0.35 + 0.65 * t);
+      const noise = (rnd() - 0.5) * 2 * cfg.spread * (1 - t * 0.82);
+      effect.push(conv + noise);
+      ciHalf.push(ciEnd * Math.sqrt(days / (i + 1)));
+    }
+    effect[days - 1] = fin;
+    const vmax = cfg.vmax, vmin = cfg.vmin;
+    const X = i => padL + i / (days - 1) * (w - padL - padR);
+    const Y = v => padT + (vmax - v) / (vmax - vmin) * (h - padT - padB);
+    const zeroY = Y(0);
+    const up = effect.map((v, i) => [X(i), Y(v + ciHalf[i])]);
+    const lo = effect.map((v, i) => [X(i), Y(v - ciHalf[i])]);
+    const bandD = 'M' + up.map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' L') + ' L' + lo.reverse().map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ') + ' Z';
+    const linePts = effect.map((v, i) => X(i).toFixed(1) + ',' + Y(v).toFixed(1)).join(' ');
+    const iris = '#6A45C4', E = React.createElement;
+    return E('svg', { viewBox: `0 0 ${w} ${h}`, width: '100%', style: { display: 'block' } }, [
+      E('line', { key: 'z', x1: padL, y1: zeroY, x2: w - padR, y2: zeroY, stroke: '#B7AF9E', strokeWidth: 1.4, strokeDasharray: '4 4' }),
+      E('path', { key: 'b', d: bandD, fill: iris, fillOpacity: 0.14 }),
+      E('line', { key: 'hz', x1: X(horizon), y1: padT, x2: X(horizon), y2: h - padB, stroke: '#1E9E6A', strokeWidth: 1.3, strokeDasharray: '3 4' }),
+      E('polyline', { key: 'l', points: linePts, fill: 'none', stroke: iris, strokeWidth: 2.6, strokeLinecap: 'round', strokeLinejoin: 'round' }),
+      E('circle', { key: 'g', cx: X(days - 1), cy: Y(fin), r: 8, fill: iris, fillOpacity: 0.18 }),
+      E('circle', { key: 'd', cx: X(days - 1), cy: Y(fin), r: 4.5, fill: iris }),
+    ]);
+  }
+
+  fmtP(p) { return p < 0.001 ? '<0.001' : p.toFixed(3); }
+  sgn(x) { return (x >= 0 ? '+' : '\u2212') + Math.abs(x).toFixed(1) + '%'; }
+
+  renderVals() {
+    const st = this.state;
+    const base = {
+      checkout: { metricName: 'checkout_conversion', tag: 'main', effect: 4.2, se: 0.765, mde: 2.0, v1: '11.8%', v2: '12.3%', sd1: '32.3', sd2: '32.8', spread: 3.2, vmax: 9, vmin: -4, seed: 5 },
+      revenue:  { metricName: 'revenue_per_user', tag: 'secondary', effect: 1.9, se: 1.17, mde: 2.0, v1: '$62.9', v2: '$64.1', sd1: '41.9', sd2: '42.4', spread: 3.8, vmax: 8, vmin: -6, seed: 11 },
+      refund:   { metricName: 'refund_rate', tag: 'guardrail', effect: 0.1, se: 0.33, mde: 1.0, v1: '3.10%', v2: '3.11%', sd1: '17.3', sd2: '17.4', spread: 1.6, vmax: 3, vmin: -3, seed: 19 },
+    };
+    const m = base[st.metric];
+
+    // live recompute
+    let se = m.se;
+    if (st.cuped) se *= 0.76;      // ~42% variance reduction
+    if (st.stratify) se *= 0.93;
+    if (st.testType === 'bootstrap') se *= 1.02;
+    const z = this.zFor(st.alpha);
+    const ciH = z * se;
+    const lo = m.effect - ciH, hi = m.effect + ciH;
+    const tstat = Math.abs(m.effect) / se;
+    const p = 2 * (1 - this.Phi(tstat));
+    const power = this.Phi(m.mde / se - z);
+
+    let badge, color, tint, rationale;
+    if (lo > 0) { badge = 'WIN · stabilized'; color = '#1E9E6A'; tint = '#EAF5EF'; rationale = 'CI sits entirely above zero and has held past the horizon. Significant lift — ship treatment.'; }
+    else if (hi < 0) { badge = 'LOSE'; color = '#D6453D'; tint = '#FBECEB'; rationale = 'CI sits entirely below zero — a real regression. Roll back and investigate.'; }
+    else if (power >= 0.8) { badge = 'FLAT'; color = '#7A8595'; tint = '#EFF1F3'; rationale = 'CI includes zero while the study is well-powered for your MDE — a true no-change.'; }
+    else { badge = 'INCONCLUSIVE'; color = '#E0A23B'; tint = '#FBF3E4'; rationale = 'CI still crosses zero and power is below target. Keep running — or enable CUPED to tighten it.'; }
+
+    const cur = {
+      metricName: m.metricName, effect: this.sgn(m.effect), color, tint, badge,
+      ci: '95% CI [' + this.sgn(lo).replace('%', '') + ', ' + this.sgn(hi).replace('%', '') + '%]',
+      ciHalf: '\u00b1' + ciH.toFixed(1) + '%', p: this.fmtP(p),
+      power: power.toFixed(2), powerColor: power >= 0.8 ? '#1E9E6A' : '#E0A23B',
+      v1: m.v1, v2: m.v2, sd1: m.sd1, sd2: m.sd2, rationale,
+    };
+    const chart = this.chartSVG({ effect: m.effect, ci: ciH, spread: m.spread, vmax: m.vmax, vmin: m.vmin, seed: m.seed, w: 900, h: 210 });
+
+    // calibration + apply gating
+    const eq = (a, b) => a.testType === b.testType && Math.abs(a.alpha - b.alpha) < 1e-9 && a.cuped === b.cuped && a.stratify === b.stratify;
+    const calibrated = eq(st, st.validated);
+    const calib = calibrated
+      ? { value: (st.alpha * 0.98 * 100).toFixed(1) + '%', color: '#1E9E6A', bg: '#EAF5EF', border: '#1E9E6A' }
+      : { value: 'stale', color: '#E0A23B', bg: '#FBF3E4', border: '#E0A23B' };
+
+    const applyStyle = 'border:none;cursor:' + (calibrated ? 'pointer' : 'not-allowed') + ";font-family:'Schibsted Grotesk',sans-serif;font-size:13.5px;font-weight:700;padding:9px 20px;border-radius:9px;transition:all .15s;" +
+      (calibrated ? 'background:#6A45C4;color:#FBF9F3' : 'background:#E6E0D4;color:#9A9384');
+    const applyLabel = calibrated ? 'Apply → write YAML' : 'Apply (validate first)';
+    const onApply = () => { if (calibrated) this.setState({ applied: Date.now() }); };
+
+    const gateNote = calibrated
+      ? { text: '\u2713 Params match the last A/A validation \u2014 Apply archives experiments/.history/checkout_v2/ and writes method_params back to the YAML.', style: 'margin-top:14px;font-size:12.5px;color:#1E7A54;background:#EAF5EF;border:1px solid #B7E0CB;border-radius:10px;padding:11px 14px' }
+      : { text: '\u26a0 These params differ from the last validation \u2014 Apply is gated. Run  abk validate  (or the Auto mode) to measure the real \u03b1 before shipping.', style: 'margin-top:14px;font-size:12.5px;color:#8A5A12;background:#FBF3E4;border:1px solid #EAD6A6;border-radius:10px;padding:11px 14px' };
+
+    // controls
+    const mkSeg = (active, activeColor) => ({
+      border: 'none', cursor: 'pointer', fontFamily: "'Schibsted Grotesk',sans-serif", fontSize: '12px', fontWeight: 600,
+      padding: '6px 12px', borderRadius: '7px', background: active ? '#FBF9F3' : 'transparent',
+      color: active ? (activeColor || '#1B1916') : '#6E675B', boxShadow: active ? '0 1px 2px #00000014' : 'none', transition: 'all .15s',
+    });
+    const modes = [['tune', 'Tune'], ['auto', 'Auto'], ['segment', 'Segment'], ['review', 'Review']].map(([k, l]) => ({
+      label: l, style: mkSeg(st.mode === k), onClick: () => this.setState({ mode: k }),
+    }));
+    const metricTabs = Object.keys(base).map(k => {
+      const active = st.metric === k;
+      return {
+        label: base[k].metricName,
+        tag: base[k].tag,
+        tagStyle: 'font-family:JetBrains Mono,monospace;font-size:9.5px;padding:2px 6px;border-radius:5px;letter-spacing:.03em;' + (base[k].tag === 'guardrail' ? 'background:#F8EBF1;color:#B23A6B' : base[k].tag === 'main' ? 'background:#6A45C418;color:#6A45C4' : 'background:#EDE7DA;color:#9A9384'),
+        style: 'display:flex;align-items:center;gap:8px;border:1px solid ' + (active ? '#6A45C4' : '#E6E0D4') + ';cursor:pointer;font-family:Schibsted Grotesk,sans-serif;font-size:13px;font-weight:600;padding:7px 13px;border-radius:9px;transition:all .15s;background:' + (active ? '#FBF9F3' : 'transparent') + ';color:' + (active ? '#1B1916' : '#6E675B'),
+        onClick: () => this.setState({ metric: k }),
+      };
+    });
+    const testTypes = [['cuped_t', 'CUPED t-test', 'variance ↓'], ['welch_t', 'Welch t-test', 'means'], ['bootstrap', 'Bootstrap', 'paired']].map(([k, l, n]) => {
+      const active = st.testType === k;
+      return {
+        label: l, note: n,
+        style: 'display:flex;align-items:center;justify-content:space-between;border:1px solid ' + (active ? '#6A45C4' : '#E6E0D4') + ";cursor:pointer;font-family:'Schibsted Grotesk',sans-serif;font-size:12.5px;font-weight:600;padding:9px 11px;border-radius:8px;transition:all .15s;background:" + (active ? '#6A45C40F' : '#F2EEE4') + ';color:' + (active ? '#4F2F9E' : '#4A443B'),
+        onClick: () => this.setState({ testType: k, cuped: k === 'cuped_t' ? true : st.cuped }),
+      };
+    });
+    const toggle = (on) => 'border:none;cursor:pointer;width:38px;height:22px;border-radius:12px;position:relative;transition:all .15s;background:' + (on ? '#6A45C4' : '#D8D1C2');
+    const knob = (on) => 'position:absolute;top:2px;' + (on ? 'right:2px' : 'left:2px') + ';width:18px;height:18px;border-radius:50%;background:#fff;transition:all .15s';
+
+    return {
+      cur, chart, calib, applyStyle, applyLabel, onApply, gateNote,
+      modes, metricTabs, testTypes,
+      alpha: st.alpha, alphaLabel: st.alpha.toFixed(2), onAlpha: (e) => this.setState({ alpha: parseFloat(e.target.value) }),
+      onCuped: () => this.setState({ cuped: !st.cuped }), cupedToggle: toggle(st.cuped), cupedKnob: knob(st.cuped),
+      onStratify: () => this.setState({ stratify: !st.stratify }), stratToggle: toggle(st.stratify), stratKnob: knob(st.stratify),
+      showAdv: st.adv, showBasic: !st.adv,
+      basicTab: { style: mkSeg(!st.adv), onClick: () => this.setState({ adv: false }) },
+      advTab: { style: mkSeg(st.adv), onClick: () => this.setState({ adv: true }) },
+    };
+  }
+}
+</script>
+</body>
+</html>
