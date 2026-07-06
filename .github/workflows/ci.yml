@@ -156,7 +156,13 @@ jobs:
 
       - name: Mypy
         run: mypy abkit
-        continue-on-error: true  # mypy strict mode is aspirational; do not block PRs yet
+        # Aspirational, non-blocking. mypy now RUNS TO COMPLETION (the old
+        # "metric_config.py:48 Invalid syntax" bail was a stray `# type:` comment
+        # parsed as a PEP-484 type comment — fixed M6 WP1, not a numpy issue) and
+        # reports ~124 real strict-mode errors (mostly Optional-handling in
+        # recompute.py/readout.py). Clearing those is tracked debt (ROADMAP); until
+        # then keep this non-blocking so the numeric hot paths aren't rushed.
+        continue-on-error: true
 
       - name: Wheel ships the committed bundles
         # the real packaging gate (WP3 review finding): the source-tree tests

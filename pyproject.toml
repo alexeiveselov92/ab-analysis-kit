@@ -62,8 +62,10 @@ dev = [
     "pytest-cov>=4.0",
     "pytest-mock>=3.0",
     "requests-mock>=1.12",
-    "black>=23.0",
-    "mypy>=1.0",
+    # Pinned to the exact pre-commit versions so local pre-commit and CI never
+    # diverge on formatting/type-check results (ROADMAP tooling debt; M6 WP1).
+    "black==24.4.2",   # == .pre-commit-config.yaml psf/black rev
+    "mypy==1.10.0",    # == .pre-commit-config.yaml mirrors-mypy rev
     "ruff>=0.1.0",
 ]
 # Integration tests (require Docker)
@@ -140,7 +142,10 @@ extend-exclude = '''
 '''
 
 [tool.mypy]
-python_version = "3.10"
+# 3.12 so mypy parses numpy>=2.5's PEP-695 `type X = ...` stubs (they are 3.12+
+# syntax; under 3.10 mypy rejects them — abkit itself targets 3.10+ at runtime,
+# ruff/black still pin py310). See docs/specs/m6-implementation-plan.md WP1.
+python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
@@ -161,6 +166,7 @@ module = [
     "pymysql.*",
     "scipy.*",
     "statsmodels.*",
+    "yaml.*",
 ]
 ignore_missing_imports = true
 

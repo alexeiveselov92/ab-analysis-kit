@@ -13,6 +13,18 @@ number change).
 
 ## [Unreleased]
 
+### Fixed
+- **M6 WP1 — tooling debt root-caused + partly cleared (no behavior change).** The
+  long-standing "`mypy` fails on clean HEAD" was **not** a numpy issue: a stray comment
+  `# type: (required, optional)` in `abkit/config/metric_config.py` was parsed by mypy as a
+  PEP-484 type comment (`Invalid syntax`), making it bail before type-checking anything.
+  Reworded the comment; raised `[tool.mypy] python_version` to `3.12` (clears the secondary
+  numpy 2.5 PEP-695 stub error); added `yaml.*` to `ignore_missing_imports`. `mypy abkit` now
+  runs to completion (it reports ~124 real strict-mode errors, still `continue-on-error` —
+  tracked debt, they live in numeric hot paths). Pinned `[dev]` `black==24.4.2` and
+  `mypy==1.10.0` to the pre-commit revs so CI and local pre-commit cannot diverge (zero
+  reformat churn). No runtime code changed; goldens untouched; no `ALGORITHM_VERSION` moved.
+
 ### Added
 - **M5 — sequential analysis, the always-valid CI, `abk plan`, composed corrections.** Opt-in
   (`sequential: {enabled: true}`, **default off** — the fixed-horizon series is
