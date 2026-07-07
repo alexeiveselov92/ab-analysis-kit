@@ -59,6 +59,7 @@ export default defineConfig({
             { label: 'Sequential analysis', link: '/guides/sequential/' },
             { label: 'Planning', link: '/guides/plan/' },
             { label: 'Visualizing results', link: '/guides/visualizing-results/' },
+            { label: 'Notification channels', link: '/guides/notification-channels/' },
           ],
         },
         {

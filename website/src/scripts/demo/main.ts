@@ -89,8 +89,8 @@ function init(): void {
     out(
       'abk-demo-ci',
       latest.scored && latest.lo != null && latest.hi != null
-        ? `[${fmtVal(latest.lo)}, ${fmtVal(latest.hi)}]`
-        : '—',
+        ? `95% CI [${fmtVal(latest.lo)}, ${fmtVal(latest.hi)}]`
+        : '95% CI —',
     );
     out('abk-demo-p', latest.scored && latest.p != null ? `p ${fmtP(latest.p)}` : 'p —');
     out('abk-demo-n', `${latest.n1.toLocaleString()} vs ${latest.n2.toLocaleString()}`);

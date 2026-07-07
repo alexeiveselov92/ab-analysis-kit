@@ -24,38 +24,41 @@ export interface Margins {
 // ----------------------------------------------------------------------------
 
 // One brand-token layer: every color any abkit surface uses lives here as a
-// semantic CSS custom property with a placeholder fallback. The finalized
-// abkit palette (branding-and-site.md — decided in Claude design) drops in by
-// editing THIS table (and the mirrored CSS block in each renderer's
-// injectStyle) — no other code names a color. Placeholder values are the
-// validated dataviz reference palette (CVD-checked against the surfaces they
-// render on); status roles never impersonate series hues and always ship with
-// a text label.
+// semantic CSS custom property with its fallback value. The finalized abkit
+// palette (Iris Violet — docs/design/brand-tokens.md, decided in Claude design)
+// lives HERE and in the mirrored CSS block in each renderer's injectStyle — no
+// other code names a color. These are the FROZEN Iris values (M6 WP7b), kept in
+// value+name lockstep with website/src/styles/brand.css by the CI token-sync
+// gate: the self-contained report/explore bundles render on these when brand.css
+// is not loaded (the light warm-paper surface + the theme-independent dark chart
+// panel). Status roles never impersonate series hues and always ship a text
+// label; series slots are the iris family, CVD-safely apart from the win/lose
+// verdict greens/reds.
 export const TOKEN_FALLBACKS: Record<string, string> = {
-  // page + cards (light)
-  '--abk-page': '#f9f9f7',
-  '--abk-card': '#fcfcfb',
-  '--abk-ink': '#0b0b0b',
-  '--abk-ink-2': '#52514e',
-  '--abk-muted': '#898781',
-  '--abk-border': '#e1e0d9',
-  // the dark chart panel
-  '--abk-chart-bg': '#1a1a19',
-  '--abk-chart-border': '#2c2c2a',
-  '--abk-chart-ink': '#c3c2b7',
-  '--abk-chart-grid': '#898781',
-  // series (validated for the dark chart surface; slot order is fixed)
-  '--abk-series-1': '#3987e5',
-  '--abk-series-2': '#199e70',
-  // status roles (fixed; icon/word always accompanies the color)
-  '--abk-st-good': '#0ca30c',
-  '--abk-st-warn': '#fab219',
-  '--abk-st-serious': '#ec835a',
-  '--abk-st-critical': '#d03b3b',
-  // success-colored TEXT on the light surface needs the darker step
-  '--abk-good-text': '#006300',
-  // the explore cockpit's page accent (favicon, badges, Apply — tuning/html.py)
-  '--abk-explore-accent': '#2e7d5b',
+  // page + cards — the light warm-paper surface (report/explore default theme)
+  '--abk-page': '#f5f1e8', // --paper
+  '--abk-card': '#fbf9f3', // --surface
+  '--abk-ink': '#1b1916', // --ink
+  '--abk-ink-2': '#6e675b', // --muted
+  '--abk-muted': '#9a9384', // --subtle
+  '--abk-border': '#e6e0d4', // --border
+  // the dark chart panel (theme-independent — dark on both site themes)
+  '--abk-chart-bg': '#211e1a', // --surface-raised
+  '--abk-chart-border': '#332f29', // --border-dark
+  '--abk-chart-ink': '#c9c2b4', // bright chart text
+  '--abk-chart-grid': '#9a9384', // gridlines + axis ticks (--subtle)
+  // series (iris family on the dark panel; slot order is fixed)
+  '--abk-series-1': '#c9a6f0', // iris-on-dark — primary / cumulative-effect line
+  '--abk-series-2': '#8e76e0', // iris-alt-dark — secondary / arm B
+  // status roles (verdict palette; icon/word always accompanies the color)
+  '--abk-st-good': '#1e9e6a', // --win     — within budget
+  '--abk-st-warn': '#e0a23b', // --inconclusive — mild excess
+  '--abk-st-serious': '#d6453d', // --lose  — out of budget
+  '--abk-st-critical': '#b23a6b', // --srm  — badly out / withheld
+  // success-colored TEXT on the light paper surface needs the darker step
+  '--abk-good-text': '#15774e',
+  // the explore cockpit's page accent = Iris (never green; green is WIN)
+  '--abk-explore-accent': '#6a45c4',
 };
 
 /** Read a brand CSS custom property off :root, falling back to the placeholder. */

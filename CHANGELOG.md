@@ -13,6 +13,30 @@ number change).
 
 ## [Unreleased]
 
+### Changed
+- **M6 WP7b — the self-contained `abk run --report` + `abk explore` surfaces now render in the
+  finalized Iris brand.** The one brand-token layer (`web/src/shared/chart.ts` `TOKEN_FALLBACKS`)
+  was frozen from placeholder values to the real Iris palette (`docs/design/brand-tokens.md`):
+  a warm-paper light page (`#f5f1e8`/`#1b1916`), a dark chart panel, the iris-family series
+  slots (`#c9a6f0`/`#8e76e0`), and the five verdict/status tokens (WIN `#1e9e6a` … SRM `#b23a6b`).
+  Both page shells (`abkit/reporting/html_report.py`, `abkit/tuning/html.py`) now carry the abkit
+  **"Diverge"** brand mark as their favicon (iris tile + paper strokes) and open on warm paper —
+  still fully self-contained (no network, no webfonts; system-font fallback). `report.js` +
+  `explore.js` rebuilt. The CI token-sync gate is **promoted to a hard value check** for the
+  theme-independent tokens now that the palette is frozen (per-theme surface tokens stay
+  value-skipped). WCAG-AA contrast recorded for the reskinned text surfaces (body/muted/accent on
+  paper and the dark chart panel all pass AA). No `abkit.stats` change; no `ALGORITHM_VERSION` moved.
+
+### Added
+- **M6 WP7b — an interactive stabilization demo on the landing page.** The marketing hero now
+  mounts a live `#abk-demo` widget (dial true effect / noise / traffic, watch the cumulative
+  effect + CI converge past the decision horizon and the WIN/LOSE/FLAT/INCONCLUSIVE verdict get
+  called). Its compute core (`website/src/scripts/demo/stats.ts`) is a TypeScript re-derivation of
+  `abkit.stats`, golden-parity-gated in CI (`check-demo-parity.mjs`, rel-1e-6), painted through the
+  shared framework-free renderer core (`web/src/shared/chart.ts`). Everything is client-side and
+  dependency-free. The `Notification channels` guide (`docs/guides/notification-channels.md`, WP5)
+  is now wired into the docs site (sidebar + `sync-docs` PAGES).
+
 ### Fixed
 - **`abk init` prod-profile env placeholders were double-wrapped (latent scaffold bug).**
   The `prod:` profiles in the three `abk init` templates used quadruple-brace

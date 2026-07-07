@@ -30,14 +30,18 @@ from importlib.resources import files
 
 from abkit.utils.json_utils import json_dumps_sorted
 
-# A small placeholder-brand tile (data-URI, no network): an A/B split square
-# using the placeholder accent from the one brand-token layer — swapped with
-# the finalized logo/palette per branding-and-site.md.
+# The abkit "Diverge" brand mark (data-URI, no network): an Iris tile with one
+# node fanning into two arms — control holds the baseline, treatment climbs to
+# the accented effect dot (docs/design/brand-tokens.md §Logo). Its two hexes
+# (%236a45c4 iris, %23fbf9f3 paper) live in the one brand-token layer
+# (web/src/shared/chart.ts TOKEN_FALLBACKS), pinned by the CI hex-containment gate.
 _FAVICON = (
-    "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'"
-    "%3E%3Crect width='32' height='32' rx='7' fill='%233987e5'/%3E%3Crect x='17' y='6'"
-    " width='9' height='20' rx='2' fill='%23fcfcfb' opacity='0.55'/%3E%3Crect x='6' "
-    "y='12' width='9' height='14' rx='2' fill='%23fcfcfb'/%3E%3C/svg%3E"
+    "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'"
+    "%3E%3Crect x='3' y='3' width='94' height='94' rx='26' fill='%236a45c4'/%3E"
+    "%3Cg fill='none' stroke='%23fbf9f3' stroke-width='9' stroke-linecap='round'"
+    " stroke-linejoin='round'%3E%3Cpolyline points='13 50 34 50'/%3E"
+    "%3Cpolyline points='34 50 86 27'/%3E%3Cpolyline points='34 50 86 61'/%3E%3C/g%3E"
+    "%3Ccircle cx='86' cy='27' r='7' fill='%23fbf9f3'/%3E%3C/svg%3E"
 )
 
 _TEMPLATE = """<!doctype html>
@@ -51,7 +55,7 @@ _TEMPLATE = """<!doctype html>
 /* Page shell only — the renderer injects its own scoped styles and the one
    brand-token layer (web/src/report/report.ts injectStyle). System fonts:
    the report must open file:// with zero network requests. */
-html,body{margin:0;background:#f9f9f7;color:#0b0b0b;
+html,body{margin:0;background:#f5f1e8;color:#1b1916;
   font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;}
 *{box-sizing:border-box;}
 </style>
