@@ -1,0 +1,178 @@
+/*
+ * abkit brand theme — the SINGLE SOURCE of real token values for the site.
+ *
+ * Derived verbatim from docs/design/brand-tokens.md (the finalized Iris palette).
+ * abkit is detectkit's sibling: SAME warm paper / ink / type, only the accent hue
+ * moves — from clay to Iris Violet #6A45C4.
+ *
+ * Two contracts this file must hold:
+ *   1. The `--abk-*` tokens below are name-for-name in LOCKSTEP with
+ *      web/src/shared/chart.ts `TOKEN_FALLBACKS` (the CI token-sync gate pins the
+ *      two layers). chart.ts ships PLACEHOLDER values; the REAL values live HERE.
+ *      The landing demo imports chart.ts and reads these off :root via token().
+ *   2. Starlight `--sl-color-*` is mapped to the brand (warm neutrals shared with
+ *      detectkit verbatim; only the accent trio changes to Iris).
+ *
+ * Theme model (mirrors the donor): base :root = dark theme (Starlight default),
+ * :root[data-theme='light'] = the warm-paper light override. The DARK CHART PANEL
+ * tokens (--abk-chart-*, --abk-series-*) and the verdict/status tokens are
+ * theme-independent — the report/explore chart panel is dark on both site themes.
+ */
+
+/* ============================================================================
+ * Brand palette — the real Iris values (theme-independent)
+ * ==========================================================================*/
+
+:root {
+  /* ----- accent (the one thing that moves vs detectkit) ----- */
+  --iris: #6a45c4; /* primary accent · cumulative-effect line · CI band · links */
+  --iris-700: #4f2f9e; /* iris deep · hover/pressed */
+  --iris-tint: rgba(106, 69, 196, 0.14); /* CI-band fill / selected tint (14%) */
+
+  /* ----- warm bones (carried over from detectkit, verbatim) ----- */
+  --ink: #1b1916; /* primary text · dark tiles */
+  --muted: #6e675b; /* secondary text */
+  --subtle: #9a9384; /* tertiary / captions / axis labels */
+  --faint: #9a9384; /* alias of --subtle (donor-ported landing compat) */
+  --paper: #f5f1e8; /* page background */
+  --surface: #fbf9f3; /* card / elevated surface */
+  --border: #e6e0d4; /* hairline borders / grid major */
+  --grid: #eee9de; /* grid minor */
+  --zero-line: #b7af9e; /* chart "zero / no effect" dashed hairline */
+
+  /* ----- dark-surface variants (report/explore/CLI/chat cards) ----- */
+  --surface-raised: #211e1a; /* raised dark card */
+  --border-dark: #332f29; /* hairline on dark */
+  --fg-on-dark: #fbf9f3; /* text on dark */
+  --muted-on-dark: #7c766a; /* secondary text on dark */
+  --iris-on-dark: #c9a6f0; /* iris, lightened for AA on ink */
+  --iris-alt-dark: #8e76e0; /* secondary iris on dark (arm B) */
+  --win-on-dark: #6fcb8e; /* win, lightened for AA on ink */
+  --info-on-dark: #9fb8c4; /* method/label accent on dark */
+
+  /* ----- terminal surfaces (CLI demos on the landing) ----- */
+  --term-bg: #211e1a;
+  --term-border: #332f29;
+  --term-text: #c9c2b4;
+
+  /* ----- verdict semantics (every readout/chart/cockpit reads these five) ----- */
+  --win: #1e9e6a; /* WIN — significant lift (also decision-horizon marker) */
+  --lose: #d6453d; /* LOSE — significant harm */
+  --flat: #7a8595; /* FLAT — no detectable effect */
+  --inconclusive: #e0a23b; /* INCONCLUSIVE — underpowered / still converging */
+  --srm: #b23a6b; /* SRM — sample-ratio gate failed, results withheld */
+
+  /* ----- DB badge colors (carried from detectkit, verbatim) ----- */
+  --db-postgres: #336791;
+  --db-mysql: #00758f;
+  --db-clickhouse: #ffcc00; /* yellow tile, black text per legacy DbBadges */
+
+  /* ----- fonts (Google Fonts loaded by astro.config.mjs head; site chrome only) ----- */
+  --sl-font: 'Schibsted Grotesk', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --sl-font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* ============================================================================
+ * --abk-* token layer — LOCKSTEP with web/src/shared/chart.ts TOKEN_FALLBACKS.
+ * Same names; real Iris values here. Chart-panel + series + status are
+ * theme-independent; the surface subset (page/card/ink/…) flips with the theme.
+ * ==========================================================================*/
+
+:root {
+  /* --- the dark chart panel (constant across site themes) --- */
+  --abk-chart-bg: #211e1a; /* raised dark card — the plot panel */
+  --abk-chart-border: #332f29;
+  --abk-chart-ink: #c9c2b4; /* bright chart text (value labels) */
+  --abk-chart-grid: #9a9384; /* gridlines + axis tick labels (--subtle) */
+
+  /* --- series slots on the dark panel (iris family; slot order fixed) --- */
+  --abk-series-1: #c9a6f0; /* primary — the cumulative-effect line (iris-on-dark) */
+  --abk-series-2: #8e76e0; /* secondary — arm B / comparison (iris-alt-dark) */
+
+  /* --- status / A/A-matrix bands (verdict palette; word/icon always accompanies) --- */
+  --abk-st-good: #1e9e6a; /* --win     — within budget */
+  --abk-st-warn: #e0a23b; /* --inconclusive — mild excess */
+  --abk-st-serious: #d6453d; /* --lose  — out of budget */
+  --abk-st-critical: #b23a6b; /* --srm  — badly out / withheld */
+
+  /* --- explore cockpit page accent = IRIS (never green; green is WIN) --- */
+  --abk-explore-accent: #6a45c4;
+}
+
+/* ============================================================================
+ * Dark theme (Starlight default) — --abk-* surface subset + --sl-color-* mapping
+ * ==========================================================================*/
+
+:root {
+  /* --abk-* surfaces — dark */
+  --abk-page: #1b1916; /* --ink */
+  --abk-card: #211e1a; /* --surface-raised */
+  --abk-ink: #fbf9f3; /* --fg-on-dark */
+  --abk-ink-2: #c9c2b4; /* secondary text on dark */
+  --abk-muted: #7c766a; /* --muted-on-dark */
+  --abk-border: #332f29; /* --border-dark */
+  --abk-good-text: #6fcb8e; /* win-colored text on dark (--win-on-dark) */
+
+  /* Starlight accent trio → Iris (neutrals shared with detectkit, verbatim) */
+  --sl-color-accent-low: #2e1d5a;
+  --sl-color-accent: #6a45c4;
+  --sl-color-accent-high: #c9a6f0;
+  --sl-color-white: #fbf9f3;
+  --sl-color-gray-1: #ece7db;
+  --sl-color-gray-2: #c9c2b4;
+  --sl-color-gray-3: #9a9384;
+  --sl-color-gray-4: #6e675b;
+  --sl-color-gray-5: #403b34;
+  --sl-color-gray-6: #2a2620;
+  --sl-color-black: #1b1916;
+
+  --sl-color-bg-nav: #211e1a;
+  --sl-color-bg-sidebar: #211e1a;
+  --sl-color-hairline: #332f29;
+  --sl-color-hairline-light: #332f29;
+  --sl-color-hairline-shade: #26231f;
+}
+
+/* ============================================================================
+ * Light theme (warm paper) — overrides
+ * ==========================================================================*/
+
+:root[data-theme='light'] {
+  /* --abk-* surfaces — light */
+  --abk-page: #f5f1e8; /* --paper */
+  --abk-card: #fbf9f3; /* --surface */
+  --abk-ink: #1b1916; /* --ink */
+  --abk-ink-2: #6e675b; /* --muted */
+  --abk-muted: #9a9384; /* --subtle */
+  --abk-border: #e6e0d4; /* --border */
+  --abk-good-text: #15774e; /* darker win step for AA text on paper */
+
+  /* Starlight accent trio → deep Iris for AA on paper */
+  --sl-color-accent-low: #e9e0f7;
+  --sl-color-accent: #4f2f9e;
+  --sl-color-accent-high: #3a2374;
+  --sl-color-white: #1b1916;
+  --sl-color-gray-1: #2b2823;
+  --sl-color-gray-2: #454039;
+  --sl-color-gray-3: #6e675b;
+  --sl-color-gray-4: #8a8373;
+  --sl-color-gray-5: #cfc8b8;
+  --sl-color-gray-6: #ece6da;
+  --sl-color-black: #f5f1e8;
+
+  --sl-color-bg-nav: #fbf9f3;
+  --sl-color-bg-sidebar: #fbf9f3;
+  --sl-color-hairline: #e6e0d4;
+  --sl-color-hairline-light: #e6e0d4;
+  --sl-color-hairline-shade: #efeadf;
+}
+
+/* ============================================================================
+ * Chrome tweaks
+ * ==========================================================================*/
+
+/* Wordmark in the header: tighten like the brand lockup ("abkit", 700). */
+.site-title {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}

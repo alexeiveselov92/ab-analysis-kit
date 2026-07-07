@@ -1,0 +1,664 @@
+---
+// abkit marketing landing — ported from detectkit's index.astro machinery
+// (nav / hero / section / terminal / footer), with ALL copy, palette and the
+// interactive demo rewritten for A/B analysis. Detectkit's anomaly/alerting
+// surfaces (channel platform demo, LOAD→DETECT→ALERT steps, detector switcher,
+// playground) are pruned.
+//
+// Colors are never hard-coded: every hue comes from a brand.css token (the
+// single source of real values, swap-seam for the palette). The marketing page
+// is theme-independent and always light, so it uses brand.css's semantic tokens
+// (--iris / --win / --lose / --flat / --inconclusive / --srm / --paper /
+// --surface / --ink / --muted / --subtle / --term-* / --db-*), exactly as the
+// donor landing used --clay/--paper/--st-*. brand.css's theme-flipping --abk-*
+// layer is reserved for the dark report/explore surfaces + the landing demo
+// (which reads it via chart.ts token()); it is not used for the page chrome.
+import '../styles/brand.css';
+import '../styles/landing.css';
+
+const repo = 'https://github.com/alexeiveselov92/ab-analysis-kit';
+const pypi = 'https://pypi.org/project/ab-analysis-kit/';
+const docsHref = '/overview/';
+const startHref = '/getting-started/installation/';
+
+const title = 'abkit — declarative A/B experiment analysis';
+const description =
+  'Define an experiment in YAML + SQL. abkit computes the cumulative effect, its confidence interval and power, and calls a WIN / LOSE / FLAT / INCONCLUSIVE verdict once the estimate stabilizes — SRM-gated, peeking-honest, database-agnostic.';
+
+// ---- the signature stabilization chart, rendered as a self-contained SVG.
+// Deterministic converging series → effect line + tightening CI band + zero
+// line + decision horizon. Element colors are set by landing.css (.sig-*), so
+// nothing here hard-codes a hue. This is the STATIC render used for the section
+// showcases + the hero fallback; the live hero demo (below) is wired by the
+// demo agent through web/src/shared/chart.ts. ----
+const stabChart = ({
+  w,
+  h,
+  effect,
+  ciEnd,
+  spread,
+  vmax,
+  vmin,
+  seed = 7,
+  days = 30,
+  horizon = 21,
+}: {
+  w: number;
+  h: number;
+  effect: number;
+  ciEnd: number;
+  spread: number;
+  vmax: number;
+  vmin: number;
+  seed?: number;
+  days?: number;
+  horizon?: number;
+}): string => {
+  const padL = 6;
+  const padR = 6;
+  const padT = 12;
+  const padB = 12;
+  let s = seed;
+  const rnd = () => {
+    s = (s * 1103515245 + 12345) & 0x7fffffff;
+    return s / 0x7fffffff;
+  };
+  const eff: number[] = [];
+  const ciHalf: number[] = [];
+  for (let i = 0; i < days; i++) {
+    const t = i / (days - 1);
+    const conv = effect * (0.35 + 0.65 * t);
+    const noise = (rnd() - 0.5) * 2 * spread * (1 - t * 0.82);
+    eff.push(conv + noise);
+    ciHalf.push(ciEnd * Math.sqrt(days / (i + 1)));
+  }
+  eff[days - 1] = effect;
+  const X = (i: number) => +(padL + (i / (days - 1)) * (w - padL - padR)).toFixed(1);
+  const Y = (v: number) => +(padT + ((vmax - v) / (vmax - vmin)) * (h - padT - padB)).toFixed(1);
+  const zeroY = Y(0);
+  const up = eff.map((v, i) => [X(i), Y(v + ciHalf[i])]);
+  const lo = eff.map((v, i) => [X(i), Y(v - ciHalf[i])]);
+  const bandD =
+    'M' +
+    up.map((p) => p[0] + ',' + p[1]).join(' L') +
+    ' L' +
+    lo
+      .reverse()
+      .map((p) => p[0] + ',' + p[1])
+      .join(' L') +
+    ' Z';
+  const lineD = 'M' + eff.map((v, i) => X(i) + ',' + Y(v)).join(' L');
+  const hzX = X(horizon);
+  const endX = X(days - 1);
+  const endY = Y(effect);
+  return (
+    `<svg class="sig-svg" viewBox="0 0 ${w} ${h}" aria-hidden="true">` +
+    `<line class="sig-zero" x1="${padL}" y1="${zeroY}" x2="${w - padR}" y2="${zeroY}"/>` +
+    `<path class="sig-band" d="${bandD}"/>` +
+    `<line class="sig-hz" x1="${hzX}" y1="${padT}" x2="${hzX}" y2="${h - padB}"/>` +
+    `<path class="sig-line" d="${lineD}" pathLength="1"/>` +
+    `<circle class="sig-halo" cx="${endX}" cy="${endY}" r="8.5"/>` +
+    `<circle class="sig-dot" cx="${endX}" cy="${endY}" r="4.5"/>` +
+    `</svg>`
+  );
+};
+
+const heroChart = stabChart({ w: 480, h: 180, effect: 4.2, ciEnd: 1.5, spread: 3.2, vmax: 9, vmin: -4, seed: 5 });
+const bigChart = stabChart({ w: 1080, h: 240, effect: 4.2, ciEnd: 1.5, spread: 3.2, vmax: 9, vmin: -4, seed: 5 });
+const cockpitChart = stabChart({ w: 720, h: 200, effect: 4.2, ciEnd: 1.5, spread: 3.0, vmax: 9, vmin: -4, seed: 5 });
+
+// ---- declarative config snippet (experiments/checkout_v2.yml) ----
+const declareLines = [
+  '<span class="tk-k">name</span>: <span class="tk-s">checkout_v2</span>',
+  '<span class="tk-k">assignment</span>:',
+  '  <span class="tk-k">unit</span>: <span class="tk-s">user_id</span>',
+  '  <span class="tk-k">salt</span>: <span class="tk-s">checkout_v2_2026</span>',
+  '<span class="tk-k">variants</span>:',
+  '  <span class="tk-k">control</span>:   { <span class="tk-k">weight</span>: <span class="tk-n">50</span> }',
+  '  <span class="tk-k">treatment</span>: { <span class="tk-k">weight</span>: <span class="tk-n">50</span> }',
+  '',
+  '<span class="tk-k">metrics</span>:',
+  '  - <span class="tk-k">ref</span>: <span class="tk-s">checkout_conversion</span>   <span class="tk-c"># metrics/*.yml</span>',
+  '    <span class="tk-k">method</span>: <span class="tk-s">cuped</span>',
+  '  - <span class="tk-k">ref</span>: <span class="tk-s">revenue_per_user</span>',
+  '    <span class="tk-k">method</span>: <span class="tk-s">bootstrap</span>',
+  '',
+  '<span class="tk-k">analysis</span>:',
+  '  <span class="tk-k">alpha</span>: <span class="tk-n">0.05</span>',
+  '  <span class="tk-k">horizon_days</span>: <span class="tk-n">22</span>',
+  '  <span class="tk-k">correction</span>: <span class="tk-s">holm</span>',
+];
+const declareHtml = declareLines.map((l) => `<div class="ln">${l || '&nbsp;'}</div>`).join('');
+
+// ---- CLI walkthrough (mirrors abk run / _output tree style) ----
+const cliLines = [
+  '<span class="tk-cmd">$ abk init</span>                      <span class="tk-c"># scaffold the project</span>',
+  '<span class="tk-cmd">$ abk explore</span>                   <span class="tk-c"># open the live cockpit</span>',
+  '  <span class="tk-p">▸</span> <span class="tk-path">http://localhost:8713</span>',
+  '',
+  '<span class="tk-cmd">$ abk run --experiment checkout_v2 --report</span>',
+  '  <span class="tk-p">┌─ LOAD</span>    96,090 exposures',
+  '  <span class="tk-p">┌─ SRM</span>     χ² p=0.42 · <span class="tk-ok">pass</span>',
+  '  <span class="tk-p">┌─ COMPUTE</span> 3 metrics',
+  '  <span class="tk-p">└─ READOUT</span> checkout ▸ <span class="tk-ok">WIN +4.2%</span>',
+  '',
+  '  <span class="tk-arrow">→</span> report.html written (self-contained)',
+];
+const cliHtml = cliLines.map((l) => `<div class="ln">${l || '&nbsp;'}</div>`).join('');
+
+// ---- section data ----
+const methods = [
+  { tag: '// t-test', kind: 'parametric', name: 'Welch t-test', desc: 'Means with unequal variance — the default for continuous metrics.' },
+  { tag: '// two-prop', kind: 'parametric', name: 'Proportion z-test', desc: 'Conversion & rate metrics, absolute and relative.' },
+  { tag: '// cuped', kind: 'variance ↓', name: 'CUPED', desc: 'Pre-experiment covariate adjustment — same power, less sample.' },
+  { tag: '// ratio', kind: 'delta-method', name: 'Ratio metrics', desc: 'Per-session ratios with the delta-method variance.' },
+  { tag: '// bootstrap', kind: 'vectorised', name: 'Bootstrap family', desc: 'Plain, paired, Poisson & post-normed — numpy-vectorised.' },
+  { tag: '// correction', kind: 'family-wise', name: 'Multiple testing', desc: 'Holm / Benjamini-Hochberg across a metric family.' },
+];
+
+const verdictCards = [
+  { cls: 'win', badge: 'WIN', effect: '+4.2%', desc: 'Significant lift, stabilized past the horizon. Ship it.' },
+  { cls: 'lose', badge: 'LOSE', effect: '−3.1%', desc: 'Significant harm — the whole CI is below zero. Roll back.' },
+  { cls: 'flat', badge: 'FLAT', effect: '+0.3%', desc: 'Well-powered and null. A true no-change, not missing data.' },
+  { cls: 'inconclusive', badge: 'INCONCL.', effect: '+2.1%', desc: 'Underpowered — MDE not reached. Keep the experiment running.' },
+  { cls: 'srm', badge: 'SRM', effect: '⚠', desc: 'Split ratio failed the χ² gate. Results withheld, row flagged.' },
+];
+
+// A/A false-positive matrix (methods × sample sizes) — observed α vs the 5% budget
+const aaCols = ['1k', '5k', '20k', '50k', 'peek'];
+const aaRows = [
+  { name: 't-test', vals: [0.061, 0.052, 0.049, 0.048, 0.183] },
+  { name: 'z-test', vals: [0.058, 0.051, 0.05, 0.049, 0.176] },
+  { name: 'CUPED', vals: [0.064, 0.053, 0.05, 0.049, 0.181] },
+  { name: 'bootstrap', vals: [0.072, 0.055, 0.051, 0.05, 0.191] },
+  { name: 'ratio', vals: [0.069, 0.056, 0.052, 0.05, 0.188] },
+];
+const aaBand = (v: number) => (v <= 0.055 ? 'good' : v <= 0.09 ? 'warn' : 'bad');
+
+const features = [
+  { tag: '// declarative', title: 'YAML + SQL', desc: 'Experiments & reusable metrics — no analysis code to maintain.' },
+  { tag: '// cumulative', title: 'Stabilization chart', desc: 'Effect + CI per day; call it once it converges.' },
+  { tag: '// honest', title: 'Peeking-aware', desc: 'Real cumulative FPR measured; sequential CIs one toggle away.' },
+  { tag: '// gate', title: 'SRM checked first', desc: 'Blocking-but-non-dropping: loud flag, preserved row.' },
+  { tag: '// bi-agnostic', title: 'One clean table', desc: '_ab_results for Grafana, Lightdash, Metabase, Superset.' },
+  { tag: '// ai-native', title: 'abk init-claude', desc: 'Assistant context + skills to scaffold and tune with you.' },
+];
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="canonical" href="https://abkit.pipelab.dev/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content="https://abkit.pipelab.dev/" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <!-- Site chrome only: Google Fonts is allowed for the site, never inside a
+         self-contained report/explore/demo bundle. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body class="landing">
+    <!-- ===== header ===== -->
+    <header class="site-header">
+      <nav class="wrap nav">
+        <a class="brand" href="/">
+          <svg width="30" height="30" viewBox="0 0 100 100" aria-hidden="true" class="brand-logo">
+            <rect x="3" y="3" width="94" height="94" rx="26"></rect>
+            <polyline points="13,50 34,50" fill="none" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"></polyline>
+            <polyline points="34,50 86,27" fill="none" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"></polyline>
+            <polyline points="34,50 86,61" fill="none" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"></polyline>
+            <circle cx="86" cy="27" r="6.5"></circle>
+          </svg>
+          <span>abkit</span>
+        </a>
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" hidden />
+        <label for="nav-toggle" class="hamburger" aria-label="Toggle navigation">
+          <span></span><span></span><span></span>
+        </label>
+        <div class="nav-panel">
+          <div class="nav-links">
+            <a href={docsHref}>Docs</a>
+            <a href="/guides/compute-methods/">Methods</a>
+            <a href="/guides/explore/">Explore</a>
+            <a href="/guides/validate/">Validate</a>
+            <a href="/changelog/">Changelog</a>
+          </div>
+          <div class="nav-right">
+            <a class="ghost-link" href={repo}>GitHub</a>
+            <a class="pip" href={pypi}>pip install abkit</a>
+          </div>
+        </div>
+      </nav>
+    </header>
+
+    <!-- ===== hero ===== -->
+    <section class="wrap hero">
+      <div class="hero-copy">
+        <div class="badge"><span class="dot"></span>open source · python · declarative</div>
+        <h1>Call it once<br /><span class="accent">it stabilizes.</span></h1>
+        <p class="lede">
+          Define an experiment in YAML + SQL. A rigorous engine computes the cumulative effect, its
+          confidence interval and power over the experiment's lifetime — and refuses to call a
+          winner until the estimate stabilizes.
+        </p>
+        <div class="cta-row">
+          <a class="btn btn-primary" href={startHref}>Get started</a>
+          <a class="btn btn-ghost" href={docsHref}>Read the docs</a>
+        </div>
+        <div class="hero-trust">
+          <span class="ht-item"><span class="ht-dot"></span>SRM-gated</span>
+          <span class="ht-item"><span class="ht-dot"></span>peeking-honest</span>
+          <span class="ht-item"><span class="ht-dot"></span>BI-agnostic</span>
+        </div>
+      </div>
+
+      <!-- Interactive stabilization demo MOUNT. The demo agent renders the live
+           version here through web/src/shared/chart.ts. The markup inside is the
+           static, no-JS fallback (checkout tab) and may be replaced; keep the
+           #stabilization-demo / #stabilization-demo-chart ids stable. -->
+      <div class="hero-demo" id="stabilization-demo" data-abk-demo="stabilization">
+        <div class="hd-tabs" role="tablist" aria-label="metric">
+          <button class="hd-tab is-active" type="button">checkout</button>
+          <button class="hd-tab" type="button">revenue</button>
+          <button class="hd-tab" type="button">refund</button>
+        </div>
+        <div class="hd-body">
+          <div class="hd-head">
+            <div>
+              <div class="hd-sub">checkout_conversion · treatment vs control</div>
+              <div class="hd-figure">
+                <span class="hd-effect verdict-win">+4.2%</span>
+                <span class="hd-ci">95% CI [+2.7%, +5.7%]</span>
+              </div>
+            </div>
+            <span class="hd-badge verdict-win">WIN</span>
+          </div>
+          <div class="hd-chart" id="stabilization-demo-chart" set:html={heroChart}></div>
+          <div class="hd-axis"><span>day 1</span><span>horizon</span><span>day 30</span></div>
+          <div class="hd-stats">
+            <div class="hd-stat"><div class="hd-stat-k">p-value</div><div class="hd-stat-v">0.001</div></div>
+            <div class="hd-stat"><div class="hd-stat-k">power</div><div class="hd-stat-v">0.92</div></div>
+            <div class="hd-stat"><div class="hd-stat-k">method</div><div class="hd-stat-v">CUPED t</div></div>
+            <div class="hd-stat hd-stat-right"><div class="hd-stat-k">SRM</div><div class="hd-stat-v verdict-win">pass</div></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== works with (reads from / feeds) ===== -->
+    <section class="wrap io-strip-wrap">
+      <div class="io-strip">
+        <span class="io-label">Reads from</span>
+        <div class="db-badges">
+          <span class="db-badge db-clickhouse" style="--db-chip:var(--ink);--db-name:var(--ink)">
+            <span class="db-chip">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.333 10H24v4h-2.667ZM16 1.335h2.667v21.33H16Zm-5.333 0h2.666v21.33h-2.666ZM0 22.665V1.335h2.667v21.33zm5.333-21.33H8v21.33H5.333Z"></path></svg>
+            </span>
+            ClickHouse
+          </span>
+          <span class="db-badge" style="--db-chip:var(--db-postgres);--db-name:var(--db-postgres)">
+            <span class="db-chip"><span class="db-mono">Pg</span></span>
+            PostgreSQL
+          </span>
+          <span class="db-badge" style="--db-chip:var(--db-mysql);--db-name:var(--db-mysql)">
+            <span class="db-chip"><span class="db-mono">My</span></span>
+            MySQL
+          </span>
+        </div>
+        <span class="io-div" aria-hidden="true"></span>
+        <span class="io-label">Feeds</span>
+        <div class="io-feeds">
+          <span>Grafana</span><span>Lightdash</span><span>Metabase</span><span>Superset</span>
+          <span class="io-feeds-note">· orchestrate with Prefect</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== 01 · declare ===== -->
+    <section class="section section-declare">
+      <div class="wrap declare-grid">
+        <div>
+          <div class="eyebrow">01 · Declare</div>
+          <h2>An experiment is<br />YAML + SQL.</h2>
+          <p class="sub">
+            Assignment, variants and comparisons in one file, referencing a reusable library of
+            metrics. Everything correctness-critical — the cohort join, the window filter, per-unit
+            dedup, alpha — is packaged, never hand-repeated. Like dbt, like detectkit.
+          </p>
+          <ul class="declare-list">
+            <li><strong>experiments/*.yml</strong> — the split &amp; the metrics to read</li>
+            <li><strong>metrics/*.yml</strong> — reusable SQL, shared across experiments</li>
+            <li><strong>numpy-first</strong> — no pandas in the hot path</li>
+          </ul>
+        </div>
+        <div class="term">
+          <div class="term-bar">
+            <span class="b b-r"></span><span class="b b-y"></span><span class="b b-g"></span>
+            <span class="term-file">experiments/checkout_v2.yml</span>
+            <span class="term-lang">YAML</span>
+          </div>
+          <div class="term-body code" set:html={declareHtml}></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== 02 · compute ===== -->
+    <section class="section section-compute">
+      <div class="wrap">
+        <div class="section-head-center">
+          <div class="eyebrow">02 · Compute</div>
+          <h2>A statistical engine you can trust.</h2>
+          <p class="sub">
+            Ported from a battle-tested legacy engine and improved deliberately — never a number
+            changed silently. Each method is a plugin: relative &amp; absolute effects, CI, p-value,
+            MDE/power, multiple-testing correction.
+          </p>
+        </div>
+        <div class="method-grid">
+          {
+            methods.map((m) => (
+              <div class="method-card">
+                <div class="method-top">
+                  <span class="method-tag">{m.tag}</span>
+                  <span class="method-kind">{m.kind}</span>
+                </div>
+                <div class="method-name">{m.name}</div>
+                <div class="method-desc">{m.desc}</div>
+              </div>
+            ))
+          }
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== 03 · stabilize ===== -->
+    <section class="section section-stabilize">
+      <div class="wrap">
+        <div class="section-head">
+          <div class="eyebrow">03 · Stabilize</div>
+          <h2>Watch the estimate converge.</h2>
+          <p class="sub">
+            The signature chart: cumulative effect + CI, one point per day since launch. The band
+            tightens as sample accrues. The daily view peeks — so the real cumulative-peeking FPR is
+            always measured, and the readout refuses a pre-horizon WIN / LOSE.
+          </p>
+        </div>
+        <div class="sig-card">
+          <div class="sig-head">
+            <div>
+              <div class="sig-sub">checkout_conversion · treatment vs control · n = 96,090</div>
+              <div class="sig-figure">
+                <span class="sig-effect verdict-win">+4.2%</span>
+                <span class="sig-ci">95% CI [+2.7%, +5.7%]</span>
+              </div>
+            </div>
+            <span class="sig-badge verdict-win">WIN · stabilized</span>
+          </div>
+          <div class="sig-plot" set:html={bigChart}></div>
+          <div class="sig-axis">
+            <span>day 1</span><span>day 15</span><span>horizon · day 22</span><span>day 30</span>
+          </div>
+          <div class="sig-legend">
+            <span><i class="sw sw-line"></i>cumulative effect</span>
+            <span><i class="sw sw-band"></i>95% confidence interval</span>
+            <span><i class="sw sw-zero"></i>zero / no effect</span>
+            <span><i class="sw sw-hz"></i>decision horizon</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== 04 · decide ===== -->
+    <section class="section section-decide">
+      <div class="wrap">
+        <div class="section-head">
+          <div class="eyebrow eyebrow-dark">04 · Decide</div>
+          <h2>Five verdicts. One contract.</h2>
+          <p class="sub">
+            Every metric resolves to exactly one state — colored from the same five tokens across
+            the chat readout, the HTML report and the cockpit. SRM is a hard gate: it is checked
+            before any effect is trusted.
+          </p>
+        </div>
+        <div class="verdict-grid">
+          {
+            verdictCards.map((v) => (
+              <div class={`verdict-card verdict-${v.cls}`}>
+                <div class="verdict-bar"></div>
+                <div class="verdict-inner">
+                  <div class="verdict-badge"><span class="verdict-dot"></span>{v.badge}</div>
+                  <div class="verdict-effect">{v.effect}</div>
+                  <div class="verdict-desc">{v.desc}</div>
+                </div>
+              </div>
+            ))
+          }
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== 05 · validate ===== -->
+    <section class="section section-validate">
+      <div class="wrap validate-grid">
+        <div>
+          <div class="eyebrow">05 · Validate</div>
+          <h2>Prove your method is calibrated.</h2>
+          <p class="sub">
+            <code>abk validate</code> runs an A/A false-positive + power matrix that measures your
+            method's <strong>real</strong> α — including the honest cumulative-peeking FPR — not the
+            nominal 5% you assumed.
+          </p>
+          <div class="validate-stats">
+            <div class="vstat"><div class="vstat-v verdict-win">4.8%</div><div class="vstat-k">fixed-horizon α</div></div>
+            <div class="vstat"><div class="vstat-v verdict-inconclusive">18.3%</div><div class="vstat-k">naïve daily-peek α</div></div>
+            <div class="vstat"><div class="vstat-v verdict-win">5.1%</div><div class="vstat-k">sequential α</div></div>
+          </div>
+        </div>
+        <div class="aa-card">
+          <div class="aa-head">
+            <span class="aa-title">A/A false-positive matrix</span>
+            <span class="aa-note">observed α vs 5% budget</span>
+          </div>
+          <div class="aa-matrix">
+            <span class="aa-corner"></span>
+            {aaCols.map((c) => <span class="aa-colhead">{c}</span>)}
+            {
+              aaRows.map((r) => (
+                <Fragment>
+                  <span class="aa-rowhead">{r.name}</span>
+                  {r.vals.map((v) => (
+                    <span class={`aa-cell aa-${aaBand(v)}`}>{v.toFixed(3)}</span>
+                  ))}
+                </Fragment>
+              ))
+            }
+          </div>
+          <div class="aa-legend">
+            <span><i class="sw aa-sw-good"></i>within budget</span>
+            <span><i class="sw aa-sw-warn"></i>elevated</span>
+            <span><i class="sw aa-sw-bad"></i>over budget</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== 06 · explore ===== -->
+    <section class="section section-explore">
+      <div class="wrap">
+        <div class="section-head">
+          <div class="eyebrow">06 · Explore</div>
+          <h2>The cockpit is the point.</h2>
+          <p class="sub">
+            <code>abk explore</code> is a local, chart-first cockpit: turn method knobs — CUPED,
+            stratification, alpha — and watch the stabilization chart recompute live, with A/A
+            calibration always in view. The priority interface, built first.
+          </p>
+        </div>
+        <div class="cockpit">
+          <div class="cockpit-knobs">
+            <div class="knob-group-h">Method</div>
+            <div class="knob-toggles">
+              <div class="knob-row"><span>CUPED</span><span class="toggle is-on"><span class="toggle-nub"></span></span></div>
+              <div class="knob-row"><span>Stratify</span><span class="toggle"><span class="toggle-nub"></span></span></div>
+            </div>
+            <div class="knob-label">alpha</div>
+            <div class="knob-slider"><span class="knob-fill"></span><span class="knob-handle"></span></div>
+            <div class="knob-value">0.05</div>
+            <div class="knob-label">estimator</div>
+            <div class="knob-options">
+              <div class="knob-opt is-active">CUPED t-test</div>
+              <div class="knob-opt">bootstrap (paired)</div>
+              <div class="knob-opt">two-proportion z</div>
+            </div>
+          </div>
+          <div class="cockpit-view">
+            <div class="cockpit-view-head">
+              <span class="cockpit-live">live · recomputed on every knob</span>
+              <span class="cockpit-badge verdict-win">WIN +4.2%</span>
+            </div>
+            <div class="cockpit-chart" set:html={cockpitChart}></div>
+            <div class="cockpit-tiles">
+              <div class="ctile">
+                <div class="ctile-k">A/A calibration</div>
+                <div class="ctile-v verdict-win">4.9% ✓</div>
+              </div>
+              <div class="ctile">
+                <div class="ctile-k">variance ↓ (CUPED)</div>
+                <div class="ctile-v accent">−38%</div>
+              </div>
+              <div class="ctile">
+                <div class="ctile-k">days to MDE</div>
+                <div class="ctile-v">12</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== CLI ===== -->
+    <section class="section section-cli">
+      <div class="wrap cli-grid">
+        <div>
+          <div class="eyebrow eyebrow-dark">The CLI is the unit of automation</div>
+          <h2>Four commands,<br />start to decision.</h2>
+          <p class="sub">
+            Idempotent and re-runnable — an experiment is a finite, deterministic recomputation. Run
+            it by hand or schedule it with Prefect.
+          </p>
+          <div class="cli-list">
+            <div><span class="cli-cmd">abk init</span><span class="cli-note">· scaffold experiments/ + metrics/</span></div>
+            <div><span class="cli-cmd">abk explore</span><span class="cli-note">· the live cockpit</span></div>
+            <div><span class="cli-cmd">abk run --report</span><span class="cli-note">· self-contained HTML</span></div>
+            <div><span class="cli-cmd">abk validate</span><span class="cli-note">· the A/A matrix</span></div>
+          </div>
+        </div>
+        <div class="term term-plain">
+          <div class="term-bar">
+            <span class="b b-r"></span><span class="b b-y"></span><span class="b b-g"></span>
+            <span class="term-file">~/experiments</span>
+          </div>
+          <div class="term-body" set:html={cliHtml}></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== features ===== -->
+    <section class="section section-features">
+      <div class="wrap">
+        <div class="feature-grid">
+          {
+            features.map((f) => (
+              <div class="feature-card">
+                <div class="feature-tag">{f.tag}</div>
+                <div class="feature-title">{f.title}</div>
+                <div class="feature-desc">{f.desc}</div>
+              </div>
+            ))
+          }
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== CTA + footer ===== -->
+    <section class="wrap footer-cta-wrap">
+      <div class="cta-band">
+        <div class="grid-bg" aria-hidden="true"></div>
+        <div class="cta-copy">
+          <h2>Stop guessing. Call it when it stabilizes.</h2>
+          <p>
+            Declarative A/B analysis with a chart-first cockpit and a calibration harness — open
+            source, Python, database-agnostic.
+          </p>
+        </div>
+        <div class="cta-actions">
+          <a class="pip" href={pypi}>pip install abkit</a>
+          <a class="cta-ghost" href={docsHref}>Read the docs →</a>
+        </div>
+      </div>
+    </section>
+
+    <footer class="wrap footer">
+      <div class="footer-grid">
+        <div>
+          <a class="brand" href="/">
+            <svg width="28" height="28" viewBox="0 0 100 100" aria-hidden="true" class="brand-logo">
+              <rect x="3" y="3" width="94" height="94" rx="26"></rect>
+              <polyline points="13,50 34,50" fill="none" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"></polyline>
+              <polyline points="34,50 86,27" fill="none" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"></polyline>
+              <polyline points="34,50 86,61" fill="none" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"></polyline>
+              <circle cx="86" cy="27" r="7"></circle>
+            </svg>
+            <span>abkit</span>
+          </a>
+          <p class="tagline">
+            Declarative A/B experiment analysis — watch the effect converge, then call it once it
+            stabilizes.
+          </p>
+        </div>
+        <div>
+          <h4>Docs</h4>
+          <ul>
+            <li><a href={docsHref}>Overview</a></li>
+            <li><a href="/getting-started/quickstart/">Quickstart</a></li>
+            <li><a href="/guides/configuration/">Configuration</a></li>
+            <li><a href="/reference/cli/">CLI reference</a></li>
+          </ul>
+        </div>
+        <div>
+          <h4>Guides</h4>
+          <ul>
+            <li><a href="/guides/compute-methods/">Compute methods</a></li>
+            <li><a href="/guides/explore/">Explore cockpit</a></li>
+            <li><a href="/guides/validate/">Validate — A/A</a></li>
+            <li><a href="/guides/sequential/">Sequential</a></li>
+          </ul>
+        </div>
+        <div>
+          <h4>Project</h4>
+          <ul>
+            <li><a href={repo}>GitHub</a></li>
+            <li><a href={pypi}>PyPI</a></li>
+            <li><a href={`${repo}/issues`}>Issues</a></li>
+            <li><a href={`${repo}/blob/main/LICENSE`}>License (MIT)</a></li>
+          </ul>
+        </div>
+      </div>
+      <div class="legal">
+        <span>© 2026 abkit · MIT License</span>
+        <span>The sibling of detectkit · Built with Astro + Starlight</span>
+      </div>
+    </footer>
+  </body>
+</html>

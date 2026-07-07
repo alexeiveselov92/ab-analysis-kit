@@ -79,19 +79,20 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: web/package-lock.json
+          # one root lockfile for the whole JS monorepo (web/ + website/)
+          cache-dependency-path: package-lock.json
 
-      - name: Install web toolchain
+      - name: Install the JS workspaces
+        # `npm ci` at the workspace ROOT hydrates both the renderer core
+        # (web/, package abkit-web) and the site (website/) from the single
+        # root lockfile — no per-package install.
         run: npm ci --no-audit --no-fund
-        working-directory: web
 
       - name: Type-check the renderer sources
-        run: npm run check
-        working-directory: web
+        run: npm run check --workspace web
 
       - name: Rebuild bundles (asserts globals + marker classes)
-        run: npm run build
-        working-directory: web
+        run: npm run build --workspace web
 
       - name: Committed assets are fresh
         # porcelain (not `git diff`) so a rebuilt-but-never-committed NEW
@@ -127,9 +128,121 @@ jobs:
             done
           done
 
+      - name: brand.css and TOKEN_FALLBACKS stay in token lockstep
+        # The one brand-token layer has two mirrors: web/src/shared/chart.ts
+        # TOKEN_FALLBACKS (the placeholder palette compiled into the committed,
+        # self-contained bundles) and website/src/styles/brand.css (the site's
+        # real --abk-* values). NAME parity is a hard gate in BOTH directions so
+        # an M6 palette swap can never add/rename a token on one side that the
+        # other never reads. VALUE divergence is reported but non-fatal: the
+        # bundles legitimately render on placeholder fallbacks while the site
+        # loads brand.css, and tokens carry per-theme (light/dark) variants — so
+        # value equality is only meaningful once the frozen palette is copied
+        # into TOKEN_FALLBACKS (promote to a hard check then). Skips cleanly
+        # until brand.css lands (parallel M6 site WP).
+        run: |
+          node --input-type=commonjs - <<'EOF'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          // 1) the placeholder palette compiled into the committed bundles
+          const chartTs = fs.readFileSync('web/src/shared/chart.ts', 'utf8');
+          const block = chartTs.match(/TOKEN_FALLBACKS[^{]*\{([\s\S]*?)\};/);
+          if (!block) { console.error('could not locate TOKEN_FALLBACKS in chart.ts'); process.exit(1); }
+          const fallbacks = {};
+          for (const m of block[1].matchAll(/'(--abk-[a-z0-9-]+)'\s*:\s*'([^']*)'/g)) {
+            fallbacks[m[1]] = m[2].trim().toLowerCase();
+          }
+          const fbNames = Object.keys(fallbacks);
+          if (fbNames.length === 0) { console.error('TOKEN_FALLBACKS parsed empty'); process.exit(1); }
+          // 2) find the site's real --abk-* values (skip until brand.css lands)
+          function findBrand(dir) {
+            let out = [];
+            let ents;
+            try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch { return out; }
+            for (const e of ents) {
+              if (['node_modules', '.astro', 'dist', '.git'].includes(e.name)) continue;
+              const full = path.join(dir, e.name);
+              if (e.isDirectory()) out = out.concat(findBrand(full));
+              else if (e.name === 'brand.css') out.push(full);
+            }
+            return out;
+          }
+          const cssFiles = findBrand('website');
+          if (cssFiles.length === 0) {
+            console.log('brand.css not present yet (parallel M6 site WP) — skipping token sync.');
+            process.exit(0);
+          }
+          const brand = {};
+          for (const f of cssFiles) {
+            const css = fs.readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+            for (const m of css.matchAll(/(--abk-[a-z0-9-]+)\s*:\s*([^;]+);/g)) {
+              (brand[m[1]] ||= []).push(m[2].trim().toLowerCase());
+            }
+          }
+          const brandNames = Object.keys(brand);
+          // 3) NAME sync — hard gate, both directions
+          const missing = fbNames.filter((n) => !brandNames.includes(n));
+          const extra = brandNames.filter((n) => !fbNames.includes(n));
+          let failed = false;
+          if (missing.length) { console.error('in TOKEN_FALLBACKS but NOT in brand.css:', missing.join(', ')); failed = true; }
+          if (extra.length) { console.error('--abk-* in brand.css but NOT in TOKEN_FALLBACKS:', extra.join(', ')); failed = true; }
+          // 4) VALUE sync — informational (per notes above)
+          const norm = (h) => { const x = h.replace('#', ''); return x.length === 3 ? '#' + x.split('').map((c) => c + c).join('') : '#' + x; };
+          const isHex = (v) => /^#[0-9a-f]{3}([0-9a-f]{3})?$/.test(v);
+          const diverged = [];
+          for (const n of fbNames) {
+            const vals = brand[n];
+            if (!vals || vals.length !== 1) continue;
+            if (!isHex(vals[0]) || !isHex(fallbacks[n])) continue;
+            if (norm(vals[0]) !== norm(fallbacks[n])) diverged.push(n + ': brand.css ' + vals[0] + ' vs fallback ' + fallbacks[n]);
+          }
+          if (diverged.length) {
+            console.log('note: brand.css values diverge from chart.ts placeholders (expected until the palette is frozen into TOKEN_FALLBACKS):');
+            for (const d of diverged) console.log('  ' + d);
+          }
+          if (failed) process.exit(1);
+          console.log('token sync OK: ' + fbNames.length + ' --abk-* names mirrored across chart.ts and brand.css');
+          EOF
+
       - name: jsdom smoke suite over the committed bundle
-        run: npm test
-        working-directory: web
+        run: npm test --workspace web
+
+  website:
+    # The Astro/Starlight marketing + docs site (M6). Docker-free — the
+    # Dockerfile image build + GHCR push + deploy stay in website.yml. This
+    # gate proves the site builds from the workspace root: the docs sync runs,
+    # `astro check` finds no broken links / missing pages / type errors, the
+    # static build succeeds, and the landing demo stays in golden parity with
+    # the Python stats core. It consumes web/ (package abkit-web) as a workspace
+    # dependency — the landing demo imports web/src/shared/chart.ts.
+    name: Website (astro build + demo parity)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install the JS workspaces
+        run: npm ci --no-audit --no-fund
+
+      - name: Sync docs into the site
+        run: npm run sync --workspace website
+
+      - name: Astro check (types + unresolved links)
+        run: npm run check --workspace website
+
+      - name: Astro build (reds on a missing page source or broken link)
+        run: npm run build --workspace website
+
+      - name: Landing demo stays in golden parity with the stats core
+        # Hard gate: the TS landing demo re-implements the abkit compute path;
+        # this asserts it reproduces the frozen Python golden within tolerance.
+        run: node website/scripts/check-demo-parity.mjs
 
   lint:
     name: Lint & type-check
