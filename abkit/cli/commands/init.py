@@ -54,12 +54,23 @@ profiles:
 
   prod:
     type: clickhouse
-    host: "{{{{ env_var('ABKIT_CH_HOST') }}}}"
+    host: "{{ env_var('ABKIT_CH_HOST') }}"
     port: 9000
-    user: "{{{{ env_var('ABKIT_CH_USER') }}}}"
-    password: "{{{{ env_var('ABKIT_CH_PASSWORD') }}}}"
+    user: "{{ env_var('ABKIT_CH_USER') }}"
+    password: "{{ env_var('ABKIT_CH_PASSWORD') }}"
     internal_database: abkit_internal
     data_database: analytics
+
+# Optional: channels for `abk test-report` (a connectivity / format check).
+# Secrets are read from env vars at load time — never stored here. Uncomment to use.
+# notification_channels:
+#   team_slack:
+#     type: slack
+#     webhook_url: "${SLACK_WEBHOOK_URL}"
+#   ops_telegram:
+#     type: telegram
+#     bot_token: "${TELEGRAM_BOT_TOKEN}"
+#     chat_id: "${TELEGRAM_CHAT_ID}"
 """
 
 PROFILES_POSTGRES = """\
@@ -78,13 +89,24 @@ profiles:
 
   prod:
     type: postgres
-    host: "{{{{ env_var('ABKIT_PG_HOST') }}}}"
+    host: "{{ env_var('ABKIT_PG_HOST') }}"
     port: 5432
-    user: "{{{{ env_var('ABKIT_PG_USER') }}}}"
-    password: "{{{{ env_var('ABKIT_PG_PASSWORD') }}}}"
+    user: "{{ env_var('ABKIT_PG_USER') }}"
+    password: "{{ env_var('ABKIT_PG_PASSWORD') }}"
     database: analytics
     internal_schema: abkit
     data_schema: public
+
+# Optional: channels for `abk test-report` (a connectivity / format check).
+# Secrets are read from env vars at load time — never stored here. Uncomment to use.
+# notification_channels:
+#   team_slack:
+#     type: slack
+#     webhook_url: "${SLACK_WEBHOOK_URL}"
+#   ops_telegram:
+#     type: telegram
+#     bot_token: "${TELEGRAM_BOT_TOKEN}"
+#     chat_id: "${TELEGRAM_CHAT_ID}"
 """
 
 PROFILES_MYSQL = """\
@@ -102,12 +124,23 @@ profiles:
 
   prod:
     type: mysql
-    host: "{{{{ env_var('ABKIT_MYSQL_HOST') }}}}"
+    host: "{{ env_var('ABKIT_MYSQL_HOST') }}"
     port: 3306
-    user: "{{{{ env_var('ABKIT_MYSQL_USER') }}}}"
-    password: "{{{{ env_var('ABKIT_MYSQL_PASSWORD') }}}}"
+    user: "{{ env_var('ABKIT_MYSQL_USER') }}"
+    password: "{{ env_var('ABKIT_MYSQL_PASSWORD') }}"
     internal_database: abkit
     data_database: analytics
+
+# Optional: channels for `abk test-report` (a connectivity / format check).
+# Secrets are read from env vars at load time — never stored here. Uncomment to use.
+# notification_channels:
+#   team_slack:
+#     type: slack
+#     webhook_url: "${SLACK_WEBHOOK_URL}"
+#   ops_telegram:
+#     type: telegram
+#     bot_token: "${TELEGRAM_BOT_TOKEN}"
+#     chat_id: "${TELEGRAM_CHAT_ID}"
 """
 
 EXPERIMENT_YML = """\

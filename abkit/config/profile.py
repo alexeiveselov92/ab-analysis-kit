@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from abkit.utils.env_interpolation import interpolate_env_vars
 
@@ -201,6 +201,23 @@ class ProfileConfig(BaseModel):
             raise ValueError(f"Unsupported database type: {self.type}")
 
 
+class NotificationChannelConfig(BaseModel):
+    """One notification channel for ``abk test-report`` (profiles.yml
+    ``notification_channels:``).
+
+    A flat block mirroring the channel constructor: a ``type`` discriminator
+    (webhook / slack / mattermost / telegram / email) plus channel-specific
+    params as sibling keys (``extra='allow'`` keeps them). Secrets are
+    env-interpolated by :meth:`ProfilesConfig.from_yaml` before validation, so
+    they are never stored in plaintext. Instantiate via
+    ``abkit.notify.ChannelFactory.create_from_config(cfg.model_dump())``.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    type: str = Field(..., description="Channel type: webhook|slack|mattermost|telegram|email")
+
+
 class ProfilesConfig(BaseModel):
     """
     Container for multiple profile configurations.
@@ -210,10 +227,12 @@ class ProfilesConfig(BaseModel):
     Attributes:
         profiles: Dictionary mapping profile names to configurations
         default_profile: Name of default profile to use
+        notification_channels: Named channels for ``abk test-report`` (optional)
     """
 
     profiles: dict[str, ProfileConfig]
     default_profile: str | None = None
+    notification_channels: dict[str, NotificationChannelConfig] = Field(default_factory=dict)
 
     @field_validator("default_profile")
     @classmethod
