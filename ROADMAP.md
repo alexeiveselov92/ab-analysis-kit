@@ -174,6 +174,41 @@ The implementation record + decisions are in
 - **DoD:** PyPI release `pip install ab-analysis-kit`; `CHANGELOG.md` authoritative;
   contributor `CLAUDE.md` + `.claude/rules` in sync.
 
+## Post-baseline hardening (multi-arm UX + stats-core), tiered by version
+
+From the 2026-07-07 audits ([docs/research/2026-07-multi-arm-and-stats-core/](docs/research/2026-07-multi-arm-and-stats-core/)).
+Both baselines are **sound**: multi-arm (>2 groups) is correct end-to-end statistically
+(all-pairwise compute, joint K-way SRM, `C(N,2)×metrics` Bonferroni, per-pair persistence);
+the stats core is minimal-dep, vectorized, and scipy-delegated. What follows is **hardening**,
+biased to *ship the MVP fast, improve in 1.x*. The baseline locks **numeric results** (golden
+rel-1e-9), not the implementation or correctness-forever — byte-identical wins are free; number
+changes are legitimate as a versioned deviation (`ALGORITHM_VERSION` + `statistics-changes.md` +
+A/A revalidation).
+
+- **Now / 0.1.0 (MVP, no numbers move):**
+  - Fix `abk explore` Review mode showing only the **first** arm's verdict per metric
+    (`.find` → map) — the one near-decision multi-arm bug (`web/src/explore/explore.ts:1516`).
+  - **Document** the known multi-arm limitations honestly (control-vs-each readout, no
+    experiment-level winner, `abk plan` first-pair sizing, `abk validate` two-arm placebo).
+- **0.1.x safe wins (byte-identical, no version bump — opportunistic):**
+  - Stats hot path: `ndtri/ndtr` swap (~60×) + lazy `statsmodels` import + lazy never-read
+    `effect_distribution` (~250× on the `validate`/`explore` path); parametric `_finalize`
+    helper + registry-parametrized contract/completeness tests + double-compute dedup.
+  - Multi-arm: B-vs-C (non-control) **verdict card** + on-page asymmetry note; per-pair
+    labels in `abk run --report` text; explore `activePair` memory.
+- **1.x (versioned statistical improvements — ALGORITHM_VERSION + A/A; opt-in first):**
+  - **Holm** (step-down) over Bonferroni (strict power gain, same FWER); z-test **unpooled**
+    CI SE; restore the **relative-z covariance** term; **uniform ddof=1**; **Agresti-Caffo /
+    Wilson** proportion CIs; **main-tier `metrics_count=1` FWER** fix. *(Student-t /
+    Welch–Satterthwaite, BCa bootstrap, cross-fitted CUPED/CUPAC, cluster-robust SE are the
+    same items already named under v2 below — promote per demand.)*
+  - Multi-arm decision layer: **experiment-level winner rollup** on `ExperimentReadout` +
+    treatment-vs-treatment verdicts + a cross-arm overview; an explicit **`control:`** field
+    (or validate the positional convention).
+- **v2 / bets:** incremental Chan-merge cumulative recompute (the real warehouse-cost lever;
+  see below); drop-`statsmodels` scipy reimplementation (or `[power]` optional extra);
+  bootstrap `PCG64→SFC64`.
+
 ## v2 (deferred, profiling-gated)
 - Python incremental accumulator + array-cache + quantile sketches +
   `incremental_backend`; `abk verify-incremental` gate (whole-series reconciliation);
