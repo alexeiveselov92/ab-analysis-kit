@@ -26,6 +26,23 @@ number change).
   reformat churn). No runtime code changed; goldens untouched; no `ALGORITHM_VERSION` moved.
 
 ### Added
+- **M6 WP-B — the A/A composed sweep gains its always-valid (peeking) twin (no
+  behavior change to the shipped single-look family).** `abk validate`'s composed
+  multi-metric family sweep now mirrors the per-cell D8 trio at the family level: alongside
+  the unchanged single-look `fwer`/`fdr`, it composes a matched **peeking pair** over the
+  same shared placebo assignments — `fwer_peeking`/`fdr_peeking` (each member's fixed CI
+  peeked across every look: the composed optional-stopping hazard, inflated) and
+  `fwer_sequential`/`fdr_sequential` (the always-valid twin via the identical D8 estimator:
+  controlled, ≈ the single-look rate). Gated on a sequential-eligible family (≥1 member has
+  a frozen τ²); an ineligible member (bootstrap — unscorable from suffstats) is a full gap
+  in every family, disclosed by the existing "scored in 0 iterations" warning. The numbers
+  persist additively in the `_ab_aa_runs` sentinel row's `details.family` (no new schema
+  column); the report's composed band renders a "peeking → always-valid" recovery stat.
+  This is a validate-layer MODE transform reusing the M5 D8 estimator verbatim — **no
+  `ALGORITHM_VERSION` bump, no stats-core number changed, the single-look family byte-stable
+  (`sequential` defaults off)**. Closes the last non-`alpha_spending` A/A deferral
+  (aa-false-positive-matrix.md §8.1). Pinned by the D8×D9 headline tests in
+  `tests/validate/test_family_sweep.py` + the sequential-matrix e2e.
 - **M6 WP7a — the abkit docs + marketing website (`website/`, Astro + Starlight).** A
   single-source site built from the `docs/` body via `sync-docs.mjs`, on the real Iris
   brand (`brand.css`, light+dark, name-locked to the bundles' `--abk-*` token layer), with

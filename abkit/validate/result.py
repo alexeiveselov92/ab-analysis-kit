@@ -69,6 +69,15 @@ class FamilyResult:
     alpha: float  # the family-wide (pre-correction) significance the sweep ran at
     verdict: str
     warnings: tuple[str, ...] = field(default_factory=tuple)
+    # WP-B (D8×D9) — the composed peeking pair, side-by-side with the single-look family
+    # error: the fixed-CI PEEKING hazard (inflated) and its always-valid twin (controlled).
+    # None when the family is not sequential-eligible (no member has a τ²).
+    fwer_peeking: float | None = None
+    fdr_peeking: float | None = None
+    any_rejection_rate_peeking: float | None = None
+    fwer_sequential: float | None = None
+    fdr_sequential: float | None = None
+    any_rejection_rate_sequential: float | None = None
 
 
 @dataclass(frozen=True)

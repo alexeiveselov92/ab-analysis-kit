@@ -322,6 +322,14 @@ function buildCalibrationFamily(family: CalibrationFamily): HTMLElement | null {
   };
   stat('family-wise error', pct(family.fwer), family.over_budget);
   stat('false-discovery rate', pct(family.fdr));
+  // WP-B (D8×D9): the composed peeking-recovery story — the family-level optional-stopping
+  // hazard (fixed CIs peeked across looks, inflated) and the always-valid twin it recovers
+  // to. Mirrors the per-cell "peeking FPR → always-valid" headline. Absent (pair null) on a
+  // sequential-ineligible family, never shown as 0%.
+  if (family.fwer_peeking != null && family.fwer_sequential != null) {
+    const overPeek = family.budget != null && family.fwer_peeking > family.budget;
+    stat('peeking → always-valid', `${pct(family.fwer_peeking)} → ${pct(family.fwer_sequential)}`, overPeek);
+  }
   if (family.budget != null) stat('budget', pct(family.budget));
   wrap.appendChild(stats);
   if (family.verdict) wrap.appendChild(el('div', 'abk-cal-family-verdict', family.verdict));

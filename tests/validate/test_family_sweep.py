@@ -22,13 +22,14 @@ def _ttest(alpha: float):
     return MethodConfig(name="t-test", params={"test_type": "absolute"}).bind(alpha=alpha)
 
 
-def _null_members(k: int, alpha: float):
+def _null_members(k: int, alpha: float, n_cutoffs: int = 1):
     # k independent well-behaved metrics on the SAME cohort (one shared mask, distinct
-    # values ⇒ ~independent tests) — the canonical family-error fixture.
+    # values ⇒ ~independent tests) — the canonical family-error fixture. ``n_cutoffs>1``
+    # gives the peeking columns multiple looks to accumulate over (WP-B).
     return [
         FamilyMember(
             metric=f"m{i}",
-            panel=normal_panel(n_units=3000, n_cutoffs=1, seed=100 + i, mu=50.0, sigma=10.0),
+            panel=normal_panel(n_units=3000, n_cutoffs=n_cutoffs, seed=100 + i, mu=50.0, sigma=10.0),
             method=_ttest(alpha),
             alpha=alpha,
             planted=False,
@@ -125,6 +126,98 @@ def test_union_cohort_partial_overlap_scores_every_metric():
     )
     assert s.valid_iterations == 3000  # every metric scorable under the shared union mask
     assert 0.02 < s.fwer < 0.08  # sane null family error on disjoint-ish cohorts
+
+
+# ── the composed peeking pair: fixed hazard → always-valid recovery (D8×D9, WP-B) ──
+
+
+def test_sequential_off_by_default_leaves_no_peeking_columns():
+    """The shipped single-look family (``sequential`` unset) computes ONLY ``fwer``/``fdr``
+    — the peeking pair is absent (None), never zero-filled, so the M5 byte-shape holds."""
+    members = _null_members(3, ALPHA / 3, n_cutoffs=8)
+    s = sweep_family(members, correction="bonferroni", iterations=500, share_a=0.5, seed_parts=("q",))
+    assert s.fwer is not None  # the single-look family still measured
+    assert s.fwer_peeking is None and s.fdr_peeking is None
+    assert s.fwer_sequential is None and s.fdr_sequential is None
+    assert s.any_rejection_rate_peeking is None and s.any_rejection_rate_sequential is None
+
+
+def test_sequential_composed_peeking_hazard_recovers_to_control():
+    """The D8×D9 headline: across an 8-look grid the composed FIXED-CI peeking family-wise
+    error inflates well past nominal (the optional-stopping hazard the per-cell column warns
+    about), while the ALWAYS-VALID twin — same shared assignments, same composed rule, only
+    the marginals widened — is brought back to ≈ the single-look rate. The single-look
+    ``fwer`` is unchanged from the fixed sweep."""
+    members = _null_members(3, ALPHA / 3, n_cutoffs=8)  # Bonferroni α/3 ⇒ composed ≈ α
+    s = sweep_family(
+        members, correction="bonferroni", iterations=2000, share_a=0.5, seed_parts=("seq",),
+        sequential=True,
+    )
+    assert s.fwer_peeking is not None and s.fwer_sequential is not None
+    # the single-look composed family sits at ≈ α (unchanged by the peeking pair)
+    assert 0.02 < s.fwer < 0.09
+    # fixed-CI peeking is inflated across the 8 looks — strictly worse than a single look
+    assert s.fwer_peeking > 2 * ALPHA
+    assert s.fwer_peeking > s.fwer
+    # the always-valid twin is strictly better and controlled at/below the single-look rate
+    # (anytime-valid CIs are conservative → it sits below, never materially above, ``fwer``)
+    assert s.fwer_sequential < s.fwer_peeking
+    assert s.fwer_sequential <= s.fwer + 0.02
+    # complete-null identity holds for BOTH new families (every rejection is false)
+    assert s.fwer_peeking == pytest.approx(s.fdr_peeking, abs=1e-12)
+    assert s.fwer_sequential == pytest.approx(s.fdr_sequential, abs=1e-12)
+    assert s.any_rejection_rate_peeking == pytest.approx(s.fwer_peeking, abs=1e-12)
+    assert s.any_rejection_rate_sequential == pytest.approx(s.fwer_sequential, abs=1e-12)
+
+
+def test_sequential_bh_peeking_pair_also_recovers():
+    """The recovery holds under read-time BH too (the p-value path): the composed peeking
+    FDR inflates and the always-valid twin returns to control."""
+    members = _null_members(3, ALPHA, n_cutoffs=8)  # BH members carry the RAW alpha
+    s = sweep_family(
+        members, correction="benjamini_hochberg", iterations=2000, share_a=0.5,
+        seed_parts=("seqbh",), sequential=True,
+    )
+    assert s.fdr_peeking is not None and s.fdr_sequential is not None
+    assert s.fdr_peeking > 2 * ALPHA  # peeking inflates the BH family FDR
+    assert s.fdr_sequential < s.fdr_peeking  # the always-valid twin recovers
+    assert s.fdr_sequential <= s.fdr + 0.03
+
+
+def test_sequential_ineligible_member_is_a_full_gap_and_twin_uses_the_eligible_member():
+    """A sequential-ineligible member is a bootstrap method, which cannot be scored from
+    suffstats at all (it needs per-unit samples) — so it is a FULL gap in every family, not
+    a fixed-peeking-only rider. It is honestly disclosed by the 'scored in 0 iterations —
+    excluded' warning; the peeking pair is still computed from the eligible t-test (which
+    supplies the ≥1 τ² that lights ``peek_active``), over the SAME member set as the fixed
+    peeking family (no asymmetry, so the recovery story is honest)."""
+    tt = _null_members(1, ALPHA / 2, n_cutoffs=8)[0]
+    boot = FamilyMember(
+        "boot",
+        normal_panel(n_units=3000, n_cutoffs=8, seed=900, mu=50.0, sigma=10.0),
+        MethodConfig(name="bootstrap", params={"n_samples": 200}).bind(alpha=ALPHA / 2),
+        ALPHA / 2,
+    )
+    s = sweep_family(
+        [tt, boot], correction="bonferroni", iterations=300, share_a=0.5,
+        seed_parts=("mix",), sequential=True,
+    )
+    assert s.fwer_peeking is not None and s.fwer_sequential is not None  # eligible t-test drives both
+    # the bootstrap member is a full gap, disclosed honestly — no false "rides in the hazard" claim
+    assert any("boot" in w and "scored in 0" in w for w in s.warnings)
+    assert not any("no always-valid option" in w for w in s.warnings)
+
+
+def test_sequential_deterministic_same_seed_parts():
+    a = sweep_family(
+        _null_members(2, ALPHA / 2, n_cutoffs=6), correction="bonferroni", iterations=800,
+        share_a=0.5, seed_parts=("sd",), sequential=True,
+    )
+    b = sweep_family(
+        _null_members(2, ALPHA / 2, n_cutoffs=6), correction="bonferroni", iterations=800,
+        share_a=0.5, seed_parts=("sd",), sequential=True,
+    )
+    assert a.fwer_peeking == b.fwer_peeking and a.fwer_sequential == b.fwer_sequential
 
 
 # ── determinism ──────────────────────────────────────────────────────────────────

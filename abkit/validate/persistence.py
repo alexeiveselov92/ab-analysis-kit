@@ -35,6 +35,14 @@ def _family_record(experiment: str, run_stamp: str, family: FamilyResult) -> dic
             "fwer": family.fwer,
             "fdr": family.fdr,
             "any_rejection_rate": family.any_rejection_rate,
+            # WP-B: the composed peeking pair (fixed hazard → always-valid twin), or None
+            # on a sequential-ineligible family — the report's recovery story.
+            "fwer_peeking": family.fwer_peeking,
+            "fdr_peeking": family.fdr_peeking,
+            "any_rejection_rate_peeking": family.any_rejection_rate_peeking,
+            "fwer_sequential": family.fwer_sequential,
+            "fdr_sequential": family.fdr_sequential,
+            "any_rejection_rate_sequential": family.any_rejection_rate_sequential,
             "budget": family.budget,
             "over_budget": family.over_budget,
             "warnings": list(family.warnings),

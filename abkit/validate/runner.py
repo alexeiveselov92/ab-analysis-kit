@@ -275,9 +275,17 @@ def _family_verdict(score, budget: float | None) -> str:
     band = f" (budget {budget:.1%})" if budget is not None else ""
     state = "within budget" if not score.over_budget else "OVER budget — do not trust the family"
     fdr_txt = "—" if score.fdr is None else f"{score.fdr:.1%}"
+    # WP-B: the composed peeking-recovery story, when a sequential-eligible member scored —
+    # the family-level optional-stopping hazard and the always-valid rate it recovers to.
+    recovery = ""
+    if score.fwer_peeking is not None and score.fwer_sequential is not None:
+        recovery = (
+            f"; peeking family-wise error {score.fwer_peeking:.1%} → "
+            f"always-valid {score.fwer_sequential:.1%}"
+        )
     return (
         f"composed {score.correction} over {score.n_metrics} metrics: family-wise error "
-        f"{score.fwer:.1%}{band} {state}; FDR {fdr_txt}"
+        f"{score.fwer:.1%}{band} {state}; FDR {fdr_txt}{recovery}"
     )
 
 
@@ -356,6 +364,10 @@ def _run_family_sweep(
             seed_parts=("aa-family", experiment.name),
             inject_effect=None,
             budget=budget,
+            # Always compute the composed peeking pair side-by-side (mirrors the always-on
+            # per-cell D8 column) — it is most useful precisely when sequential is OFF, to
+            # show the family-level optional-stopping hazard and the always-valid recovery.
+            sequential=True,
         )
     except (ValidateError, StatsError) as exc:
         log.append(DecisionEntry("family", f"family sweep failed — {exc}"))
@@ -378,6 +390,12 @@ def _run_family_sweep(
         alpha=alphas.alpha,
         verdict=verdict,
         warnings=score.warnings,
+        fwer_peeking=score.fwer_peeking,
+        fdr_peeking=score.fdr_peeking,
+        any_rejection_rate_peeking=score.any_rejection_rate_peeking,
+        fwer_sequential=score.fwer_sequential,
+        fdr_sequential=score.fdr_sequential,
+        any_rejection_rate_sequential=score.any_rejection_rate_sequential,
     )
 
 
