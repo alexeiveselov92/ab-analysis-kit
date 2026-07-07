@@ -1,0 +1,19 @@
+# Keep the website image build context small + reproducible. The website
+# Dockerfile COPYs only the sources it needs; everything below is noise that
+# would otherwise be shipped to the daemon (slow) or leak into a layer.
+.git
+**/node_modules
+.venv
+venv
+**/dist
+**/.astro
+**/__pycache__
+*.pyc
+.pytest_cache
+.mypy_cache
+.ruff_cache
+htmlcov
+reports
+**/.history
+build
+*.egg-info

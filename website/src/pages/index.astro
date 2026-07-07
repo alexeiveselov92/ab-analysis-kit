@@ -110,23 +110,25 @@ const cockpitChart = stabChart({ w: 720, h: 200, effect: 4.2, ciEnd: 1.5, spread
 // ---- declarative config snippet (experiments/checkout_v2.yml) ----
 const declareLines = [
   '<span class="tk-k">name</span>: <span class="tk-s">checkout_v2</span>',
-  '<span class="tk-k">assignment</span>:',
-  '  <span class="tk-k">unit</span>: <span class="tk-s">user_id</span>',
-  '  <span class="tk-k">salt</span>: <span class="tk-s">checkout_v2_2026</span>',
-  '<span class="tk-k">variants</span>:',
-  '  <span class="tk-k">control</span>:   { <span class="tk-k">weight</span>: <span class="tk-n">50</span> }',
-  '  <span class="tk-k">treatment</span>: { <span class="tk-k">weight</span>: <span class="tk-n">50</span> }',
+  '<span class="tk-k">start_date</span>: <span class="tk-n">2026-01-05</span>      <span class="tk-c"># pinned window start</span>',
+  '<span class="tk-k">end_date</span>: <span class="tk-n">2026-01-26</span>        <span class="tk-c"># planner horizon</span>',
+  '<span class="tk-k">unit_key</span>: <span class="tk-s">user_id</span>',
+  '<span class="tk-k">cadence</span>: <span class="tk-s">1d</span>',
   '',
-  '<span class="tk-k">metrics</span>:',
-  '  - <span class="tk-k">ref</span>: <span class="tk-s">checkout_conversion</span>   <span class="tk-c"># metrics/*.yml</span>',
-  '    <span class="tk-k">method</span>: <span class="tk-s">cuped</span>',
-  '  - <span class="tk-k">ref</span>: <span class="tk-s">revenue_per_user</span>',
-  '    <span class="tk-k">method</span>: <span class="tk-s">bootstrap</span>',
+  '<span class="tk-k">assignment</span>:                  <span class="tk-c"># READ-ONLY exposure source</span>',
+  '  <span class="tk-k">query_file</span>: <span class="tk-s">sql/checkout_v2.sql</span>',
+  '  <span class="tk-k">variants</span>: [<span class="tk-s">control</span>, <span class="tk-s">treatment</span>]   <span class="tk-c"># first = control</span>',
+  '  <span class="tk-k">expected_split</span>: { <span class="tk-k">control</span>: <span class="tk-n">0.5</span>, <span class="tk-k">treatment</span>: <span class="tk-n">0.5</span> }',
   '',
-  '<span class="tk-k">analysis</span>:',
-  '  <span class="tk-k">alpha</span>: <span class="tk-n">0.05</span>',
-  '  <span class="tk-k">horizon_days</span>: <span class="tk-n">22</span>',
-  '  <span class="tk-k">correction</span>: <span class="tk-s">holm</span>',
+  '<span class="tk-k">alpha</span>: <span class="tk-n">0.05</span>',
+  '<span class="tk-k">correction</span>: <span class="tk-s">bonferroni</span>       <span class="tk-c"># two-tier: main vs the rest</span>',
+  '',
+  '<span class="tk-k">comparisons</span>:',
+  '  - <span class="tk-k">metric</span>: <span class="tk-s">checkout_conversion</span>   <span class="tk-c"># metrics/*.yml</span>',
+  '    <span class="tk-k">is_main_metric</span>: <span class="tk-n">true</span>',
+  '    <span class="tk-k">method</span>: { <span class="tk-k">name</span>: <span class="tk-s">cuped-t-test</span>, <span class="tk-k">params</span>: { <span class="tk-k">covariate_lookback</span>: <span class="tk-s">14d</span> } }',
+  '  - <span class="tk-k">metric</span>: <span class="tk-s">revenue_per_user</span>',
+  '    <span class="tk-k">method</span>: { <span class="tk-k">name</span>: <span class="tk-s">bootstrap</span> }',
 ];
 const declareHtml = declareLines.map((l) => `<div class="ln">${l || '&nbsp;'}</div>`).join('');
 
@@ -134,9 +136,9 @@ const declareHtml = declareLines.map((l) => `<div class="ln">${l || '&nbsp;'}</d
 const cliLines = [
   '<span class="tk-cmd">$ abk init</span>                      <span class="tk-c"># scaffold the project</span>',
   '<span class="tk-cmd">$ abk explore</span>                   <span class="tk-c"># open the live cockpit</span>',
-  '  <span class="tk-p">▸</span> <span class="tk-path">http://localhost:8713</span>',
+  '  <span class="tk-p">▸</span> <span class="tk-path">http://127.0.0.1:…</span> <span class="tk-c"># opens in your browser</span>',
   '',
-  '<span class="tk-cmd">$ abk run --experiment checkout_v2 --report</span>',
+  '<span class="tk-cmd">$ abk run --select checkout_v2 --report</span>',
   '  <span class="tk-p">┌─ LOAD</span>    96,090 exposures',
   '  <span class="tk-p">┌─ SRM</span>     χ² p=0.42 · <span class="tk-ok">pass</span>',
   '  <span class="tk-p">┌─ COMPUTE</span> 3 metrics',
@@ -148,12 +150,12 @@ const cliHtml = cliLines.map((l) => `<div class="ln">${l || '&nbsp;'}</div>`).jo
 
 // ---- section data ----
 const methods = [
-  { tag: '// t-test', kind: 'parametric', name: 'Welch t-test', desc: 'Means with unequal variance — the default for continuous metrics.' },
+  { tag: '// t-test', kind: 'parametric', name: 't-test', desc: 'Difference of means, unequal variance (large-sample normal approx) — the default for continuous metrics.' },
   { tag: '// two-prop', kind: 'parametric', name: 'Proportion z-test', desc: 'Conversion & rate metrics, absolute and relative.' },
   { tag: '// cuped', kind: 'variance ↓', name: 'CUPED', desc: 'Pre-experiment covariate adjustment — same power, less sample.' },
   { tag: '// ratio', kind: 'delta-method', name: 'Ratio metrics', desc: 'Per-session ratios with the delta-method variance.' },
   { tag: '// bootstrap', kind: 'vectorised', name: 'Bootstrap family', desc: 'Plain, paired, Poisson & post-normed — numpy-vectorised.' },
-  { tag: '// correction', kind: 'family-wise', name: 'Multiple testing', desc: 'Holm / Benjamini-Hochberg across a metric family.' },
+  { tag: '// correction', kind: 'family-wise', name: 'Multiple testing', desc: 'Two-tier Bonferroni + read-time Benjamini-Hochberg across a metric family.' },
 ];
 
 const verdictCards = [
@@ -236,7 +238,7 @@ const features = [
           </div>
           <div class="nav-right">
             <a class="ghost-link" href={repo}>GitHub</a>
-            <a class="pip" href={pypi}>pip install abkit</a>
+            <a class="pip" href={pypi}>pip install ab-analysis-kit</a>
           </div>
         </div>
       </nav>
@@ -390,8 +392,8 @@ const features = [
           <h2>Watch the estimate converge.</h2>
           <p class="sub">
             The signature chart: cumulative effect + CI, one point per day since launch. The band
-            tightens as sample accrues. The daily view peeks — so the real cumulative-peeking FPR is
-            always measured, and the readout refuses a pre-horizon WIN / LOSE.
+            tightens as sample accrues. The daily view peeks — so <code>abk validate</code> measures
+            the real cumulative-peeking FPR, and the readout refuses a pre-horizon WIN / LOSE.
           </p>
         </div>
         <div class="sig-card">
@@ -424,7 +426,7 @@ const features = [
       <div class="wrap">
         <div class="section-head">
           <div class="eyebrow eyebrow-dark">04 · Decide</div>
-          <h2>Five verdicts. One contract.</h2>
+          <h2>Five states. One contract.</h2>
           <p class="sub">
             Every metric resolves to exactly one state — colored from the same five tokens across
             the chat readout, the HTML report and the cockpit. SRM is a hard gate: it is checked
@@ -538,8 +540,8 @@ const features = [
                 <div class="ctile-v accent">−38%</div>
               </div>
               <div class="ctile">
-                <div class="ctile-k">days to MDE</div>
-                <div class="ctile-v">12</div>
+                <div class="ctile-k">power</div>
+                <div class="ctile-v">0.92</div>
               </div>
             </div>
           </div>
@@ -603,7 +605,7 @@ const features = [
           </p>
         </div>
         <div class="cta-actions">
-          <a class="pip" href={pypi}>pip install abkit</a>
+          <a class="pip" href={pypi}>pip install ab-analysis-kit</a>
           <a class="cta-ghost" href={docsHref}>Read the docs →</a>
         </div>
       </div>
