@@ -76,8 +76,15 @@ jobs:
     needs: build-and-push
     if: needs.build-and-push.outputs.built == 'true'
     runs-on: ubuntu-latest
+    env:
+      # env indirection: `secrets` is not usable in a step `if:`, so expose the
+      # token's presence as a job-level boolean. A missing/empty
+      # PIPELAB_DISPATCH_TOKEN then simply SKIPS the deploy notification instead
+      # of reddening main on `curl -f` (a fork PR / a repo without the secret).
+      HAS_DISPATCH_TOKEN: ${{ secrets.PIPELAB_DISPATCH_TOKEN != '' }}
     steps:
       - name: Trigger pipelab deploy
+        if: env.HAS_DISPATCH_TOKEN == 'true'
         run: |
           curl -fsS -X POST \
             -H "Authorization: Bearer ${{ secrets.PIPELAB_DISPATCH_TOKEN }}" \

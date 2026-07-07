@@ -1,0 +1,13 @@
+{
+  "name": "ab-analysis-kit-monorepo",
+  "private": true,
+  "type": "module",
+  "description": "npm workspace root for ab-analysis-kit's JS surfaces: the dev-only renderer core (web/, package abkit-web) and the marketing + docs site (website/). The lockfile lives here at the root.",
+  "workspaces": [
+    "web",
+    "website"
+  ],
+  "engines": {
+    "node": ">=22"
+  }
+}

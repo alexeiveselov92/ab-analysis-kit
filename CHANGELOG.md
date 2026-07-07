@@ -26,6 +26,17 @@ number change).
   reformat churn). No runtime code changed; goldens untouched; no `ALGORITHM_VERSION` moved.
 
 ### Added
+- **M6 WP7a — the abkit docs + marketing website (`website/`, Astro + Starlight).** A
+  single-source site built from the `docs/` body via `sync-docs.mjs`, on the real Iris
+  brand (`brand.css`, light+dark, name-locked to the bundles' `--abk-*` token layer), with
+  the "Diverge" logo/favicon, a landing page, and an interactive stabilization-chart demo
+  whose JS compute path is golden-pinned to `abkit.stats` (hard demo-parity CI gate). `web/`
+  and `website/` are now an npm workspace (single root lockfile); a Docker-free `website` CI
+  job runs sync + `astro check` + build + demo-parity. The live deploy (Dockerfile → GHCR →
+  `abkit.pipelab.dev`) is a separate gated step. Renderer bundles unchanged.
+- **M6 — user-facing docs body + brand source-of-truth.** The `docs/` guide/reference tree
+  (WP3) and the finalized Claude Design brand deliverables under `docs/design/`
+  (`brand-tokens.md`, logo SVGs, mockups) that the site and surfaces build on.
 - **M6 WP2 — `abk init-claude` + packaged Claude Code context.** New command that
   installs AI-assistant context into a user's abkit project (idempotent,
   version-stamped, re-runnable after upgrade): a marker-delimited managed block in
