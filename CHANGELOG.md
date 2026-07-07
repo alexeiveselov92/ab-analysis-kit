@@ -14,6 +14,14 @@ number change).
 ## [Unreleased]
 
 ### Fixed
+- **`abk init` prod-profile env placeholders were double-wrapped (latent scaffold bug).**
+  The `prod:` profiles in the three `abk init` templates used quadruple-brace
+  `{{{{ env_var('ABKIT_*') }}}}` placeholders, but `profiles.yml` is written **raw** (never
+  `.format()`-ed, unlike `abkit_project.yml`), so a set env var resolved to `{{value}}`
+  (wrapped in stray braces) instead of `value`. Corrected to standard double-brace
+  `{{ env_var('ABKIT_*') }}`. Latent because `abk init`'s scaffold self-check runs with the
+  vars unset (a preserved placeholder validates fine either way). Surfaced while adding the
+  WP5 `notification_channels:` seed block.
 - **M6 WP1 — tooling debt root-caused + partly cleared (no behavior change).** The
   long-standing "`mypy` fails on clean HEAD" was **not** a numpy issue: a stray comment
   `# type: (required, optional)` in `abkit/config/metric_config.py` was parsed by mypy as a
@@ -26,6 +34,24 @@ number change).
   reformat churn). No runtime code changed; goldens untouched; no `ALGORITHM_VERSION` moved.
 
 ### Added
+- **M6 WP5 — `abk test-report` + a minimal notification-channel layer (`abkit/notify/`).**
+  A new command sends a **synthetic mock readout** through every channel in a new
+  `profiles.yml` `notification_channels:` block and prints a per-channel ✓/✗ — a
+  connectivity + formatting smoke test (no lock, no warehouse read, no statistics). Five
+  channels ported and **reshaped** from detectkit's alerting channels — Slack, Mattermost,
+  a generic webhook, Telegram, email — keeping the transport/envelope but dropping every
+  alerting semantic (no severity / recovery / no-data / detector / quorum / consecutive
+  machinery; abkit has no alerting). The message is experiment-primary: a verdict
+  (WIN/LOSE/FLAT/INCONCLUSIVE, SRM-gate overriding), effect + CI, p-value, the effective
+  post-correction alpha, and the weekly-cycle representativeness, colored by the five brand
+  verdict tokens. Secrets come **only** from env interpolation (`${VAR}` / `{{ env_var(…) }}`)
+  and an unresolved placeholder is refused with a clear error. `notification_channels:` is a
+  new typed field on `ProfilesConfig` (`NotificationChannelConfig`, additive — existing
+  `profiles.yml` files are unaffected); a commented example ships in the `abk init` seed.
+  The command exits **non-zero** on any send failure / misconfiguration (the CLI-is-the-
+  automation-unit convention). Pure Python, no new dependency (`requests` was already a
+  dependency); `abkit.stats` untouched, no `ALGORITHM_VERSION` moved. Covered by
+  `tests/notify/test_channels.py` + `tests/cli/test_test_report_command.py`.
 - **M6 WP-A — `abk plan` gains runtime + ASN (read-only, no stats-core change).** Given a
   unit-arrival rate — derived read-only from `_ab_exposures` (new `get_arrival_rate`:
   distinct units per observed day, whole-cohort window, split to the control arm) or supplied

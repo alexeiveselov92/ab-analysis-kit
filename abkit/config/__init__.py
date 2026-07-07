@@ -14,7 +14,11 @@ from abkit.config.experiment_config import (
 )
 from abkit.config.method_config import MethodConfig
 from abkit.config.metric_config import MetricColumnsConfig, MetricConfig
-from abkit.config.profile import ProfileConfig, ProfilesConfig
+from abkit.config.profile import (
+    NotificationChannelConfig,
+    ProfileConfig,
+    ProfilesConfig,
+)
 from abkit.config.project_config import ProjectConfig
 from abkit.config.validator import (
     ValidationReport,
@@ -34,6 +38,7 @@ __all__ = [
     "MethodConfig",
     "MetricColumnsConfig",
     "MetricConfig",
+    "NotificationChannelConfig",
     "ProfileConfig",
     "ProfilesConfig",
     "ProjectConfig",

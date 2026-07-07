@@ -7,8 +7,7 @@ driver is required until a command actually needs one. Failures exit NON-ZERO
 from the detectkit donor's swallow-and-return-0 behaviour).
 
 Surface: ``init``, ``run``, ``unlock``, ``clean`` (M2) + ``explore`` (M3) +
-``validate`` (M4) + ``plan`` (M5) + ``init-claude`` (M6). The remaining command
-(``test-report``) lands later in M6.
+``validate`` (M4) + ``plan`` (M5) + ``init-claude`` / ``test-report`` (M6).
 """
 
 from __future__ import annotations
@@ -309,6 +308,27 @@ def plan(
     from abkit.cli.commands.plan import run_plan
 
     run_plan(select, metric, mde, power, alpha, baseline, arrival_rate, profile)
+
+
+@cli.command(name="test-report")
+@click.argument("experiment_name", metavar="EXPERIMENT")
+@click.option(
+    "--channel",
+    multiple=True,
+    help="Test only these configured channel(s) by name (repeatable; default all)",
+)
+@click.option("--profile", help="Profile name (default: profiles.yml default_profile)")
+def test_report(experiment_name: str, channel: tuple[str, ...], profile: str | None) -> None:
+    """Send a mock readout through the configured notification channels.
+
+    A connectivity / format check for the profiles.yml `notification_channels:`
+    block: builds a synthetic WIN readout for EXPERIMENT (no lock, no warehouse
+    read) and delivers it to each channel, printing a per-channel ✓/✗. Exits
+    non-zero if any channel fails or is misconfigured.
+    """
+    from abkit.cli.commands.test_report import run_test_report
+
+    run_test_report(experiment_name, channel, profile)
 
 
 @cli.command()
