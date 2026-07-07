@@ -250,3 +250,204 @@ def test_plan_comparison_refuses_ratio_and_bootstrap_but_sizes_ztest():
 
     boot = _plan_comparison(exp, by_metric["arpu"], alphas, 0.8, 0.05, None, tables=None)
     assert boot.refused is not None and "resampling" in boot.refused
+
+
+# ── WP-A: runtime + ASN ──────────────────────────────────────────────────────────
+
+
+def test_plan_arrival_rate_renders_runtime_line(project):
+    # --arrival-rate + --baseline sizes and times a comparison with no run/exposures at all
+    result = runner.invoke(
+        cli,
+        [
+            "plan",
+            "--select",
+            EXP,
+            "--mde",
+            "0.05",
+            "--baseline",
+            "example_signup_cr:prop=0.1,n=10000",
+            "--arrival-rate",
+            "2000",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "runtime ≈" in result.output
+    assert "units/day/arm" in result.output
+    assert "→" in result.output and "control" in result.output  # the split label
+    # the example is NOT sequential.enabled ⇒ ASN is honestly declared n/a
+    assert "sequential ASN: n/a — fixed-horizon design" in result.output
+
+
+def test_plan_no_arrival_data_skips_runtime(ran):
+    # the seed-mirror exposures all share one timestamp ⇒ the rate is underivable; without
+    # --arrival-rate runtime must be SKIPPED with a reason, never guessed.
+    result = runner.invoke(cli, ["plan", "--select", EXP, "--mde", "0.05"])
+    assert result.exit_code == 0, result.output
+    assert "runtime: n/a" in result.output
+
+
+def test_plan_bad_arrival_rate_exits_nonzero(project):
+    result = runner.invoke(cli, ["plan", "--select", EXP, "--arrival-rate", "0"])
+    assert result.exit_code != 0
+
+
+def test_plan_asn_renders_for_a_sequential_experiment(project):
+    # flip the scaffolded experiment to sequential.enabled and plan with a rate + baseline:
+    # the always-valid ASN line must render (early-stop N/arm + P(win by horizon)).
+    from pathlib import Path
+
+    exp_yml = Path("experiments/example_signup_test.yml")
+    exp_yml.write_text(
+        exp_yml.read_text() + "\nsequential:\n  enabled: true\n  scheme: always_valid\n",
+        encoding="utf-8",
+    )
+    result = runner.invoke(
+        cli,
+        [
+            "plan",
+            "--select",
+            EXP,
+            "--metric",
+            "example_signup_cr",
+            "--mde",
+            "0.05",
+            "--baseline",
+            "example_signup_cr:prop=0.2,n=10000",
+            "--arrival-rate",
+            "4000",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "sequential ASN ≈" in result.output
+    assert "P(win by horizon)" in result.output
+    assert "null ASN" in result.output
+
+
+def test_build_runtime_asn_note_for_non_sequential_and_bootstrap():
+    # unit-level: a non-sequential design and a resampling method each get an honest note
+    from abkit.cli.commands.plan import _build_runtime
+    from abkit.planning.sizing import BaselineMoments, SizingResult
+    from abkit.stats import get_method_class
+
+    moments = BaselineMoments("fraction", 0.2, 10000, 10000, None, "x")
+    result = SizingResult(required_n=5000, achievable_mde=0.03, achieved_power=0.5)
+    look_days = [float(d) for d in range(1, 15)]
+
+    non_seq_exp = ExperimentConfig.model_validate(
+        {
+            "name": "e",
+            "start_date": "2024-07-01",
+            "end_date": "2024-07-14",
+            "unit_key": "u",
+            "assignment": {
+                "query": "SELECT 1",
+                "variants": ["control", "t"],
+                "expected_split": {"control": 0.5, "t": 0.5},
+            },
+            "comparisons": [{"metric": "cr", "is_main_metric": True, "method": {"name": "z-test"}}],
+        }
+    )
+    rt = _build_runtime(
+        non_seq_exp,
+        get_method_class("z-test"),
+        result,
+        moments,
+        test_type="relative",
+        alpha=0.05,
+        target_mde=0.05,
+        plan_ratio=1.0,
+        rate_control=1000.0,
+        rate_source="test",
+        look_days=look_days,
+        horizon_days=14.0,
+    )
+    assert rt.asn is None and rt.asn_note is not None and "fixed-horizon" in rt.asn_note
+    assert rt.days_to_required_n == 5.0  # 5000 / 1000
+
+
+def _seq_experiment() -> ExperimentConfig:
+    return ExperimentConfig.model_validate(
+        {
+            "name": "e",
+            "start_date": "2024-07-01",
+            "end_date": "2024-07-14",
+            "unit_key": "u",
+            "assignment": {
+                "query": "SELECT 1",
+                "variants": ["control", "t"],
+                "expected_split": {"control": 0.5, "t": 0.5},
+            },
+            "comparisons": [{"metric": "cr", "is_main_metric": True, "method": {"name": "z-test"}}],
+            "sequential": {"enabled": True, "scheme": "always_valid"},
+        }
+    )
+
+
+def test_build_runtime_flags_asn_below_required_and_labels_it():
+    # underpowered / horizon-capped regime: horizon (28,000/arm) barely clears required-N
+    # (25,580) at low sequential power ⇒ the horizon-capped ASN dips BELOW required-N. The
+    # line must label it so it can't be misread as "sequential needs fewer samples".
+    from abkit.cli.commands.plan import _build_runtime, _runtime_lines
+    from abkit.planning.sizing import BaselineMoments, size_comparison
+    from abkit.stats import get_method_class
+
+    exp = _seq_experiment()
+    m = BaselineMoments("fraction", 0.2, 10000, 10000, None, "x")
+    result = size_comparison(
+        m, test_type="relative", alpha=0.05, power=0.8, target_mde=0.05, plan_ratio=1.0
+    )
+    rt = _build_runtime(
+        exp,
+        get_method_class("z-test"),
+        result,
+        m,
+        test_type="relative",
+        alpha=0.05,
+        target_mde=0.05,
+        plan_ratio=1.0,
+        rate_control=2000.0,
+        rate_source="test",
+        look_days=[float(d) for d in range(1, 15)],
+        horizon_days=14.0,
+    )
+    assert rt.asn is not None and rt.asn.asn_n_h1 < result.required_n
+    assert rt.asn_below_required is True
+    line = " ".join(_runtime_lines(rt))
+    assert "horizon-capped expected-stop, not a lower requirement" in line
+
+
+def test_fmt_rate_keeps_a_sub_one_rate_visible():
+    from abkit.cli.commands.plan import _fmt_rate
+
+    assert _fmt_rate(0.33) == "0.33"  # never rounds a fractional daily rate to "0"
+    assert _fmt_rate(2000.0) == "2,000"
+
+
+def test_resolve_arrival_rate_distinguishes_empty_cohort_from_one_instant():
+    from abkit.cli.commands.plan import _resolve_arrival_rate
+
+    exp = _seq_experiment()
+
+    class _Tables:
+        def __init__(self, arrivals, count):
+            self._arrivals, self._count = arrivals, count
+
+        def exposures_table_exists(self):
+            return True
+
+        def get_arrival_rate(self, name, variants):
+            return self._arrivals
+
+        def count_exposures(self, name):
+            return self._count
+
+    # empty cohort for THIS experiment (table exists, zero rows) ⇒ the empty-case message
+    rate, reason = _resolve_arrival_rate(exp, None, _Tables(None, 0))
+    assert rate is None and "no exposures for this experiment yet" in reason
+    # a one-instant window (rows exist, but max == min) ⇒ the ~one-instant message
+    rate, reason = _resolve_arrival_rate(exp, None, _Tables(None, 5))
+    assert rate is None and "one instant" in reason
+    # a real derived rate flows through untouched
+    rate, reason = _resolve_arrival_rate(exp, None, _Tables(({"control": 500.0, "t": 500.0}, 30.0), 30000))
+    assert rate == 500.0 and "observed days" in reason

@@ -1,21 +1,26 @@
-"""Pure sizing-engine tests (m5-implementation-plan.md WP6).
+"""Pure sizing-engine tests (m5-implementation-plan.md WP6; m6 WP-A runtime/ASN).
 
 KAT vs the legacy-transcribed ``abkit.stats.power`` solves + the round-trip property
-(required-N re-solved back to ~target power), plus the ``--baseline`` grammar.
+(required-N re-solved back to ~target power), plus the ``--baseline`` grammar; and the
+WP-A runtime (days-to-N) + ASN (always-valid average sample number) additions, the ASN
+Monte-Carlo cross-checked against an independent scalar simulation.
 """
 
 from __future__ import annotations
 
 import math
 
+import numpy as np
 import pytest
 
 from abkit.planning.sizing import (
     FRACTION,
     SAMPLE,
     BaselineMoments,
+    asn_for,
     moments_from_override,
     parse_baseline_overrides,
+    runtime_for,
     size_comparison,
 )
 from abkit.stats.power import (
@@ -26,6 +31,7 @@ from abkit.stats.power import (
     get_ttest_power,
     get_ttest_sample_size,
 )
+from abkit.stats.sequential import mixture_tau2
 
 # ── sample (t-test / CUPED-on-raw) ───────────────────────────────────────────────
 
@@ -210,3 +216,159 @@ def test_moments_from_override_sample_and_fraction():
 def test_moments_from_override_rejects_incomplete(kind, fields):
     with pytest.raises(ValueError):
         moments_from_override(kind, fields)
+
+
+# ── runtime: days-to-N (WP-A) ──────────────────────────────────────────────────
+
+
+def test_runtime_for_divides_required_n_by_rate():
+    assert runtime_for(1000, 250.0) == 4.0  # 1000 units / 250 per day = 4 days
+
+
+def test_runtime_for_none_target_and_no_rate():
+    assert runtime_for(None, 250.0) is None  # no target ⇒ no days-to-N
+    assert runtime_for(1000, 0.0) is None  # no usable rate ⇒ skipped
+
+
+def test_runtime_for_infinite_required_n_is_infinite():
+    assert runtime_for(float("inf"), 250.0) == float("inf")
+
+
+# ── ASN: the always-valid average sample number (WP-A) ───────────────────────────
+
+# a well-powered sample metric + a 60-day daily grid at 500 units/day/arm (horizon
+# 30000/arm — far past required-N, so P(win) → 1 and the early-stop saving is large)
+_ASN_M = BaselineMoments(SAMPLE, baseline=100.0, n=1, n_other=1, std=25.0, source="x")
+_ASN_LOOK_DAYS = [float(d) for d in range(1, 61)]
+_ASN_RATE = 500.0
+
+
+def _asn(mde, look_days=None, rate=_ASN_RATE, **kw):
+    return asn_for(
+        _ASN_M,
+        test_type="relative",
+        target_mde=mde,
+        alpha=0.05,
+        plan_ratio=1.0,
+        look_days=look_days if look_days is not None else _ASN_LOOK_DAYS,
+        rate_control_per_day=rate,
+        **kw,
+    )
+
+
+def test_asn_is_deterministic_across_calls():
+    # a read-only planner must not wobble between two invocations on identical inputs
+    assert _asn(0.05).asn_n_h1 == _asn(0.05).asn_n_h1
+
+
+def test_asn_h1_stops_well_before_the_horizon():
+    # the real sequential saving: under a true effect you conclude far before the planned
+    # end (NOT below the fixed required-N — the always-valid CS is the price of peeking).
+    a = _asn(0.05)
+    assert a.asn_n_h1 < a.horizon_n
+    assert a.asn_n_h1 < 0.2 * a.horizon_n  # a big early-stop saving in this overpowered grid
+
+
+def test_asn_h0_runs_essentially_to_the_horizon():
+    # under the null the CS rarely crosses ⇒ the expected stop is ~ the horizon,
+    # and strictly later than under the true effect.
+    a = _asn(0.05)
+    assert a.asn_n_h0 > 0.95 * a.horizon_n
+    assert a.asn_n_h0 > a.asn_n_h1
+
+
+def test_asn_decreases_as_the_true_effect_grows():
+    # a larger true effect crosses the boundary sooner (floored by the first look's N)
+    asns = [_asn(mde).asn_n_h1 for mde in (0.02, 0.05, 0.10)]
+    assert asns[0] > asns[1] > asns[2] - 1e-9  # monotone non-increasing (ties at the floor)
+
+
+def test_asn_prob_win_is_a_probability():
+    a = _asn(0.05)
+    assert 0.0 <= a.prob_win_by_horizon <= 1.0
+
+
+def test_asn_none_without_target_or_enough_looks():
+    assert _asn(None) is None  # no target MDE
+    assert _asn(0.05, look_days=[1.0]) is None  # a single look cannot peek
+    # a zero-baseline relative effect is undetectable (δ_abs = 0)
+    zero = BaselineMoments(SAMPLE, baseline=0.0, n=1, n_other=1, std=5.0, source="x")
+    assert (
+        asn_for(
+            zero,
+            test_type="relative",
+            target_mde=0.05,
+            alpha=0.05,
+            plan_ratio=1.0,
+            look_days=_ASN_LOOK_DAYS,
+            rate_control_per_day=_ASN_RATE,
+        )
+        is None
+    )
+
+
+def test_asn_matches_an_independent_scalar_simulation():
+    """Cross-check the vectorised MC against a from-scratch scalar first-passage loop.
+
+    The plan's ASN validation (m6-implementation-plan.md WP-A): an independent
+    implementation — a plain per-trajectory Python loop with its OWN RNG and its OWN
+    closed-form boundary (the documented mixture radius, re-derived here, not
+    ``sizing._cs_radius``) — must agree with the shipped engine within Monte-Carlo noise.
+    """
+    mde, alpha = 0.05, 0.05
+    a = _asn(mde)
+
+    mean, std = 100.0, 25.0
+    delta = mean * mde  # absolute-scale target effect
+    var_factor = std * std * 2.0  # base_var * (1 + 1/ratio), ratio = 1
+    # usable looks: ≥1 control unit; here every day ≥1 (rate 500), strictly increasing
+    n_arr = np.array([_ASN_RATE * d for d in _ASN_LOOK_DAYS])
+    v_arr = var_factor / n_arr
+    tau2 = mixture_tau2(v_arr[0], alpha)
+
+    def radius(v):  # the documented normal-mixture CS half-width (independent derivation)
+        return math.sqrt(
+            (2.0 * v * (v + tau2) / tau2) * (math.log(1.0 / alpha) + 0.5 * math.log((v + tau2) / v))
+        )
+
+    rad = [radius(v) for v in v_arr]
+    info = 1.0 / v_arr
+
+    def simulate(true_delta, seed):
+        rng = np.random.default_rng(seed)
+        stops = []
+        for _ in range(4000):
+            s = 0.0
+            prev_i = 0.0
+            stop = float(n_arr[-1])
+            for k in range(len(n_arr)):
+                di = info[k] - prev_i
+                s += true_delta * di + math.sqrt(di) * rng.standard_normal()
+                prev_i = info[k]
+                if abs(s / info[k]) > rad[k]:
+                    stop = float(n_arr[k])
+                    break
+            stops.append(stop)
+        return sum(stops) / len(stops)
+
+    ref_h1 = simulate(delta, seed=777)
+    ref_h0 = simulate(0.0, seed=778)
+    # agree within ~6% — both are MC estimates of the same first-passage expectation
+    assert abs(a.asn_n_h1 - ref_h1) / ref_h1 < 0.06
+    assert abs(a.asn_n_h0 - ref_h0) / ref_h0 < 0.06
+
+
+def test_asn_fraction_metric_is_supported():
+    m = BaselineMoments(FRACTION, baseline=0.2, n=1, n_other=1, std=None, source="x")
+    a = asn_for(
+        m,
+        test_type="relative",
+        target_mde=0.1,
+        alpha=0.05,
+        plan_ratio=1.0,
+        look_days=[float(d) for d in range(1, 31)],
+        rate_control_per_day=2000.0,
+    )
+    assert a is not None
+    assert a.asn_n_h1 < a.horizon_n
+    assert a.asn_n_h0 > a.asn_n_h1

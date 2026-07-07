@@ -26,6 +26,26 @@ number change).
   reformat churn). No runtime code changed; goldens untouched; no `ALGORITHM_VERSION` moved.
 
 ### Added
+- **M6 WP-A — `abk plan` gains runtime + ASN (read-only, no stats-core change).** Given a
+  unit-arrival rate — derived read-only from `_ab_exposures` (new `get_arrival_rate`:
+  distinct units per observed day, whole-cohort window, split to the control arm) or supplied
+  via the new `--arrival-rate <units/day>` flag — each sizable comparison now also reports
+  **runtime** (`days-to-required-N = required_n / rate` + the planned horizon) and, for a
+  `sequential.enabled` sequential-eligible design, the always-valid **ASN** (average sample
+  number): the expected control-arm N at which the confidence sequence first excludes zero
+  under the true effect (H1) and the null (H0). ASN is a deterministic fixed-seed Monte-Carlo
+  estimate over the canonical information-time process, crossing the **exact shipped CS
+  boundary** (`abkit.stats.sequential`) — it adds no estimator and moves no
+  `ALGORITHM_VERSION`; `abkit.stats` stays pure and byte-identical. No arrival data ⇒ runtime
+  is SKIPPED with a reason (never guessed); a fixed-horizon/resampling design ⇒ `ASN n/a`.
+  **Honest framing:** the always-valid design's *sample requirement* (N to reach a given
+  power) is *larger* than the fixed required-N (the Robbins mixture CI is wider by design —
+  the price of unlimited peeking), so the CS never lets you design for fewer units at the
+  same power. The reported **ASN is a different quantity** — the expected *stopping* N,
+  horizon-capped — guaranteed only against the horizon (ASN_H1 ≪ horizon-N; ASN_H0 ≈
+  horizon-N; monotone in effect); vs required-N it is regime-dependent (can dip below in the
+  underpowered/horizon-capped case, which the CLI line flags). The Monte-Carlo estimate is
+  cross-validated against an independent scalar first-passage simulation in the tests.
 - **M6 WP-B — the A/A composed sweep gains its always-valid (peeking) twin (no
   behavior change to the shipped single-look family).** `abk validate`'s composed
   multi-metric family sweep now mirrors the per-cell D8 trio at the family level: alongside

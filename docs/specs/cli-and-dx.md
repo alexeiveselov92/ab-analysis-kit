@@ -36,12 +36,12 @@ with metrics/Z.yml — metric and experiment names share one namespace"). The
 two-level selector semantics are documented in `cli.md` because detectkit users will
 assume the one-level model.
 
-### `abk plan` scope amendment (M5 WP6; m5-implementation-plan.md D10)
+### `abk plan` scope amendment (M5 WP6; m5-implementation-plan.md D10 — runtime/ASN shipped M6 WP-A)
 
 The `abk plan` row's word **"runtime"** — days-to-N from a unit-arrival rate, and the
-sequential design's expected/average sample number (ASN) — is **deferred to M6**: it
-needs an arrival-rate source the pipeline does not yet capture. M5 ships the **sizing**
-planner only: required-N / achievable-MDE / achieved-power (at the effective two-tier
+sequential design's expected/average sample number (ASN) — **shipped in M6 WP-A** (see
+the runtime/ASN sub-section below). M5 shipped the **sizing** planner only: required-N /
+achievable-MDE / achieved-power (at the effective two-tier
 alpha), the projected look count, and the compute cost shape — all read-only. Baseline
 per-arm moments come from the latest persisted `_ab_results` row for the control/first-
 treatment pair (a `--baseline <metric>:mean=..,std=..,n=..` / `:prop=..,n=..` override
@@ -70,6 +70,53 @@ Done. 1 experiment(s) planned
 The effective **per-comparison alpha** (two-tier resolved) heads the tree; each line
 reports required-N (vs the current N → powered/underpowered), the achievable MDE at the
 current size, and achieved power; a ratio/bootstrap comparison reads `SKIPPED: …` instead.
+
+#### Runtime + ASN (M6 WP-A)
+
+Given a **unit-arrival rate** — derived read-only from `_ab_exposures` (distinct units
+per observed day, whole-cohort window, split to the control arm) or supplied with
+`--arrival-rate <units/day>` (total across arms) — each sizable comparison also reports:
+
+- **runtime** — `days-to-required-N = required_n / rate` plus the planned horizon length,
+  a plain division; and
+- **ASN** — for a `sequential.enabled`, sequential-eligible comparison, the always-valid
+  design's **average sample number**: the expected control-arm N at which the confidence
+  sequence first excludes zero, under the true target effect (H1) and the null (H0). It
+  is a deterministic (fixed-seed) Monte-Carlo estimate over the canonical information-time
+  Gaussian process of the per-look estimate, crossing the **exact shipped CS boundary**
+  (`abkit.stats.sequential`), capped at the planned horizon.
+
+Without an arrival rate BOTH are **SKIPPED with a reason** (a backfilled cohort whose
+exposures span ~one instant is underivable) — never invented. A fixed-horizon or
+resampling design reports `sequential ASN: n/a` with the reason.
+
+> **Honest ASN framing (WP-A).** Keep two quantities distinct.
+> **(1) The always-valid design's *sample requirement*** — the N needed to reach a given
+> power — is **larger** than the fixed required-N, because the Robbins mixture CI is
+> deliberately wider than a fixed CI (≈3.0·SE vs 1.96·SE at the anchor). So the CS never
+> lets you *design* for fewer units than a fixed test at the same power; that width is the
+> price of unlimited peeking.
+> **(2) The reported ASN is a *different* thing** — the *expected stopping* N, capped at
+> the planned horizon. Its guarantee is stated **strictly against the horizon**: under a
+> true effect the sequence usually stops well before the horizon (ASN_H1 ≪ horizon-N when
+> well-powered), while under the null it runs essentially to the horizon (ASN_H0 ≈
+> horizon-N); ASN shrinks as the true effect grows, floored by the first look's N (a coarse
+> cadence forfeits early-stop savings — itself a planning signal).
+> ASN vs the fixed required-N is therefore **regime-dependent**: it *exceeds* required-N
+> when the horizon comfortably clears the design's power need, but can dip *below* required-N
+> in the underpowered / horizon-capped regime (early crossers pulling the capped mean down,
+> non-crossers stopping at a horizon ≈ required-N). It is **never** a "sequential concludes
+> in fewer samples than the fixed test" claim — the `abk plan` ASN line flags the
+> below-required case as a horizon-capped expected-stop so the juxtaposition can't be
+> misread. The shipped tests assert only the horizon-framed invariants (ASN_H1 ≪ horizon-N,
+> ASN_H0 ≈ horizon-N, ASN monotone in effect), never an ASN-vs-required-N ordering.
+
+```
+  │   example_signup_cr [main · z-test · relative] — baseline prop=0.2 · n=10000/10000 trials
+  │     target MDE 5.00% → required 1,568/arm ✓ powered · power@MDE 1.00 · achievable MDE 1.98%
+  │     runtime ≈ 0.8d to required-N @ 2,000 units/day/arm (_ab_exposures over 30.0 observed days) · horizon 14.0d
+  │     sequential ASN ≈ 2,400/arm (≈ 1.2d) at target effect · P(win by horizon) 100% · null ASN ≈ 27,800/arm
+```
 
 ## 2. The explore cockpit (priority interface)
 
