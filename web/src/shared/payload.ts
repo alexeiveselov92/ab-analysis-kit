@@ -199,6 +199,13 @@ export interface CalibrationFamily {
   correction?: string | null;
   fwer?: number | null;
   fdr?: number | null;
+  /** WP-B (D8×D9) — the composed peeking pair: the fixed-CI family-wise error peeked
+   * across looks (the optional-stopping hazard, inflated) and its always-valid twin
+   * (controlled, ≈ single-look). null on a sequential-ineligible family. */
+  fwer_peeking?: number | null;
+  fdr_peeking?: number | null;
+  fwer_sequential?: number | null;
+  fdr_sequential?: number | null;
   budget?: number | null;
   over_budget?: boolean;
   n_metrics?: number | null;

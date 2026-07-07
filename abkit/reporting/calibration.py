@@ -214,6 +214,12 @@ def _family_block(sentinel: dict | None) -> dict | None:
         "correction": fam.get("correction"),
         "fwer": _num(fam.get("fwer")),
         "fdr": _num(fam.get("fdr")),
+        # WP-B (D8×D9): the composed peeking pair — the fixed-CI hazard and its always-valid
+        # twin, side-by-side (None on a sequential-ineligible family). The recovery story.
+        "fwer_peeking": _num(fam.get("fwer_peeking")),
+        "fdr_peeking": _num(fam.get("fdr_peeking")),
+        "fwer_sequential": _num(fam.get("fwer_sequential")),
+        "fdr_sequential": _num(fam.get("fdr_sequential")),
         "budget": _num(fam.get("budget")),
         "over_budget": bool(fam.get("over_budget", False)),
         "n_metrics": fam.get("n_metrics"),

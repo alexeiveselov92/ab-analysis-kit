@@ -201,7 +201,7 @@ The **Recommended** row and its one-line rationale, the budget-band colors, and 
 peeking headline ("nominal α 5%, real peeking FPR 12.7%") are what `abk validate
 --report` renders and the explore calibration chip surfaces live (§4, §5).
 
-### 8.1 The sequential column (D8) and the composed family (D9) — shipped in M5
+### 8.1 The sequential column (D8) and the composed family (D9) — shipped in M5; sequential × composed in M6 (WP-B)
 
 With `sequential: {enabled: true}` on a sequential-eligible method, `abk validate` adds
 the always-valid twin **beside** the fixed peeking column (never asserting it, only
@@ -233,4 +233,31 @@ tier each at α, by design). The budget is therefore anchored to that nominal ra
 the correction is loose. A planted true effect in one metric leaves the null metrics'
 family error controlled (the D12 story, pinned by `tests/validate/test_family_sweep.py`).
 It is one sentinel `_ab_aa_runs` row and a composed-family band above the report matrix.
-**Sequential × composed is an M6 follow-up** (the sweep is fixed-horizon in M5).
+
+**Sequential × composed — shipped in M6 (WP-B).** The composed sweep now mirrors the
+per-cell D8 trio at the family level, composing three matched families over the *same*
+shared assignments under the *same* composed rule (only the marginals differ):
+
+| composed family error | how each member is scored | controlled? |
+|---|---|---|
+| `fwer`/`fdr` (single-look) | fixed CI at the **horizon** — the readout's honest fixed decision | ≈ nominal (unchanged from M5) |
+| `fwer_peeking`/`fdr_peeking` | fixed CI **peeked across every look** — the composed optional-stopping hazard | **inflated** ⚠ |
+| `fwer_sequential`/`fdr_sequential` | always-valid CI peeked across every look (D8 estimator) | **≈ nominal** ✅ |
+
+The peeking pair is the family analog of the per-cell "peeking FPR → always-valid"
+recovery: where the fixed column breaks budget across looks, the always-valid twin returns
+to ≈ the composed nominal. It is computed in one walk per member and gated on a
+sequential-eligible family (≥1 member has a frozen τ²) — an all-ineligible family (e.g.
+bootstrap-only) shows only the single-look column. The only sequential-ineligible methods
+are the bootstrap family, which cannot be scored from sufficient statistics at all (they
+need per-unit samples), so an ineligible member is a **full gap** in every family (honestly
+disclosed by the "scored in 0 iterations — excluded from the family error" warning), not a
+fixed-peeking-only rider — the peeking pair therefore always composes over the *same*
+eligible member set, keeping the recovery story apples-to-apples. The numbers live in the
+sentinel row's `details.family`
+(no schema column — additive to the M5 sentinel); the report renders a "peeking →
+always-valid" stat in the composed band. Zero method-math changes (no `ALGORITHM_VERSION`
+bump — this is a validate-layer MODE transform, the D8 estimator reused verbatim). Pinned
+by the D8×D9 headline tests in `tests/validate/test_family_sweep.py` + the sequential-matrix
+e2e. **Only `alpha_spending`/group-sequential remains a v2 deferral** (a
+`scheme: alpha_spending` config error names it).

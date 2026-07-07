@@ -151,6 +151,11 @@ def test_family_sentinel_row_is_persisted_and_shaped(warehouse):
     fam = json.loads(sentinel["details"])["family"]
     assert fam["n_metrics"] == 2 and fam["fwer"] is not None
     assert fam["fwer"] == fam["fdr"]  # complete-null identity
+    # WP-B (D8×D9): the composed peeking pair persists in details (t-test + z-test are both
+    # sequential-eligible ⇒ the pair lights); the complete-null identity holds for both.
+    assert fam["fwer_peeking"] is not None and fam["fwer_sequential"] is not None
+    assert fam["fwer_peeking"] == fam["fdr_peeking"]
+    assert fam["fwer_sequential"] == fam["fdr_sequential"]
     # a real cell + the sentinel share the run_stamp but have distinct run_ids
     assert len({r["run_id"] for r in records}) == len(records)
 

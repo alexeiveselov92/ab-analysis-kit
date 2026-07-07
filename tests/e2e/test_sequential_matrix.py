@@ -103,6 +103,11 @@ def test_validate_renders_the_sequential_column_and_family_sweep(project):
     fam = json.loads(family[0]["details"])["family"]
     assert fam["n_metrics"] >= 2 and fam["fwer"] is not None
     assert fam["fwer"] == fam["fdr"]  # complete-null identity
+    # WP-B (D8×D9): the composed peeking pair is persisted too (≥1 eligible cell above ⇒
+    # the family lights the pair); the complete-null identity holds for both new families.
+    assert fam["fwer_peeking"] is not None and fam["fwer_sequential"] is not None
+    assert fam["fwer_peeking"] == fam["fdr_peeking"]
+    assert fam["fwer_sequential"] == fam["fdr_sequential"]
 
 
 def test_plan_sizes_the_sequential_experiment(project):
