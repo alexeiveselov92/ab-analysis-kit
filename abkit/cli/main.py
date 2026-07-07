@@ -279,6 +279,13 @@ def validate(
     help="Baseline moments override for a metric with no persisted data: "
     "'<metric>:mean=..,std=..,n=..' (sample) or '<metric>:prop=..,n=..' (fraction); repeatable",
 )
+@click.option(
+    "--arrival-rate",
+    type=float,
+    default=None,
+    help="Total units/day across all arms for runtime + ASN (default: derived read-only "
+    "from _ab_exposures; without either, runtime is skipped)",
+)
 @click.option("--profile", help="Profile name (default: profiles.yml default_profile)")
 def plan(
     select: tuple[str, ...],
@@ -287,18 +294,21 @@ def plan(
     power: float | None,
     alpha: float | None,
     baseline: tuple[str, ...],
+    arrival_rate: float | None,
     profile: str | None,
 ) -> None:
     """Pre-launch power / sizing planner (read-only — no lock, no writes).
 
     Reports required sample size, achievable MDE, and achieved power per comparison
     from the latest persisted baseline moments (or a `--baseline` override), plus the
-    projected look count and cost shape. Refuses what it cannot size honestly (ratio /
-    bootstrap methods). Runtime / ASN estimation lands in M6.
+    projected look count and cost shape. Given an arrival rate (derived from
+    `_ab_exposures` or `--arrival-rate`) it adds days-to-required-N and, for a
+    `sequential.enabled` design, the always-valid average sample number (ASN). Refuses
+    what it cannot size honestly (ratio / bootstrap methods).
     """
     from abkit.cli.commands.plan import run_plan
 
-    run_plan(select, metric, mde, power, alpha, baseline, profile)
+    run_plan(select, metric, mde, power, alpha, baseline, arrival_rate, profile)
 
 
 @cli.command()

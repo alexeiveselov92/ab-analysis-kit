@@ -624,6 +624,31 @@ unaffected; no goldens touched.
 lives in `planning/`, not `stats/`); confirm runtime is SKIPPED (not guessed) with no arrival
 data; confirm ASN is only emitted for sequential-eligible cells.
 
+**As built (WP-A shipped):** `_exposures.get_arrival_rate` (read-only, one round trip,
+in-process bucketed, whole-cohort window → per-arm units/day; degenerate/one-instant window ⇒
+`None`); `planning/sizing.runtime_for` (pure division) + `asn_for` (deterministic fixed-seed
+Monte-Carlo over the canonical information-time Gaussian process `S_k = I_k·êffect_k`,
+increments `N(δ·ΔI_k, ΔI_k)`, crossing the **exact shipped** `sequentialize` boundary at τ²
+anchored to the first usable look — reuses `abkit.stats.sequential`, adds no estimator);
+`plan.py` `--arrival-rate` + `_resolve_arrival_rate`/`_build_runtime`/`_runtime_lines`. No
+`ALGORITHM_VERSION`, `test_purity.py` green.
+
+**⚠ Statistical correction to the DoD wording "ASN < fixed-N under a true effect" — it is
+WRONG for an always-valid confidence sequence and was NOT shipped as such.** Two quantities
+must be kept distinct (adversarial-review round-2 finding, self-caught): (a) the always-valid
+design's *sample requirement* — the N to reach a given power — is **larger** than the fixed
+required-N (the Robbins mixture CI is ≈3.0·SE vs 1.96·SE at the anchor: the price of unlimited
+peeking), so the CS never designs for fewer units at the same power; but (b) the reported
+**ASN** is the expected *stopping* N, **horizon-capped**, a different thing. ASN vs required-N
+is **regime-dependent** — it exceeds required-N when the horizon comfortably clears the power
+need, yet can dip *below* it in the underpowered/horizon-capped case (early crossers pull the
+capped mean down; the `abk plan` line flags that case). The shipped, honest invariants (tests
+in `test_sizing.py`) are stated **against the horizon only**: **ASN_H1 ≪ horizon-N**,
+**ASN_H0 ≈ horizon-N**, **ASN monotone non-increasing in the true effect** (floored by the
+first look's N), plus an **independent scalar first-passage cross-check** (≤6% MC agreement —
+the plan's "simulation-validation" requirement). Neither the output nor the specs claim an
+ASN-vs-required-N ordering.
+
 ---
 
 ### WP-B — A/A sequential × composed sweep (pulled into M6 per scope decision) — additive, independent

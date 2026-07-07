@@ -140,6 +140,52 @@ class _ExposuresMixin(_InternalTablesBase):
             for boundary in boundaries
         ]
 
+    def get_arrival_rate(
+        self, experiment: str, variants: list[str]
+    ) -> tuple[dict[str, float], float] | None:
+        """Observed unit-arrival rate (units/day) per variant from ``_ab_exposures``.
+
+        The read-only arrival source ``abk plan`` runtime/ASN needs (WP-A;
+        m6-implementation-plan.md): reads the deduped cohort ONCE (one round trip,
+        mirroring :meth:`get_exposure_count_stream`) and derives, per declared
+        variant, ``count / observed-window-days`` where the window spans the WHOLE
+        cohort's ``[min, max] exposure_ts`` (a shared calendar window, so the per-arm
+        rates are mutually consistent). Every variant in ``variants`` is zero-filled.
+
+        Returns ``(rates, window_days)`` or ``None`` when the window is degenerate —
+        an empty cohort, or all exposures at ~one instant (``max == min``, e.g. a
+        backfilled cohort). The caller then SKIPS runtime rather than inventing a rate
+        (never extrapolates from a zero window). Never writes.
+        """
+        full_table_name = self._manager.get_full_table_name(TABLE_EXPOSURES, use_internal=True)
+        rows = self._manager.execute_query(
+            f"SELECT variant, exposure_ts FROM {full_table_name}{self._manager.final_modifier} "
+            "WHERE experiment = %(e)s",
+            {"e": experiment},
+        )
+        counts: dict[str, int] = dict.fromkeys(variants, 0)
+        earliest: datetime | None = None
+        latest: datetime | None = None
+        for row in rows:
+            variant = row.get("variant")
+            if variant not in counts:
+                continue  # a variant not declared this run — never counted
+            ts = to_naive_utc(row.get("exposure_ts"))
+            if ts is None:
+                continue
+            counts[variant] += 1
+            if earliest is None or ts < earliest:
+                earliest = ts
+            if latest is None or ts > latest:
+                latest = ts
+        if earliest is None or latest is None:
+            return None
+        window_days = (latest - earliest).total_seconds() / 86400.0
+        if window_days <= 0.0:
+            return None
+        rates = {v: counts[v] / window_days for v in variants}
+        return rates, window_days
+
     def get_first_exposure_ts(self, experiment: str) -> datetime | None:
         """Earliest exposure timestamp (diagnostics/plan)."""
         full_table_name = self._manager.get_full_table_name(TABLE_EXPOSURES, use_internal=True)

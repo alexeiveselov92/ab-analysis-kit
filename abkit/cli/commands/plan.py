@@ -11,9 +11,13 @@ Strictly read-only (D11): no lock, no ``_ab_*`` writes; its own manager is close
 ``finally``. Honest refusals (D10): ratio metrics and resampling (bootstrap) methods
 have no versioned power formula → SKIPPED with a reason, never sized with invented math;
 CUPED is sized on the raw persisted variance (ρ is not persisted) and flagged as a
-conservative upper bound. runtime / ASN are deferred to M6. A genuine harness failure
-(bad selection / ``--baseline`` / warehouse error) exits non-zero; a by-design refusal
-does not.
+conservative upper bound. A genuine harness failure (bad selection / ``--baseline`` /
+warehouse error) exits non-zero; a by-design refusal does not.
+
+Runtime / ASN (WP-A, m6-implementation-plan.md): each sizable comparison also reports
+days-to-required-N from a unit-arrival rate (derived read-only from ``_ab_exposures`` or
+supplied via ``--arrival-rate``) and, for a ``sequential.enabled`` design, the
+always-valid average sample number. No arrival data ⇒ runtime SKIPPED, never invented.
 """
 
 from __future__ import annotations
@@ -30,11 +34,15 @@ from abkit.pipeline import comparison_alpha, effective_alphas
 from abkit.planning.sizing import (
     FRACTION,
     SAMPLE,
+    AsnResult,
     BaselineMoments,
     ComparisonPlan,
+    RuntimePlan,
+    asn_for,
     is_powered,
     moments_from_override,
     parse_baseline_overrides,
+    runtime_for,
     size_comparison,
 )
 from abkit.stats import get_method_class, n_comparisons
@@ -47,6 +55,7 @@ def run_plan(
     power: float | None,
     alpha: float | None,
     baseline: tuple[str, ...],
+    arrival_rate: float | None,
     profile: str | None,
 ) -> None:
     context = load_project_context(require_profiles=True)
@@ -58,6 +67,10 @@ def run_plan(
         raise click.BadParameter(f"--power must be in (0, 1), got {power}", param_hint="--power")
     if mde is not None and mde <= 0:
         raise click.BadParameter(f"--mde must be > 0, got {mde}", param_hint="--mde")
+    if arrival_rate is not None and arrival_rate <= 0:
+        raise click.BadParameter(
+            f"--arrival-rate must be > 0, got {arrival_rate}", param_hint="--arrival-rate"
+        )
     try:
         overrides = parse_baseline_overrides(baseline)
     except ValueError as exc:
@@ -73,7 +86,9 @@ def run_plan(
     failed = 0
     for _, experiment in selected:
         try:
-            _plan_one(experiment, context, profile, metric, mde, power, alpha, overrides)
+            _plan_one(
+                experiment, context, profile, metric, mde, power, alpha, overrides, arrival_rate
+            )
         except click.ClickException:
             raise
         except Exception as exc:  # a warehouse/read failure on one experiment
@@ -94,6 +109,7 @@ def _plan_one(
     power_opt,
     alpha_opt,
     overrides,
+    arrival_rate,
 ) -> None:
     from abkit.database.internal_tables import InternalTablesManager
 
@@ -137,11 +153,17 @@ def _plan_one(
     pairs = int(n_comparisons(len(experiment.assignment.variants), 1))
     rows_per_refresh = looks * pairs * len(experiment.comparisons)
 
+    # WP-A: the shared look schedule (cumulative days since the pinned left edge) and
+    # planned horizon length — the ASN process and days-to-N both live on this axis.
+    look_days = [(c.end_ts - grid.start_ts).total_seconds() / 86400.0 for c in grid.cutoffs]
+    horizon_days = (grid.horizon_ts - grid.start_ts).total_seconds() / 86400.0
+
     plans: list[ComparisonPlan] = []
     manager = context.profiles.create_manager(profile)
     try:
         tables = InternalTablesManager(manager)
         has_results = tables.results_table_exists()
+        rate_control, rate_source = _resolve_arrival_rate(experiment, arrival_rate, tables)
         for comparison in comparisons:
             plans.append(
                 _plan_comparison(
@@ -152,12 +174,55 @@ def _plan_one(
                     mde,
                     overrides.get(comparison.metric),
                     tables if has_results else None,
+                    rate_control,
+                    rate_source,
+                    look_days,
+                    horizon_days,
                 )
             )
     finally:
         manager.close()
 
     _emit_plan(experiment, project, alphas, power, looks, grid, rows_per_refresh, plans)
+
+
+def _resolve_arrival_rate(experiment, override: float | None, tables) -> tuple[float | None, str]:
+    """Control-arm units/day for the runtime/ASN axis (WP-A), or ``(None, reason)``.
+
+    ``--arrival-rate`` is total traffic across all arms → split to the control arm by the
+    normalized ``expected_split`` (so it lines up with required-N, which is per control
+    arm). Absent an override the rate is derived read-only from ``_ab_exposures``; a
+    never-run project (no exposures) or a backfilled cohort spanning ~one instant yields
+    no rate — runtime is then SKIPPED with a reason, never guessed.
+    """
+    variants = experiment.assignment.variants
+    control = variants[0]
+    split = experiment.assignment.expected_split
+    total_weight = sum(split.values()) or float(len(variants))
+    control_share = (split.get(control, 0.0) or 0.0) / total_weight
+    if control_share <= 0.0:
+        control_share = 1.0 / len(variants)
+
+    if override is not None:
+        return (
+            override * control_share,
+            f"--arrival-rate {override:g}/day → {control_share:.0%} control",
+        )
+    if not tables.exposures_table_exists():
+        return None, "no _ab_exposures yet — pass --arrival-rate <units/day>"
+    arrivals = tables.get_arrival_rate(experiment.name, list(variants))
+    if arrivals is None:
+        # get_arrival_rate returns None for BOTH an empty cohort and a one-instant window;
+        # disambiguate so the skip reason is truthful (a never-run experiment in a project
+        # where OTHER experiments have run reaches here with zero rows for this one).
+        if tables.count_exposures(experiment.name) == 0:
+            return None, "no exposures for this experiment yet — pass --arrival-rate <units/day>"
+        return None, "arrival rate underivable (exposures span ~one instant) — pass --arrival-rate"
+    rates, window_days = arrivals
+    rate_control = rates.get(control, 0.0)
+    if rate_control <= 0.0:
+        return None, "no control-arm exposures — pass --arrival-rate <units/day>"
+    return rate_control, f"_ab_exposures over {window_days:.1f} observed days"
 
 
 def _plan_comparison(
@@ -168,6 +233,10 @@ def _plan_comparison(
     mde: float | None,
     override: dict[str, float] | None,
     tables,
+    rate_control: float | None = None,
+    rate_source: str = "",
+    look_days: list[float] | None = None,
+    horizon_days: float = 0.0,
 ) -> ComparisonPlan:
     role = (
         "main"
@@ -232,6 +301,20 @@ def _plan_comparison(
         target_mde=target_mde,
         plan_ratio=plan_ratio,
     )
+    runtime = _build_runtime(
+        experiment,
+        method_cls,
+        result,
+        moments,
+        test_type=test_type,
+        alpha=alpha,
+        target_mde=target_mde,
+        plan_ratio=plan_ratio,
+        rate_control=rate_control,
+        rate_source=rate_source,
+        look_days=look_days,
+        horizon_days=horizon_days,
+    )
     return ComparisonPlan(
         metric=comparison.metric,
         method_name=method_name,
@@ -244,7 +327,71 @@ def _plan_comparison(
         target_mde=target_mde,
         plan_ratio=plan_ratio,
         result=result,
+        runtime=runtime,
         notes=notes,
+    )
+
+
+def _build_runtime(
+    experiment,
+    method_cls,
+    result,
+    moments,
+    *,
+    test_type: str,
+    alpha: float,
+    target_mde: float | None,
+    plan_ratio: float,
+    rate_control: float | None,
+    rate_source: str,
+    look_days: list[float] | None,
+    horizon_days: float,
+) -> RuntimePlan:
+    """Days-to-required-N + the always-valid ASN for one sized comparison (WP-A).
+
+    Without an arrival rate, runtime is SKIPPED (``rate_control_per_day=None``). ASN is
+    emitted only for a sequential-eligible method under ``sequential.enabled`` with a
+    target MDE; otherwise ``asn_note`` records why it is n/a — never a fixed-horizon N
+    dressed up as sequential.
+    """
+    if rate_control is None:
+        return RuntimePlan(None, rate_source, None, horizon_days, None, None)
+
+    days_to_required_n = runtime_for(result.required_n, rate_control)
+    asn: AsnResult | None = None
+    asn_note: str | None = None
+    if not method_cls.supports_sequential:
+        asn_note = "fixed-horizon (resampling method — not sequential-eligible)"
+    elif not experiment.sequential.enabled:
+        asn_note = "fixed-horizon design (set sequential.enabled for anytime ASN)"
+    elif target_mde is None:
+        asn_note = "no target MDE (pass --mde for a sequential ASN)"
+    else:
+        asn = asn_for(
+            moments,
+            test_type=test_type,
+            target_mde=target_mde,
+            alpha=alpha,
+            plan_ratio=plan_ratio,
+            look_days=look_days or [],
+            rate_control_per_day=rate_control,
+        )
+        if asn is None:
+            asn_note = "ASN n/a (degenerate baseline or <2 usable looks)"
+    asn_below_required = bool(
+        asn is not None
+        and result.required_n is not None
+        and math.isfinite(result.required_n)
+        and asn.asn_n_h1 < result.required_n
+    )
+    return RuntimePlan(
+        rate_control,
+        rate_source,
+        days_to_required_n,
+        horizon_days,
+        asn,
+        asn_note,
+        asn_below_required,
     )
 
 
@@ -418,8 +565,56 @@ def _plan_lines(plan: ComparisonPlan) -> list[str]:
         parts.append("no target MDE (pass --mde or set comparison.min_effect for required-N)")
     parts.append(f"achievable MDE {_fmt_effect(r.achievable_mde, plan.test_type or 'relative')}")
     lines.append("  " + " · ".join(parts))
+    if plan.runtime is not None:
+        lines.extend(_runtime_lines(plan.runtime))
     for note in plan.notes:
         lines.append(f"  ⚠ {note}")
+    return lines
+
+
+def _fmt_days(days: float | None) -> str:
+    if days is None:
+        return "—"
+    if not math.isfinite(days):
+        return "∞"
+    if days < 1.0:
+        return f"{days * 24:.1f}h"
+    return f"{days:,.1f}d"
+
+
+def _fmt_rate(rate: float) -> str:
+    # a low-traffic derived rate can be < 1/day; ",.0f" would round it to a
+    # self-contradictory "0 units/day" beside a finite runtime, so keep 2 dp under 1.
+    return f"{rate:,.2f}" if rate < 1.0 else f"{rate:,.0f}"
+
+
+def _runtime_lines(rt) -> list[str]:
+    """The WP-A timing lines: days-to-N and (for a sequential design) the ASN."""
+    if rt.rate_control_per_day is None:
+        return [f"  runtime: n/a — {rt.rate_source}"]
+    lines = [
+        f"  runtime ≈ {_fmt_days(rt.days_to_required_n)} to required-N "
+        f"@ {_fmt_rate(rt.rate_control_per_day)} units/day/arm ({rt.rate_source}) · "
+        f"horizon {_fmt_days(rt.horizon_days)}"
+    ]
+    if rt.asn is not None:
+        a = rt.asn
+        # ASN is the expected STOPPING N (horizon-capped), not a smaller sample
+        # requirement than the fixed required-N. When it lands below required-N (the
+        # underpowered/horizon-capped regime) say so, so the juxtaposition can't read as
+        # "sequential concludes in fewer samples than a fixed test" (cli-and-dx §1).
+        tail = (
+            " · horizon-capped expected-stop, not a lower requirement"
+            if rt.asn_below_required
+            else ""
+        )
+        lines.append(
+            f"  sequential ASN ≈ {_fmt_n(a.asn_n_h1)}/arm (≈ {_fmt_days(a.asn_days_h1)}) "
+            f"at target effect · P(win by horizon) {a.prob_win_by_horizon * 100:.0f}% · "
+            f"null ASN ≈ {_fmt_n(a.asn_n_h0)}/arm{tail}"
+        )
+    elif rt.asn_note is not None:
+        lines.append(f"  sequential ASN: n/a — {rt.asn_note}")
     return lines
 
 

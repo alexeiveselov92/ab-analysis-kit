@@ -221,6 +221,38 @@ class TestExposures:
         tables.replace_exposures("exp1", self._cohort(4))
         assert tables.get_exposure_count_stream("exp1", [], ["control", "treatment"]) == []
 
+    def test_arrival_rate_derives_units_per_day_per_arm(self, tables):
+        # 4 units spanning :00..:03 ⇒ window = 3s = 3/86400 days; 2 per arm ⇒ rate = 2/window
+        tables.replace_exposures("exp1", self._cohort(4))
+        result = tables.get_arrival_rate("exp1", ["control", "treatment"])
+        assert result is not None
+        rates, window_days = result
+        assert window_days == pytest.approx(3.0 / 86400.0)
+        assert rates["control"] == pytest.approx(2.0 / window_days)
+        assert rates["treatment"] == pytest.approx(2.0 / window_days)
+
+    def test_arrival_rate_degenerate_window_is_none(self, tables):
+        # all exposures at one instant ⇒ window == 0 ⇒ underivable (the seed-mirror case)
+        cohort = {
+            "unit_id": np.array(["u0", "u1"], dtype=object),
+            "variant": np.array(["control", "treatment"], dtype=object),
+            "exposure_ts": np.array(
+                [datetime(2024, 1, 1, 8, 0, 0), datetime(2024, 1, 1, 8, 0, 0)], dtype=object
+            ),
+        }
+        tables.replace_exposures("exp1", cohort)
+        assert tables.get_arrival_rate("exp1", ["control", "treatment"]) is None
+
+    def test_arrival_rate_empty_cohort_is_none(self, tables):
+        assert tables.get_arrival_rate("ghost", ["control", "treatment"]) is None
+
+    def test_arrival_rate_zero_fills_undeclared_variant(self, tables):
+        tables.replace_exposures("exp1", self._cohort(4))
+        result = tables.get_arrival_rate("exp1", ["control", "treatment", "t2"])
+        assert result is not None
+        rates, _ = result
+        assert rates["t2"] == 0.0  # a declared arm with no exposures reads as a zero rate
+
 
 class TestUnitState:
     DAY = date(2024, 1, 5)
