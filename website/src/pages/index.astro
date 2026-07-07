@@ -265,34 +265,53 @@ const features = [
         </div>
       </div>
 
-      <!-- Interactive stabilization demo MOUNT. The demo agent renders the live
-           version here through web/src/shared/chart.ts. The markup inside is the
-           static, no-JS fallback (checkout tab) and may be replaced; keep the
-           #stabilization-demo / #stabilization-demo-chart ids stable. -->
-      <div class="hero-demo" id="stabilization-demo" data-abk-demo="stabilization">
-        <div class="hd-tabs" role="tablist" aria-label="metric">
-          <button class="hd-tab is-active" type="button">checkout</button>
-          <button class="hd-tab" type="button">revenue</button>
-          <button class="hd-tab" type="button">refund</button>
-        </div>
+      <!-- Interactive stabilization demo. Dial a true effect / noise / traffic
+           and watch the cumulative effect + CI converge past the decision
+           horizon; the readout is called live. All client-side: the compute
+           core (src/scripts/demo/stats.ts) is a TypeScript re-derivation of
+           abkit.stats, golden-parity-gated in CI, painted through the shared
+           renderer core web/src/shared/chart.ts. The DOM ids match the
+           #abk-demo contract in src/scripts/demo/main.ts — keep them stable. -->
+      <div class="hero-demo" id="abk-demo" data-abk-demo="stabilization">
         <div class="hd-body">
           <div class="hd-head">
             <div>
               <div class="hd-sub">checkout_conversion · treatment vs control</div>
               <div class="hd-figure">
-                <span class="hd-effect verdict-win">+4.2%</span>
-                <span class="hd-ci">95% CI [+2.7%, +5.7%]</span>
+                <span class="hd-effect" id="abk-demo-headline">+0.020</span>
+                <span class="hd-ci" id="abk-demo-ci">95% CI —</span>
               </div>
             </div>
-            <span class="hd-badge verdict-win">WIN</span>
+            <span class="abk-demo-verdict abk-v-win" id="abk-demo-verdict">WIN</span>
           </div>
-          <div class="hd-chart" id="stabilization-demo-chart" set:html={heroChart}></div>
-          <div class="hd-axis"><span>day 1</span><span>horizon</span><span>day 30</span></div>
+          <div class="hd-chart">
+            <canvas id="abk-demo-canvas" aria-label="cumulative effect and confidence interval converging over the experiment"></canvas>
+            <noscript><div set:html={heroChart}></div></noscript>
+          </div>
+          <div class="hd-axis"><span>day 1</span><span>horizon</span><span>day 28</span></div>
           <div class="hd-stats">
-            <div class="hd-stat"><div class="hd-stat-k">p-value</div><div class="hd-stat-v">0.001</div></div>
-            <div class="hd-stat"><div class="hd-stat-k">power</div><div class="hd-stat-v">0.92</div></div>
-            <div class="hd-stat"><div class="hd-stat-k">method</div><div class="hd-stat-v">CUPED t</div></div>
-            <div class="hd-stat hd-stat-right"><div class="hd-stat-k">SRM</div><div class="hd-stat-v verdict-win">pass</div></div>
+            <div class="hd-stat"><div class="hd-stat-k">p-value</div><div class="hd-stat-v" id="abk-demo-p">p —</div></div>
+            <div class="hd-stat"><div class="hd-stat-k">n / arm</div><div class="hd-stat-v" id="abk-demo-n">—</div></div>
+            <div class="hd-stat hd-stat-right"><div class="hd-stat-k">look</div><div class="hd-stat-v" id="abk-demo-day">—</div></div>
+          </div>
+          <div class="abk-demo-config" id="abk-demo-config">t-test · absolute · alpha=0.05 · horizon=14d</div>
+          <div class="abk-demo-controls">
+            <label class="abk-demo-ctl">
+              <span class="abk-demo-ctl-row"><span>true effect</span><span class="abk-demo-ctl-val" id="abk-demo-effect-val">+0.020</span></span>
+              <input type="range" id="abk-demo-effect" min="-40" max="40" value="20" step="1" aria-label="true effect" />
+            </label>
+            <label class="abk-demo-ctl">
+              <span class="abk-demo-ctl-row"><span>noise (σ)</span><span class="abk-demo-ctl-val" id="abk-demo-noise-val">0.20</span></span>
+              <input type="range" id="abk-demo-noise" min="10" max="40" value="20" step="1" aria-label="per-unit noise" />
+            </label>
+            <label class="abk-demo-ctl">
+              <span class="abk-demo-ctl-row"><span>traffic</span><span class="abk-demo-ctl-val" id="abk-demo-traffic-val">45/day</span></span>
+              <input type="range" id="abk-demo-traffic" min="20" max="80" value="45" step="1" aria-label="units per arm per day" />
+            </label>
+          </div>
+          <div class="abk-demo-actions">
+            <button type="button" class="abk-demo-btn" id="abk-demo-replay">▸ Replay</button>
+            <button type="button" class="abk-demo-btn" id="abk-demo-reseed">↻ New sample</button>
           </div>
         </div>
       </div>
@@ -662,5 +681,12 @@ const features = [
         <span>The sibling of detectkit · Built with Astro + Starlight</span>
       </div>
     </footer>
+
+    <!-- The interactive stabilization demo. Astro bundles this module (and its
+         web/src/shared/chart.ts workspace import) into a dependency-free script;
+         it no-ops on any page without an #abk-demo block. -->
+    <script>
+      import '../scripts/demo/main.ts';
+    </script>
   </body>
 </html>

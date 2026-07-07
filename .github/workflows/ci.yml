@@ -130,16 +130,16 @@ jobs:
 
       - name: brand.css and TOKEN_FALLBACKS stay in token lockstep
         # The one brand-token layer has two mirrors: web/src/shared/chart.ts
-        # TOKEN_FALLBACKS (the placeholder palette compiled into the committed,
+        # TOKEN_FALLBACKS (the frozen Iris palette compiled into the committed,
         # self-contained bundles) and website/src/styles/brand.css (the site's
-        # real --abk-* values). NAME parity is a hard gate in BOTH directions so
-        # an M6 palette swap can never add/rename a token on one side that the
-        # other never reads. VALUE divergence is reported but non-fatal: the
-        # bundles legitimately render on placeholder fallbacks while the site
-        # loads brand.css, and tokens carry per-theme (light/dark) variants — so
-        # value equality is only meaningful once the frozen palette is copied
-        # into TOKEN_FALLBACKS (promote to a hard check then). Skips cleanly
-        # until brand.css lands (parallel M6 site WP).
+        # --abk-* values). NAME parity is a hard gate in BOTH directions so a
+        # palette swap can never add/rename a token on one side that the other
+        # never reads. VALUE parity is now ALSO a hard gate (M6 WP7b froze the
+        # Iris palette into TOKEN_FALLBACKS) for the theme-independent tokens;
+        # the per-theme (light/dark) surface tokens legitimately carry two
+        # brand.css values and cannot equal a single fallback, so they are
+        # value-skipped (the bundle's fallback is the light-surface default).
+        # Skips cleanly until brand.css lands.
         run: |
           node --input-type=commonjs - <<'EOF'
           const fs = require('node:fs');
@@ -186,22 +186,27 @@ jobs:
           let failed = false;
           if (missing.length) { console.error('in TOKEN_FALLBACKS but NOT in brand.css:', missing.join(', ')); failed = true; }
           if (extra.length) { console.error('--abk-* in brand.css but NOT in TOKEN_FALLBACKS:', extra.join(', ')); failed = true; }
-          // 4) VALUE sync — informational (per notes above)
+          // 4) VALUE sync — HARD gate for single-value (theme-independent)
+          // tokens now that the Iris palette is frozen into TOKEN_FALLBACKS
+          // (M6 WP7b). Per-theme (light/dark) tokens carry two brand.css values
+          // and cannot equal a single fallback, so they are skipped (the
+          // bundle's fallback is the light-surface default).
           const norm = (h) => { const x = h.replace('#', ''); return x.length === 3 ? '#' + x.split('').map((c) => c + c).join('') : '#' + x; };
           const isHex = (v) => /^#[0-9a-f]{3}([0-9a-f]{3})?$/.test(v);
           const diverged = [];
           for (const n of fbNames) {
             const vals = brand[n];
-            if (!vals || vals.length !== 1) continue;
+            if (!vals || vals.length !== 1) continue; // per-theme token — value-skip
             if (!isHex(vals[0]) || !isHex(fallbacks[n])) continue;
             if (norm(vals[0]) !== norm(fallbacks[n])) diverged.push(n + ': brand.css ' + vals[0] + ' vs fallback ' + fallbacks[n]);
           }
           if (diverged.length) {
-            console.log('note: brand.css values diverge from chart.ts placeholders (expected until the palette is frozen into TOKEN_FALLBACKS):');
-            for (const d of diverged) console.log('  ' + d);
+            console.error('VALUE DRIFT — theme-independent --abk-* tokens must match brand.css (the frozen Iris palette):');
+            for (const d of diverged) console.error('  ' + d);
+            failed = true;
           }
           if (failed) process.exit(1);
-          console.log('token sync OK: ' + fbNames.length + ' --abk-* names mirrored across chart.ts and brand.css');
+          console.log('token sync OK: ' + fbNames.length + ' --abk-* names mirrored (single-value tokens value-matched) across chart.ts and brand.css');
           EOF
 
       - name: jsdom smoke suite over the committed bundle

@@ -37,6 +37,7 @@ const PAGES = [
   { src: 'docs/guides/sequential.md', dest: 'guides/sequential.md' },
   { src: 'docs/guides/plan.md', dest: 'guides/plan.md' },
   { src: 'docs/guides/visualizing-results.md', dest: 'guides/visualizing-results.md' },
+  { src: 'docs/guides/notification-channels.md', dest: 'guides/notification-channels.md' },
   { src: 'docs/reference/cli.md', dest: 'reference/cli.md' },
   { src: 'docs/reference/internal-tables.md', dest: 'reference/internal-tables.md' },
   { src: 'docs/reference/legacy-method-catalogue.md', dest: 'reference/legacy-method-catalogue.md' },

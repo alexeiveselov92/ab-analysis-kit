@@ -339,6 +339,93 @@
   margin-top: 2px;
 }
 
+/* ---------- the live interactive demo (#abk-demo, wired by
+   src/scripts/demo/main.ts through web/src/shared/chart.ts) ---------- */
+.hd-chart canvas {
+  display: block;
+  width: 100%;
+  height: 210px;
+}
+/* live verdict badge — main.ts overwrites className to `abk-demo-verdict
+   abk-v-{v}`, so ALL badge styling must live under these selectors (it cannot
+   rely on .hd-badge surviving). */
+.abk-demo-verdict {
+  display: inline-flex;
+  align-items: center;
+  padding: 7px 13px;
+  border-radius: 9px;
+  font-weight: 700;
+  font-size: 12.5px;
+  white-space: nowrap;
+  color: var(--surface);
+}
+.abk-demo-verdict.abk-v-win {
+  background: var(--win);
+}
+.abk-demo-verdict.abk-v-lose {
+  background: var(--lose);
+}
+.abk-demo-verdict.abk-v-flat {
+  background: var(--flat);
+}
+.abk-demo-verdict.abk-v-inconclusive {
+  background: var(--inconclusive);
+  color: var(--ink); /* amber needs dark text for AA contrast */
+}
+.abk-demo-config {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--subtle);
+  margin-top: 10px;
+}
+.abk-demo-controls {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.abk-demo-ctl {
+  display: block;
+}
+.abk-demo-ctl-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 5px;
+}
+.abk-demo-ctl-val {
+  font-family: var(--mono);
+  color: var(--ink);
+}
+.abk-demo-ctl input[type='range'] {
+  width: 100%;
+  accent-color: var(--iris);
+}
+.abk-demo-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+.abk-demo-btn {
+  flex: 1;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 9px 12px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--ink);
+  transition: all 0.15s ease;
+}
+.abk-demo-btn:hover {
+  border-color: var(--iris);
+  color: var(--iris);
+}
+
 /* verdict text/fill helpers (shared across surfaces) */
 .verdict-win {
   color: var(--win);
