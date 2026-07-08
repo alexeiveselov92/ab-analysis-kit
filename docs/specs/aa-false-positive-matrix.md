@@ -201,7 +201,7 @@ The **Recommended** row and its one-line rationale, the budget-band colors, and 
 peeking headline ("nominal α 5%, real peeking FPR 12.7%") are what `abk validate
 --report` renders and the explore calibration chip surfaces live (§4, §5).
 
-### 8.1 The sequential column (D8) and the composed family (D9) — shipped in M5; sequential × composed in M6 (WP-B)
+### 8.1 The sequential column (D8) and the composed family (D9) — shipped in M5; sequential × composed shipped in M6 (WP-B)
 
 With `sequential: {enabled: true}` on a sequential-eligible method, `abk validate` adds
 the always-valid twin **beside** the fixed peeking column (never asserting it, only

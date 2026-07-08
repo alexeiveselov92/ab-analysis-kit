@@ -20,7 +20,7 @@ Ported from detectkit's lazy-import Click group (shared flag vocabulary:
 | `abk run --select <exp> [--steps validate,plan,load,compute] [--from/--to] [--full-refresh] [--profile] [--report]` | The pipeline: validate → plan → maintain unit-state → load → SRM → compute → persist → optional HTML readout. Streams `VALIDATE → PLAN → STATE → LOAD → SRM → COMPUTE → RESULT`. *(The readout surface is `--report` — tri-state: bare → `reports/<exp>.html`, a directory → `<dir>/<exp>.html`, a `.html` path → that file; emitted best-effort per experiment after its pipeline, even with zero pending cutoffs. A former `readout` `--steps` token was never wired and is superseded by `--report` — m3-implementation-plan.md D8.)* |
 | `abk explore --select <exp> [--metric <m>] [--no-serve] [--no-open]` | **PRIORITY:** the localhost cockpit — live `method_params` tuning + the stabilization chart + always-visible A/A calibration + write-back |
 | `abk validate --select <exp> [--method <m>] [--metric <m>] [--iterations N] [--inject-effect <pct>] [--scoring fpr\|power\|mde] [--report] [--force]` | The A/A false-positive + power matrix (incl. honest peeking FPR) → `_ab_aa_runs` + recommendation. Streams `LOAD → RESAMPLE → SCORE → PERSIST` — a **distinct** stage vocabulary from `abk run`'s config-lint `VALIDATE` step (`--steps validate`): the two never share copy (the word "validate" is deliberately not reused between the config gate and the A/A matrix). Its own out-of-band lock (`process_type='validate'`, D5), cleared by `abk unlock`; exits non-zero on any cell/harness failure; `--report` is best-effort. `--method` (not `--select`) is the method-grid axis (§below). |
-| `abk plan --select <exp> [--metric <m>] [--mde <pct>] [--power 0.8] [--alpha 0.05] [--baseline <metric>:mean=..,std=..,n=..]` | Pre-launch power / sample-size planner (no detectkit analog). **Read-only** (no lock, no `_ab_*` writes). Reports required-N / achievable-MDE / achieved-power at the effective two-tier alpha + the projected look count & cost shape; refuses ratio/bootstrap methods it cannot size honestly. **runtime/ASN → M6** (see amendment below). |
+| `abk plan --select <exp> [--metric <m>] [--mde <pct>] [--power 0.8] [--alpha 0.05] [--baseline <metric>:mean=..,std=..,n=..]` | Pre-launch power / sample-size planner (no detectkit analog). **Read-only** (no lock, no `_ab_*` writes). Reports required-N / achievable-MDE / achieved-power at the effective two-tier alpha + the projected look count & cost shape + **runtime** (days-to-N from an arrival rate) and **ASN** (average sample number for a sequential design); refuses ratio/bootstrap methods it cannot size honestly. (Runtime/ASN shipped in M6 WP-A — see amendment below.) |
 | `abk clean --select <exp> \| --orphaned-experiments [--execute] [--yes]` | Config-hash drift GC (prune `_ab_results` rows whose `method_config_id` the YAML no longer produces; purge removed experiments). Dry-run by default |
 | `abk unlock --select <exp> [--profile]` | Clear stale run locks (verbatim from detectkit) |
 | `abk test-report <exp> [--profile]` | Send a mock readout through configured channels (connectivity/format check) |
@@ -144,17 +144,25 @@ abkit is orchestration-friendly by design (the legacy system ran on Prefect):
   analyst schedules experiments to recompute daily with no human in the loop.
 - The **CLI is the unit of automation**: a Prefect task = an `abk` invocation.
   Nothing about the pipeline assumes interactivity; locks are self-healing for
-  unattended runs; failures surface via `test-report` channels and project-level
-  error notification.
+  unattended runs; failures surface via the CLI's non-zero exit (the orchestrator's
+  own alerting then fires). Automatic project-level error *notification* on a failed
+  run is a post-M6 item; the shipped connectivity/format smoke is `abk test-report`,
+  which sends a mock readout through the configured channels — not an on-failure
+  alerter.
 - The same flow works under cron or any orchestrator; Prefect is the documented
   first-class path.
 
 ## 4. BI integration (connect your own)
 
 `_ab_results` is a stable, BI-friendly warehouse table; teams connect **Grafana /
-Lightdash / Metabase / Superset** to it. We ship reference queries + example
-dashboards per tool in `docs/examples/bi/`, plus the optional SRM panel. abkit owns
-the numbers, not the dashboard. ([data-contract-and-reporting.md §3](data-contract-and-reporting.md))
+Lightdash / Metabase / Superset** to it. We ship **tool-agnostic reference SQL** you
+paste into any of them (`docs/examples/bi/queries.sql` — headline scoreboard, the
+effect+CI stabilization chart, significance-vs-effective-alpha, MDE/power, cross-
+experiment board, freshness, config-drift), the optional SRM panel
+(`srm_panel.sql`), and **one importable Grafana dashboard** (`grafana_dashboard.json`,
+ClickHouse) that wires the core recipes together — the portable SQL recipes are the
+first-class deliverable, not a per-tool importable file for each of the four. abkit
+owns the numbers, not the dashboard. ([data-contract-and-reporting.md §3](data-contract-and-reporting.md))
 
 ## 5. `init-claude` & single-source developer docs
 
@@ -179,13 +187,28 @@ jewel; domain-agnostic mechanism):
   one-row-per-unit and join the cohort macro; sum/count metrics are additive
   (incremental) while medians/quantiles are not; `_ab_results` is the BI contract.
 
-**Single-source, two renders.** The `.claude/rules/*.md` (assistant-facing,
-installed by `init-claude`) and the published `docs/` tree (the site at
-`abkit.pipelab.dev`) are **one** Markdown body of domain truth, authored once,
-version-stamped so re-running `init-claude` after an upgrade refreshes the in-repo
-copy. `docs/specs/` additionally holds the migration/quality contract
-(baseline, changes, A/A matrix, data contract, this spec) so the whole project is
-auditable. The website mirrors detectkit's Astro `website/` + `sync-docs.mjs`.
+**One story, three authored bodies (as built).** Domain truth is not machine
+cross-generated from a single Markdown source. Three bodies are authored **separately,
+each for its audience**, and kept telling **one** story by **human review** — not by
+lockstep generation (a CI drift gate to enforce it lands in WP9):
+
+1. the **packaged assistant assets** `abkit/cli/assets/claude/` (`CLAUDE.section.md` +
+   `rules/*.md` + `skills/*`), installed into a user's project by `init-claude`,
+   version-stamped so an upgrade refreshes the in-repo copy;
+2. the **user-facing `docs/` tree** (guides + reference), published to the site at
+   `abkit.pipelab.dev`; and
+3. the **contributor truth** — `.claude/rules/` (this repo's `architecture.md` +
+   `contributing.md`) plus `docs/specs/`, which additionally holds the
+   migration/quality contract (baseline, changes, A/A matrix, data contract, this spec)
+   so the whole project is auditable.
+
+The **only mechanical sync** is `docs/` → the published site: the website mirrors
+detectkit's Astro `website/` + `sync-docs.mjs`, which copies the `docs/` pages into the
+build. The assistant assets vs the `docs/` prose are deliberately written for different
+readers (terse rule vs. narrative guide), so they are reconciled by **human review**
+today — the packaged index is kept honest by `tests/cli/test_init_claude.py` (every
+rule/skill is routed from `CLAUDE.section.md`; the shipped tree matches the declared
+set). A broader cross-body drift gate (`test_docs_single_source.py`) lands in WP9.
 
 ## 6. First-run experience (must-fix)
 

@@ -140,7 +140,7 @@ optional-stopping hazard back toward ≈ α:
 
 The fixed column _diagnoses_ the trap; the always-valid column _is_ the defense, at the
 cost of a wider interval. This is how the fixed-horizon default stays honest without
-being changed. (The sequential × composed-family sweep is not yet built.)
+being changed — and the composed **family** sweep below carries the same twin.
 
 ## The composed family sweep
 
@@ -158,6 +158,16 @@ design). The budget is anchored to that nominal rate, so "over budget" means the
 **methods** are miscalibrated (clustering, variance underestimation), not that the
 correction is loose. It surfaces as one sentinel `_ab_aa_runs` row and a composed-family
 band above the report matrix.
+
+With `sequential: {enabled: true}` on a sequential-eligible family, the sweep mirrors the
+per-cell recovery at the family level: alongside the single-look `fwer`/`fdr` it also
+reports the **peeking** pair (`fwer_peeking`/`fdr_peeking` — the fixed CI peeked across
+every look, inflated) and the **always-valid** pair (`fwer_sequential`/`fdr_sequential` —
+the same looks under the confidence sequence, back toward ≈ the composed nominal). It
+composes over the same sequential-eligible member set (an all-bootstrap family shows only
+the single-look column) and lives additively in the sentinel row's `details.family` — no
+schema change, no number change. Only `alpha_spending`/group-sequential remains a future
+item.
 
 ## Command and flags
 

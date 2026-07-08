@@ -86,14 +86,21 @@ For a **>2-arm** experiment, sizing is shown for the first-pair contrast only
 exceeds `warn_looks` without `sequential.enabled`, it warns that peeking inflates
 the false-positive rate (enable sequential or coarsen the cadence).
 
-## Timing companion (look count + cost shape now; runtime/ASN → M6)
+## Timing companion (look count, cost shape, runtime & ASN)
 
-The footer look-count + cost-shape line is the shipped pre-launch timing/cost
-companion. Full **runtime / ASN** — days-to-N from a unit-arrival rate and the
-sequential design's average sample number — is a **named M6 item**: it needs an
-arrival-rate source the pipeline does not yet capture. Do not promise it in the
-current build; use `required-N` + the team's known daily-eligible-unit count to
-estimate calendar time by hand for now.
+The footer look-count + cost-shape line is the pre-launch timing/cost companion.
+**Runtime and ASN** ship too: given a **unit-arrival rate** — derived read-only from
+`_ab_exposures` (distinct units per observed day, whole-cohort window, split to the
+control arm) or supplied with `--arrival-rate <units/day>` — each sizable comparison
+also reports **runtime** (`days-to-required-N = required_n / rate` plus the horizon
+length) and, for a `sequential.enabled`, sequential-eligible comparison, the **ASN**
+(the always-valid design's *average sample number* — the expected control-arm N at
+which the confidence sequence first excludes zero under H1/H0, a fixed-seed Monte-Carlo
+capped at the horizon). Without an arrival rate BOTH are SKIPPED with a reason (a
+backfilled cohort spanning ~one instant is underivable) — never invented; a
+fixed-horizon or resampling design reports `sequential ASN: n/a`. ASN is the expected
+*stopping* N against the horizon, **not** a lower sample requirement than the fixed
+required-N (the mixture CI is wider — the price of peeking).
 
 ## Exit codes
 

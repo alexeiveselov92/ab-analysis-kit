@@ -263,7 +263,7 @@ def _plan_comparison(
             comparison.metric,
             method_name,
             role,
-            refused="ratio metric — no versioned power formula (M6)",
+            refused="ratio metric — no versioned power formula",
         )
 
     kind = FRACTION if method_cls.input_kind == "fraction" else SAMPLE

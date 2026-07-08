@@ -172,8 +172,9 @@ recorded in [m5-implementation-plan.md](m5-implementation-plan.md) D2.
   `ALGORITHM_VERSION` bump on any registered method; golden tests untouched. The
   transform is not a registered method, so its versioning is this entry + the
   sequential-mode provenance the pipeline persists (a τ²-policy change forces a
-  re-plan, D7) — never a silent CI move. `alpha_spending` (group-sequential) is
-  **deferred to M6**; `scheme: alpha_spending` is a config error in M5.
+  re-plan, D7) — never a silent CI move. `alpha_spending` (group-sequential) is a
+  **future item** (no version promise); `scheme: alpha_spending` raises a clean
+  config error naming `always_valid` as the supported scheme.
 
 ### 4.2 Sub-day sequential-multinomial SRM — as built (M5 WP5)
 

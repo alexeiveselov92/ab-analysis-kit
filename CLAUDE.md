@@ -87,8 +87,9 @@ plan` (read-only pre-launch power/sizing, `abkit/planning/`), the A/A **D8** seq
 side-by-side peeking column, and the **D9** composed multi-metric FWER/FDR sweep (via the
 shared `stats.correction.composed_significance` extracted from the readout). Adversarially
 reviewed per WP + a ≥2-round exit gate; 1550+ tests incl. the sequential-matrix e2e.
-**Named M6 deferrals:** `alpha_spending`/group-sequential, the A/A sequential × composed
-sweep, `abk plan` runtime/ASN.
+**Named future deferral** (no version promise): `alpha_spending`/group-sequential. (The
+A/A sequential × composed sweep and `abk plan` runtime/ASN — once M6 deferrals — shipped
+in M6, WP-B / WP-A.)
 
 **Decided** (recorded in the specs + CHANGELOG): sub-day cumulative intervals
 ([cumulative-intervals.md §6](docs/specs/cumulative-intervals.md)); CUPED

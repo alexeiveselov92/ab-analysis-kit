@@ -170,18 +170,34 @@ If the projected look count exceeds the project's `warn_looks` without
 — and points you at enabling sequential analysis or coarsening the cadence. See
 [Sequential analysis](sequential.md) for the always-valid CI that closes this gap.
 
-## Estimating calendar time today
+## Estimating calendar time
 
-The footer's look-count and cost-shape line is the shipped pre-launch timing and
-cost companion. Full **runtime / ASN** estimation — days-to-N derived from a
-unit-arrival rate and (for sequential designs) the average sample number — is a
-**named future item**: it needs an arrival-rate source the pipeline does not yet
-capture, so `abk plan` does not promise it.
+The footer's look-count and cost-shape line is one part of the pre-launch timing
+companion; **runtime** and **ASN** complete it. Given a **unit-arrival rate**, each
+sizable comparison also reports how long the experiment will take:
 
-Until then, combine the `required-N` from this command with your team's known
-daily-eligible-unit count to estimate calendar time by hand. For example, at
-25,580 units/arm required and ~5,000 eligible units/day landing in the control arm,
-you are looking at roughly five days to reach the single-arm target.
+- **runtime** — `days-to-required-N = required_n / arrival_rate`, plus the planned
+  horizon length. The arrival rate is derived **read-only** from `_ab_exposures`
+  (distinct units per observed day over the whole-cohort window, split to the control
+  arm), or supplied directly with `--arrival-rate <units/day>` (total across arms) for
+  a greenfield experiment with no exposures yet.
+- **ASN** — for a `sequential.enabled`, sequential-eligible comparison, the always-valid
+  design's **average sample number**: the expected control-arm N at which the confidence
+  sequence first excludes zero, under the true target effect (H1) and the null (H0). It
+  is a deterministic (fixed-seed) Monte-Carlo estimate crossing the *exact* shipped CS
+  boundary, capped at the planned horizon.
+
+Without an arrival rate — neither derivable from `_ab_exposures` nor passed via
+`--arrival-rate` — both runtime and ASN are **SKIPPED with a reason** (a backfilled
+cohort spanning ~one instant is underivable), never invented. A fixed-horizon or
+resampling design reports `sequential ASN: n/a`.
+
+> **ASN is not a smaller sample requirement.** The reported ASN is the expected
+> *stopping* N, stated **against the horizon**: under a true effect the sequence usually
+> stops well before the horizon (ASN ≪ horizon-N when well-powered); under the null it
+> runs essentially to the horizon. The always-valid design's *sample requirement* (the N
+> to reach a given power) is actually **larger** than the fixed required-N, because the
+> mixture CI is deliberately wider — that width is the price of unlimited peeking.
 
 ## Exit codes
 
