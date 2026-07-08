@@ -85,7 +85,7 @@ abk --version
 ```
 
 ```text
-abk, version 0.0.1.dev0
+abk, version 0.1.0
 ```
 
 List the available commands to confirm the full surface installed cleanly:

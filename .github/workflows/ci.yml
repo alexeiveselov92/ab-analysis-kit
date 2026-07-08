@@ -282,16 +282,87 @@ jobs:
         # then keep this non-blocking so the numeric hot paths aren't rushed.
         continue-on-error: true
 
-      - name: Wheel ships the committed bundles
+      - name: Wheel ships the committed bundles + init-claude assets
         # the real packaging gate (WP3 review finding): the source-tree tests
-        # cannot catch a wheel that silently drops package-data
+        # cannot catch a wheel that silently drops package-data. WP9 extends it
+        # to the `abk init-claude` payload — the highest-risk packaging miss,
+        # since a bad wheel cannot be re-uploaded under the same version.
         run: |
           pip wheel --no-deps -w /tmp/wheelhouse .
           python - <<'EOF'
-          import glob, sys, zipfile
+          import glob, pathlib, zipfile
           wheel = glob.glob("/tmp/wheelhouse/ab_analysis_kit-*.whl")[0]
-          names = zipfile.ZipFile(wheel).namelist()
-          assert "abkit/reporting/assets/report.js" in names, names
-          assert "abkit/tuning/assets/explore.js" in names, names
-          print("wheel contains the report + explore bundles")
+          names = set(zipfile.ZipFile(wheel).namelist())
+          # the two committed self-contained renderer bundles
+          for bundle in ("abkit/reporting/assets/report.js", "abkit/tuning/assets/explore.js"):
+              assert bundle in names, f"wheel is missing {bundle}"
+          # every `abk init-claude` asset (CLAUDE.section + rules + skills). Derived
+          # from the source tree so a NEW or removed asset is caught automatically
+          # (package-data ships `assets/**/*.md`; the whole claude tree is Markdown).
+          claude_assets = sorted(
+              p.as_posix() for p in pathlib.Path("abkit/cli/assets/claude").rglob("*.md")
+          )
+          assert claude_assets, "no init-claude assets in the source tree — check the path"
+          missing = [p for p in claude_assets if p not in names]
+          assert not missing, f"wheel is missing init-claude assets: {missing}"
+          print(
+              f"wheel contains the report + explore bundles and "
+              f"all {len(claude_assets)} init-claude assets"
+          )
           EOF
+
+  install-smoke:
+    # The `pip install ab-analysis-kit` DoD (WP9): prove the BUILT WHEEL — not an
+    # editable `-e .` install — resolves the `abk` console script and reads its
+    # packaged assets via importlib.resources at INSTALL time, across the full
+    # support matrix. The source-tree unit tests only exercise the checkout, so
+    # this is the only gate that catches a wheel whose console script or
+    # package-data fails to resolve once installed into a clean environment.
+    name: pip install smoke (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Build the wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --wheel --outdir dist .
+
+      - name: Install the wheel into a clean venv and prove the release DoD
+        run: |
+          set -euo pipefail
+          python -m venv /tmp/smoke
+          /tmp/smoke/bin/pip install --upgrade pip
+          whl=$(ls dist/ab_analysis_kit-*.whl)
+          echo "installing $whl"
+          /tmp/smoke/bin/pip install "$whl"
+
+          # 1) the console script resolves and reports the bumped version (must
+          #    exceed the reserved 0.0.1.dev0 placeholder)
+          ver=$(/tmp/smoke/bin/abk --version)
+          echo "$ver"
+          echo "$ver" | grep -q '0\.1\.0' || { echo "abk --version is not 0.1.0: $ver"; exit 1; }
+
+          # 2) init-claude materializes the managed CLAUDE.md block + the 9
+          #    operator rules + the 7 skills FROM THE INSTALLED WHEEL (this is the
+          #    importlib.resources read the source tests cannot cover)
+          work=$(mktemp -d)
+          /tmp/smoke/bin/abk init-claude -d "$work"
+          grep -q 'BEGIN ab-analysis-kit' "$work/CLAUDE.md" \
+            || { echo "managed CLAUDE.md block missing"; exit 1; }
+          rules=$(find "$work/.claude/rules/ab-analysis-kit" -name '*.md' | wc -l)
+          [ "$rules" -eq 9 ] || { echo "expected 9 operator rules, found $rules"; exit 1; }
+          skills=$(find "$work/.claude/skills" -name 'SKILL.md' | wc -l)
+          [ "$skills" -eq 7 ] || { echo "expected 7 skills, found $skills"; exit 1; }
+
+          echo "pip install DoD smoke passed: version + init-claude assets resolve from the installed wheel"

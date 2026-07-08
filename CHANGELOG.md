@@ -13,6 +13,38 @@ number change).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-07-08
+
+The first tagged public release — milestones **M1–M6**. The pure numpy statistical
+core, the declarative YAML+SQL config / DB layer / recompute pipeline, the explore
+cockpit + self-contained reports, `abk validate` (the A/A false-positive matrix),
+opt-in sequential analysis + `abk plan`, and the M6 DX layer (`abk init-claude`,
+`abk test-report`, the docs site, Prefect scaffolding). No statistical numbers
+changed across M2–M6 (goldens intact at rel-1e-9; no `ALGORITHM_VERSION` moved).
+
+### Added
+- **M6 WP9 — release engineering (prep only; the tagged publish is a separate,
+  maintainer-gated step).** Bumped `__version__` `0.0.1.dev0` → `0.1.0` (the first
+  real version must exceed the reserved placeholder or PyPI rejects the upload) and
+  the packaging classifier to `Development Status :: 3 - Alpha`. Cut this
+  `[Unreleased]` history into the dated `[0.1.0]` section. Hardened the release DoD
+  with three new gates: (1) the CI **wheel-namelist gate** now also asserts the wheel
+  ships every `abkit/cli/assets/claude/**` file (the 17 `abk init-claude` assets —
+  the highest-risk packaging miss, since a bad wheel can't be re-uploaded under the
+  same version), alongside the existing `report.js`/`explore.js` bundle check; (2) a
+  new **`pip install` DoD smoke** job installs the *built wheel* (not `-e .`) into a
+  clean venv on Python 3.10/3.11/3.12 and proves `abk --version` reports `0.1.0` and
+  `abk init-claude -d <tmp>` materializes the managed `CLAUDE.md` block + the 9 rules
+  + the 7 skills from `importlib.resources` at install time; (3) the WP8-promised
+  cross-body **docs single-source drift gate** (`tests/docs/test_docs_single_source.py`)
+  asserts every packaged operator rule in `abkit/cli/assets/claude/rules/` has a
+  corresponding published `docs/` page — so a new rule cannot ship without a user-doc
+  home. The `mypy abkit` strict gate stays `continue-on-error` (aspirational) for
+  0.1.0: the ~124 tracked strict-mode errors live in numeric hot paths
+  (`recompute.py`/`readout.py`) and clearing them is a post-0.1.0 quality pass, not a
+  release blocker (§7 Q9 decision). No `abkit.stats` change; no `ALGORITHM_VERSION`
+  moved; goldens untouched.
+
 ### Changed
 - **M6 WP8 — named-deferrals hygiene: the shipped code, packaged assistant assets, docs, and
   specs now tell one true story about what is and isn't implemented (no behavior change).**
@@ -876,5 +908,5 @@ number change).
   sequential (always-valid) CIs opt-in.
 - ClickHouse-first; PostgreSQL/MySQL supported. Read-only exposures.
 
-_Pre-development: no PyPI release yet. The first tagged release will populate a
-versioned section here. Roadmap: [`ROADMAP.md`](ROADMAP.md)._
+_This section was authored pre-release and is cut into the `[0.1.0]` heading above
+— the first tagged PyPI release (M1–M6). Roadmap: [`ROADMAP.md`](ROADMAP.md)._
