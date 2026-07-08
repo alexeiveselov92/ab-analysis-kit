@@ -376,7 +376,7 @@ class ExperimentConfig(BaseModel):
                 "cumulative-intervals.md §6.2). Use data_lag: 0 only if data is "
                 "truly complete in real time."
             )
-        # (scheme: alpha_spending is rejected globally in SequentialConfig — M6 deferral.)
+        # (scheme: alpha_spending is rejected globally in SequentialConfig — a future item.)
         return self
 
     @model_validator(mode="after")

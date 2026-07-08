@@ -140,7 +140,8 @@ The implementation record + decisions are in
   Ramdas), computed as a pure MODE transform over the fixed `(effect, SE)`, never a method
   plugin. Rows carry `ci_kind='always_valid'`; the readout calls WIN/LOSE pre-horizon only
   under it; the toggle self-invalidates (a bare `abk run` re-plans the series). ~~alpha-
-  spending / group-sequential~~ → **M6** (a `scheme: alpha_spending` config error names it).
+  spending / group-sequential~~ → a **future item** (no version promise; a
+  `scheme: alpha_spending` config error names it).
 - **The A/A matrix's `sequential.enabled` side-by-side column (D8):** `abk validate`
   renders the always-valid peeking FPR + power + CI-width beside the fixed ones — the CI
   brought back to ≈ α, the honest completion of the peeking story.
@@ -148,10 +149,11 @@ The implementation record + decisions are in
   composed rule (two-tier Bonferroni ∘ BH) is one shared helper (`stats.correction.
   composed_significance`); `abk validate` sweeps the empirical **FWER + FDR** over the
   multi-metric family (one shared union-cohort assignment per iteration). Fixed-horizon
-  only; ~~sequential × composed~~ → **M6**.
+  in M5; **sequential × composed shipped in M6 (WP-B)** — the composed sweep gained its
+  always-valid peeking twin.
 - **`abk plan`** — the read-only pre-launch power/sizing planner (required-N / achievable-
-  MDE / achieved-power at the effective two-tier alpha + look count & cost). ~~runtime /
-  ASN~~ → **M6**.
+  MDE / achieved-power at the effective two-tier alpha + look count & cost); **runtime /
+  ASN shipped in M6 (WP-A)**.
 - **Sub-day** (cumulative-intervals.md §6): the config lint recommends `always_valid` when
   the planned **look count** exceeds `warn_looks` (the dangerous variable is the look
   count, not the time unit — dense sub-day grids trip it first); `alpha_spending` is a
@@ -160,8 +162,9 @@ The implementation record + decisions are in
 - Benjamini-Hochberg read-time was *pulled forward to M3 WP1* (`pipeline/readout.py`
   rescoring — an M2-accepted `correction: benjamini_hochberg` would otherwise verdict at
   the wrong alpha).
-- **Deferred to M6** (named): `alpha_spending`/group-sequential, the A/A sequential ×
-  composed sweep, `abk plan` runtime/ASN.
+- **Shipped in M6:** the A/A sequential × composed sweep (WP-B) and `abk plan`
+  runtime/ASN (WP-A). **Still deferred** — a future item, no version promise:
+  `alpha_spending`/group-sequential.
 
 ## M6 — DX, docs, orchestration, release
 - `abk init-claude` + packaged `.claude` assets (rules + 7 skills);
@@ -169,8 +172,9 @@ The implementation record + decisions are in
   analogous machinery with our own palette, logo, and landing page** (design
   finalized in Claude design; interfaces stay on a themeable brand-token layer) per
   [branding-and-site.md](docs/specs/branding-and-site.md); Prefect flow/deployment
-  scaffolding; BI reference queries/dashboards (Grafana, Lightdash, Metabase,
-  Superset) + optional SRM panel; `test-report` channels.
+  scaffolding; BI tool-agnostic reference SQL (paste into Grafana / Lightdash /
+  Metabase / Superset) + one importable Grafana dashboard + the optional SRM panel;
+  `test-report` channels.
 - **DoD:** PyPI release `pip install ab-analysis-kit`; `CHANGELOG.md` authoritative;
   contributor `CLAUDE.md` + `.claude/rules` in sync.
 

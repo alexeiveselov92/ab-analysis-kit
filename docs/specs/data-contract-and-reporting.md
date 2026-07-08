@@ -101,9 +101,12 @@ documented warehouse table that analysts point **their own BI** at:
   from this one table: (1) effect + CI band vs zero + avg_group_size (the primary
   winner chart); (2) raw values + std + CUPED; (3) MDE + sizes (power); (4)
   p-value vs alpha. Plus a results/audit table and a cross-experiment summary.
-- We ship **reference queries** (and example dashboards) for each tool in
-  `docs/examples/bi/` so a team is productive in minutes — but the contract, not
-  any one dashboard, is the deliverable. A team can also keep their existing
+- We ship **tool-agnostic reference queries** (`queries.sql`) plus **one importable
+  Grafana dashboard** (`grafana_dashboard.json`, ClickHouse) in `docs/examples/bi/` so
+  a team is productive in minutes — the portable SQL recipes are the first-class
+  deliverable (Lightdash/Metabase/Superset users paste them as chart SQL), not a
+  per-tool importable file for each of the four; the contract, not any one dashboard,
+  is what abkit owns. A team can also keep their existing
   Grafana by repointing it at `_ab_results` and adjusting column names (the legacy
   dashboard JSON in `docs/reference/` documents what each panel needed).
 - An **optional SRM panel** snippet is shipped, because the canonical SRM gate is

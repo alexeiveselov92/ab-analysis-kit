@@ -14,6 +14,23 @@ number change).
 ## [Unreleased]
 
 ### Changed
+- **M6 WP8 — named-deferrals hygiene: the shipped code, packaged assistant assets, docs, and
+  specs now tell one true story about what is and isn't implemented (no behavior change).**
+  Every "planned for M6 / deferred to M6 / M6 follow-up" string that pointed at a feature which
+  actually **shipped** in M6 is flipped to shipped — `abk plan` **runtime/ASN** (WP-A) and the
+  A/A **sequential × composed** sweep (WP-B) across `abkit/planning/__init__.py`, the packaged
+  `abk init-claude` assets (`rules/plan.md`, `rules/validate.md`, `skills/abk-plan`),
+  `docs/guides/plan.md`, `docs/specs/cli-and-dx.md`, `docs/specs/aa-false-positive-matrix.md`,
+  `ROADMAP.md`, `.claude/rules/architecture.md`, and this repo's `CLAUDE.md`. The **one**
+  genuinely unshipped item — `alpha_spending` / group-sequential — is re-pointed everywhere from
+  "M6" to a **future item with no version promise** (the user-facing config error already refuses
+  it cleanly). Three spec-reconciliations bring the as-built into line with the prose: the
+  single-source docs model is documented as **three separately-authored bodies kept consistent by
+  human review** (not machine cross-generation; a CI drift gate lands in WP9), the BI deliverable as
+  **tool-agnostic reference SQL + one Grafana
+  dashboard** (not a per-tool importable dashboard for each of the four), and project-level error
+  *notification* as a **post-M6 item** (with `abk test-report` the shipped connectivity smoke). No
+  `abkit.stats` change; no `ALGORITHM_VERSION` moved; goldens untouched.
 - **M6 WP7b — the self-contained `abk run --report` + `abk explore` surfaces now render in the
   finalized Iris brand.** The one brand-token layer (`web/src/shared/chart.ts` `TOKEN_FALLBACKS`)
   was frozen from placeholder values to the real Iris palette (`docs/design/brand-tokens.md`):

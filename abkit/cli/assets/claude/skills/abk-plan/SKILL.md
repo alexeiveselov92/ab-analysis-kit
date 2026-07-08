@@ -141,13 +141,17 @@ this; tell the user the true requirement is lower.
 - **Multi-arm note:** for >2 variants, sizing is shown for the first contrast
   (`variants[0]` vs `variants[1]`) only; the other pairs share the same alpha.
 
-`abk plan` is planning-only. Sizing (required-N / MDE / power) is the core it computes
-today; **runtime / ASN** — days-to-N from an arrival rate and the sequential design's
-average sample number — is a planned pre-launch timing companion. If the user asks
-"how long", check `abk plan --help` for a runtime flag on the installed build; if it's
-not exposed yet, convert required-N to a duration from the user's known arrival rate
-by hand and note it's an estimate. `scheme: alpha_spending` (group-sequential) is a
-named future item and is not implemented — refuse it with no version promise.
+`abk plan` is planning-only. Sizing (required-N / MDE / power) is the core; **runtime /
+ASN** ship alongside it. If the user asks "how long", `abk plan` reports **runtime**
+(days-to-required-N) from a unit-arrival rate — derived read-only from `_ab_exposures`
+or supplied with `--arrival-rate <units/day>` — and, for a `sequential.enabled`,
+sequential-eligible comparison, the **ASN** (the always-valid design's average sample
+number: expected stopping N under H1/H0, horizon-capped). Without an arrival rate both
+are SKIPPED with a reason (never invented); a fixed-horizon/resampling design shows
+`sequential ASN: n/a`. Relay that ASN is an expected *stopping* N against the horizon,
+not a lower requirement than the fixed required-N. `scheme: alpha_spending`
+(group-sequential) is a named future item and is not implemented — refuse it with no
+version promise.
 
 ## Final checklist
 

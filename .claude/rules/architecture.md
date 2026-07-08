@@ -251,16 +251,17 @@ sequential engine (`stats/sequential/`, opt-in `ci_kind='always_valid'`), the re
 sequential + weekly-cycle chip, the sub-day anytime-valid multinomial SRM (Lindon & Malek),
 `abk plan` (`planning/`), and the two A/A columns deferred from M4 — the `sequential.enabled`
 side-by-side peeking FPR (D8) and the composed FWER/FDR sweep over the multi-metric family
-(D9, via the shared `stats.correction.composed_significance`). **Named M6 deferrals:**
-`alpha_spending`/group-sequential (a `scheme: alpha_spending` config error names it), the
-A/A **sequential × composed** sweep, and `abk plan` **runtime/ASN**.
+(D9, via the shared `stats.correction.composed_significance`). The A/A **sequential ×
+composed** sweep and `abk plan` **runtime/ASN** shipped in M6 (WP-B / WP-A); the sole
+remaining **named future deferral** (no version promise) is `alpha_spending`/group-
+sequential (a `scheme: alpha_spending` config error names it).
 
 **M6 next** — init-claude + the docs site. Read before coding:
 
 - The M5 as-built + the math → [m5-implementation-plan.md](../../docs/specs/m5-implementation-plan.md),
   [statistics-changes.md §4](../../docs/specs/statistics-changes.md),
   [cumulative-intervals.md §6](../../docs/specs/cumulative-intervals.md)
-- The A/A matrix contracts (M4 + M5 as-built + M6 deferrals) → [aa-false-positive-matrix.md](../../docs/specs/aa-false-positive-matrix.md)
+- The A/A matrix contracts (M4 + M5 + M6 as-built) → [aa-false-positive-matrix.md](../../docs/specs/aa-false-positive-matrix.md)
 - The blocking must-fix checklist → [quorum-review.md](../../docs/specs/quorum-review.md)
 - The cockpit & readout as-built contracts → [data-contract-and-reporting.md §5](../../docs/specs/data-contract-and-reporting.md),
   [cli-and-dx.md §2](../../docs/specs/cli-and-dx.md)

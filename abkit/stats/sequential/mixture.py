@@ -20,8 +20,10 @@ that is why the anchor must be fixed at design time (the first look), never the 
 look (which would make the mixing prior data-dependent and void the guarantee). A change
 to this policy is a docs/specs/statistics-changes.md §4 event and triggers the
 sequential-mode re-plan (D7), never a silent CI move. (Horizon-anchoring — statistically
-tightest at the planned stop — is the M6 refinement once ``abk plan`` supplies a
-planned-N; it is not live-computable today.)
+tightest at the planned stop — is a possible **future** refinement now that ``abk plan``
+can supply a planned-N; it stays unimplemented because moving the anchor is a
+docs/specs/statistics-changes.md §4 event, and it is not live-computable during an
+ongoing experiment.)
 
 Purity: plain primitives only.
 """

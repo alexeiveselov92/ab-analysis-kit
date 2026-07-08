@@ -12,10 +12,14 @@
 - **Astro static site** under `website/` (mirrors detectkit's `website/`):
   `astro.config.mjs`, `package.json`, `src/pages/`, `src/components/`,
   `src/styles/`, `src/scripts/`, `public/`.
-- **Single-source docs.** One Markdown body of domain truth renders three ways:
-  the published site (`abkit.pipelab.dev`), the `.claude/rules` shipped by
-  `abk init-claude`, and `docs/`. A `website/scripts/sync-docs.mjs` step keeps them
-  in lockstep (detectkit pattern). ([cli-and-dx.md §5](cli-and-dx.md))
+- **One story, separately-authored bodies (as built).** Domain truth lives in three
+  bodies authored for three audiences — the packaged assistant assets shipped by
+  `abk init-claude`, the user-facing `docs/` tree, and the contributor
+  `.claude/rules` + `docs/specs` — kept consistent by **human review**, **not** machine
+  cross-generation (a CI drift gate, `test_docs_single_source.py`, lands in WP9). The
+  single mechanical sync is `docs/` →
+  the published site (`abkit.pipelab.dev`) via `website/scripts/sync-docs.mjs`
+  (detectkit pattern). ([cli-and-dx.md §5](cli-and-dx.md))
 - **Framework-free renderer core shared with the product.** The landing's
   interactive demo, the `abk run --report` HTML, and the `abk explore` cockpit all
   render through the **same** dependency-free TS/JS core
@@ -68,7 +72,10 @@ So the brand (once designed) applies everywhere without touching logic:
 
 ## 5. Timing
 
-The site + branding land in **M6** ([ROADMAP.md](../../ROADMAP.md)). Until then:
-keep every interface on the semantic token layer with **placeholder** values, so
-the finalized palette + logo from Claude design drop straight in. Do not hard-code
-brand colors anywhere in product code.
+The site + branding **shipped in M6** ([ROADMAP.md](../../ROADMAP.md)): the site is
+live at `abkit.pipelab.dev` and every interface (site, `abk run --report`, `abk
+explore`, the `test-report` channel branding) reads the real **Iris** palette + logo
+(`docs/design/`) through the shared semantic token layer — the placeholders were
+frozen to the real values in WP7b, name-for-name. Because the token layer stayed in
+place, a future palette change is still a single-file edit; brand colors are never
+hard-coded in product code.

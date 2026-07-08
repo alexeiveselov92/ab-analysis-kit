@@ -94,8 +94,11 @@ default two-tier Bonferroni (which protects the main tier and the secondary tier
 at α, by design). The budget is anchored to that nominal rate, so "over budget" means
 the **methods** are miscalibrated (clustering / variance underestimation), not that
 the correction is loose. It surfaces as one sentinel `_ab_aa_runs` row and a
-composed-family band above the report matrix. (Sequential × composed is an M6
-follow-up — the sweep is fixed-horizon.)
+composed-family band above the report matrix. With `sequential.enabled` the sweep also
+reports the **always-valid composed twin** — the fixed peeking pair (`fwer_peeking`/
+`fdr_peeking`, inflated across looks) vs its always-valid recovery (`fwer_sequential`/
+`fdr_sequential`, back to ≈ nominal) — mirroring the per-cell D8 recovery story at the
+family level. (Only `alpha_spending`/group-sequential stays a future item.)
 
 ## Command
 
