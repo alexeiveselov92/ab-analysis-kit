@@ -59,6 +59,7 @@ Flags (confirm the live set with `abk plan --help`):
 | `--power` | Target power (default: `statistics.power`, typically 0.8) |
 | `--alpha` | Experiment-level significance **before** correction (default: experiment/project alpha) |
 | `--baseline` | Baseline moments for a metric with no data (repeatable — Step 2) |
+| `--arrival-rate` | Total units/day across arms, for the runtime (days-to-N) + always-valid ASN estimates (default: derived read-only from `_ab_exposures`; must be `> 0`) |
 | `--profile` | Profile name (default: `profiles.yml` `default_profile`) |
 
 `--mde` and `--alpha` are in the comparison's own units: a `relative` test type reads

@@ -44,8 +44,9 @@ name a configured **comparison** of that experiment (default: the main metric).
   `correction`, analysis unit (preview-only). Sidedness and winsorization are
   **not** here — the stats core has no such params (two-sided p-values, no winsor).
 - **Modes** — Tune (knobs lead) / Auto (run `validate` server-side, re-seed the
-  knobs, green the chip in place) / Segment (heterogeneous effects) / Review (mark
-  guardrail vs primary, confirm the decision).
+  knobs, green the chip in place) / Review (mark guardrail vs primary, confirm the
+  decision). *(Segment / heterogeneous-effects mode is a deferred placeholder — not
+  available in 0.1.0.)*
 
 ## Live recompute — one source of math truth
 

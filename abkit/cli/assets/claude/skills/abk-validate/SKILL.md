@@ -91,7 +91,8 @@ The three classic failures to recognize:
 ## Step 3 — Act on the recommendation and budget bands
 
 - The report/matrix marks a **★ "Recommended" row** with a one-line rationale
-  ("lowest CI width among methods with FPR within budget"), plus a plain-language
+  ("highest power among methods with FPR within budget"; tiebreak: tightest
+  achieved MDE), plus a plain-language
   per-method verdict and the peeking headline (e.g. *"nominal α 5%, real peeking
   FPR 12.7%"*).
 - **Budget bands** color FPR cells green (in-band) / red (out). The budget

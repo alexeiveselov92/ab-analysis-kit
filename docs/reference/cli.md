@@ -230,7 +230,7 @@ Read-only pre-launch power / sample-size planner (cli-and-dx §1). No lock, no w
 
 ```bash
 abk plan [--select <exp>]... [--metric <m>] [--mde PCT] [--power P] [--alpha A] \
-         [--baseline '<metric>:mean=..,std=..,n=..']... [--profile NAME]
+         [--baseline '<metric>:mean=..,std=..,n=..']... [--arrival-rate N] [--profile NAME]
 ```
 
 | Option | Default | Meaning |
@@ -241,6 +241,7 @@ abk plan [--select <exp>]... [--metric <m>] [--mde PCT] [--power P] [--alpha A] 
 | `--power` | project default | Target power (must be in `(0, 1)`) |
 | `--alpha` | experiment / project alpha | Experiment-level significance before correction (must be in `(0, 1)`) |
 | `--baseline` | — | Baseline moments override for a greenfield metric (repeatable, see below) |
+| `--arrival-rate` | derived from `_ab_exposures` | Total units/day across arms, for the runtime (days-to-N) + always-valid ASN estimates (must be > 0) |
 | `--profile` | `default_profile` | Connection profile to use |
 
 Reports required sample size, achievable MDE, and achieved power **at the effective
@@ -255,7 +256,10 @@ resampling methods are refused** (reported as `SKIPPED` — they have no version
 formula, and abkit never invents math; measure their power empirically with
 `abk validate --inject-effect`). CUPED is sized on the raw persisted variance (the
 covariate correlation is not persisted per row) and flagged as a conservative upper
-bound. Runtime / ASN (days-to-N from an arrival rate) is not part of this command.
+bound. When an arrival rate is available — derived read-only from `_ab_exposures` or
+supplied via `--arrival-rate` — `plan` also reports the **runtime** (days to reach the
+required N) and, for a `sequential.enabled` design, the always-valid **ASN** (expected /
+average sample number, horizon-capped); without arrival data both are skipped.
 
 **Exit behavior:** a by-design refusal (`SKIPPED`) exits **zero** — it is expected,
 not an error. A genuine harness failure (bad selection, a malformed `--baseline`, or a
@@ -315,6 +319,29 @@ Two modes:
 
 **Exit behavior:** prints `DRY RUN` and changes nothing unless `--execute` is given;
 exits non-zero on a database error.
+
+## `abk test-report`
+
+Send a **mock** readout through the configured notification channels — a
+connectivity / formatting smoke test. **No lock, no warehouse read, no statistics**:
+it builds a synthetic WIN readout for the experiment and pushes it to the channels
+declared in `profiles.yml` `notification_channels:` (see the
+[configuration guide](../guides/notification-channels.md)).
+
+```bash
+abk test-report <experiment> [--channel NAME]... [--profile NAME]
+```
+
+| Option | Default | Meaning |
+|---|---|---|
+| `EXPERIMENT` | required | The experiment name to stamp on the mock readout |
+| `--channel` | all configured | Send only to these channels (repeatable) |
+| `--profile` | `default_profile` | Connection profile whose `notification_channels` to use |
+
+Prints a per-channel ✓/✗ line and **exits non-zero if any channel fails or is
+misconfigured** — so you can wire it into CI before trusting an orchestrator to
+deliver real readouts. Supported channel types: `slack`, `mattermost`, `webhook`,
+`telegram`, `email`.
 
 ## Common workflows
 

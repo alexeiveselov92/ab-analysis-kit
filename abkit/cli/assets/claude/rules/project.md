@@ -4,7 +4,9 @@ Two project-level files sit at the root of an abkit project:
 `abkit_project.yml` (project settings + statistical defaults) and `profiles.yml`
 (database connections). Both support environment-variable interpolation —
 `{{ env_var('VAR') }}` and `${VAR}` — so **secrets stay out of YAML**. An
-unresolved placeholder surfaces as an error, never an empty string. `abk init
+unresolved placeholder is kept **verbatim** (never silently emptied) so a missing
+variable is detectable rather than a blank connection; notification-channel secrets
+are the exception (an unresolved one is actively rejected). `abk init
 --db-type {clickhouse,postgres,mysql}` scaffolds both files (ClickHouse default).
 
 A directory is an abkit project when it contains `abkit_project.yml`.
@@ -154,6 +156,30 @@ profiles:
 Keep the internal location **separate** from your analytics location so the
 `_ab_*` tables don't clutter shared schemas. Override per run with
 `abk run --profile prod`.
+
+### `notification_channels` (optional — for `abk test-report`)
+
+A top-level `notification_channels:` block in `profiles.yml`, keyed by channel
+name, declares where readouts can be sent. Each entry has a `type`
+(`slack` \| `mattermost` \| `webhook` \| `telegram` \| `email`) plus that
+transport's fields (put secrets behind `env_var`/`${VAR}` — an unresolved
+channel secret **is** rejected):
+
+```yaml
+notification_channels:
+  team_slack:
+    type: slack
+    webhook_url: "${SLACK_WEBHOOK_URL}"
+  ops_telegram:
+    type: telegram
+    bot_token: "${TELEGRAM_BOT_TOKEN}"
+    chat_id: "-1001234567890"
+```
+
+`abk test-report <exp> [--channel <name>]... [--profile <p>]` sends a **mock**
+WIN readout through them (no lock, no warehouse read, no stats) and prints a
+per-channel ✓/✗, exiting non-zero if any channel fails — a connectivity/format
+smoke test before wiring channels into an orchestrator.
 
 ## The two-tier alpha (why the effective alpha isn't the alpha you set)
 
