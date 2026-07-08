@@ -83,10 +83,23 @@ structure/tests where they hold. Anything metric-primary-shaped (detectkit's
 primary entity) must be consciously reshaped to experiment-primary — flag it in
 the PR rather than silently diverging.
 
-## Release checklist (from M6 onward)
+## Release checklist (from M6 onward — first tagged release is `0.1.0`)
 
-- `__version__` bumped; `CHANGELOG.md` section cut.
-- `docs/`, `.claude/rules/`, and the `init-claude` packaged assets
-  (`abkit/cli/assets/claude/`) tell the same story.
-- Website sync (`abkit.pipelab.dev`) after docs changes.
-- PyPI publish is tag-triggered by CI.
+- `__version__` (in `abkit/__init__.py`) bumped; `CHANGELOG.md` `[Unreleased]`
+  cut into a dated section; the Dev Status classifier in `pyproject.toml` current.
+- **The three single-source bodies tell one story**: (a) the user docs `docs/`
+  (rendered to the site), (b) the contributor rules `.claude/rules/`, (c) the
+  packaged `init-claude` operator assets `abkit/cli/assets/claude/` (the managed
+  block + 9 rules + 7 skills). The drift gate `tests/docs/test_docs_single_source.py`
+  asserts every packaged operator rule has a published `docs/` home.
+- **Packaging DoD**: the built wheel ships `report.js` + `explore.js` + every
+  `abkit/cli/assets/claude/**` asset (the CI wheel-namelist gate), and the
+  `pip install`-smoke job proves `abk --version` + `abk init-claude` resolve from
+  a clean-venv install across Py 3.10/3.11/3.12. `web/` never ships in the wheel.
+- Layout to keep in mind when touching a release: `cli/assets/claude/` (init-claude
+  payload), `abkit/notify/` (`abk test-report` channels), `website/` (the Astro site,
+  auto-redeploys on `website/**` push to `main`).
+- Website sync (`abkit.pipelab.dev`) is automatic on `website/**` merge to `main`.
+- PyPI publish is **tag-triggered** by CI (`publish.yml`, OIDC trusted-publisher);
+  the maintainer pushes `v<version>` after the exit gate is green (never before the
+  version bump — a duplicate version upload is rejected).

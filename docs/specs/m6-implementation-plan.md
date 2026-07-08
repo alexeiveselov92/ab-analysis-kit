@@ -897,23 +897,72 @@ WP3 + WP4 ──▶ WP7 (Astro site + sync-docs + brand + demo) ─▶ WP9 (rele
 
 ## 5. Adversarial review record (M6 exit gate)
 
-> To be completed at WP10. Follow the M4/M5 protocol: **≥2 full rounds**, refute-by-default,
-> a second independent verifier per finding; per-WP mini-reviews recorded at each WP.
-> Round-2 is mandatory (it caught an incomplete round-1 fix in both M4 and M5).
->
-> **Round 1 — lenses:** packaging (wheel ships every asset; `pip install` resolves them),
-> DX correctness (CLAUDE.section gotchas match M5 as-built — sequential opt-in, `abk
-> validate` ≠ lint, orphaning), single-source drift (bodies a/b/c agree), brand-swap seam
-> (every surface on the token layer; hex loop + name+value gate), reliability (idempotent
-> init-claude, non-zero exits, no leaked alerting semantics in test-report), docs build
-> (astro red on missing page; demo parity red on math drift).
->
-> **Round 2 — re-review of the patched tree.**
->
-> **Exit-gate invariants to reassert:** goldens untouched at rel-1e-9, no `ALGORITHM_VERSION`
-> moved, `abkit.stats` purity intact (`tests/stats/test_purity.py`), bundles rebuilt+committed
-> for any `web/src/**` edit, `web/` absent from the wheel, no external-host asset in any
-> self-contained bundle.
+Followed the M4/M5 protocol: **≥2 full rounds**, refute-by-default, a second independent
+verifier per finding (round-2 is mandatory — it caught an incomplete round-1 fix in both M4
+and M5). The WP10 diff is intentionally narrow — the release-readiness e2e
+(`tests/e2e/test_release_readiness.py`) + the coordinated "M5 shipped → M6 shipped" docs sync
+flip (`CLAUDE.md`, `.claude/rules/architecture.md` + `contributing.md`, `ROADMAP.md`,
+`README.md`, `CHANGELOG.md`) — so the review targeted (a) the diff's correctness/accuracy and
+(b) reassertion of the M6 exit-gate invariants over the whole tree.
+
+**Round 1** — six lenses (e2e-correctness, docs-factual-accuracy, milestone-flip completeness /
+single-source drift, exit-gate invariants, CHANGELOG/version consistency, reliability/DoD), each
+finding independently re-verified refute-by-default. **10 raw → 6 confirmed, 4 refuted.** The
+confirmed findings collapsed to **two real defects** (5 of 6 were the same README issue seen by
+different lenses):
+
+- **README overstated PyPI availability (fact-check / single-source drift).** The new README
+  status banner + `## Install` presented `pip install ab-analysis-kit` and "the first public
+  release … all shipped" with **no** caveat that the tagged PyPI publish is the maintainer's
+  pending G1 step — while every *other* synced body (`CLAUDE.md`, `ROADMAP.md`, `contributing.md`,
+  `CHANGELOG.md`) correctly hedged it. **Fix:** reworded the README status to "the first release,
+  prepared" + "the tagged PyPI publish is the maintainer's pending step", and gated the `Install`
+  block on `v0.1.0` being tagged (install-from-source until then). Restores single-source
+  agreement; keeps the correct, landing-consistent `pip install ab-analysis-kit` command.
+- **CHANGELOG referenced a review record that did not yet exist.** The WP10 CHANGELOG entry said
+  the exit-gate review "is recorded in `docs/specs/m6-implementation-plan.md §5`", but §5 was still
+  the "To be completed at WP10" placeholder and the file was absent from the diff. **Fix:** this
+  section (populated in the same change) — the claim is now true at commit time.
+
+  *Quality nit (inside a refuted finding, adopted anyway):* the e2e's in-test `pip wheel` build
+  ran 4× in CI under PEP-517 network build-isolation and duplicated the dedicated `lint`
+  wheel-namelist gate + `install-smoke` job; its "no network" docstring was inaccurate for it.
+  **Simplified:** dropped the in-test wheel build (the wheel-packaging DoD is owned authoritatively
+  by those two CI jobs) and kept the genuinely-offline self-contained-bundle assertion, so the e2e
+  is fully offline + byte-reproducible as designed.
+
+- **Refuted (4):** the wheel-skip "masks packaging breaks / not offline" (the skip only fired on a
+  build-env failure, the content assertion still ran, and CI owns the authoritative gate — mooted by
+  the simplification above); the init-claude `*.md` rglob being "narrower than every asset" (all 17
+  packaged assets *are* Markdown, so coverage is complete); the CHANGELOG `[0.1.0]` "first tagged
+  public release" heading (pre-existing WP9 wording, byte-identical in `main`, not this diff); and a
+  duplicate of the README finding filed under a different lens.
+
+**Round 2** — re-review of the patched tree (fixes applied) + a completeness critic + an
+invariant-recheck, each finding independently re-verified. **3 raw → 3 confirmed, 0 refuted** — and
+round-2 earned its keep by catching **incomplete round-1 fixes** (the M4/M5 lesson repeats):
+
+- **CHANGELOG mis-attributed the dropped wheel sub-test.** After round-1 removed the e2e's in-test
+  `pip wheel` build, the WP10 CHANGELOG entry still credited the e2e with proving "a freshly-built
+  wheel ships both bundles + every `abkit/cli/assets/claude/**` asset." **Fix:** reworded the entry to
+  attribute the wheel-packaging DoD to CI (the `lint` wheel-namelist gate + `install-smoke` job) and
+  describe the e2e's actual final assertion (committed bundles self-contained/offline) — matching the
+  e2e docstring, this §5, and `contributing.md`.
+- **§5 stated a stale test count.** The round-1 draft of this section said "1665 passed, 2
+  Docker-skipped"; removing the wheel sub-test dropped the count by one and only one skip is Docker.
+  **Fix:** corrected to the reproduced figures below.
+
+**Round 2 verdict: all confirmed findings fixed; no residual or new defect.** (Both round-2 confirmed
+items were doc-accuracy misstatements introduced by the round-1 fixes — no code/behavior/invariant
+impact.)
+
+**Exit-gate invariants reasserted (verified, not assumed):** `git diff --name-only main...HEAD`
+touches nothing under `abkit/stats/`, `tests/golden/`, or `web/src/`; no `ALGORITHM_VERSION` moved;
+`tests/stats/test_purity.py` passes; the committed bundles are byte-unchanged (no `web/src` edit); `web/`
+is absent from the wheel and the wheel ships `report.js`/`explore.js` + all `abkit/cli/assets/claude/**`
+(CI `lint` + `install-smoke`); no self-contained bundle references an external host; the full suite is
+green (**1664 passed, 2 skipped** — 1 Docker-gated real-ClickHouse e2e, 1 MySQL affected-rows-semantics
+case; a Docker-equipped env is 1665 passed / 1 skipped) with the new e2e; goldens intact at rel-1e-9.
 
 ## 6. Named deferrals (explicitly NOT in M6 — pushed to v2/future)
 

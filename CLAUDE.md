@@ -22,7 +22,7 @@ The as-built condensation for contributors/assistants (detectkit-style):
 Design contracts for what is being *built next* stay in [docs/specs/](docs/specs/)
 (canonical for M2+ work — table below). Keep rules ↔ docs in sync per milestone.
 
-## Status: M1 + M2 + M3 + M4 + M5 shipped; next up M6
+## Status: M1 + M2 + M3 + M4 + M5 + M6 shipped — `0.1.0` release-ready
 
 **Done — M1, the pure statistical core** (`abkit.stats`, importable standalone;
 see [ROADMAP.md](ROADMAP.md) for the deferred-cleanup list): data model with the
@@ -97,10 +97,24 @@ covariate = fixed whole-day lookback implemented as the pre-period second
 render ([declarative-config.md §3](docs/specs/declarative-config.md)); Jinja
 built-ins win over context; CLI exits non-zero on failure.
 
-**Next — M6** (DX, docs, orchestration, release: `abk init-claude` + packaged `.claude`
-assets, the single-source docs site, Prefect scaffolding, BI reference dashboards, the
-PyPI release). The source of truth is [docs/specs/](docs/specs/). Read the relevant spec
-before writing code:
+**Done — M6, the DX / docs / orchestration / release layer** (see
+[ROADMAP.md](ROADMAP.md) M6 and [m6-implementation-plan.md](docs/specs/m6-implementation-plan.md)
+for the record): `abk init-claude` + the packaged `.claude` assets (the managed
+`CLAUDE.md` block, 9 operator rules, 7 skills), the single-source docs site
+(Astro, live at abkit.pipelab.dev), Prefect flow/deployment scaffolding in
+`abk init`, BI reference (tool-agnostic SQL recipes + one Grafana dashboard),
+`abk test-report` + the `abkit/notify/` channel layer, `abk plan` **runtime/ASN**
+(WP-A), the A/A **sequential × composed** family sweep (WP-B), and the release
+engineering (`__version__ = 0.1.0`, classifier `3 - Alpha`, the wheel-namelist +
+`pip install` DoD gates, the docs single-source drift gate) behind the WP10 exit
+gate (release-readiness e2e + ≥2 adversarial rounds). **Zero statistical-number
+changes across M2–M6** (no `ALGORITHM_VERSION` moved, goldens intact at rel-1e-9,
+`abkit.stats` purity held). **Named future deferral** (no version promise):
+`alpha_spending`/group-sequential; see [ROADMAP.md](ROADMAP.md) for the
+post-0.1.0 hardening backlog. The tagged PyPI publish is the maintainer's G1 step.
+
+Design contracts stay in [docs/specs/](docs/specs/) (canonical). Read the relevant
+spec before writing code:
 
 | If you're working on… | Read |
 |---|---|
@@ -118,10 +132,11 @@ The master plan in Russian: [docs/ru/project-initiation-spec.md](docs/ru/project
 Reference material (legacy dashboard JSON, results chart, method catalogue):
 [docs/reference/](docs/reference/).
 
-> The contributor condensation now lives in `.claude/rules/` (see the routing
+> The contributor condensation lives in `.claude/rules/` (see the routing
 > table above); `docs/specs/` stays canonical for design contracts. The
-> *user-facing* `init-claude` payload + docs site render arrive in M6 — keep all
-> three in sync from then on, detectkit-style.
+> *user-facing* `init-claude` payload (`abkit/cli/assets/claude/`) + the docs
+> site now ship — keep all three (`docs/`, `.claude/rules/`, the packaged
+> init-claude assets) telling one story on every release, detectkit-style.
 
 ## Invariants (do not violate)
 

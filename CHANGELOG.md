@@ -23,6 +23,26 @@ opt-in sequential analysis + `abk plan`, and the M6 DX layer (`abk init-claude`,
 changed across M2–M6 (goldens intact at rel-1e-9; no `ALGORITHM_VERSION` moved).
 
 ### Added
+- **M6 WP10 — the M6 exit gate: release-readiness e2e, ≥2 adversarial review rounds,
+  and the coordinated milestone-header sync.** New `tests/e2e/test_release_readiness.py`
+  proves the whole first-release journey offline and byte-reproducibly — `abk --version`
+  reports the real (non-placeholder) release, `abk init` → `abk run --select` lands a real
+  verdict-bearing `_ab_results` row, `abk run --report` bakes a self-contained zero-network
+  readout, `abk init-claude` materializes the managed `CLAUDE.md` block + the 9 rules + 7
+  skills (idempotently), and the committed renderer bundles are self-contained (offline, no
+  external host). The *wheel-packaging* DoD — a built wheel shipping both bundles + every
+  `abkit/cli/assets/claude/**` asset and resolving in a clean venv — is owned authoritatively
+  by the CI `lint` wheel-namelist gate + the `install-smoke` job (across the Python matrix),
+  which this fully-offline e2e complements deterministically. The as-built docs are flipped to
+  one story now that M6 is shipped:
+  the status headers in `CLAUDE.md`, `.claude/rules/architecture.md` (including
+  `__version__` `0.0.1.dev0` → `0.1.0` in the banner), `.claude/rules/contributing.md`
+  (the release checklist names the three single-source bodies + the packaging DoD), and
+  `ROADMAP.md` (M6 ✅ SHIPPED; the sole `alpha_spending`/group-sequential deferral pointed
+  at the future with no version promise). The exit-gate review (≥2 full rounds,
+  refute-by-default, a second independent verifier per finding) is recorded in
+  `docs/specs/m6-implementation-plan.md §5`. No `abkit.stats` change; no `ALGORITHM_VERSION`
+  moved; goldens untouched at rel-1e-9; `abkit.stats` purity intact.
 - **M6 WP9 — release engineering (prep only; the tagged publish is a separate,
   maintainer-gated step).** Bumped `__version__` `0.0.1.dev0` → `0.1.0` (the first
   real version must exceed the reserved placeholder or PyPI rejects the upload) and
