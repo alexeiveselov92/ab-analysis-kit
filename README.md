@@ -11,12 +11,27 @@ stabilization chart), writes them to a clean warehouse table any BI can read, an
 gives you a local cockpit to tune the analysis and a harness to prove your method is
 actually calibrated.
 
-> **Status: pre-development.** This repo currently holds the **project-initiation
-> specs** (the development contract). Start with the master plan (RU):
-> [docs/ru/project-initiation-spec.md](docs/ru/project-initiation-spec.md), then the
-> [specs index](docs/specs/00-overview.md).
+> **Status: `0.1.0` (Alpha) — the first release, prepared** (milestones **M1–M6**). The
+> statistical core, the declarative config / DB / pipeline layer, the explore cockpit +
+> self-contained reports, `abk validate`, opt-in sequential analysis + `abk plan`, and the
+> DX layer (`abk init-claude`, docs site, Prefect scaffolding) are all shipped. The tagged
+> PyPI publish is the maintainer's pending step. Docs: [abkit.pipelab.dev](https://abkit.pipelab.dev).
 
-## What it will do
+## Install
+
+Once `0.1.0` is published to PyPI (a maintainer tags `v0.1.0`; until then install from
+source — `pip install -e ".[dev]"`):
+
+```bash
+pip install ab-analysis-kit          # Python 3.10+; add a DB extra for real data:
+pip install "ab-analysis-kit[clickhouse]"   # or [postgres] / [mysql] / [all-db]
+```
+
+`abk --version` and `abk --help` work with no database driver; you can even lint a
+config (`abk run --steps validate`) with no database at all. See the
+[getting-started guide](https://abkit.pipelab.dev) for the full first run.
+
+## What it does
 
 - **Declarative experiments** — `experiments/*.yml` (assignment + variants +
   comparisons) referencing a reusable `metrics/*.yml` library (YAML + SQL).
@@ -50,12 +65,11 @@ flipped from *metric* to *experiment*.
 
 ## Documentation
 
-- **Master plan (RU):** [docs/ru/project-initiation-spec.md](docs/ru/project-initiation-spec.md)
-- **Specs index:** [docs/specs/00-overview.md](docs/specs/00-overview.md)
-- **Architecture:** [docs/specs/architecture.md](docs/specs/architecture.md)
+- **Docs site:** [abkit.pipelab.dev](https://abkit.pipelab.dev) — getting started, guides, reference
 - **Roadmap:** [ROADMAP.md](ROADMAP.md) · **Principles:** [PRINCIPLES.md](PRINCIPLES.md)
-- **Contributor guide:** [CLAUDE.md](CLAUDE.md)
+- **Contributor guide:** [CLAUDE.md](CLAUDE.md) · design contracts in [docs/specs/](docs/specs/)
+- **Master plan (RU):** [docs/ru/project-initiation-spec.md](docs/ru/project-initiation-spec.md)
 
 ## License
 
-MIT (planned).
+[MIT](LICENSE).

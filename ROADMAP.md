@@ -166,17 +166,26 @@ The implementation record + decisions are in
   runtime/ASN (WP-A). **Still deferred** — a future item, no version promise:
   `alpha_spending`/group-sequential.
 
-## M6 — DX, docs, orchestration, release
-- `abk init-claude` + packaged `.claude` assets (rules + 7 skills);
-  single-source docs site (`abkit.pipelab.dev`, Astro + sync-docs) — **detectkit-
-  analogous machinery with our own palette, logo, and landing page** (design
-  finalized in Claude design; interfaces stay on a themeable brand-token layer) per
-  [branding-and-site.md](docs/specs/branding-and-site.md); Prefect flow/deployment
-  scaffolding; BI tool-agnostic reference SQL (paste into Grafana / Lightdash /
-  Metabase / Superset) + one importable Grafana dashboard + the optional SRM panel;
-  `test-report` channels.
-- **DoD:** PyPI release `pip install ab-analysis-kit`; `CHANGELOG.md` authoritative;
-  contributor `CLAUDE.md` + `.claude/rules` in sync.
+## M6 — DX, docs, orchestration, release ✅ SHIPPED
+- `abk init-claude` + packaged `.claude` assets (the managed `CLAUDE.md` block, 9
+  operator rules + 7 skills); single-source docs site (`abkit.pipelab.dev`, Astro +
+  sync-docs) — **detectkit-analogous machinery with our own palette, logo, and landing
+  page** (the real Iris "Diverge" brand; interfaces stay on a themeable brand-token
+  layer) per [branding-and-site.md](docs/specs/branding-and-site.md); Prefect
+  flow/deployment scaffolding in `abk init`; BI tool-agnostic reference SQL (paste into
+  Grafana / Lightdash / Metabase / Superset) + one importable Grafana dashboard + the
+  optional SRM panel; `abk test-report` channels (`abkit/notify/`).
+- Two ex-deferrals pulled in as WPs: **`abk plan` runtime/ASN** (WP-A) and the **A/A
+  sequential × composed** family sweep (WP-B) — both stats-pure, no `ALGORITHM_VERSION`.
+- Release engineering: `__version__ = 0.1.0`, classifier `3 - Alpha`, the CHANGELOG cut,
+  the wheel-namelist + `pip install` DoD gates, and the docs single-source drift gate,
+  behind the WP10 exit gate (release-readiness e2e + ≥2 adversarial rounds).
+- **DoD met:** `pip install ab-analysis-kit` (prep — the tagged publish is the
+  maintainer's G1 step); `CHANGELOG.md` authoritative; contributor `CLAUDE.md` +
+  `.claude/rules` + packaged init-claude assets in sync. **Zero statistical-number
+  changes across M2–M6** (goldens intact, no `ALGORITHM_VERSION` moved).
+- **Named future deferral** (no version promise): `alpha_spending`/group-sequential
+  (see the hardening tiers below + the v2 list).
 
 ## Post-baseline hardening (multi-arm UX + stats-core), tiered by version
 

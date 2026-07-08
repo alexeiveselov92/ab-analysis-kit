@@ -1,12 +1,14 @@
 # abkit architecture — as built
 
 > The contributor/assistant condensation of the system **as it exists in code**.
-> Reflects: **M1 + M2 + M3 + M4 + M5 shipped** (`__version__ = 0.0.1.dev0`; M3's WP9
-> testcontainers hardening deferred to a Docker-equipped environment).
-> Design contracts for what is being *built next* live in [docs/specs/](../../docs/specs/)
-> (canonical for M6+ work); this file must never claim unbuilt code exists.
-> Keep in sync with `docs/` on every milestone (and with the `init-claude`
-> payload once it exists — M6).
+> Reflects: **M1 + M2 + M3 + M4 + M5 + M6 shipped** (`__version__ = 0.1.0`,
+> release-ready; M3's WP9 testcontainers hardening deferred to a Docker-equipped
+> environment).
+> Design contracts for what is being *built next* (1.x hardening) live in
+> [docs/specs/](../../docs/specs/) + [ROADMAP.md](../../ROADMAP.md); this file must
+> never claim unbuilt code exists.
+> Keep in sync with `docs/` and the packaged `init-claude` payload
+> (`abkit/cli/assets/claude/`) on every release.
 
 ## The shape
 
@@ -243,7 +245,7 @@ identity param orphans the prior results series.
 - Stratification uses Hamilton apportionment; Poisson bootstrap is mean-only
   (guarded); zero denominators → NaN + warning (H5), never an exception.
 
-## M5 as built + M6 targets (specs are canonical)
+## M5 + M6 as built (specs are canonical)
 
 **M5 shipped** (the implementation record is
 [m5-implementation-plan.md](../../docs/specs/m5-implementation-plan.md)): the always-valid
@@ -251,12 +253,25 @@ sequential engine (`stats/sequential/`, opt-in `ci_kind='always_valid'`), the re
 sequential + weekly-cycle chip, the sub-day anytime-valid multinomial SRM (Lindon & Malek),
 `abk plan` (`planning/`), and the two A/A columns deferred from M4 — the `sequential.enabled`
 side-by-side peeking FPR (D8) and the composed FWER/FDR sweep over the multi-metric family
-(D9, via the shared `stats.correction.composed_significance`). The A/A **sequential ×
-composed** sweep and `abk plan` **runtime/ASN** shipped in M6 (WP-B / WP-A); the sole
-remaining **named future deferral** (no version promise) is `alpha_spending`/group-
-sequential (a `scheme: alpha_spending` config error names it).
+(D9, via the shared `stats.correction.composed_significance`).
 
-**M6 next** — init-claude + the docs site. Read before coding:
+**M6 shipped** (the record is
+[m6-implementation-plan.md](../../docs/specs/m6-implementation-plan.md)): the DX / docs /
+orchestration / release layer — `abk init-claude` + the packaged `.claude` assets
+(`abkit/cli/assets/claude/`: the managed `CLAUDE.md` block, 9 operator rules, 7 skills), the
+single-source docs site (`website/` Astro, live at abkit.pipelab.dev), Prefect scaffolding in
+`abk init` (`runners/`), BI reference (tool-agnostic SQL + one Grafana dashboard), `abk
+test-report` + the `abkit/notify/` channel layer, `abk plan` **runtime/ASN** (WP-A, from
+`_ab_exposures` arrival + always-valid ASN), the A/A **sequential × composed** family sweep
+(WP-B, `validate/family.py`), and the release engineering (`__version__ = 0.1.0`, classifier
+`3 - Alpha`, the wheel-namelist + `pip install` DoD gates, `tests/docs/test_docs_single_source.py`)
+behind the WP10 exit gate (`tests/e2e/test_release_readiness.py` + ≥2 adversarial rounds).
+**Zero statistical-number changes across M2–M6** (no `ALGORITHM_VERSION` moved, goldens intact,
+`abkit.stats` purity held). The sole remaining **named future deferral** (no version promise)
+is `alpha_spending`/group-sequential (a `scheme: alpha_spending` config error names it); the
+tagged PyPI publish is the maintainer's G1 step.
+
+**Next — 1.x hardening** (see [ROADMAP.md](../../ROADMAP.md) "Post-baseline hardening"). Read before coding:
 
 - The M5 as-built + the math → [m5-implementation-plan.md](../../docs/specs/m5-implementation-plan.md),
   [statistics-changes.md §4](../../docs/specs/statistics-changes.md),
