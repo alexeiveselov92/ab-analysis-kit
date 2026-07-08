@@ -85,7 +85,7 @@ abk --version
 ```
 
 ```text
-abk, version 0.1.0
+abk, version 0.1.1
 ```
 
 List the available commands to confirm the full surface installed cleanly:
@@ -95,7 +95,7 @@ abk --help
 ```
 
 You should see the shipped commands: `init`, `init-claude`, `run`, `explore`,
-`validate`, `plan`, `unlock`, and `clean`. Every command runs its body lazily, so
+`validate`, `plan`, `unlock`, `clean`, and `test-report`. Every command runs its body lazily, so
 `abk --version` and `abk --help` work instantly and require **no** database driver.
 
 If `abk` isn't found, your virtual environment probably isn't active (re-run the

@@ -17,6 +17,7 @@ task = one `abk` invocation), so a broken run fails the job instead of exiting 0
 | `abk plan --select <exp>` | Read-only pre-launch sizing: required-N / achievable-MDE / power (see `plan.md`) |
 | `abk unlock --select <exp>` | Clear a stuck pipeline / validate lock |
 | `abk clean --select <exp>` | Prune internal rows that no longer match the config |
+| `abk test-report <exp>` | Send a **mock** WIN readout through the configured notification channels — a connectivity smoke test (no lock, no warehouse read); `--channel <name>` (repeatable) / `--profile`; non-zero exit if any channel fails. See `project.md` `notification_channels` |
 | `abk --version` | Show the installed abkit version |
 
 ## The two-level selector model (read this first)

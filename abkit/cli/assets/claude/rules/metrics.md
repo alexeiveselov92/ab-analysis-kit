@@ -92,8 +92,9 @@ live there once, so metric SQL describes only its own aggregation:
 
 Config-lint asserts the rendered SQL joins `_ab_exposures`; a metric authored
 without the macro fails. Never hand-roll the assignment join or the window
-filter. `{{ data_database }}` (or `{{ data_schema }}` on Postgres) resolves to
-the profile's data location.
+filter. `{{ data_database }}` is the data-location built-in on **every** dialect
+(on Postgres it resolves to the profile's `data_schema` value); there is no
+`{{ data_schema }}` built-in.
 
 ## CUPED covariate = a whole-day pre-period lookback
 

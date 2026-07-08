@@ -117,8 +117,11 @@ Two facts to keep straight while tuning:
 
 - **Editing an identity param starts a NEW series.** `method_config_id` is a hash of
   the method + its non-default **identity** params; changing `test_type`, CUPED, the
-  lookback, strata, or the correction **orphans** the prior `_ab_results` rows.
+  lookback, or strata **orphans** the prior `_ab_results` rows.
   `seed` is identity-**excluded**, so changing a bootstrap seed does *not* orphan.
+  The **correction** and **alpha** are experiment-level (never in `method_config_id`):
+  changing them re-derives the effective alpha and re-arms the calibration chip but
+  does **not** orphan the series.
 - **Sequential is not a rail knob.** Peeking-safe (always-valid) CIs are the
   experiment-level opt-in `sequential: {enabled: true}` in the YAML, not a method
   param. Without it the readout **withholds** WIN/LOSE and FLAT before the planned horizon

@@ -142,9 +142,9 @@ The recommended way to work is hands-on and iterative:
    read-only required-N / achievable-MDE / achieved-power at the effective alpha.
 
 The full command surface is `init`, `init-claude`, `run`, `explore`, `validate`,
-`plan`, `unlock`, and `clean` (cli-and-dx §1). Two things that are easy to
-confuse: `abk run --steps validate` is the **config lint** (no database), while
-`abk validate` is the **A/A false-positive matrix**.
+`plan`, `unlock`, `clean`, and `test-report` (cli-and-dx §1). Two things that are
+easy to confuse: `abk run --steps validate` is the **config lint** (no database),
+while `abk validate` is the **A/A false-positive matrix**.
 
 ## Where results land: the `_ab_*` tables
 

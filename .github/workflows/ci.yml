@@ -347,11 +347,15 @@ jobs:
           echo "installing $whl"
           /tmp/smoke/bin/pip install "$whl"
 
-          # 1) the console script resolves and reports the bumped version (must
-          #    exceed the reserved 0.0.1.dev0 placeholder)
+          # 1) the console script resolves and reports the installed package
+          #    version (which must never be the reserved 0.0.1.dev0 placeholder).
+          #    Compared dynamically against abkit.__version__ so this gate needs
+          #    no edit on a version bump.
           ver=$(/tmp/smoke/bin/abk --version)
           echo "$ver"
-          echo "$ver" | grep -q '0\.1\.0' || { echo "abk --version is not 0.1.0: $ver"; exit 1; }
+          pkgver=$(/tmp/smoke/bin/python -c "import abkit; print(abkit.__version__)")
+          echo "$pkgver" | grep -qvxF '0.0.1.dev0' || { echo "version is still the placeholder"; exit 1; }
+          echo "$ver" | grep -qF "$pkgver" || { echo "abk --version ($ver) != package version ($pkgver)"; exit 1; }
 
           # 2) init-claude materializes the managed CLAUDE.md block + the 9
           #    operator rules + the 7 skills FROM THE INSTALLED WHEEL (this is the

@@ -91,8 +91,9 @@ hand-roll the assignment join.
   column names with args if needed: `ab.exposed_units('dt', 'ts')`.
 - `{{ ab.variant_col() }}` — the arm label (project it `AS variant`).
 - `{{ ab.stratum_col() }}` — the stratum label, only when stratifying.
-- `{{ data_database }}` (or `{{ data_schema }}` on Postgres) resolves to the
-  profile's data location. Mind the dialect (ClickHouse vs Postgres vs MySQL).
+- `{{ data_database }}` is the single data-location built-in on every backend
+  (on Postgres it resolves to the profile's `data_schema` value; there is no
+  `{{ data_schema }}` built-in). Mind the dialect (ClickHouse vs Postgres vs MySQL).
 
 A fraction metric (per-user conversion): `count = max(converted)`, `nobs = 1`:
 

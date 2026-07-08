@@ -46,6 +46,7 @@ Without either, that comparison is reported **un-sizable — not guessed**. The
 | `--power 0.8` | Target power. Default: the project statistics default. |
 | `--alpha 0.05` | Experiment-level alpha *before* correction; the two-tier scheme still divides it. Default: experiment/project alpha. |
 | `--baseline <spec>` | Greenfield baseline moments (repeatable; see above). |
+| `--arrival-rate <units/day>` | Total units/day across arms, for the **runtime** (days-to-required-N) + always-valid **ASN** estimates. Default: derived read-only from `_ab_exposures`; without arrival data both are skipped. Must be `> 0`. |
 | `--profile` | Profile name (default: `profiles.yml` `default_profile`). |
 
 ## What it refuses (honest, never invented math)

@@ -13,6 +13,50 @@ number change).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-08
+
+Documentation + AI-assistant-context accuracy patch (no code, no statistical
+numbers — a post-`0.1.0` fact-check of every published doc page and every packaged
+`abk init-claude` asset against the shipped CLI/config/method surface). 15 verified
+findings fixed; each was independently re-verified against the code.
+
+### Fixed
+- **Packaged `abk init-claude` assets now match the shipped API** (these ship in the
+  wheel, so the fix ships in `0.1.1`):
+  - Metric-SQL docs no longer reference a non-existent `{{ data_schema }}` template
+    built-in (`rules/metrics.md`, `skills/abk-new-metric`) — `{{ data_database }}` is
+    the single data-location built-in on every dialect (on Postgres it resolves to the
+    profile's `data_schema` value); under `StrictUndefined` the old note would have made
+    Postgres metric SQL fail to render.
+  - `skills/abk-explore` no longer lists **the multiple-comparison correction** among the
+    identity params that orphan an `_ab_results` series — the correction (like `alpha`)
+    is experiment-level and never enters `method_config_id`; changing it re-arms the
+    calibration chip but does not orphan results.
+  - `skills/abk-validate` quotes the **actual** Recommended-row rationale ("highest power
+    among methods with FPR within budget", tiebreak: tightest achieved MDE), not a
+    CI-width criterion the selector never uses.
+  - `rules/explore.md` marks **Segment mode** as a deferred placeholder (not an available
+    0.1.0 cockpit mode).
+  - `rules/project.md` describes env-var interpolation correctly (an unresolved
+    placeholder is kept verbatim, not raised as an error; only channel secrets are
+    actively rejected); `skills/abk-setup-project` scopes the "no `database:` key" note to
+    ClickHouse (it is optional for MySQL, required for Postgres).
+- **`abk test-report` + `notification_channels` are now covered** for the AI assistant and
+  in the docs (they shipped in `0.1.0` but were undocumented): a `test-report` command
+  entry + `## abk test-report` section (`rules/cli.md`, `docs/reference/cli.md`), a
+  `notification_channels` block in `rules/project.md`, a routing entry in
+  `CLAUDE.section.md`, and the command added to the enumerated command surface in
+  `docs/README.md` / `docs/getting-started/installation.md`.
+- **`abk plan` runtime/ASN documented as shipped**: `docs/reference/cli.md` no longer says
+  runtime/ASN "is not part of this command", and the `--arrival-rate` flag is added to the
+  `abk plan` option/flag tables in `docs/reference/cli.md`, `rules/plan.md`, and
+  `skills/abk-plan`.
+- The CI `install-smoke` version gate now compares `abk --version` against
+  `abkit.__version__` dynamically (no longer hard-pinned to a literal), and the
+  `abk --version` sample in `installation.md` tracks the release.
+
+No `abkit.stats` change; no `ALGORITHM_VERSION` moved; goldens untouched at rel-1e-9.
+
 ## [0.1.0] - 2026-07-08
 
 The first tagged public release — milestones **M1–M6**. The pure numpy statistical

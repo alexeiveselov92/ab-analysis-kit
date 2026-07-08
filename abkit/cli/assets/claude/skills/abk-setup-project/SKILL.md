@@ -164,7 +164,10 @@ self-contained HTML readout. The CLI exits **non-zero** on any failure.
 
 - `internal_database must be set` / `data_database must be set` (CH/MySQL) or
   `internal_schema` / `data_schema` (PG) → a Step 3 location field is blank or
-  missing. There is no plain `database:` key for CH/MySQL.
+  missing. ClickHouse has no connect-target `database:` key (it uses
+  `internal_database`/`data_database`); for MySQL `database:` is an optional
+  connect-target and for Postgres it is required, but the location fields above
+  are still needed.
 - `default_profile '<x>' not found` → Step 4: it names a profile that isn't
   defined in `profiles.yml`.
 - `Profiles file not found` → run from inside the project root (or pass the
