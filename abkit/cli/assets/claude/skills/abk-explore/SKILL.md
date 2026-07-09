@@ -99,8 +99,9 @@ fix the assignment before tuning anything else.
 
 The rail defaults to **Basic** and reveals the rest under **Advanced**:
 
-- **Basic** — `test_type` (`relative` vs `absolute` effect), **alpha**, and
-  **CUPED on/off**. These cover the median analyst.
+- **Basic** — the **method picker** (choose the `cuped-t-test` variant to turn on
+  CUPED), `test_type` (`relative` vs `absolute` effect), and **alpha**. These cover
+  the median analyst.
 - **Advanced** — the CUPED **covariate + lookback** (`covariate_lookback`, a whole-
   day window like `14d`), **stratification keys**, **bootstrap iterations**
   (`n_samples` for a bootstrap method), the multiple-comparison **correction**

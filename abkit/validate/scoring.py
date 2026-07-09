@@ -29,12 +29,17 @@ never zeros — tallied separately so they can never silently deflate the FPR.
 
 from __future__ import annotations
 
+import functools
 import math
+import warnings
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Any, TypeVar, cast
 
 import numpy as np
 
 from abkit.stats.base import BaseMethod
+from abkit.stats.exceptions import AbkitStatsWarning
 from abkit.stats.power import cuped_adjusted_std, get_fraction_mde, get_ttest_mde
 from abkit.stats.rng import derive_seed
 from abkit.stats.samples import Fraction, RatioSufficientStats, SufficientStats
@@ -46,6 +51,29 @@ from abkit.validate.resample import ArmStats, build_arm, placebo_mask, present_p
 
 #: Default target power for the achieved-MDE column.
 DEFAULT_TARGET_POWER = 0.8
+
+_F = TypeVar("_F", bound=Callable[..., Any])
+
+
+def suppress_resample_warnings(fn: _F) -> _F:
+    """Silence per-split ``AbkitStatsWarning`` (the CUPED low-correlation and ratio-zero
+    legacy guards) for the duration of A/A scoring.
+
+    A validate run re-invokes the SAME method across hundreds of placebo splits × looks,
+    so these guards — meaningful once for a real ``abk run`` — become thousands of lines of
+    stderr spam (the guard message embeds the varying correlation, so Python's own
+    once-per-message dedup never fires). This is **non-numeric**: only the warning
+    *emission* is filtered here; every statistic is unchanged, and the single real
+    analysis still surfaces the guard (also carried in ``TestResult.warnings``).
+    """
+
+    @functools.wraps(fn)
+    def _wrapper(*args: Any, **kwargs: Any) -> Any:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", AbkitStatsWarning)
+            return fn(*args, **kwargs)
+
+    return cast(_F, _wrapper)
 
 
 @dataclass(frozen=True)
@@ -210,6 +238,7 @@ def _analytic_mde(
     return None  # ratio-delta and other families: no analytic MDE
 
 
+@suppress_resample_warnings
 def score_cell(
     panel: PlaceboPanel,
     method: BaseMethod,

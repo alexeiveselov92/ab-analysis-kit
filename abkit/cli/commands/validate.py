@@ -189,8 +189,9 @@ def _validate_one(
                 now_iso=now_utc_naive().isoformat(),
                 extra_methods=extra_methods,
                 metric_filter=metric_filter,
+                progress=lambda line: renderer("score", line),
             )
-            renderer("score", f"{len(result.cells)} cell(s)")
+            renderer("score", f"{len(result.cells)} cell(s) scored")
 
             records = aa_run_records(result)
             for record in records:

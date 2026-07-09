@@ -59,6 +59,7 @@ import type {
   SeriesPoint,
   VerdictBlock,
 } from '../shared/payload';
+import { makeBrandLockup } from '../shared/logo';
 
 // ----------------------------------------------------------------------------
 // Constants + tiny helpers
@@ -142,6 +143,7 @@ function humanCadence(seconds: number): string {
 
 function buildHeader(payload: ReportPayload): HTMLElement {
   const h = el('div', 'abk-header');
+  h.appendChild(makeBrandLockup());
 
   const title = payload.project
     ? `${esc(payload.project)} · ${esc(payload.experiment)}`
@@ -1279,6 +1281,9 @@ function injectStyle(): void {
 .${ROOT_CLASS} .abk-root{max-width:1100px;margin:0 auto;padding:20px 18px 48px;}
 /* header ------------------------------------------------------------------ */
 .${ROOT_CLASS} .abk-header{margin-bottom:16px;padding-left:12px;border-left:3px solid var(--abk-series-1);}
+.${ROOT_CLASS} .abk-brand{display:flex;align-items:center;gap:8px;margin-bottom:10px;}
+.${ROOT_CLASS} .abk-logomark{width:22px;height:22px;border-radius:6px;display:block;}
+.${ROOT_CLASS} .abk-wordmark{font:700 15px var(--abk-sans);color:var(--abk-explore-accent);letter-spacing:-0.01em;}
 .${ROOT_CLASS} .abk-h-top{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 14px;}
 .${ROOT_CLASS} .abk-title{font-size:21px;font-weight:700;margin:0;letter-spacing:-0.01em;}
 .${ROOT_CLASS} .abk-meta{font-size:12px;color:var(--abk-ink-2);font-family:var(--abk-mono);}

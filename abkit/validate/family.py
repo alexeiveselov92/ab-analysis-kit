@@ -54,7 +54,7 @@ from abkit.validate._types import ValidateError
 from abkit.validate.inject import inject_multiplicative, injection_clamped
 from abkit.validate.panel import PlaceboPanel
 from abkit.validate.resample import build_arm, placebo_mask, present_positions
-from abkit.validate.scoring import _cell_tau2
+from abkit.validate.scoring import _cell_tau2, suppress_resample_warnings
 
 
 @dataclass(frozen=True)
@@ -252,6 +252,7 @@ def _member_peeked_marginals(
     return fixed.to_input(member.alpha), (av.to_input(member.alpha) if av is not None else None)
 
 
+@suppress_resample_warnings
 def sweep_family(
     members: list[FamilyMember],
     *,
