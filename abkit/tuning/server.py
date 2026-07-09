@@ -146,11 +146,14 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         body = self._srv().html.encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        # A browser that navigated away mid-load closes the socket — suppress the
+        # resulting BrokenPipe like the POST replies do (no traceback per dropped GET).
+        with contextlib.suppress(BrokenPipeError, ConnectionResetError):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
 
     def do_POST(self) -> None:
         from urllib.parse import parse_qs, urlparse
@@ -190,11 +193,17 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _reply_json(self, payload: dict[str, Any], code: int = 200) -> None:
         resp = json.dumps(payload, default=_json_default).encode("utf-8")
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(resp)))
-        self.end_headers()
-        self.wfile.write(resp)
+        # A stale-dropped knob turn means the client AbortController closed the socket
+        # before we finished computing: writing the reply then raises BrokenPipe /
+        # ConnectionReset. That is the EXPECTED tail of the stale-drop discipline (the
+        # latest request still computes and replies) — never an error. Suppress it so the
+        # ThreadingHTTPServer does not dump a full traceback per aborted knob turn.
+        with contextlib.suppress(BrokenPipeError, ConnectionResetError):
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(resp)))
+            self.end_headers()
+            self.wfile.write(resp)
 
     def _reply_error(self, code: int, detail: str) -> None:
         """Error detail in the UTF-8 body, never the latin-1 status line.
@@ -205,11 +214,13 @@ class _Handler(BaseHTTPRequestHandler):
         returning a clean error. The page reads the body via ``r.text()``.
         """
         body = detail.encode("utf-8")
-        self.send_response(code)
-        self.send_header("Content-Type", "text/plain; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        # Same stale-drop reality as _reply_json: the client may have already gone.
+        with contextlib.suppress(BrokenPipeError, ConnectionResetError):
+            self.send_response(code)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
 
     # -- endpoints -------------------------------------------------------------
 
@@ -661,6 +672,7 @@ def _run_validate(srv: _ExploreServer) -> dict[str, Any]:
                 session.grid,
                 settings,
                 now_iso=now_utc_naive().isoformat(),
+                progress=srv.echo,
             )
             records = aa_run_records(result)
             for record in records:

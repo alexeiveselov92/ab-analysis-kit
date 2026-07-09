@@ -39,7 +39,8 @@ name a configured **comparison** of that experiment (default: the main metric).
   flag**. Pre-horizon fixed CIs render de-emphasized (peeking is not free).
 - **Side rail (mode-aware, Basic / Advanced disclosure)** — the knobs, auto-derived
   from the live method's `param_specs`. **Basic** shows the median-analyst surface
-  (`test_type`, `alpha`, CUPED on/off); **Advanced** opens the full ~9-knob set:
+  (the method picker — pick `cuped-t-test` for CUPED — plus `test_type` and `alpha`);
+  **Advanced** opens the full ~9-knob set:
   covariate + `covariate_lookback`, stratification keys, bootstrap iterations,
   `correction`, analysis unit (preview-only). Sidedness and winsorization are
   **not** here — the stats core has no such params (two-sided p-values, no winsor).

@@ -87,7 +87,8 @@ The knobs are **auto-derived from the live method's parameter specs**, so the
 rail always matches the method that's actually selected. It has two disclosure
 levels (`cli-and-dx.md §2`):
 
-- **Basic** — the median-analyst surface: `test_type`, `alpha`, CUPED on/off.
+- **Basic** — the median-analyst surface: the method picker (choose `cuped-t-test`
+  for CUPED), `test_type`, and `alpha`.
 - **Advanced** — the full ~9-knob set: covariate + `covariate_lookback`,
   stratification keys, bootstrap iterations, `correction`, analysis unit
   (preview-only).

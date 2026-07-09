@@ -13,6 +13,42 @@ number change).
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-07-09
+
+Explore-cockpit / CLI DX + reporting polish. **No statistical numbers changed**
+(no `ALGORITHM_VERSION` bump, goldens intact, `abkit.stats` purity held) — every
+change below is transport, logging, or presentation.
+
+### Added
+- **Brand logo in every generated surface** — the "Diverge" mark + `abkit` wordmark
+  now render in the `abk run --report` and `abk explore` headers (inline SVG, shared
+  `web/src/shared/logo.ts`), not just the browser-tab favicon.
+- **Progress heartbeats on long-running compute** so a multi-minute run is no longer a
+  silent freeze: `abk run` prints a throttled `LOOK i/N` per computed look; `abk
+  validate` streams `scoring cell i/N` per cell; Auto mode echoes the same to the
+  explore terminal.
+
+### Changed
+- **Explore Auto button is honest when unavailable** — on a `--no-serve` / saved-report
+  page it now carries an actionable tooltip ("Auto needs a live server — open the
+  printed localhost (127.0.0.1) URL, not a saved report") + `aria-disabled`, and it
+  shows a `busy` state while a validation is in flight.
+- **Removed the redundant explore "CUPED on/off" checkbox** — it was a pure UI alias of
+  the method picker (it only strip/prepended `cuped-` and switched the method). CUPED is
+  now chosen directly in the method picker as the `cuped-t-test` variant; no functional
+  loss, one fewer duplicate control.
+
+### Fixed
+- **No more `BrokenPipeError` tracebacks from `abk explore`** — the stale-drop discipline
+  (a knob turn aborting a superseded request) left the server writing to a closed socket;
+  the transport helpers now suppress `BrokenPipeError`/`ConnectionResetError` (the latest
+  request still computes and replies).
+- **No more per-split `AbkitStatsWarning` flood during `abk validate` / Auto mode** — the
+  A/A sweep re-invokes the same method over hundreds of placebo splits × looks, so the
+  CUPED low-correlation / ratio-zero legacy guards spammed stderr thousands of times.
+  They are now suppressed inside the scoring loop only (the single real `abk run` still
+  surfaces them; also carried in `TestResult.warnings`). Non-numeric.
+
 ## [0.1.1] - 2026-07-08
 
 Documentation + AI-assistant-context accuracy patch (no code, no statistical

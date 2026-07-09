@@ -361,7 +361,13 @@ def run_experiment(
                     "show duplicate stabilization lines) — run `abk clean`"
                 )
 
-            for cutoff in pending:
+            # Heartbeat so a large pending series is not a silent multi-minute freeze
+            # (each look is one full-window warehouse query, + bootstrap resampling for
+            # bootstrap methods). Throttled to ~20 lines so a dense sub-day grid stays
+            # readable; the final look always prints.
+            n_pending = len(pending)
+            beat_every = max(1, n_pending // 20)
+            for look_index, cutoff in enumerate(pending, start=1):
                 loaded = backend.load_cutoff(comparison, metric, metric_sql, grid, cutoff)
                 outcomes = analyze_cutoff(
                     experiment,
@@ -394,6 +400,11 @@ def run_experiment(
                     ),
                 )
                 outcome.results_written += tables.save_results(rows)
+                if n_pending > 1 and (look_index % beat_every == 0 or look_index == n_pending):
+                    log(
+                        f"LOOK  {experiment.name}/{metric.name}: "
+                        f"{look_index}/{n_pending} looks computed"
+                    )
             log(f"RESULT {experiment.name}/{metric.name}: " f"{outcome.results_written} rows total")
 
     except BaseException as exc:

@@ -59,6 +59,7 @@ import {
   token,
 } from '../shared/chart';
 import type { MetricBlock, PairBlock, ReportPayload, SeriesPoint } from '../shared/payload';
+import { makeBrandLockup } from '../shared/logo';
 import type {
   ApplyComparison,
   ApplyReply,
@@ -1041,7 +1042,6 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
 
   // ---- the rail: knob machinery ----------------------------------------------------
   let methodCtl: Ctl<string> | null = null;
-  let cupedCtl: Ctl<boolean> | null = null;
   let paramCtls: ParamCtl[] = [];
   const basicHost = el('div');
   const advancedHost = document.createElement('details');
@@ -1057,13 +1057,6 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
   }
   function methodSurface(name: string): MethodSurface | undefined {
     return currentSurface().methods.find((m) => m.name === name);
-  }
-
-  /** CUPED on/off is UI sugar over the methods list: the counterpart under
-   * the registry's `cuped-` naming, when both are servable for this metric. */
-  function cupedCounterpart(name: string): string | null {
-    const other = name.startsWith('cuped-') ? name.slice(6) : `cuped-${name}`;
-    return methodSurface(other) !== undefined ? other : null;
   }
 
   function seedValueFor(spec: KnobSpec, method: string, saved: KnobValues | undefined): unknown {
@@ -1111,35 +1104,9 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
     );
     basicHost.appendChild(methodCtl.row);
 
-    // CUPED on/off — Basic (cli-and-dx §2), when a cuped- counterpart exists
-    const counterpart = cupedCounterpart(methodName);
-    if (counterpart !== null) {
-      cupedCtl = checkControl(
-        'CUPED',
-        methodName.startsWith('cuped-'),
-        (on) => {
-          const target = on
-            ? methodName.startsWith('cuped-')
-              ? methodName
-              : counterpart
-            : methodName.startsWith('cuped-')
-              ? counterpart
-              : methodName;
-          onMethodSwitch(target);
-        },
-        'variance reduction via a pre-period covariate (switches to the cuped- method variant)',
-        [
-          {
-            cls: 'abk-badge-identity',
-            text: '⚠ series',
-            hint: 'CUPED on/off changes method_config_id — a new results series',
-          },
-        ],
-      );
-      basicHost.appendChild(cupedCtl.row);
-    } else {
-      cupedCtl = null;
-    }
+    // (CUPED is chosen directly in the method picker above — `t-test` vs `cuped-t-test`.
+    // The separate "CUPED on/off" checkbox was a redundant alias of that same switch and
+    // was removed to avoid two controls doing one thing.)
 
     if (!m) return;
     for (const spec of m.params) {
@@ -1547,16 +1514,23 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
   };
   let uiMode: UiMode = 'tune';
   const modeBtns: HTMLButtonElement[] = [];
+  let autoBtn: HTMLButtonElement | null = null;
   for (const m of MODES) {
     const b = document.createElement('button');
     b.type = 'button';
-    // Auto is live only when a server route is bound (WP6); the static
-    // `--no-serve` preview keeps it greyed (validate_url null), Segment is inert.
-    const disabled = m.inert || (m.v === 'auto' && payload.validate_url === null);
+    // Auto is live only when a server route is bound (WP6); a static `--no-serve`
+    // preview or a saved report keeps it disabled (validate_url null), Segment is inert.
+    const noServerAuto = m.v === 'auto' && payload.validate_url === null;
+    const disabled = m.inert || noServerAuto;
     b.className = 'abk-mode-btn' + (disabled ? ' abk-mode-disabled' : '');
     b.textContent = m.label;
-    b.title = m.hint;
+    // An honest tooltip: say WHY Auto is dead and what to do, instead of a silent grey.
+    b.title = noServerAuto
+      ? 'Auto needs a live server — run `abk explore` (without --no-serve) and open the printed localhost (127.0.0.1) URL, not a saved report'
+      : m.hint;
+    if (disabled) b.setAttribute('aria-disabled', 'true');
     b.dataset.v = m.v;
+    if (m.v === 'auto') autoBtn = b;
     b.onclick = (): void => {
       if (m.inert) return;
       if (m.v === 'auto') {
@@ -1598,6 +1572,7 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
     controller?.abort();
     controller = new AbortController();
     spinner.classList.add('on');
+    autoBtn?.classList.add('busy');
     setStat('Auto: running a reduced A/A validation (fast estimate — `abk validate` for the full run)…');
     fetch(payload.validate_url, {
       method: 'POST',
@@ -1610,6 +1585,7 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
         if (r.status === 409) {
           requestId = Math.max(requestId, Date.now());
           spinner.classList.remove('on');
+          autoBtn?.classList.remove('busy');
           setStat('another explore tab is ahead — turn a knob to retake this one');
           return;
         }
@@ -1621,12 +1597,14 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
         return r.json().then((reply: ValidateReply) => {
           if (myId !== requestId) return; // outdated by the time the body parsed
           spinner.classList.remove('on');
+          autoBtn?.classList.remove('busy');
           adoptValidate(reply);
         });
       })
       .catch((e: Error) => {
         if (e.name === 'AbortError' || myId !== requestId) return;
         spinner.classList.remove('on');
+        autoBtn?.classList.remove('busy');
         setStat(`Auto validate failed: ${e.message}`, 'err');
       });
   }
@@ -1945,6 +1923,7 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
 
 function buildHeader(payload: ExplorePayload, live: boolean): HTMLElement {
   const h = el('div', 'abk-header');
+  h.appendChild(makeBrandLockup());
   const top = el('div', 'abk-h-top');
   const h1 = el('h1', 'abk-title');
   h1.innerHTML = payload.project
@@ -2532,6 +2511,9 @@ function injectStyle(): void {
 .${ROOT_CLASS} .abk-root{height:100vh;display:flex;flex-direction:column;overflow:hidden;padding:14px 16px 10px;}
 /* header ------------------------------------------------------------------ */
 .${ROOT_CLASS} .abk-header{flex:none;margin-bottom:8px;padding-left:12px;border-left:3px solid var(--abk-explore-accent);}
+.${ROOT_CLASS} .abk-brand{display:flex;align-items:center;gap:8px;margin-bottom:6px;}
+.${ROOT_CLASS} .abk-logomark{width:22px;height:22px;border-radius:6px;display:block;}
+.${ROOT_CLASS} .abk-wordmark{font:700 14px var(--abk-sans);color:var(--abk-explore-accent);letter-spacing:-0.01em;}
 .${ROOT_CLASS} .abk-h-top{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;}
 .${ROOT_CLASS} .abk-title{font-size:19px;font-weight:700;margin:0;letter-spacing:-0.01em;}
 .${ROOT_CLASS} .abk-badge-page{font-size:10px;font-family:var(--abk-mono);text-transform:uppercase;
@@ -2576,6 +2558,7 @@ function injectStyle(): void {
 .${ROOT_CLASS} .abk-mode-btn{font:600 11.5px var(--abk-mono);padding:5px 12px;border-radius:9px;
   border:1px solid var(--abk-border);background:var(--abk-card);color:var(--abk-ink-2);cursor:pointer;}
 .${ROOT_CLASS} .abk-mode-btn.on{border-color:var(--abk-explore-accent);color:var(--abk-explore-accent);}
+.${ROOT_CLASS} .abk-mode-btn.busy{border-color:var(--abk-explore-accent);color:var(--abk-explore-accent);opacity:0.85;cursor:progress;}
 .${ROOT_CLASS} .abk-mode-disabled{opacity:0.55;cursor:default;}
 /* legend ----------------------------------------------------------------------- */
 .${ROOT_CLASS} .abk-legend{flex:none;display:flex;flex-wrap:wrap;gap:5px 14px;margin-bottom:4px;}

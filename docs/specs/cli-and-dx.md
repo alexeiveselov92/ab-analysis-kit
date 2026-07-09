@@ -124,9 +124,10 @@ The detectkit-`tune` port — see [data-contract-and-reporting.md §5](data-cont
 Key DX commitments (from the quorum):
 - **Calibration always visible**, Apply gated when uncalibrated (no silent
   mis-calibration footgun).
-- **Basic / Advanced knob disclosure** — default view shows `test_type`, alpha,
-  CUPED on/off; the full ~9-knob surface is opt-in (the median user is an analyst,
-  not a statistician).
+- **Basic / Advanced knob disclosure** — default view shows the method picker
+  (CUPED is chosen there as the `cuped-t-test` variant), `test_type`, and alpha;
+  the full ~9-knob surface is opt-in (the median user is an analyst, not a
+  statistician).
 - **Live recompute via the Python `from_suffstats` path** (one source of truth for
   the math; no JS stats fork; no DB round-trip).
 - **Orphan detection** — warn at run/explore when an experiment has >1

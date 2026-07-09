@@ -10,6 +10,7 @@ effective_alphas``) so the D3 calibration chip matches (recompute.py:245–315).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from abkit.compute.recompute_backend import RecomputeBackend
@@ -190,13 +191,19 @@ def run_validation(
     now_iso: str,
     extra_methods: list[MethodConfig] | None = None,
     metric_filter: str | None = None,
+    progress: Callable[[str], None] | None = None,
 ) -> AaValidateResult:
     """Score every cell and return the per-cell results + the recommendation.
 
     Reads the warehouse (never writes); the caller persists. Panels are cached by
     ``(metric, covariate_lookback)`` — methods sharing a metric and lookback reuse
     one load. ``metric_filter`` restricts scoring to a single metric (``--metric``).
+
+    ``progress`` (optional) is called with a one-line status before each cell and the
+    family sweep, so a multi-minute run (each cell is ``iterations`` placebo splits ×
+    looks) is not a silent freeze — Auto mode passes the server ``echo`` here.
     """
+    emit = progress if progress is not None else (lambda _msg: None)
     log: list[DecisionEntry] = []
     specs = enumerate_cells(experiment, project, metrics, extra_methods, log)
     if metric_filter is not None:
@@ -205,11 +212,13 @@ def run_validation(
     panel_cache: dict[tuple[str, object], PlaceboPanel] = {}
     cells: list[CellResult] = []
 
-    for spec in specs:
+    total = len(specs)
+    for index, spec in enumerate(specs, start=1):
         metric = metrics.get(spec.metric)
         if metric is None:
             log.append(DecisionEntry("enumerate", f"metric '{spec.metric}' not found — skipped"))
             continue
+        emit(f"scoring cell {index}/{total}: {spec.metric} · {spec.method.name}")
         cell = _score_one(
             backend,
             experiment,
@@ -249,6 +258,7 @@ def run_validation(
     # was scored (a --metric filter or a single comparison has no family to compose).
     family = None
     if metric_filter is None:
+        emit("composing multi-metric family (FWER/FDR)")
         family = _run_family_sweep(experiment, project, panel_cache, share_a, settings, log)
 
     return AaValidateResult(
