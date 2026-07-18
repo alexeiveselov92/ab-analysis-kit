@@ -22,7 +22,7 @@ The as-built condensation for contributors/assistants (detectkit-style):
 Design contracts for what is being *built next* stay in [docs/specs/](docs/specs/)
 (canonical for M2+ work — table below). Keep rules ↔ docs in sync per milestone.
 
-## Status: M1 + M2 + M3 + M4 + M5 + M6 shipped — `0.1.0` release-ready
+## Status: M1–M6 shipped (`0.1.2` on PyPI) — polish track M7–M17 approved
 
 **Done — M1, the pure statistical core** (`abkit.stats`, importable standalone;
 see [ROADMAP.md](ROADMAP.md) for the deferred-cleanup list): data model with the
@@ -110,8 +110,21 @@ engineering (`__version__ = 0.1.0`, classifier `3 - Alpha`, the wheel-namelist +
 gate (release-readiness e2e + ≥2 adversarial rounds). **Zero statistical-number
 changes across M2–M6** (no `ALGORITHM_VERSION` moved, goldens intact at rel-1e-9,
 `abkit.stats` purity held). **Named future deferral** (no version promise):
-`alpha_spending`/group-sequential; see [ROADMAP.md](ROADMAP.md) for the
-post-0.1.0 hardening backlog. The tagged PyPI publish is the maintainer's G1 step.
+`alpha_spending`/group-sequential. Released: `0.1.0` → `0.1.1` (docs fact-check)
+→ `0.1.2` (explore/CLI DX polish), all on PyPI.
+
+**Next — the polish track M7–M17 → `0.2.0`…`0.12.0` (approved 2026-07-18).**
+The code-verified pain audit
+([docs/research/2026-07-data-flow-audit/REPORT.md](docs/research/2026-07-data-flow-audit/REPORT.md))
+plus the entire hardening backlog, one minor release per milestone: M7 validate
+vectorization → M8 assignment no-copy default → M9 additive engine + CUPED
+Tier-E → M10 timestamps + both schema breaks → M11 `abk dashboard` → M12
+notifications → M13–M17 (versioned stats, multi-arm decisions, new methods,
+owned randomization, app integration — contours, design-session-first). The
+track section in [ROADMAP.md](ROADMAP.md) is the map; the as-designed contracts
+are [m7](docs/specs/m7-implementation-plan.md)–[m12](docs/specs/m12-implementation-plan.md)
+implementation plans. Discipline: one WP = one session = one PR; **M7–M12 move
+no statistical number** (parity gates); M13/M15 go through full change control.
 
 Design contracts stay in [docs/specs/](docs/specs/) (canonical). Read the relevant
 spec before writing code:

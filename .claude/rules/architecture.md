@@ -1,9 +1,9 @@
 # abkit architecture — as built
 
 > The contributor/assistant condensation of the system **as it exists in code**.
-> Reflects: **M1 + M2 + M3 + M4 + M5 + M6 shipped** (`__version__ = 0.1.0`,
-> release-ready; M3's WP9 testcontainers hardening deferred to a Docker-equipped
-> environment).
+> Reflects: **M1 + M2 + M3 + M4 + M5 + M6 shipped** (`__version__ = 0.1.2`,
+> released on PyPI; M3's WP9 testcontainers hardening deferred to a
+> Docker-equipped environment).
 > Design contracts for what is being *built next* (1.x hardening) live in
 > [docs/specs/](../../docs/specs/) + [ROADMAP.md](../../ROADMAP.md); this file must
 > never claim unbuilt code exists.
@@ -271,7 +271,15 @@ behind the WP10 exit gate (`tests/e2e/test_release_readiness.py` + ≥2 adversar
 is `alpha_spending`/group-sequential (a `scheme: alpha_spending` config error names it); the
 tagged PyPI publish is the maintainer's G1 step.
 
-**Next — 1.x hardening** (see [ROADMAP.md](../../ROADMAP.md) "Post-baseline hardening"). Read before coding:
+**Next — the polish track M7–M17 → `0.2.0`…`0.12.0`** (approved 2026-07-18; it
+absorbs the whole "Post-baseline hardening" backlog — see the track section in
+[ROADMAP.md](../../ROADMAP.md) and the as-designed contracts
+[m7](../../docs/specs/m7-implementation-plan.md)…[m12](../../docs/specs/m12-implementation-plan.md);
+M13–M17 are contours, each opens with a design session). One WP = one session =
+one PR; **M7–M12 move no statistical number** (parity gates + empty
+`ALGORITHM_VERSION` grep); M13/M15 use full change control. The M8→M9 contract:
+STATE/tail-scan SQL builds ONLY through M8's `build_cohort_backend` factory.
+Read before coding:
 
 - The M5 as-built + the math → [m5-implementation-plan.md](../../docs/specs/m5-implementation-plan.md),
   [statistics-changes.md §4](../../docs/specs/statistics-changes.md),

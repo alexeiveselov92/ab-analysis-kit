@@ -13,6 +13,20 @@ number change).
 
 ## [Unreleased]
 
+### Added
+- **The polish track M7–M17 (`0.2.0` … `0.12.0`) planned into the repo** — docs
+  only, no behavior change, no statistical numbers touched: the approved
+  (2026-07-18) track section in `ROADMAP.md` (milestone map + versioning +
+  the coverage map over the data-flow audit's 15 items and the entire
+  post-baseline hardening backlog + the cross-cutting discipline, incl. the
+  M7–M12 "numbers do not move" parity gates and the M8→M9
+  `build_cohort_backend` blocker contract), six as-designed contracts
+  `docs/specs/m7…m12-implementation-plan.md` (from the code-verified WP
+  breakdowns), and the verified pain audit committed as
+  `docs/research/2026-07-data-flow-audit/REPORT.md` (four verification
+  corrections recorded in its banner). M13–M17 stay contours — each opens
+  with its own design session.
+
 ## [0.1.2] - 2026-07-09
 
 Explore-cockpit / CLI DX + reporting polish. **No statistical numbers changed**
