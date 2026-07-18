@@ -187,7 +187,175 @@ The implementation record + decisions are in
 - **Named future deferral** (no version promise): `alpha_spending`/group-sequential
   (see the hardening tiers below + the v2 list).
 
+## The polish track — M7–M17 → `0.2.0` … `0.12.0` (approved 2026-07-18)
+
+The post-`0.1.x` plan, **approved 2026-07-18**: the code-verified pain audit
+([docs/research/2026-07-data-flow-audit/REPORT.md](docs/research/2026-07-data-flow-audit/REPORT.md)
+— every claim re-checked against the code by a 10-agent verification pass; ~90%
+held verbatim, four corrections recorded in the audit's banner and in the
+affected milestone docs) **plus the entire post-baseline hardening backlog
+below** (maintainer decision), laid out as milestones M7–M17. **One minor
+release per milestone** (M7→`0.2.0` … M17→`0.12.0`), each published to PyPI
+(tag → `publish.yml`). Neither 1.0 nor 2.0 is part of this track — 1.0 = the
+polished library, 2.0 = the finished product; both come later. The plan itself
+passed a 3-critic adversarial review (11 findings, incl. 1 blocker — folded in
+below and in the milestone docs). Core (M7–M12): ~42 sessions; extension
+(M13–M17): ~22–27.
+
+- **Discipline (unchanged from M1–M6):** one WP = one session = one PR (tests +
+  CHANGELOG + conventional commit); milestone exit gate = e2e + ≥2 adversarial
+  review rounds with written findings + the implementation-plan doc in
+  [docs/specs/](docs/specs/). Session estimates are **not contracts** — a WP
+  that doesn't fit a session simply continues into the next one. After M7 and
+  M8: retro-calibrate the remaining estimates against actuals.
+- **M7–M12: statistical numbers do not move anywhere.** Parity/golden gates
+  (exact on integer counts + mandatory near-boundary stress fixtures, rel-1e-9
+  on continuous values); the grep for `ALGORITHM_VERSION` bumps stays empty.
+  **M13/M15 move numbers only through the full change control** —
+  `ALGORITHM_VERSION` bump + `statistics-changes.md` entry + A/A revalidation
+  through the *already-vectorized* `abk validate` (the M7-first ordering is
+  what makes that revalidation cheap) + opt-in first where applicable.
+- **Perf milestones (M7, M9) carry an executable perf test as an exit
+  criterion** — track lesson: a rule without an executable gate does not hold
+  (the 800k-iteration nested `for` loop slipped past numpy-first).
+- **Schema policy:** breaks ship as documented recreate instructions, never
+  migration code; **both real breaks are collected in M10** (drop the
+  `_ab_results` date columns + widen `_ab_experiments` `Date`→`DateTime64`) —
+  one guide, one release. Column *additions* are non-breaking (additive
+  `ensure_columns`, M9).
+- **Inter-milestone contracts** (plan-review findings): M8's
+  `build_cohort_backend`/`ab_cohort_source` factory is the **only** way M9's
+  STATE writer and tail-scan build cohort SQL (the blocker finding — a
+  hand-rolled render silently joins a non-existent `_ab_exposures` under the
+  no-copy default and yields silent zeros); M11 clones `tuning/server.py`
+  **after** M10 WP4 so it inherits the decoupled lock model; M14's dashboard
+  surface builds on M11.
+- **Coverage map:** REPORT #5–8→M7, #3–4→M8, #1–2→M9, #9–12→M10, #13→M11,
+  #14→M12, #15→parked (revisited in M17). Hardening tiers below: Now-bug→M7
+  WP0; "0.1.x safe wins" stats hot path→M7 WP1, its multi-arm UX wins→M14;
+  "1.x versioned"→M13+M14; the v2 incremental engine→M9; v2 methods→M15;
+  owned randomization→M16; app integration→M17.
+
+### M7 — validate: vectorization + iteration policy → `0.2.0` 📋
+Design contract: [m7-implementation-plan.md](docs/specs/m7-implementation-plan.md).
+The 800k-iteration nested Python loop (`scoring.py`) becomes a numpy
+block-streaming engine with **the same numbers** (minutes → sub-seconds):
+scipy hot-path swap (`ndtr(-z)` bit-parity) + lazy imports (WP1), batch
+closed-form significance kernels in `abkit.stats` (`from_suffstats_array`,
+WP2), the vectorized permutation matrix (`vector_resample`, bit-identical to
+`placebo_mask` by construction, WP3), the `score_cell` rewrite with scalar
+fallback (WP4), the parity + perf gate (WP5), and the iteration policy —
+`--family-sweep` goes opt-in, default iterations `max(2000, ceil(200/α))`
+(WP6; stretch WP7 vectorizes `family.py`, which has its own loop). Carries the
+live multi-arm explore Review-mode bug fix (WP0) and hardening bucket A.
+
+### M8 — assignments: no-copy default + incremental copy → `0.3.0` 📋
+Design contract: [m8-implementation-plan.md](docs/specs/m8-implementation-plan.md).
+Metrics join *your* assignment source directly; `_ab_exposures` becomes an
+**opt-in incremental copy** (detectkit-style watermark batching), never a
+2M-row rewrite: the `assignment.copy` config block (WP1), the pushdown
+`ExposureSnapshot` (WP2), the single `ab_cohort_source` builtin (WP3), **all
+call-sites through the `build_cohort_backend` factory** (WP4 — the contract M9
+depends on), the incremental copier (WP5), both-mode e2e (WP6), and the 3-way
+docs sync (WP7).
+
+### M9 — additive compute engine + CUPED Tier-E → `0.4.0` 📋
+Design contract: [m9-implementation-plan.md](docs/specs/m9-implementation-plan.md).
+Kills the O(D²) full-window rescan for closed forms by finally wiring the
+STATE stage + `_ab_unit_state` (cumulative-intervals §4–6: warehouse-side
+day-bucketed increments, sub-day = state + tail-scan through the M8 factory —
+the blocker contract), and makes CUPED instant in explore: +4 covariate
+columns via additive `ensure_columns` (WP1), CUPED → Tier-E with rel-1e-9
+reconstruction — the "byte-for-byte" REPORT claim is refuted, the gate is
+rel-1e-9 (WP2), the STATE stage (WP3), the opt-in `IncrementalBackend` with
+gap→Recompute fallback, never silent undercount (WP4), `abk
+verify-incremental` + cost observability + state GC (WP5), and the exit gate —
+the flag on/off changes no number (WP6). Bootstrap stays full-window forever.
+
+### M10 — timestamps + schema cleanup + explore polish → `0.5.0` 📋
+Design contract: [m10-implementation-plan.md](docs/specs/m10-implementation-plan.md).
+Experiment start/horizon become full timestamps (`date | datetime` union, no
+coercion; bare dates stay byte-identical — existing tests unmodified are the
+gate; WP1–2), **both track schema breaks land here in one recreate guide**
+(drop `_ab_results` date columns + widen `_ab_experiments`; WP2–3), the
+explore lock decouples (`heavy_lock` only for reload/validate/apply;
+`/recompute` free + post-compute stale re-check; WP4), and bootstrap
+resampling memoizes (`_resample`+`_finalize` split, memo key
+`(method_config_id, end_ts)`, "5 α → 1 resample"; WP5).
+
+### M11 — `abk dashboard` (the flagship overview UI) → `0.6.0` 📋
+Design contract: [m11-implementation-plan.md](docs/specs/m11-implementation-plan.md).
+The `dtk ui` architecture ported: metadata-only boot, lazy per-row stats
+(client-side pool of 3), sparklines ≤160 points, buttons = CLI subprocesses;
+the server **never takes the pipeline lock**; verdicts via
+`readout.evaluate()`. `JobManager` port (DASH-1), `overview.py` (DASH-2), the
+server skeleton with the two test-pinned deltas from the tune-server pattern —
+token on ALL routes, never self-shutdown (DASH-3), job routes (DASH-4),
+`dashboard.ts` written from scratch — the donor has no TS sources (DASH-5),
+the third build entry + `abk dashboard` CLI (DASH-6), and the exit gate
+(DASH-7). CRUD editing is explicitly phase 2, out of the milestone.
+
+### M12 — notifications → `0.7.0` 📋
+Design contract: [m12-implementation-plan.md](docs/specs/m12-implementation-plan.md).
+`abkit/notify/` (shipped M6, reachable only via `abk test-report`) gets wired
+to six real signals behind opt-in `--notify`, with dedup/cooldown state in
+`_ab_notify_states` — **a verdict flip always sends over the cooldown, an
+unchanged verdict never re-sends**, and a notification failure **never fails
+the run** (fail-soft, e2e-pinned): the send seam + readout-ready (NTF-1),
+SRM/error urgency with `on:` filters (NTF-2), the dedup state machine (NTF-3),
+four new channels — discord/teams/googlechat/ntfy — as thin adapters (NTF-4),
+calibration-red + staleness from existing signals (NTF-5), and the exit gate +
+5→9 channel docs (NTF-6).
+
+### M13 — versioned statistical improvements (bucket B, core) → `0.8.0` 📐 contour
+Holm over Bonferroni (strictly more power, same FWER); unpooled SE in the
+z-test CI; restore the relative-z covariance term; uniform ddof=1;
+Agresti-Caffo/Wilson proportion CIs; the main-tier `metrics_count=1` FWER fix.
+~5 WP: a design session first, then 2–3 implementation WPs (methods grouped by
+adjacency) → whole-batch A/A revalidation → exit gate. Baseline goldens stay
+untouched (legacy-parity mode); new numbers get **new** goldens. ~5–6 sessions.
+
+### M14 — multi-arm decision layer (bucket B, decisions) → `0.9.0` 📐 contour
+An explicit `control:` field (or a validated positional convention);
+experiment-level winner rollup on `ExperimentReadout`; treatment-vs-treatment
+verdicts; a cross-arm overview in report/explore/dashboard (the 0.1.x
+multi-arm UX safe wins fold in here). Pair statistics do not change — this is
+the interpretation layer + UI, built on M11's dashboard surface. ~4 WP,
+~4–5 sessions; design session first.
+
+### M15 — new methods (bucket C, statistics) → `0.10.0` 📐 contour
+Student-t (Welch–Satterthwaite), BCa bootstrap, Mann-Whitney, cross-fitted
+CUPED/CUPAC, cluster-robust SE — each through the plugin checklist
+(`BaseMethod` + `ParamSpec` + dual entry + identity test + A/A through the
+matrix; `supports_vectorized` where applicable) and the full change control.
+~6 WP, ~6–8 sessions; design session first.
+
+### M16 — owned randomization (opt-in) → `0.11.0` 📐 contour
+abkit today only *reads* assignments. An optional deterministic hash-split
+module (`unit_id`+salt → arm) for teams without their own assignment system:
+cohort generation written through the existing exposures path, the SRM gate as
+a sanity check of our own split. **Never a default**; no-copy semantics per
+M8. Design session mandatory (boundary questions). ~3–4 sessions.
+
+### M17 — app integration (agentic + embedded Lightdash) → `0.12.0` 📐 contour
+The most open-ended piece, fixed as a milestone contour: its design session
+decides the form (a read-only MCP server as in dtk? embedded Lightdash? an
+agentic layer over the `abk` CLI?) and cuts the WPs. Parked items are
+re-evaluated here (other DBs — REPORT #15). Estimate ~4+ sessions, conditional
+until the design session.
+
+> **M13–M17 have no detailed WP breakdowns yet — each opens with its own
+> design session** (verification pass → WP breakdown → design doc in
+> `docs/specs/`) before any implementation, exactly like the M7–M12 docs were
+> produced.
+
 ## Post-baseline hardening (multi-arm UX + stats-core), tiered by version
+
+> **Status (2026-07-18): absorbed into the polish track above** (maintainer
+> decision — everything below is scheduled, nothing dropped): the Now-bug →
+> M7 WP0; the "0.1.x safe wins" stats hot path → M7 WP1 and the multi-arm UX
+> wins → M14; the "1.x versioned" tier → M13 (stats core) + M14 (decision
+> layer); the v2-named methods → M15. Kept below as the source inventory.
 
 From the 2026-07-07 audits ([docs/research/2026-07-multi-arm-and-stats-core/](docs/research/2026-07-multi-arm-and-stats-core/)).
 Both baselines are **sound**: multi-arm (>2 groups) is correct end-to-end statistically
@@ -223,6 +391,14 @@ A/A revalidation).
   bootstrap `PCG64→SFC64`.
 
 ## v2 (deferred, profiling-gated)
+
+> **Status (2026-07-18): promoted into the polish track above.** The
+> incremental engine + `abk verify-incremental` + cost observability → **M9**
+> (the flag will NOT be named `--profile` — that collides with the DB-profile
+> selector); the named methods → **M15**; owned randomization → **M16**; app
+> integration → **M17**; other-DB support stays parked and is re-evaluated in
+> M17. Kept below as the source inventory.
+
 - Python incremental accumulator + array-cache + quantile sketches +
   `incremental_backend`; `abk verify-incremental` gate (whole-series reconciliation);
   `run --profile` observability to trigger it on a concrete cost threshold.
