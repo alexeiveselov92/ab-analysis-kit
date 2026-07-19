@@ -11,8 +11,15 @@ invariant and CUPED needs no special case.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
+import numpy as np
+import numpy.typing as npt
+
 from abkit.stats.samples import Fraction, RatioSufficientStats, SufficientStats
 from abkit.validate._types import ValidateError
+
+FloatArray = npt.NDArray[np.float64]
 
 #: Returned suffstats type for a multiplicative injection.
 InjectableStats = SufficientStats | RatioSufficientStats | Fraction
@@ -62,6 +69,69 @@ def inject_multiplicative(stats: InjectableStats, delta: float) -> InjectableSta
             name=stats.name,
         )
     raise ValidateError(f"cannot inject an effect into {type(stats).__name__}")
+
+
+def inject_multiplicative_columns(
+    input_kind: str, columns: Mapping[str, FloatArray], delta: float
+) -> dict[str, FloatArray]:
+    """The batch mirror of :func:`inject_multiplicative` over
+    ``ArmStatsBatch.columns`` (the M7 WP3→WP4 injected-pass seam).
+
+    Same algebra, same op order per element (``x * factor``,
+    ``m2 * factor * factor`` clamped at 0, the Fraction ``count ≤ nobs``
+    clamp), applied array-wise — bit-exact vs the scalar path per row for
+    finite inputs, pinned by ``tests/validate/test_vector_resample.py``. One
+    DELIBERATE divergence on NaN ``m2``/``m2_num`` (adversarial review round
+    2): the scalar's ``max(0.0, nan)`` swallows a NaN to an exact-zero
+    variance — a latent scalar-side quirk (reachable only from overflow-scale
+    moments, out of WP3 scope) — while ``np.maximum(0.0, nan)`` here keeps
+    the NaN, preserving the "gaps, never zeros" poison; a regression test
+    pins the divergence so the batch is never "fixed" back to the scalar
+    quirk. ``input_kind`` follows ``BaseMethod.input_kind`` (sample |
+    fraction | ratio) exactly like ``build_arm_batch``.
+    """
+    factor = 1.0 + float(delta)
+
+    if input_kind == "fraction":
+        return {
+            "count": np.minimum(columns["nobs"], columns["count"] * factor),
+            "nobs": columns["nobs"],
+        }
+    if input_kind == "ratio":
+        return {
+            "n": columns["n"],
+            "mean_num": columns["mean_num"] * factor,
+            "m2_num": np.maximum(0.0, columns["m2_num"] * factor * factor),
+            "mean_den": columns["mean_den"],
+            "m2_den": columns["m2_den"],
+            "c_nd": columns["c_nd"] * factor,
+        }
+    injected = {
+        "n": columns["n"],
+        "mean": columns["mean"] * factor,
+        "m2": np.maximum(0.0, columns["m2"] * factor * factor),
+    }
+    if "cross_c" in columns:  # CUPED: covariate moments unchanged, cross scales
+        injected["cov_mean"] = columns["cov_mean"]
+        injected["cov_m2"] = columns["cov_m2"]
+        injected["cross_c"] = columns["cross_c"] * factor
+    return injected
+
+
+def injection_clamped_columns(
+    input_kind: str, columns: Mapping[str, FloatArray], delta: float
+) -> npt.NDArray[np.bool_]:
+    """Per-row batch mirror of :func:`injection_clamped` (Fraction saturation).
+
+    NaN rows compare False — a degenerate gap is never reported as clamped.
+    """
+    if not columns:
+        raise ValueError("injection_clamped_columns requires at least one suffstats column")
+    if input_kind == "fraction":
+        with np.errstate(invalid="ignore"):
+            return columns["count"] * (1.0 + float(delta)) > columns["nobs"]
+    first = next(iter(columns.values()))
+    return np.zeros(first.shape[0], dtype=bool)
 
 
 def injection_clamped(stats: InjectableStats, delta: float) -> bool:
