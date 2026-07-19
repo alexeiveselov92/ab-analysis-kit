@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import math
 
-import scipy.stats as sps
+import scipy.special as special
 
 from abkit.stats.base import (
     CALCULATE_MDE_PARAM,
@@ -31,6 +31,7 @@ from abkit.stats.base import (
     BaseMethod,
     require_pair_type,
 )
+from abkit.stats.effects import LazyNormal, NormalTest, _two_sided_quantiles
 from abkit.stats.power import get_fraction_mde
 from abkit.stats.registry import register
 from abkit.stats.result import TestResult
@@ -59,8 +60,9 @@ class ZTest(BaseMethod):
 
         if std_effect > 0.0 and math.isfinite(std_effect):
             # Legacy sign quirk kept verbatim: z uses prop_1 − prop_2, effect prop_2 − prop_1.
+            # WP1 A1: ndtr(z)/ndtr(−z) ARE norm.cdf/norm.sf — byte parity golden-pinned.
             z_stat = (prop_1 - prop_2) / std_effect
-            pvalue = float(2.0 * min(sps.norm.cdf(z_stat), sps.norm.sf(z_stat)))
+            pvalue = float(2.0 * min(special.ndtr(z_stat), special.ndtr(-z_stat)))
         else:
             result_warnings.append(
                 "pooled proportion variance is zero (pooled proportion is 0 or 1); "
@@ -81,10 +83,10 @@ class ZTest(BaseMethod):
                 std_effect /= prop_1
 
         if math.isfinite(effect) and math.isfinite(std_effect) and std_effect > 0.0:
-            distribution = sps.norm(effect, std_effect)
-            quantiles = sps.norm.ppf([self.alpha / 2.0, 1.0 - self.alpha / 2.0])
-            left_bound = float(quantiles[0] * std_effect + effect)
-            right_bound = float(quantiles[1] * std_effect + effect)
+            distribution: LazyNormal | None = LazyNormal(effect, std_effect)
+            z_low, z_high = _two_sided_quantiles(self.alpha)
+            left_bound = float(z_low * std_effect + effect)
+            right_bound = float(z_high * std_effect + effect)
             ci_length = right_bound - left_bound
         else:
             distribution = None
@@ -109,7 +111,19 @@ class ZTest(BaseMethod):
                 ratio=nobs_1 / nobs_2,
             )
 
-        return TestResult(
+        # The z-test computes its test inline (the legacy sign quirk above), so the
+        # shared assembly consumes a NormalTest-shaped container, not normal_test().
+        test = NormalTest(
+            effect=effect,
+            left_bound=left_bound,
+            right_bound=right_bound,
+            ci_length=ci_length,
+            pvalue=pvalue,
+            reject=bool(pvalue < self.alpha),
+            distribution=distribution,
+        )
+        return self._result_from_normal_test(
+            test,
             name_1=stats_1.name,
             name_2=stats_2.name,
             value_1=prop_1,
@@ -120,15 +134,5 @@ class ZTest(BaseMethod):
             size_2=stats_2.sample_size,
             mde_1=mde_1,
             mde_2=mde_2,
-            method_name=self.name,
-            method_params=self.identity_params,
-            alpha=self.alpha,
-            pvalue=pvalue,
-            effect=effect,
-            ci_length=ci_length,
-            left_bound=left_bound,
-            right_bound=right_bound,
-            reject=bool(pvalue < self.alpha),
-            effect_distribution=distribution,
-            warnings=result_warnings,
+            method_warnings=result_warnings,
         )

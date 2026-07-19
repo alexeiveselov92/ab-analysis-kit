@@ -109,6 +109,69 @@ export function makePayload(overrides = {}) {
 }
 
 /**
+ * A 3-arm variant of makePayload: control + two treatments, with the main
+ * metric ("revenue") carrying TWO VerdictBlocks — one per declared
+ * control-vs-treatment pair (control-vs-treatment, control-vs-treatment_b).
+ * `abkit/pipeline/readout.py` verdicts control-vs-EACH-arm (never
+ * treatment-vs-treatment), so this is the realistic multi-arm shape.
+ *
+ * Regression fixture for the WP0 Review-mode bug: `payload.verdicts` holds
+ * one block per (metric, pair); a naive `.find` on metric name alone renders
+ * only the first pair and silently drops the rest.
+ * @param {Partial<import('../src/shared/payload').ReportPayload>} [overrides]
+ * @returns {import('../src/shared/payload').ReportPayload}
+ */
+export function makeThreeArmPayload(overrides = {}) {
+  const base = makePayload();
+  const seriesB = Array.from({ length: 14 }, (_, i) =>
+    makePoint(i + 1, { e: -0.05, lo: -0.09, hi: -0.01 }),
+  );
+  return {
+    ...base,
+    arms: ['control', 'treatment', 'treatment_b'],
+    srm: {
+      flag: false,
+      pvalue: 0.8,
+      observed: { control: 1000, treatment: 1000, treatment_b: 1000 },
+      expected: { control: 1 / 3, treatment: 1 / 3, treatment_b: 1 / 3 },
+    },
+    verdicts: [
+      ...base.verdicts,
+      {
+        metric: 'revenue',
+        pair: { c: 'control', t: 'treatment_b' },
+        verdict: 'LOSE',
+        rationale: ['CI excludes zero (negative) with a consistent sign over the trailing 7 days'],
+        caveats: [],
+        significant: true,
+        effect: -0.05,
+        pvalue: 0.01,
+        lo: -0.09,
+        hi: -0.01,
+        alpha: 0.05,
+        mde: 0.04,
+        min_effect: null,
+        end_ts: Date.UTC(2026, 0, 15),
+        elapsed_days: 14.0,
+        is_horizon: true,
+        guardrails: [],
+      },
+    ],
+    metrics: [
+      {
+        ...base.metrics[0],
+        pairs: [
+          ...base.metrics[0].pairs,
+          { c: 'control', t: 'treatment_b', series: seriesB, diag: null },
+          { c: 'treatment', t: 'treatment_b', series: seriesB, diag: null },
+        ],
+      },
+    ],
+    ...overrides,
+  };
+}
+
+/**
  * A filled M4 calibration block (the `abk validate` matrix) for the matrix-section
  * smoke tests — one in-budget recommended cell with a peeking curve, one over-budget
  * cell with a subsample note.

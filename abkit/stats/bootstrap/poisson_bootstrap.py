@@ -67,12 +67,12 @@ class PoissonBootstrapTest(BaseBootstrapMethod):
         )
         boot_data = self._boot_effect(boot_1, boot_2)
         result_warnings: list[str] = []
-        effect = self._point_effect(
-            stat_point(sample_1.array, self._stat),
-            stat_point(sample_2.array, self._stat),
-            result_warnings,
+        value_1 = stat_point(sample_1.array, self._stat)
+        value_2 = stat_point(sample_2.array, self._stat)
+        effect = self._point_effect(value_1, value_2, result_warnings)
+        return self._finalize(
+            sample_1, sample_2, boot_data, effect, result_warnings, value_1=value_1, value_2=value_2
         )
-        return self._finalize(sample_1, sample_2, boot_data, effect, result_warnings)
 
 
 @register
@@ -104,9 +104,9 @@ class PairedPoissonBootstrapTest(PoissonBootstrapTest):
         )
         boot_data = self._boot_effect(boot_1, boot_2)
         result_warnings: list[str] = []
-        effect = self._point_effect(
-            stat_point(sample_1.array, self._stat),
-            stat_point(sample_2.array, self._stat),
-            result_warnings,
+        value_1 = stat_point(sample_1.array, self._stat)
+        value_2 = stat_point(sample_2.array, self._stat)
+        effect = self._point_effect(value_1, value_2, result_warnings)
+        return self._finalize(
+            sample_1, sample_2, boot_data, effect, result_warnings, value_1=value_1, value_2=value_2
         )
-        return self._finalize(sample_1, sample_2, boot_data, effect, result_warnings)

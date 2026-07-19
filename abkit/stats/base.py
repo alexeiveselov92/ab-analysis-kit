@@ -26,6 +26,7 @@ from typing import Any, ClassVar
 
 import numpy as np
 
+from abkit.stats.effects import NormalTest
 from abkit.stats.exceptions import MethodParamError, SampleValidationError
 from abkit.stats.result import TestResult
 from abkit.stats.samples import RatioSample, Sample
@@ -342,6 +343,61 @@ class BaseMethod(ABC):
     @abstractmethod
     def from_suffstats(self, stats_1: Any, stats_2: Any) -> TestResult:
         """Compare from sufficient statistics (closed-form pipeline/explore entry)."""
+
+    # --- shared result assembly ----------------------------------------------
+    def _result_from_normal_test(
+        self,
+        test: NormalTest,
+        *,
+        name_1: str | None,
+        name_2: str | None,
+        value_1: float,
+        value_2: float,
+        std_1: float,
+        std_2: float,
+        size_1: int,
+        size_2: int,
+        cov_value_1: float | None = None,
+        cov_value_2: float | None = None,
+        mde_1: float | None = None,
+        mde_2: float | None = None,
+        method_warnings: Sequence[str] = (),
+        diagnostics: dict[str, float] | None = None,
+    ) -> TestResult:
+        """Assemble the shared closed-form ``TestResult`` tail (M7 WP1 A7).
+
+        The parametric mirror of the bootstrap ``_finalize``: every closed-form
+        method ends in the same ~20-kwarg ``TestResult(...)`` differing only in
+        the per-arm display fields, so the assembly lives once here (field-drift
+        risk, stats-core-review A7). ``method_warnings`` are prepended before the
+        test's own warnings — each method's legacy warning order is preserved.
+        """
+        return TestResult(
+            name_1=name_1,
+            name_2=name_2,
+            value_1=value_1,
+            value_2=value_2,
+            std_1=std_1,
+            std_2=std_2,
+            size_1=size_1,
+            size_2=size_2,
+            cov_value_1=cov_value_1,
+            cov_value_2=cov_value_2,
+            mde_1=mde_1,
+            mde_2=mde_2,
+            method_name=self.name,
+            method_params=self.identity_params,
+            alpha=self.alpha,
+            pvalue=test.pvalue,
+            effect=test.effect,
+            ci_length=test.ci_length,
+            left_bound=test.left_bound,
+            right_bound=test.right_bound,
+            reject=test.reject,
+            effect_distribution=test.distribution,
+            warnings=[*method_warnings, *test.warnings],
+            diagnostics={} if diagnostics is None else diagnostics,
+        )
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}(alpha={self.alpha}, params={self.params})"

@@ -22,6 +22,7 @@ import {
   makeExplorePayload,
   makeReply,
   makeSurface,
+  makeThreeArmExplorePayload,
   makeValidateReply,
 } from './fixtures-explore.mjs';
 import { makePoint } from './fixtures.mjs';
@@ -174,6 +175,43 @@ test('empty experiment payload renders the empty state, never throws', () => {
   payload.explore.default_metric = null;
   const { mount } = renderInJsdom(payload);
   assert.match(mount.querySelector('.abk-empty').textContent, /run `abk run` first/);
+});
+
+// ---------------------------------------------------------------------------
+// Review mode (WP0): one verdict line per (metric, pair), never just the first
+// ---------------------------------------------------------------------------
+
+test('Review mode renders exactly one verdict line for a 2-arm metric', () => {
+  const { mount } = renderInJsdom(makeExplorePayload());
+  const reviewBtn = [...mount.querySelectorAll('.abk-mode-btn')].find((b) => b.textContent === 'Review');
+  reviewBtn.click();
+  const rows = [...mount.querySelectorAll('.abk-review-row')];
+  assert.equal(rows.length, 1, 'one review row for the one metric');
+  const verdictLines = rows[0].querySelectorAll('.abk-review-verdict');
+  assert.equal(verdictLines.length, 1, '2-arm: exactly one verdict line, unchanged from today');
+  assert.match(verdictLines[0].textContent, /WIN \(control vs treatment\)/);
+  assert.ok(verdictLines[0].classList.contains('abk-verdict-win'), 'abk-verdict-<word> marker present');
+});
+
+test('Review mode renders one verdict line PER PAIR for a 3-arm metric (WP0 regression)', () => {
+  // the "revenue" metric carries TWO VerdictBlocks here (control-vs-treatment,
+  // control-vs-treatment_b) — before the WP0 fix, `payload.verdicts.find(...)`
+  // rendered only the first and silently dropped the second.
+  const { mount } = renderInJsdom(makeThreeArmExplorePayload());
+  const reviewBtn = [...mount.querySelectorAll('.abk-mode-btn')].find((b) => b.textContent === 'Review');
+  reviewBtn.click();
+  const rows = [...mount.querySelectorAll('.abk-review-row')];
+  assert.equal(rows.length, 1, 'still one review row per metric, not per pair');
+  const verdictLines = [...rows[0].querySelectorAll('.abk-review-verdict')];
+  assert.equal(verdictLines.length, 2, 'both declared pairs render their own verdict line');
+  const texts = verdictLines.map((n) => n.textContent);
+  assert.ok(texts.some((t) => /WIN \(control vs treatment\)/.test(t)), 'first pair renders');
+  assert.ok(texts.some((t) => /LOSE \(control vs treatment_b\)/.test(t)), 'second pair renders (was dropped pre-fix)');
+  assert.ok(
+    verdictLines.some((n) => n.classList.contains('abk-verdict-win')) &&
+      verdictLines.some((n) => n.classList.contains('abk-verdict-lose')),
+    'each line keeps its own abk-verdict-<word> marker class',
+  );
 });
 
 // ---------------------------------------------------------------------------

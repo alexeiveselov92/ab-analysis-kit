@@ -7,6 +7,11 @@ against statsmodels' pooled two-proportion test plus its documented legacy
 quirks, the H5 NaN-plus-warning divide-by-zero policy, and the identity contract
 (``identity_params`` drops defaults; ``method_config_id`` is stable across
 instances and independent of alpha).
+
+``METHOD_CLASSES`` (the identity-contract sweep below) is registry-derived
+(docs/specs/m7-implementation-plan.md WP1 A5; the plugin-registry invariant,
+CLAUDE.md "Methods are plugins") so a new closed-form plugin is auto-swept in;
+pair with test_registry_completeness.py (A6) for the "forgotten import" half.
 """
 
 from __future__ import annotations
@@ -18,6 +23,7 @@ import pytest
 from statsmodels.stats.proportion import proportions_ztest
 
 from abkit.stats.base import BaseMethod
+from abkit.stats.bootstrap import BaseBootstrapMethod
 from abkit.stats.exceptions import AbkitStatsWarning, SampleValidationError
 from abkit.stats.parametric import (
     CupedTTest,
@@ -27,19 +33,44 @@ from abkit.stats.parametric import (
     TTest,
     ZTest,
 )
+from abkit.stats.registry import available_methods, get_method_class
 from abkit.stats.samples import Fraction, PairedSufficientStats, RatioSample, Sample
 
 pytestmark = pytest.mark.unit
 
 TEST_TYPES = ("relative", "absolute")
 
-METHOD_CLASSES: tuple[type[BaseMethod], ...] = (
-    TTest,
-    PairedTTest,
-    CupedTTest,
-    PairedCupedTTest,
-    ZTest,
-    RatioDelta,
+#: Every registered closed-form (non-bootstrap) method class, sorted by name for
+#: stable test IDs. Bootstrap methods have their own contract sweep in
+#: test_bootstrap_methods.py (different construction/identity rules — seed
+#: exclusion, from_suffstats always raising, etc.).
+METHOD_CLASSES: tuple[type[BaseMethod], ...] = tuple(
+    sorted(
+        (
+            get_method_class(name)
+            for name in available_methods()
+            if not issubclass(get_method_class(name), BaseBootstrapMethod)
+        ),
+        key=lambda cls: cls.name,
+    )
+)
+
+# The registry trip-wire (mirrors SAFE_PARAMS in test_bootstrap_methods.py, M7
+# adversarial-review round-1 finding): an empty parametrize list makes pytest
+# silently collect ZERO sweep cases and exit green — exactly the vacuous-pass
+# failure mode A5 exists to prevent. Update deliberately when a closed-form
+# method is added or removed (alongside test_registry_completeness.py's pin).
+assert {cls.name for cls in METHOD_CLASSES} == {
+    "t-test",
+    "paired-t-test",
+    "z-test",
+    "cuped-t-test",
+    "paired-cuped-t-test",
+    "ratio-delta",
+}, (
+    "the registry-derived closed-form sweep is out of sync with the expected set: "
+    f"{sorted(cls.name for cls in METHOD_CLASSES)} — the contract sweeps below would "
+    "silently shrink; update this pin consciously along with the docs"
 )
 
 

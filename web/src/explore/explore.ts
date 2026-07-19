@@ -1480,8 +1480,12 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
       checks.appendChild(mainCtl.row);
       checks.appendChild(guardCtl.row);
       rowWrap.appendChild(checks);
-      const verdict = payload.verdicts.find((v) => v.metric === name);
-      if (verdict) {
+      // a metric can carry MORE THAN ONE VerdictBlock — one per declared
+      // control-vs-treatment pair (3+ arm experiments produce 2+ pairs per
+      // metric); render every matching pair's verdict as its own line, never
+      // just the first (WP0 — the multi-arm Review-mode drop bug)
+      const metricVerdicts = payload.verdicts.filter((v) => v.metric === name);
+      for (const verdict of metricVerdicts) {
         rowWrap.appendChild(
           el(
             'div',

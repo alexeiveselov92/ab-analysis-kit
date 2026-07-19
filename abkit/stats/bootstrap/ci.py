@@ -47,8 +47,16 @@ def percentile_ci(boot_data: FloatArray, alpha: float) -> tuple[float, float]:
 
 
 def pvalue_sign(boot_data: FloatArray) -> float:
-    """Legacy sign-based p-value ``2·min(P(boot>0), P(boot<0))`` (baseline §4, golden parity)."""
-    return float(2.0 * min(np.mean(boot_data > 0.0), np.mean(boot_data < 0.0)))
+    """Legacy sign-based p-value ``2·min(P(boot>0), P(boot<0))`` (baseline §4, golden parity).
+
+    Counted per side and divided once (M7 WP1 A4) — byte-identical to
+    ``2·min(np.mean(boot>0), np.mean(boot<0))``: a boolean mean is an exact
+    integer count over ``n``, and division by a positive constant is monotone,
+    so ``min`` commutes with it.
+    """
+    n_positive = int(np.count_nonzero(boot_data > 0.0))
+    n_negative = int(np.count_nonzero(boot_data < 0.0))
+    return float(2.0 * (min(n_positive, n_negative) / boot_data.size))
 
 
 def pvalue_plugin(boot_data: FloatArray) -> float:

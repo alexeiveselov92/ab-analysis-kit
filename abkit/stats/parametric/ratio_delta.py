@@ -90,7 +90,8 @@ class RatioDelta(BaseMethod):
             )
         test = normal_test(estimate, self.alpha)
 
-        return TestResult(
+        return self._result_from_normal_test(
+            test,
             name_1=stats_1.name,
             name_2=stats_2.name,
             value_1=ratio_1,
@@ -99,15 +100,5 @@ class RatioDelta(BaseMethod):
             std_2=math.sqrt(var_unit_2),
             size_1=stats_1.n,
             size_2=stats_2.n,
-            method_name=self.name,
-            method_params=self.identity_params,
-            alpha=self.alpha,
-            pvalue=test.pvalue,
-            effect=test.effect,
-            ci_length=test.ci_length,
-            left_bound=test.left_bound,
-            right_bound=test.right_bound,
-            reject=test.reject,
-            effect_distribution=test.distribution,
-            warnings=[*method_warnings, *test.warnings],
+            method_warnings=method_warnings,
         )

@@ -19,10 +19,66 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Any
 
 import numpy as np
+import scipy.special as special
 import scipy.stats as sps
+
+
+@lru_cache(maxsize=64)
+def _two_sided_quantiles(alpha: float) -> tuple[float, float]:
+    """``(ndtri(alpha/2), ndtri(1 − alpha/2))`` — data-independent, cached per alpha.
+
+    Bit-identical to the frozen ``sps.norm.ppf`` pair it replaces (M7 WP1 A1):
+    scipy's ``norm._ppf`` IS ``ndtri``, and only a handful of distinct alphas
+    exist per process (the declared per-comparison alphas), so the pair is
+    computed once instead of per comparison.
+    """
+    return float(special.ndtri(alpha / 2.0)), float(special.ndtri(1.0 - alpha / 2.0))
+
+
+class LazyNormal:
+    """A lazily-frozen ``scipy.stats.norm(loc, scale)`` stand-in (M7 WP1 A3).
+
+    Freezing a scipy distribution costs ~190 µs — orders more than the
+    ndtri/ndtr math around it — and ``TestResult.effect_distribution`` is
+    write-only on the validate/family hot path (``to_dict`` drops it). The
+    proxy keeps the ``is not None`` truthiness contract; the first attribute
+    read freezes the real ``sps.norm(loc, scale)`` and every read delegates to
+    it, so downstream ``.cdf``/``.ppf``/``.sf`` results are byte-identical to
+    the eager object's.
+    """
+
+    __slots__ = ("loc", "scale", "_frozen")
+
+    def __init__(self, loc: float, scale: float) -> None:
+        self.loc = loc
+        self.scale = scale
+        self._frozen: Any = None
+
+    def _materialize(self) -> Any:
+        if self._frozen is None:
+            self._frozen = sps.norm(self.loc, self.scale)
+        return self._frozen
+
+    def __getattr__(self, name: str) -> Any:
+        # Reached only for names not on the proxy itself (slots always resolve).
+        # Never materialize for underscore/dunder probes: pickle/copy/display
+        # protocols probe them on half-initialised instances (unset slots), which
+        # would otherwise recurse through _materialize forever — and a mere
+        # hasattr probe must not defeat the laziness.
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return getattr(self._materialize(), name)
+
+    def __reduce__(self) -> tuple[Any, tuple[float, float]]:
+        # The frozen distribution is a cache — rebuild lazily after unpickling.
+        return (type(self), (self.loc, self.scale))
+
+    def __repr__(self) -> str:
+        return f"LazyNormal(loc={self.loc!r}, scale={self.scale!r})"
 
 
 @dataclass
@@ -96,6 +152,12 @@ def normal_test(estimate: EffectEstimate, alpha: float) -> NormalTest:
 
     ``left, right = norm(mu, sqrt(var)).ppf([alpha/2, 1 − alpha/2])``;
     ``pvalue = 2 · min(cdf(0), sf(0))``; ``reject = pvalue < alpha``.
+
+    M7 WP1 (A1/A3): the frozen-norm formulas are evaluated directly via
+    ``scipy.special.ndtri``/``ndtr`` — the sf tail as ``ndtr(-z)``, never
+    ``1 − ndtr(z)``, which is NOT bit-identical for extreme z — and the
+    effect distribution is a :class:`LazyNormal`. Byte parity with the
+    pre-WP1 ``sps.norm`` path is pinned by ``test_normal_path_golden.py``.
     """
     result_warnings = list(estimate.warnings)
     if not (math.isfinite(estimate.effect) and math.isfinite(estimate.var)) or estimate.var <= 0.0:
@@ -124,11 +186,12 @@ def normal_test(estimate: EffectEstimate, alpha: float) -> NormalTest:
             warnings=result_warnings,
         )
 
-    distribution = sps.norm(loc=estimate.effect, scale=float(np.sqrt(estimate.var)))
-    left_bound, right_bound = (
-        float(bound) for bound in distribution.ppf([alpha / 2.0, 1.0 - alpha / 2.0])
-    )
-    pvalue = float(2.0 * min(distribution.cdf(0.0), distribution.sf(0.0)))
+    scale = float(np.sqrt(estimate.var))
+    z_low, z_high = _two_sided_quantiles(alpha)
+    left_bound = z_low * scale + estimate.effect
+    right_bound = z_high * scale + estimate.effect
+    z_zero = (0.0 - estimate.effect) / scale  # cdf(0) standardization, scipy op order
+    pvalue = float(2.0 * min(special.ndtr(z_zero), special.ndtr(-z_zero)))
     return NormalTest(
         effect=estimate.effect,
         left_bound=left_bound,
@@ -136,6 +199,6 @@ def normal_test(estimate: EffectEstimate, alpha: float) -> NormalTest:
         ci_length=right_bound - left_bound,
         pvalue=pvalue,
         reject=bool(pvalue < alpha),
-        distribution=distribution,
+        distribution=LazyNormal(estimate.effect, scale),
         warnings=result_warnings,
     )

@@ -13,6 +13,66 @@ number change).
 
 ## [Unreleased]
 
+### Fixed
+- **M7 WP0 — multi-arm Review mode dropped every verdict after the first
+  (UI-only; no statistical number touched).** `abk explore`'s Review mode
+  rendered a metric's verdict via `.find(...)` over `payload.verdicts`, which
+  holds one block per (metric × control-vs-treatment pair) — so in a 3+-arm
+  experiment only the first pair's verdict showed and the rest were silently
+  dropped (the underlying per-pair verdicts were always computed and persisted
+  correctly). Review mode now renders one labeled verdict line per declared
+  pair (same `abk-review-verdict`/`abk-verdict-<word>` marker classes; 2-arm
+  rendering unchanged), with jsdom regression tests for both the 2-arm and
+  3-arm cases and the rebuilt committed `explore.js`. A new honest **"Known
+  multi-arm limitations"** section in `docs/guides/experiments.md` names what
+  is not k-arm-aware today: no experiment-level winner rollup (M14), `abk plan`
+  sizes off the first declared pair only, and `abk validate`'s placebo split is
+  two-arm (control share vs the rest pooled).
+
+### Changed
+- **M7 WP1 — scalar hot-path quick wins (hardening bucket A, A1–A8). No
+  statistical numbers changed**: the old-vs-new swap was verified **bit-exact
+  on the capture environment** against a fixture frozen from the pre-change
+  code, and the committed golden gate
+  `tests/stats/test_normal_path_golden.py` re-checks the battery (extreme-z,
+  degenerates, all six closed-form methods end-to-end) on every run — float
+  fields at the repo's golden relative 1e-9 (BLAS/libm builds differ across
+  machines in the last ULP; a formula change fails by orders of magnitude),
+  every reject/size/warning/flag field exactly. The whole stats+golden suite
+  passes unmodified (634 passed, 1 opt-in benchmark skipped). The wins:
+  - **A1 — `scipy.special.ndtri`/`ndtr` replace the frozen `sps.norm` objects**
+    on the closed-form significance path (`effects.normal_test`, the z-test,
+    `sequential.se_from_ci_length`), with the sf tail computed as `ndtr(-z)`
+    (never `1 − ndtr(z)`, which drifts for extreme z). Alpha-only quantiles are
+    now computed once per alpha (`lru_cache`), not per comparison. Measured:
+    `normal_test` 283.8 → 1.9 µs/call (**~149×** on the `abk validate`/explore
+    closed-form hot path).
+  - **A2 — statsmodels imports moved inside the power/MDE solves** —
+    `import abkit.stats` no longer eagerly loads statsmodels+pandas+patsy
+    (~0.5 s cold in this env); a subprocess test pins the deferral.
+  - **A3 — `TestResult.effect_distribution` is now a `LazyNormal` proxy on the
+    closed-form path** — freezing the never-serialised scipy distribution is
+    deferred to the first attribute read (delegated reads are byte-identical);
+    the `is not None` truthiness contract and `to_dict()` behavior are pinned
+    by a new test. (The bootstrap methods' `effect_distribution` stays eager —
+    negligible next to the resampling itself.)
+  - **A4 — bootstrap result-assembly dedup** — per-arm `stat_point` values are
+    computed once and passed into `_finalize`; `pvalue_sign` counts each side
+    once and divides once (provably byte-identical, goldens intact).
+  - **A7 — shared `BaseMethod._result_from_normal_test`** — the six
+    closed-form methods' copy-pasted ~20-kwarg `TestResult` tails now assemble
+    in one place (field-drift risk removed), pinned field-by-field by the
+    golden gate.
+  - **A8 — `samples.py` micro-dedups** — `SufficientStats.from_sample` reuses
+    the `Sample`'s already-computed covariate mean; `from_ratio_sample` computes
+    each mean once; `RatioSufficientStats` gains the same `m2 ≥ 0` validation
+    `SufficientStats` already had.
+  - **A5/A6 — registry-driven contract tests + a completeness gate** — the
+    universal method contracts (dual-entry, seed-exclusion, `to_dict`,
+    quarantine) are parametrized off the plugin registry so a new method is
+    auto-swept in, and a new completeness test fails if a `BaseMethod` subclass
+    is importable but silently unregistered.
+
 ### Added
 - **The polish track M7–M17 (`0.2.0` … `0.12.0`) planned into the repo** — docs
   only, no behavior change, no statistical numbers touched: the approved

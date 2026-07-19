@@ -6,7 +6,7 @@
 // fixtures can never silently drift from the schema the cockpit consumes
 // (the WP3 discipline extended to WP7).
 
-import { makePayload } from './fixtures.mjs';
+import { makePayload, makeThreeArmPayload } from './fixtures.mjs';
 
 /**
  * @param {string} name
@@ -142,6 +142,38 @@ export function makeExplorePayload(overrides = {}) {
         correction: 'bonferroni',
         correction_choices: ['none', 'bonferroni', 'benjamini_hochberg'],
         groups_count: 2,
+        non_main_count: 0,
+      },
+      cache: { values: 28000, disabled_reason: null },
+      warnings: [],
+    },
+    save_url: null,
+    recompute_url: null,
+    reload_url: null,
+    validate_url: null,
+    ...overrides,
+  };
+}
+
+/**
+ * A 3-arm variant of makeExplorePayload — control + two treatments, riding
+ * `makeThreeArmPayload`'s two VerdictBlocks for the "revenue" metric
+ * verbatim. WP0 Review-mode regression fixture (see makeThreeArmPayload).
+ * @param {Partial<import('../src/explore/payload').ExplorePayload>} [overrides]
+ * @returns {import('../src/explore/payload').ExplorePayload}
+ */
+export function makeThreeArmExplorePayload(overrides = {}) {
+  const threeArm = makeThreeArmPayload({ experiment: 'explore_exp' });
+  return {
+    ...threeArm,
+    explore: {
+      metrics: { revenue: makeSurface() },
+      default_metric: 'revenue',
+      experiment: {
+        alpha: 0.05,
+        correction: 'bonferroni',
+        correction_choices: ['none', 'bonferroni', 'benjamini_hochberg'],
+        groups_count: 3,
         non_main_count: 0,
       },
       cache: { values: 28000, disabled_reason: null },

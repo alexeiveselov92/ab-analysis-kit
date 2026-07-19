@@ -155,7 +155,8 @@ class CupedTTest(BaseMethod):
                 ratio=n_1 / n_2,
             )
 
-        return TestResult(
+        return self._result_from_normal_test(
+            test,
             name_1=stats_1.name,
             name_2=stats_2.name,
             value_1=stats_1.mean,
@@ -168,16 +169,6 @@ class CupedTTest(BaseMethod):
             cov_value_2=stats_2.cov_mean,
             mde_1=mde_1,
             mde_2=mde_2,
-            method_name=self.name,
-            method_params=self.identity_params,
-            alpha=self.alpha,
-            pvalue=test.pvalue,
-            effect=test.effect,
-            ci_length=test.ci_length,
-            left_bound=test.left_bound,
-            right_bound=test.right_bound,
-            reject=test.reject,
-            effect_distribution=test.distribution,
-            warnings=[*method_warnings, *test.warnings],
+            method_warnings=method_warnings,
             diagnostics={"theta": theta},
         )

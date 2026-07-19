@@ -3,6 +3,12 @@
 Engine mechanics (byte-stability, block invariance, Hamilton, applier, ci) are
 covered in test_bootstrap_engine.py; golden parity vs the legacy transcription in
 tests/golden/test_golden_bootstrap.py. This module pins the METHOD contracts.
+
+``ALL_BOOTSTRAP_METHODS`` is registry-derived (docs/specs/m7-implementation-plan.md
+WP1 A5; the plugin-registry invariant, CLAUDE.md "Methods are plugins") so a new
+bootstrap plugin is auto-swept into the contract sweeps below; pair with
+test_registry_completeness.py (A6), which catches a plugin module that is never
+imported at all.
 """
 
 from __future__ import annotations
@@ -20,18 +26,23 @@ from abkit.stats import (
     create_method,
     get_method_class,
 )
+from abkit.stats.bootstrap import BaseBootstrapMethod
 from abkit.stats.exceptions import MethodParamError
+from abkit.stats.registry import available_methods
 
-ALL_BOOTSTRAP_METHODS = (
-    "bootstrap",
-    "paired-bootstrap",
-    "poisson-bootstrap",
-    "paired-poisson-bootstrap",
-    "post-normed-bootstrap",
-    "paired-post-normed-bootstrap",
+#: Registry-derived, not hand-maintained (M7 WP1 A5 — stats-core-review): every
+#: registered method whose class is a BaseBootstrapMethod. A future bootstrap
+#: plugin is auto-swept in here without touching this file; see
+#: test_registry_completeness.py for the "forgotten import" half of the gate.
+ALL_BOOTSTRAP_METHODS: tuple[str, ...] = tuple(
+    name for name in available_methods() if issubclass(get_method_class(name), BaseBootstrapMethod)
 )
 
 #: Params that make every method constructible with its non-quarantined branch.
+#: Kept as an explicit per-method mapping by design (a generic default could
+#: silently paper over a quarantined branch); the assertion below is the
+#: registry trip-wire — a new bootstrap method with no entry here fails loudly
+#: at collection instead of being silently skipped by parametrize.
 SAFE_PARAMS: dict[str, dict[str, object]] = {
     "bootstrap": {},
     "paired-bootstrap": {},
@@ -40,6 +51,14 @@ SAFE_PARAMS: dict[str, dict[str, object]] = {
     "post-normed-bootstrap": {"test_type": "relative"},
     "paired-post-normed-bootstrap": {"test_type": "absolute"},
 }
+
+assert set(SAFE_PARAMS) == set(ALL_BOOTSTRAP_METHODS), (
+    "SAFE_PARAMS is out of sync with the registry (M7 WP1 A5): "
+    f"missing entries for {set(ALL_BOOTSTRAP_METHODS) - set(SAFE_PARAMS)}, "
+    f"stale entries for {set(SAFE_PARAMS) - set(ALL_BOOTSTRAP_METHODS)}. "
+    "Add (or remove) a SAFE_PARAMS row for the new/removed bootstrap method above "
+    "so the contract tests in this module cover it."
+)
 
 
 def _samples(seed: int = 3, n: int = 400, shift: float = 0.0) -> tuple[Sample, Sample]:
