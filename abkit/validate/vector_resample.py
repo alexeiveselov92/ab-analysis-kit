@@ -53,12 +53,14 @@ contract is therefore:
 - **Masks, per-arm unit counts, degenerate flags** — bit-identical under ANY
   block partition, by construction (integer/boolean work).
 - **Float suffstats columns** — bit-reproducible run-to-run under a FIXED
-  block partition (one ``weights @ value_matrix`` GEMM per arm per cutoff:
-  deterministic for fixed shapes, the same BLAS reliance the Poisson
-  bootstrap engine already ships under the byte-reproducibility e2e gate,
-  engine.py:33); across DIFFERENT block partitions they may move at the ULP
-  level (gated at rtol 1e-12 by the invariance tests — far inside the
-  rel-1e-9 scalar-parity budget).
+  block partition AND a fixed BLAS configuration (one ``weights @
+  value_matrix`` GEMM per arm per cutoff: deterministic for fixed shapes
+  *within one BLAS build + thread count* — a different OpenBLAS thread count
+  re-rounds the same GEMM at the ULP level (measured 1 vs ≥2 threads), the
+  same BLAS reliance the Poisson bootstrap engine already ships under the
+  byte-reproducibility e2e gate, engine.py:33); across DIFFERENT block
+  partitions they may move at the ULP level (gated at rtol 1e-12 by the
+  invariance tests — far inside the rel-1e-9 scalar-parity budget).
 
 The WP4 scorer derives its blocking deterministically from
 ``(iterations, n_units)`` via :func:`block_rows`, so persisted A/A numbers
