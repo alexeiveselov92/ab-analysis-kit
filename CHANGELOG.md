@@ -213,6 +213,54 @@ number change).
   (`aa-false-positive-matrix.md` §9 "Implementation note") so the invariant
   lives in the spec, not only in code comments.
 
+- **M7 WP7 (stretch) — the composed family sweep (D9) runs its own
+  block-streamed vectorized engine. Zero statistical numbers changed — the
+  scalar loop is preserved verbatim as the fallback, and every existing
+  family/e2e reference passes unmodified.** `family.py` has its OWN hot loop
+  (the §0.3(1) plan-review correction — the WP4 `score_cell` rewrite never
+  touched it); `sweep_family` now dispatches exactly like `score_cell`: when
+  EVERY member's method opts in via `supports_vectorized`, blocks of shared
+  union masks come from `placebo_mask_block` (row *i* IS the scalar union
+  mask — bit-identical by construction), each member's per-look arms build
+  through one `build_arm_batch` GEMM + one `from_suffstats_array` call (the
+  `_Peek` accumulator gets a block-wise mirror, `_PeekBlock`, with the same
+  first-crossing/latest/min-p semantics), and the per-iteration COMPOSITION
+  (`composed_significance`) stays the unchanged scalar helper applied in
+  iteration order — so every `FamilyScore` column (count ratios,
+  exact-fraction FDP sums, warnings incl. the one-shot clamp warning's
+  lexicographic (iteration, member) pick) is expected EXACT, not rel-1e-9. A
+  family with any non-opted-in member (bootstrap, custom plugins) runs
+  `_sweep_family_scalar` — a pure code move of the previous loop; a lying
+  `supports_vectorized=True` member fails the sweep loudly as a
+  `ValidateError`. The new gate `tests/validate/test_family_vector_parity.py`
+  asserts exact equality on every `FamilyScore` field across ≥50 seeds × 5
+  family shapes (overlapping/disjoint cohorts, ratio+CUPED members, a
+  persistent-gap 3-unit member with its 'scored in 0 iterations' disclosure,
+  a saturating-clamp planted fraction member, bonferroni AND
+  benjamini_hochberg, ± injection, ± sequential; exit run at
+  `ABKIT_PARITY_SEEDS=200` — 1 000 engine-pair runs), plus multi-block
+  (quantum 1/7, every shape) and dispatch/fallback/lying-flag contracts.
+  Measured on a reference family (3 members × 2000 iterations, sequential +
+  injection): **~0.11 s vectorized vs ~1.96 s scalar (~18×)**, with
+  byte-identical output. Two adversarial review rounds; fixed under round 1:
+  the batch engine gained the scalar `_member_marginal`'s `except Exception`
+  net around the batch kernels (a structural kernel raise — e.g. a
+  programmatically-built CUPED member on a covariate-less panel — now gaps
+  that member exactly like the scalar engine instead of crashing the sweep;
+  `NotImplementedError` re-raises so the lying-flag contract stays loud),
+  and the corrupt-input divergence class (fraction `count > nobs`: the
+  scalar engine crashes the sweep, the batch engine scores it) is now
+  spec-documented for the family surface and pinned by a dedicated
+  regression test — the batch-flag hardening remains the same named
+  follow-up as `score_cell`'s. Round 2 scoped the net honestly: under
+  `sequential=True` (the runner's only mode) a member whose τ² ANCHOR itself
+  raises structurally crashes BOTH engines identically inside the shared,
+  unguarded `_cell_tau2` — pre-existing, symmetric, runner-isolated; the
+  engine net applies where the anchor didn't already fail (a
+  degenerate-anchor member — pinned by a dedicated walk-raise parity test —
+  or `sequential=False`), and guarding `_cell_tau2` itself is a named
+  follow-up since it would change both engines' behavior at once.
+
 ### Fixed
 - **M7 WP0 — multi-arm Review mode dropped every verdict after the first
   (UI-only; no statistical number touched).** `abk explore`'s Review mode
