@@ -298,3 +298,33 @@ Before you trust or launch an experiment:
 
 To inspect the stabilization series and re-slice alpha, correction, and metrics
 interactively, open the cockpit with [`abk explore`](explore.md).
+
+## Known multi-arm limitations
+
+`variants` accepts any number `>= 2` — the first is control, and abkit computes
+a full control-vs-treatment comparison for every later variant (declarative-config
+§2). A 3+-arm experiment runs end to end: the pipeline computes every pair, the
+readout renders a verdict for each, and [`abk explore`](explore.md)'s Review mode
+shows one line per pair. A few adjacent surfaces are honestly not (yet)
+k-arm-aware, though:
+
+- **No experiment-level winner rollup.** The readout carries one verdict per
+  (main metric x control-vs-treatment pair) — a WIN against `treatment` and a
+  LOSE against `treatment_b` on the same metric are both real, independent
+  calls; there is no invented "best arm" scalar that picks a winner across pairs
+  (that rollup is a named future item, M14 — see [Reading a
+  readout](reading-a-readout.md#the-verdict)).
+- **`abk plan` sizes off the first declared pair only.** Required-N / achievable
+  MDE / achieved power is computed for control-vs-first-treatment; every other
+  pair rides the same alpha and sample size rather than being sized
+  independently. The plan output says so in an explicit warning line (see
+  [Plan](plan.md#multi-arm-experiments)).
+- **`abk validate`'s placebo split is two-arm.** The A/A engine pools the
+  experiment's whole cohort and splits it into exactly two placebo shares —
+  control's expected share vs. every other variant pooled together — never a
+  k-way split that mirrors each declared arm individually. For a 3+-arm
+  experiment the measured FPR is a control-vs-rest number, not a
+  per-treatment-arm one. See [Validate](validate.md).
+
+None of this is new behavior — it is what has always run. This section just
+names it plainly so a 3+-arm user knows what is and isn't covered today.

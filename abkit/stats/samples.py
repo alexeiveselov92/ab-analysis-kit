@@ -293,7 +293,8 @@ class SufficientStats:
         n = sample.sample_size
         if sample.cov_array is None:
             return cls(n=n, mean=sample.mean, m2=float(np.var(sample.array) * n), name=sample.name)
-        cov_mean = float(np.mean(sample.cov_array))
+        assert sample.cov_mean is not None  # set with cov_array at construction
+        cov_mean = sample.cov_mean  # same np.mean the Sample already computed (WP1 A8)
         centered_y = sample.array - sample.mean
         centered_x = sample.cov_array - cov_mean
         return cls(
@@ -387,6 +388,16 @@ class RatioSufficientStats:
     ) -> None:
         if n <= 0:
             raise SampleValidationError(f"RatioSufficientStats.n must be positive, got {n}")
+        # Validation parity with SufficientStats.m2 (WP1 A8): centered second
+        # moments are non-negative in exact arithmetic.
+        if m2_num < 0:
+            raise SampleValidationError(
+                f"RatioSufficientStats.m2_num must be non-negative, got {m2_num}"
+            )
+        if m2_den < 0:
+            raise SampleValidationError(
+                f"RatioSufficientStats.m2_den must be non-negative, got {m2_den}"
+            )
         self.n = int(n)
         self.mean_num = float(mean_num)
         self.m2_num = float(m2_num)
@@ -397,13 +408,15 @@ class RatioSufficientStats:
 
     @classmethod
     def from_ratio_sample(cls, sample: RatioSample) -> RatioSufficientStats:
-        centered_num = sample.numerator - float(np.mean(sample.numerator))
-        centered_den = sample.denominator - float(np.mean(sample.denominator))
+        mean_num = float(np.mean(sample.numerator))  # computed once (WP1 A8)
+        mean_den = float(np.mean(sample.denominator))
+        centered_num = sample.numerator - mean_num
+        centered_den = sample.denominator - mean_den
         return cls(
             n=sample.sample_size,
-            mean_num=float(np.mean(sample.numerator)),
+            mean_num=mean_num,
             m2_num=float(np.dot(centered_num, centered_num)),
-            mean_den=float(np.mean(sample.denominator)),
+            mean_den=mean_den,
             m2_den=float(np.dot(centered_den, centered_den)),
             c_nd=float(np.dot(centered_num, centered_den)),
             name=sample.name,

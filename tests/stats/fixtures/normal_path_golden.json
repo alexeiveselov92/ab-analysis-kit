@@ -1,0 +1,2038 @@
+{
+ "_provenance": "frozen from the pre-WP1 sps.norm scalar path at commit 68d3fa8 on 2026-07-19; floats are float.hex() strings; regenerable only from a pre-WP1 checkout",
+ "methods": {
+  "cuped-absolute": {
+   "alpha": {
+    "f": "0x1.999999999999ap-5"
+   },
+   "ci_kind": "fixed",
+   "ci_length": {
+    "f": "0x1.d61f1b92b939ep-3"
+   },
+   "cov_value_1": {
+    "f": "0x1.40171a9a0c933p+3"
+   },
+   "cov_value_2": {
+    "f": "0x1.3edf05a93b490p+3"
+   },
+   "diagnostics": {
+    "theta": {
+     "f": "0x1.a100e5aab5e44p-1"
+    }
+   },
+   "dist_cdf_0": {
+    "f": "0x1.5d1c24e2ae418p-2"
+   },
+   "dist_ppf_975": {
+    "f": "0x1.1c3976062a80fp-3"
+   },
+   "dist_sf_1": {
+    "f": "0x1.2e2a7de0dde83p-206"
+   },
+   "effect": {
+    "f": "0x1.894f41e66f200p-6"
+   },
+   "has_distribution": true,
+   "left_bound": {
+    "f": "-0x1.73cb4b191d71fp-4"
+   },
+   "mde_1": null,
+   "mde_2": null,
+   "method_name": "cuped-t-test",
+   "method_params": {
+    "test_type": "absolute"
+   },
+   "name_1": "control",
+   "name_2": "treatment",
+   "pvalue": {
+    "f": "0x1.5d1c24e2ae418p-1"
+   },
+   "reject": false,
+   "right_bound": {
+    "f": "0x1.1c3976062a80fp-3"
+   },
+   "size_1": 800,
+   "size_2": 820,
+   "std_1": {
+    "f": "0x1.075ba3e282e40p+1"
+   },
+   "std_2": {
+    "f": "0x1.f77461c053e60p+0"
+   },
+   "value_1": {
+    "f": "0x1.406781d8d8c5bp+3"
+   },
+   "value_2": {
+    "f": "0x1.402dfbdfac1ccp+3"
+   },
+   "warnings": []
+  },
+  "cuped-degenerate-covariate": {
+   "alpha": {
+    "f": "0x1.999999999999ap-5"
+   },
+   "ci_kind": "fixed",
+   "ci_length": null,
+   "cov_value_1": {
+    "f": "0x1.c000000000000p+2"
+   },
+   "cov_value_2": {
+    "f": "0x1.c000000000000p+2"
+   },
+   "diagnostics": {
+    "theta": null
+   },
+   "effect": null,
+   "has_distribution": false,
+   "left_bound": null,
+   "mde_1": null,
+   "mde_2": null,
+   "method_name": "cuped-t-test",
+   "method_params": {},
+   "name_1": "control",
+   "name_2": "treatment",
+   "pvalue": null,
+   "reject": false,
+   "right_bound": null,
+   "size_1": 800,
+   "size_2": 820,
+   "std_1": {
+    "f": "0x1.3263af581756ap+0"
+   },
+   "std_2": {
+    "f": "0x1.2f03ae43ede21p+0"
+   },
+   "value_1": {
+    "f": "0x1.e8f008ce5ab40p+2"
+   },
+   "value_2": {
+    "f": "0x1.e6af26f821a78p+2"
+   },
+   "warnings": [
+    "cuped-t-test: theta is non-finite (zero pooled covariate variance); returning NaN test outputs",
+    "relative effect numerically unstable (near-zero control mean); returning NaN (see statistics-changes.md H5)"
+   ]
+  },
+  "cuped-low-correlation": {
+   "alpha": {
+    "f": "0x1.999999999999ap-5"
+   },
+   "ci_kind": "fixed",
+   "ci_length": {
+    "f": "0x1.7f99c24fca75ep-4"
+   },
+   "cov_value_1": {
+    "f": "0x1.3c81df66ceeaep+3"
+   },
+   "cov_value_2": {
+    "f": "0x1.3fdac052a6fc2p+3"
+   },
+   "diagnostics": {
+    "theta": {
+     "f": "0x1.0c0bc94aa1ca3p-5"
+    }
+   },
+   "dist_cdf_0": {
+    "f": "0x1.8616dc8767333p-1"
+   },
+   "dist_ppf_975": {
+    "f": "0x1.e856fb16c224bp-6"
+   },
+   "dist_sf_1": {
+    "f": "0x0.0p+0"
+   },
+   "effect": {
+    "f": "-0x1.16dc8988d2c6fp-6"
+   },
+   "has_distribution": true,
+   "left_bound": {
+    "f": "-0x1.0584038a19ecbp-4"
+   },
+   "mde_1": null,
+   "mde_2": null,
+   "method_name": "cuped-t-test",
+   "method_params": {},
+   "name_1": "control",
+   "name_2": "treatment",
+   "pvalue": {
+    "f": "0x1.e7a48de263334p-2"
+   },
+   "reject": false,
+   "right_bound": {
+    "f": "0x1.e856fb16c224bp-6"
+   },
+   "size_1": 800,
+   "size_2": 820,
+   "std_1": {
+    "f": "0x1.38eb76890b41bp+0"
+   },
+   "std_2": {
+    "f": "0x1.32a68614db2c7p+0"
+   },
+   "value_1": {
+    "f": "0x1.3ef0e6e9d7529p+1"
+   },
+   "value_2": {
+    "f": "0x1.39f35bd29a9e6p+1"
+   },
+   "warnings": [
+    "cuped-t-test: covariate correlation for 'control' is 0.0525 < 0.5 \u2014 CUPED variance reduction will be small (legacy guard)",
+    "cuped-t-test: covariate correlation for 'treatment' is 0.0560 < 0.5 \u2014 CUPED variance reduction will be small (legacy guard)"
+   ]
+  },
+  "cuped-relative": {
+   "alpha": {
+    "f": "0x1.999999999999ap-5"
+   },
+   "ci_kind": "fixed",
+   "ci_length": {
+    "f": "0x1.7816c4491c452p-6"
+   },
+   "cov_value_1": {
+    "f": "0x1.40171a9a0c933p+3"
+   },
+   "cov_value_2": {
+    "f": "0x1.3edf05a93b490p+3"
+   },
+   "diagnostics": {
+    "theta": {
+     "f": "0x1.a100e5aab5e44p-1"
+    }
+   },
+   "dist_cdf_0": {
+    "f": "0x1.5d4d05bd8246fp-2"
+   },
+   "dist_ppf_975": {
+    "f": "0x1.c6a6ce6ca1543p-7"
+   },
+   "dist_sf_1": {
+    "f": "0x0.0p+0"
+   },
+   "effect": {
+    "f": "0x1.3a40288e143c3p-9"
+   },
+   "has_distribution": true,
+   "left_bound": {
+    "f": "-0x1.2986ba2597362p-7"
+   },
+   "mde_1": null,
+   "mde_2": null,
+   "method_name": "cuped-t-test",
+   "method_params": {},
+   "name_1": "control",
+   "name_2": "treatment",
+   "pvalue": {
+    "f": "0x1.5d4d05bd8246fp-1"
+   },
+   "reject": false,
+   "right_bound": {
+    "f": "0x1.c6a6ce6ca1543p-7"
+   },
+   "size_1": 800,
+   "size_2": 820,
+   "std_1": {
+    "f": "0x1.075ba3e282e40p+1"
+   },
+   "std_2": {
+    "f": "0x1.f77461c053e60p+0"
+   },
+   "value_1": {
+    "f": "0x1.406781d8d8c5bp+3"
+   },
+   "value_2": {
+    "f": "0x1.402dfbdfac1ccp+3"
+   },
+   "warnings": []
+  },
+  "cuped-with-mde": {
+   "alpha": {
+    "f": "0x1.999999999999ap-5"
+   },
+   "ci_kind": "fixed",
+   "ci_length": {
+    "f": "0x1.766b8ac927c58p-6"
+   },
+   "cov_value_1": {
+    "f": "0x1.3f03272ea4474p+3"
+   },
+   "cov_value_2": {
+    "f": "0x1.43bdccd197796p+3"
+   },
+   "diagnostics": {
+    "theta": {
+     "f": "0x1.9d242dbba4724p-1"
+    }
+   },
+   "dist_cdf_0": {
+    "f": "0x1.db506aba53250p-4"
+   },
+   "dist_ppf_975": {
+    "f": "0x1.2d5a5c4bd566cp-6"
+   },
+   "dist_sf_1": {
+    "f": "0x0.0p+0"
+   },
+   "effect": {
+    "f": "0x1.c8925b9d06104p-8"
+   },
+   "has_distribution": true,
+   "left_bound": {
+    "f": "-0x1.2444b9f5497aep-8"
+   },
+   "mde_1": {
+    "f": "0x1.0cb295e9e1b09p-6"
+   },
+   "mde_2": {
+    "f": "0x1.04816f0068db9p-6"
+   },
+   "method_name": "cuped-t-test",
+   "method_params": {
+    "calculate_mde": true
+   },
+   "name_1": "control",
+   "name_2": "treatment",
+   "pvalue": {
+    "f": "0x1.db506aba53250p-3"
+   },
+   "reject": false,
+   "right_bound": {
+    "f": "0x1.2d5a5c4bd566cp-6"
+   },
+   "size_1": 800,
+   "size_2": 820,
+   "std_1": {
+    "f": "0x1.fde0dd11e1f9fp+0"
+   },
+   "std_2": {
+    "f": "0x1.f1f54602f90a7p+0"
+   },
+   "value_1": {
+    "f": "0x1.3e01e34eb8614p+3"
+   },
+   "value_2": {
+    "f": "0x1.4409f0a237d74p+3"
+   },
+   "warnings": []
+  },
+  "paired-absolute": {
+   "alpha": {
+    "f": "0x1.999999999999ap-5"
+   },
+   "ci_kind": "fixed",
+   "ci_length": {
+    "f": "0x1.735402d7bc3f3p-4"
+   },
+   "cov_value_1": null,
+   "cov_value_2": null,
+   "diagnostics": {},
+   "dist_cdf_0": {
+    "f": "0x1.9bedcf109fe11p-7"
+   },
+   "dist_ppf_975": {
+    "f": "0x1.8dc7e47ecc179p-4"
+   },
+   "dist_sf_1": {
+    "f": "0x0.0p+0"
+   },
+   "effect": {
+    "f": "0x1.a83bc625dbf00p-5"
+   },
+   "has_distribution": true,
+   "left_bound": {
+    "f": "0x1.a73e1a70fd860p-8"
+   },
+   "mde_1": null,
+   "mde_2": null,
+   "method_name": "paired-t-test",
+   "method_params": {
+    "test_type": "absolute"
+   },
+   "name_1": "control",
+   "name_2": "treatment",
+   "pvalue": {
+    "f": "0x1.9bedcf109fe11p-6"
+   },
+   "reject": true,
+   "right_bound": {
+    "f": "0x1.8dc7e47ecc179p-4"
+   },
+   "size_1": 900,
+   "size_2": 900,
+   "std_1": {
+    "f": "0x1.060991374497cp+1"
+   },
+   "std_2": {
+    "f": "0x1.063103ddf6a2fp+1"
+   },
+   "value_1": {
+    "f": "0x1.40b5026487138p+3"
+   },
+   "value_2": {
+    "f": "0x1.425d3e2aacef7p+3"
+   },
+   "warnings": []
+  },
+  "paired-cuped-absolute": {
+   "alpha": {
+    "f": "0x1.999999999999ap-5"
+   },
+   "ci_kind": "fixed",
+   "ci_length": {
+    "f": "0x1.7fe90b0bdd666p-4"
+   },
+   "cov_value_1": {
+    "f": "0x1.3c74cf1d321adp+3"
+   },
+   "cov_value_2": {
+    "f": "0x1.3f4e0932f71e4p+3"
+   },
+   "diagnostics": {
+    "theta": {
+     "f": "0x1.ec83a7dedf1eep-7"
+    }
+   },
+   "dist_cdf_0": {
+    "f": "0x1.a77674a4ed17cp-12"
+   },
+   "dist_ppf_975": {
+    "f": "0x1.0407f222ae259p-3"
+   },
+   "dist_sf_1": {
+    "f": "0x0.0p+0"
+   },
+   "effect": {
+    "f": "0x1.481b5ebf6d980p-4"
+   },
+   "has_distribution": true,
+   "left_bound": {
+    "f": "0x1.104db272fdc99p-5"
+   },
+   "mde_1": null,
+   "mde_2": null,
+   "method_name": "paired-cuped-t-test",
+   "method_params": {
+    "test_type": "absolute"
+   },
+   "name_1": "control",
+   "name_2": "treatment",
+   "pvalue": {
+    "f": "0x1.a77674a4ed17cp-11"
+   },
+   "reject": true,
+   "right_bound": {
+    "f": "0x1.0407f222ae259p-3"
+   },
+   "size_1": 900,
+   "size_2": 900,
+   "std_1": {
+    "f": "0x1.ff11af52906dcp+0"
+   },
+   "std_2": {
+    "f": "0x1.fcd60795bbe9ep+0"
+   },
+   "value_1": {
+    "f": "0x1.400340eb74866p+3"
+   },
+   "value_2": {
+    "f": "0x1.429e6d8e44e0ap+3"
+   },
+   "warnings": [
+    "paired-cuped-t-test: covariate correlation for 'control' is -0.0194 < 0.5 \u2014 CUPED variance reduction will be small (legacy guard)",
+    "paired-cuped-t-test: covariate correlation for 'treatment' is 0.0663 < 0.5 \u2014 CUPED variance reduction will be small (legacy guard)"
+   ]
+  },
+  "paired-cuped-relative": {
+   "alpha": {
+    "f": "0x1.999999999999ap-5"
+   },
+   "ci_kind": "fixed",
+   "ci_length": {
+    "f": "0x1.363c50b07597ap-7"
+   },
+   "cov_value_1": {
+    "f": "0x1.40430e276f565p+3"
+   },
+   "cov_value_2": {
+    "f": "0x1.4028e597f0472p+3"
+   },
+   "diagnostics": {
+    "theta": {
+     "f": "0x1.5fd13f0b2402bp-11"
+    }
+   },
+   "dist_cdf_0": {
+    "f": "0x1.8a71ce4e3ede8p-7"
+   },
+   "dist_ppf_975": {
+    "f": "0x1.4da8ca76ae5d6p-7"
+   },
+   "dist_sf_1": {
+    "f": "0x0.0p+0"
+   },
+   "effect": {
+    "f": "0x1.6515443ce7234p-8"
+   },
+   "has_distribution": true,
+   "left_bound": {
+    "f": "0x1.76c79c638c5c8p-11"
+   },
+   "mde_1": null,
+   "mde_2": null,
+   "method_name": "paired-cuped-t-test",
+   "method_params": {},
+   "name_1": "control",
+   "name_2": "treatment",
+   "pvalue": {
+    "f": "0x1.8a71ce4e3ede8p-6"
+   },
+   "reject": true,
+   "right_bound": {
+    "f": "0x1.4da8ca76ae5d6p-7"
+   },
+   "size_1": 900,
+   "size_2": 900,
+   "std_1": {
+    "f": "0x1.f977481cdedadp+0"
+   },
+   "std_2": {
+    "f": "0x1.fb2fc0eb5adf6p+0"
+   },
+   "value_1": {
+    "f": "0x1.40c65dfa2027fp+3"
+   },
+   "value_2": {
+    "f": "0x1.4285c8c294e3bp+3"
+   },
+   "warnings": [
+    "paired-cuped-t-test: covariate correlation for 'control' is 0.0290 < 0.5 \u2014 CUPED variance reduction will be small (legacy guard)",
+    "paired-cuped-t-test: covariate correlation for 'treatment' is -0.0399 < 0.5 \u2014 CUPED variance reduction will be small (legacy guard)"
+   ]
+  },
+  "paired-relative": {
+   "alpha": {
+    "f": "0x1.999999999999ap-5"
+   },
+   "ci_kind": "fixed",
+   "ci_length": {
+    "f": "0x1.27aeaf1d28e5cp-7"
+   },
+   "cov_value_1": null,
+   "cov_value_2": null,
+   "diagnostics": {},
+   "dist_cdf_0": {
+    "f": "0x1.961cd49d11fd0p-7"
+   },
+   "dist_ppf_975": {
+    "f": "0x1.3d291351d167bp-7"
+   },
+   "dist_sf_1": {
+    "f": "0x0.0p+0"
+   },
+   "effect": {
+    "f": "0x1.52a3778679e9ap-8"
+   },
+   "has_distribution": true,
+   "left_bound": {
+    "f": "0x1.57a6434a881e8p-11"
+   },
+   "mde_1": null,
+   "mde_2": null,
+   "method_name": "paired-t-test",
+   "method_params": {},
+   "name_1": "control",
+   "name_2": "treatment",
+   "pvalue": {
+    "f": "0x1.961cd49d11fd0p-6"
+   },
+   "reject": true,
+   "right_bound": {
+    "f": "0x1.3d291351d167bp-7"
+   },
+   "size_1": 900,
+   "size_2": 900,
+   "std_1": {
+    "f": "0x1.060991374497cp+1"
+   },
+   "std_2": {
+    "f": "0x1.063103ddf6a2fp+1"
+   },
+   "value_1": {
+    "f": "0x1.40b5026487138p+3"
+   },
+   "value_2": {
+    "f": "0x1.425d3e2aacef7p+3"
+   },
+   "warnings": []
+  },
+  "ratio-delta-absolute": {
+   "alpha": {
+    "f": "0x1.999999999999ap-5"
+   },
+   "ci_kind": "fixed",
+   "ci_length": {
+    "f": "0x1.cfc3c848ee186p-3"
+   },
+   "cov_value_1": null,
+   "cov_value_2": null,
+   "diagnostics": {},
+   "dist_cdf_0": {
+    "f": "0x1.63f179fdfedd5p-14"
+   },
+   "dist_ppf_975": {
+    "f": "0x1.52611b40266a9p-2"
+   },
+   "dist_sf_1": {
+    "f": "0x1.602ab5aabfddap-138"
+   },
+   "effect": {
+    "f": "0x1.bce0525bd5c90p-3"
+   },
+   "has_distribution": true,
+   "left_bound": {
+    "f": "0x1.a9fcdc6ebd799p-4"
+   },
+   "mde_1": null,
+   "mde_2": null,
+   "method_name": "ratio-delta",
+   "method_params": {
+    "test_type": "absolute"
+   },
+   "name_1": "control",
+   "name_2": "treatment",
+   "pvalue": {
+    "f": "0x1.63f179fdfedd5p-13"
+   },
+   "reject": true,
+   "right_bound": {
+    "f": "0x1.52611b40266a9p-2"
+   },
+   "size_1": 700,
+   "size_2": 730,
+   "std_1": {
+    "f": "0x1.1a925e5798ab9p+0"
+   },
+   "std_2": {
+    "f": "0x1.14615ddbeaf19p+0"
+   },
+   "value_1": {
+    "f": "0x1.f5d780c26655ap+0"
+   },
+   "value_2": {
+    "f": "0x1.16b9c586f0876p+1"
+   },
+   "warnings": []
+  },
+  "ratio-delta-relative": {
+   "alpha": {
+    "f": "0x1.999999999999ap-5"
+   },
+   "ci_kind": "fixed",
+   "ci_length": {
+    "f": "0x1.f52eafc2c5b00p-4"
+   },
+   "cov_value_1": null,
+   "cov_value_2": null,
+   "diagnostics": {},
+   "dist_cdf_0": {
+    "f": "0x1.93fd96652b51ep-13"
+   },
+   "dist_ppf_975": {
+    "f": "0x1.603c7c673fde9p-3"
+   },
+   "dist_sf_1": {
+    "f": "0x1.6709883a69ff1p-592"
+   },
+   "effect": {
+    "f": "0x1.c5e1a0ed1ce53p-4"
+   },
+   "has_distribution": true,
+   "left_bound": {
+    "f": "0x1.96949217741a5p-5"
+   },
+   "mde_1": null,
+   "mde_2": null,
+   "method_name": "ratio-delta",
+   "method_params": {},
+   "name_1": "control",
+   "name_2": "treatment",
+   "pvalue": {
+    "f": "0x1.93fd96652b51ep-12"
+   },
+   "reject": true,
+   "right_bound": {
+    "f": "0x1.603c7c673fde9p-3"
+   },
+   "size_1": 700,
+   "size_2": 730,
+   "std_1": {
+    "f": "0x1.1a925e5798ab9p+0"
+   },
+   "std_2": {
+    "f": "0x1.14615ddbeaf19p+0"
+   },
+   "value_1": {
+    "f": "0x1.f5d780c26655ap+0"
+   },
+   "value_2": {
+    "f": "0x1.16b9c586f0876p+1"
+   },
+   "warnings": []
+  },
+  "ratio-delta-zero-denominator": {
+   "alpha": {
+    "f": "0x1.999999999999ap-5"
+   },
+   "ci_kind": "fixed",
+   "ci_length": null,
+   "cov_value_1": null,
+   "cov_value_2": null,
+   "diagnostics": {},
+   "effect": null,
+   "has_distribution": false,
+   "left_bound": null,
+   "mde_1": null,
+   "mde_2": null,
+   "method_name": "ratio-delta",
+   "method_params": {},
+   "name_1": "control",
+   "name_2": "treatment",
+   "pvalue": null,
+   "reject": false,
+   "right_bound": null,
+   "size_1": 700,
+   "size_2": 730,
+   "std_1": null,
+   "std_2": {
+    "f": "0x1.1ebe183b23043p+0"
+   },
+   "value_1": null,
+   "value_2": {
+    "f": "0x1.0d563865f809ap+1"
+   },
+   "warnings": [
+    "ratio undefined for 'control': denominator mean is zero or non-finite; returning NaN (see statistics-changes.md H5)",
+    "relative effect undefined: control (denominator) mean is zero or non-finite; returning NaN (see statistics-changes.md H5)"
+   ]
+  },
+  "ttest-absolute": {
+   "alpha": {
+    "f": "0x1.999999999999ap-5"
+   },
+   "ci_kind": "fixed",
+   "ci_length": {
+    "f": "0x1.6c23f1470310cp-2"
+   },
+   "cov_value_1": null,
+   "cov_value_2": null,
+   "diagnostics": {},
+   "dist_cdf_0": {
+    "f": "0x1.0629edfff131dp-4"
+   },
+   "dist_ppf_975": {
+    "f": "0x1.4374a691f92a6p-2"
+   },
+   "dist_sf_1": {
+    "f": "0x1.396c0bcd76a10p-70"
+   },
+   "effect": {
+    "f": "0x1.1ac55bdcef440p-3"
+   },
+   "has_distribution": true,
+   "left_bound": {
+    "f": "-0x1.457a55a84f330p-5"
+   },
+   "mde_1": null,
+   "mde_2": null,
+   "method_name": "t-test",
+   "method_params": {
+    "test_type": "absolute"
+   },
+   "name_1": "control",
+   "name_2": "treatment",
+   "pvalue": {
+    "f": "0x1.0629edfff131dp-3"
+   },
+   "reject": false,
+   "right_bound": {
+    "f": "0x1.4374a691f92a6p-2"
+   },
+   "size_1": 997,
+   "size_2": 1013,
+   "std_1": {
+    "f": "0x1.0a4ceaa4826cfp+1"
+   },
+   "std_2": {
+    "f": "0x1.fc11a86f9f79bp+0"
+   },
+   "value_1": {
+    "f": "0x1.3cba884cf614bp+3"
+   },
+   "value_2": {
+    "f": "0x1.41259dbc69d1cp+3"
+   },
+   "warnings": []
+  },
+  "ttest-degenerate-constant": {
+   "alpha": {
+    "f": "0x1.999999999999ap-5"
+   },
+   "ci_kind": "fixed",
+   "ci_length": null,
+   "cov_value_1": null,
+   "cov_value_2": null,
+   "diagnostics": {},
+   "effect": {
+    "f": "0x0.0p+0"
+   },
+   "has_distribution": false,
+   "left_bound": null,
+   "mde_1": null,
+   "mde_2": null,
+   "method_name": "t-test",
+   "method_params": {},
+   "name_1": "control",
+   "name_2": "treatment",
+   "pvalue": null,
+   "reject": false,
+   "right_bound": null,
+   "size_1": 50,
+   "size_2": 60,
+   "std_1": {
+    "f": "0x0.0p+0"
+   },
+   "std_2": {
+    "f": "0x0.0p+0"
+   },
+   "value_1": {
+    "f": "0x1.8000000000000p+1"
+   },
+   "value_2": {
+    "f": "0x1.8000000000000p+1"
+   },
+   "warnings": [
+    "effect variance is zero (degenerate samples); returning NaN test outputs"
+   ]
+  },
+  "ttest-relative": {
+   "alpha": {
+    "f": "0x1.999999999999ap-5"
+   },
+   "ci_kind": "fixed",
+   "ci_length": {
+    "f": "0x1.287e7fc0d4aeap-5"
+   },
+   "cov_value_1": null,
+   "cov_value_2": null,
+   "diagnostics": {},
+   "dist_cdf_0": {
+    "f": "0x1.0befc5eacc15cp-4"
+   },
+   "dist_ppf_975": {
+    "f": "0x1.06861098304d0p-5"
+   },
+   "dist_sf_1": {
+    "f": "0x0.0p+0"
+   },
+   "effect": {
+    "f": "0x1.c91b42df17d6dp-7"
+   },
+   "has_distribution": true,
+   "left_bound": {
+    "f": "-0x1.0fc37945230d2p-8"
+   },
+   "mde_1": null,
+   "mde_2": null,
+   "method_name": "t-test",
+   "method_params": {},
+   "name_1": "control",
+   "name_2": "treatment",
+   "pvalue": {
+    "f": "0x1.0befc5eacc15cp-3"
+   },
+   "reject": false,
+   "right_bound": {
+    "f": "0x1.06861098304d0p-5"
+   },
+   "size_1": 997,
+   "size_2": 1013,
+   "std_1": {
+    "f": "0x1.0a4ceaa4826cfp+1"
+   },
+   "std_2": {
+    "f": "0x1.fc11a86f9f79bp+0"
+   },
+   "value_1": {
+    "f": "0x1.3cba884cf614bp+3"
+   },
+   "value_2": {
+    "f": "0x1.41259dbc69d1cp+3"
+   },
+   "warnings": []
+  },
+  "ttest-with-mde": {
+   "alpha": {
+    "f": "0x1.999999999999ap-5"
+   },
+   "ci_kind": "fixed",
+   "ci_length": {
+    "f": "0x1.299f2568047a2p-5"
+   },
+   "cov_value_1": null,
+   "cov_value_2": null,
+   "diagnostics": {},
+   "dist_cdf_0": {
+    "f": "0x1.fd67392c40f76p-7"
+   },
+   "dist_ppf_975": {
+    "f": "0x1.387f85aee2318p-5"
+   },
+   "dist_sf_1": {
+    "f": "0x0.0p+0"
+   },
+   "effect": {
+    "f": "0x1.475fe5f5bfe8ep-6"
+   },
+   "has_distribution": true,
+   "left_bound": {
+    "f": "0x1.dc0c08dbb6ec0p-10"
+   },
+   "mde_1": {
+    "f": "0x1.9e83e425aee63p-6"
+   },
+   "mde_2": {
+    "f": "0x1.a36e2eb1c432dp-6"
+   },
+   "method_name": "t-test",
+   "method_params": {
+    "calculate_mde": true
+   },
+   "name_1": "control",
+   "name_2": "treatment",
+   "pvalue": {
+    "f": "0x1.fd67392c40f76p-6"
+   },
+   "reject": true,
+   "right_bound": {
+    "f": "0x1.387f85aee2318p-5"
+   },
+   "size_1": 997,
+   "size_2": 1013,
+   "std_1": {
+    "f": "0x1.fe2c17e9ca9fcp+0"
+   },
+   "std_2": {
+    "f": "0x1.075cf8d9f0d82p+1"
+   },
+   "value_1": {
+    "f": "0x1.3afe484427562p+3"
+   },
+   "value_2": {
+    "f": "0x1.41498b7aa634dp+3"
+   },
+   "warnings": []
+  }
+ },
+ "normal_test": {
+  "degenerate-inf-effect": {
+   "ci_length": {
+    "f": "nan"
+   },
+   "effect": {
+    "f": "inf"
+   },
+   "has_distribution": false,
+   "left_bound": {
+    "f": "nan"
+   },
+   "pvalue": {
+    "f": "nan"
+   },
+   "reject": false,
+   "right_bound": {
+    "f": "nan"
+   },
+   "warnings": [
+    "effect or its variance is non-finite; returning NaN test outputs"
+   ]
+  },
+  "degenerate-inf-var": {
+   "ci_length": {
+    "f": "nan"
+   },
+   "effect": {
+    "f": "0x1.0000000000000p+0"
+   },
+   "has_distribution": false,
+   "left_bound": {
+    "f": "nan"
+   },
+   "pvalue": {
+    "f": "nan"
+   },
+   "reject": false,
+   "right_bound": {
+    "f": "nan"
+   },
+   "warnings": [
+    "effect or its variance is non-finite; returning NaN test outputs"
+   ]
+  },
+  "degenerate-nan-effect": {
+   "ci_length": {
+    "f": "nan"
+   },
+   "effect": {
+    "f": "nan"
+   },
+   "has_distribution": false,
+   "left_bound": {
+    "f": "nan"
+   },
+   "pvalue": {
+    "f": "nan"
+   },
+   "reject": false,
+   "right_bound": {
+    "f": "nan"
+   },
+   "warnings": [
+    "effect or its variance is non-finite; returning NaN test outputs"
+   ]
+  },
+  "degenerate-nan-var": {
+   "ci_length": {
+    "f": "nan"
+   },
+   "effect": {
+    "f": "0x1.0000000000000p-1"
+   },
+   "has_distribution": false,
+   "left_bound": {
+    "f": "nan"
+   },
+   "pvalue": {
+    "f": "nan"
+   },
+   "reject": false,
+   "right_bound": {
+    "f": "nan"
+   },
+   "warnings": [
+    "effect or its variance is non-finite; returning NaN test outputs"
+   ]
+  },
+  "degenerate-negative-var": {
+   "ci_length": {
+    "f": "nan"
+   },
+   "effect": {
+    "f": "0x1.0000000000000p-1"
+   },
+   "has_distribution": false,
+   "left_bound": {
+    "f": "nan"
+   },
+   "pvalue": {
+    "f": "nan"
+   },
+   "reject": false,
+   "right_bound": {
+    "f": "nan"
+   },
+   "warnings": [
+    "effect variance is negative (anomalous covariance term \u2014 possible with the mixed-ddof convention on adversarial data); returning NaN test outputs"
+   ]
+  },
+  "degenerate-zero-var": {
+   "ci_length": {
+    "f": "nan"
+   },
+   "effect": {
+    "f": "0x1.0000000000000p-1"
+   },
+   "has_distribution": false,
+   "left_bound": {
+    "f": "nan"
+   },
+   "pvalue": {
+    "f": "nan"
+   },
+   "reject": false,
+   "right_bound": {
+    "f": "nan"
+   },
+   "warnings": [
+    "effect variance is zero (degenerate samples); returning NaN test outputs"
+   ]
+  },
+  "extreme-huge-scale": {
+   "ci_length": {
+    "f": "0x0.0p+0"
+   },
+   "dist_cdf_0": {
+    "f": "0x0.0p+0"
+   },
+   "dist_ppf_975": {
+    "f": "0x1.7e43c8800759cp+996"
+   },
+   "dist_sf_1": {
+    "f": "0x1.0000000000000p+0"
+   },
+   "effect": {
+    "f": "0x1.7e43c8800759cp+996"
+   },
+   "has_distribution": true,
+   "left_bound": {
+    "f": "0x1.7e43c8800759cp+996"
+   },
+   "pvalue": {
+    "f": "0x0.0p+0"
+   },
+   "reject": true,
+   "right_bound": {
+    "f": "0x1.7e43c8800759cp+996"
+   },
+   "warnings": []
+  },
+  "extreme-tiny-var": {
+   "ci_length": {
+    "f": "0x0.0p+0"
+   },
+   "dist_cdf_0": {
+    "f": "0x0.0p+0"
+   },
+   "dist_ppf_975": {
+    "f": "0x1.8000000000000p+1"
+   },
+   "dist_sf_1": {
+    "f": "0x1.0000000000000p+0"
+   },
+   "effect": {
+    "f": "0x1.8000000000000p+1"
+   },
+   "has_distribution": true,
+   "left_bound": {
+    "f": "0x1.8000000000000p+1"
+   },
+   "pvalue": {
+    "f": "0x0.0p+0"
+   },
+   "reject": true,
+   "right_bound": {
+    "f": "0x1.8000000000000p+1"
+   },
+   "warnings": []
+  },
+  "extreme-z100": {
+   "ci_length": {
+    "f": "0x1.91668f4bf32c0p-2"
+   },
+   "dist_cdf_0": {
+    "f": "0x0.0p+0"
+   },
+   "dist_ppf_975": {
+    "f": "0x1.46459a3d2fccbp+3"
+   },
+   "dist_sf_1": {
+    "f": "0x1.0000000000000p+0"
+   },
+   "effect": {
+    "f": "0x1.4000000000000p+3"
+   },
+   "has_distribution": true,
+   "left_bound": {
+    "f": "0x1.39ba65c2d0335p+3"
+   },
+   "pvalue": {
+    "f": "0x0.0p+0"
+   },
+   "reject": true,
+   "right_bound": {
+    "f": "0x1.46459a3d2fccbp+3"
+   },
+   "warnings": []
+  },
+  "extreme-z20-negative": {
+   "ci_length": {
+    "f": "0x1.f5c0331eeff80p+1"
+   },
+   "dist_cdf_0": {
+    "f": "0x1.0000000000000p+0"
+   },
+   "dist_ppf_975": {
+    "f": "-0x1.20a3fcce11008p+4"
+   },
+   "dist_sf_1": {
+    "f": "0x1.1ee774feb433cp-324"
+   },
+   "effect": {
+    "f": "-0x1.4000000000000p+4"
+   },
+   "has_distribution": true,
+   "left_bound": {
+    "f": "-0x1.5f5c0331eeff8p+4"
+   },
+   "pvalue": {
+    "f": "0x1.c0bd0f18806a1p-294"
+   },
+   "reject": true,
+   "right_bound": {
+    "f": "-0x1.20a3fcce11008p+4"
+   },
+   "warnings": []
+  },
+  "extreme-z37-underflow-edge": {
+   "ci_length": {
+    "f": "0x1.f5c0331eeff80p+1"
+   },
+   "dist_cdf_0": {
+    "f": "0x1.eaccc6bfeacd5p-995"
+   },
+   "dist_ppf_975": {
+    "f": "0x1.37ae0198f77fcp+5"
+   },
+   "dist_sf_1": {
+    "f": "0x1.0000000000000p+0"
+   },
+   "effect": {
+    "f": "0x1.2800000000000p+5"
+   },
+   "has_distribution": true,
+   "left_bound": {
+    "f": "0x1.1851fe6708804p+5"
+   },
+   "pvalue": {
+    "f": "0x1.eaccc6bfeacd5p-994"
+   },
+   "reject": true,
+   "right_bound": {
+    "f": "0x1.37ae0198f77fcp+5"
+   },
+   "warnings": []
+  },
+  "extreme-z40-underflow": {
+   "ci_length": {
+    "f": "0x1.f5c0331eeff80p+1"
+   },
+   "dist_cdf_0": {
+    "f": "0x0.0p+0"
+   },
+   "dist_ppf_975": {
+    "f": "0x1.4fae0198f77fcp+5"
+   },
+   "dist_sf_1": {
+    "f": "0x1.0000000000000p+0"
+   },
+   "effect": {
+    "f": "0x1.4000000000000p+5"
+   },
+   "has_distribution": true,
+   "left_bound": {
+    "f": "0x1.3051fe6708804p+5"
+   },
+   "pvalue": {
+    "f": "0x0.0p+0"
+   },
+   "reject": true,
+   "right_bound": {
+    "f": "0x1.4fae0198f77fcp+5"
+   },
+   "warnings": []
+  },
+  "extreme-z8": {
+   "ci_length": {
+    "f": "0x1.f5c0331eeff84p+1"
+   },
+   "dist_cdf_0": {
+    "f": "0x1.669d2c90d55a2p-51"
+   },
+   "dist_ppf_975": {
+    "f": "0x1.3eb80663ddff0p+3"
+   },
+   "dist_sf_1": {
+    "f": "0x1.fffffffffd2f8p-1"
+   },
+   "effect": {
+    "f": "0x1.0000000000000p+3"
+   },
+   "has_distribution": true,
+   "left_bound": {
+    "f": "0x1.828ff3384401ep+2"
+   },
+   "pvalue": {
+    "f": "0x1.669d2c90d55a2p-50"
+   },
+   "reject": true,
+   "right_bound": {
+    "f": "0x1.3eb80663ddff0p+3"
+   },
+   "warnings": []
+  },
+  "loose-alpha": {
+   "ci_length": {
+    "f": "0x1.4813c36e26d32p+1"
+   },
+   "dist_cdf_0": {
+    "f": "0x1.44ed0bb7cb20cp-3"
+   },
+   "dist_ppf_975": {
+    "f": "0x1.7ae0198f77fc2p+1"
+   },
+   "dist_sf_1": {
+    "f": "0x1.0000000000000p-1"
+   },
+   "effect": {
+    "f": "0x1.0000000000000p+0"
+   },
+   "has_distribution": true,
+   "left_bound": {
+    "f": "-0x1.204f0db89b4c8p-2"
+   },
+   "pvalue": {
+    "f": "0x1.44ed0bb7cb20cp-2"
+   },
+   "reject": false,
+   "right_bound": {
+    "f": "0x1.2409e1b713699p+1"
+   },
+   "warnings": []
+  },
+  "micro-alpha": {
+   "ci_length": {
+    "f": "0x1.6ec4430462052p+3"
+   },
+   "dist_cdf_0": {
+    "f": "0x1.44ed0bb7cb20cp-3"
+   },
+   "dist_ppf_975": {
+    "f": "0x1.7ae0198f77fc2p+1"
+   },
+   "dist_sf_1": {
+    "f": "0x1.0000000000000p-1"
+   },
+   "effect": {
+    "f": "0x1.0000000000000p+0"
+   },
+   "has_distribution": true,
+   "left_bound": {
+    "f": "-0x1.2ec44303d4597p+2"
+   },
+   "pvalue": {
+    "f": "0x1.44ed0bb7cb20cp-2"
+   },
+   "reject": false,
+   "right_bound": {
+    "f": "0x1.aec44304efb0dp+2"
+   },
+   "warnings": []
+  },
+  "near-zero-effect": {
+   "ci_length": {
+    "f": "0x1.f5c0331eeff85p+1"
+   },
+   "dist_cdf_0": {
+    "f": "0x1.ffffffffffff9p-2"
+   },
+   "dist_ppf_975": {
+    "f": "0x1.f5c0331eeff89p+0"
+   },
+   "dist_sf_1": {
+    "f": "0x1.44ed0bb7cb212p-3"
+   },
+   "effect": {
+    "f": "0x1.203af9ee75616p-50"
+   },
+   "has_distribution": true,
+   "left_bound": {
+    "f": "-0x1.f5c0331eeff81p+0"
+   },
+   "pvalue": {
+    "f": "0x1.ffffffffffff9p-1"
+   },
+   "reject": false,
+   "right_bound": {
+    "f": "0x1.f5c0331eeff89p+0"
+   },
+   "warnings": []
+  },
+  "plain-negative": {
+   "ci_length": {
+    "f": "0x1.91668f4bf32d2p-3"
+   },
+   "dist_cdf_0": {
+    "f": "0x1.f8e1a5b741785p-1"
+   },
+   "dist_ppf_975": {
+    "f": "-0x1.894666e814ac8p-7"
+   },
+   "dist_sf_1": {
+    "f": "0x1.9cfbb891c8496p-362"
+   },
+   "effect": {
+    "f": "-0x1.c28f5c28f5c29p-4"
+   },
+   "has_distribution": true,
+   "left_bound": {
+    "f": "-0x1.a9faf5ba7477ep-3"
+   },
+   "pvalue": {
+    "f": "0x1.c796922fa1ed1p-6"
+   },
+   "reject": true,
+   "right_bound": {
+    "f": "-0x1.894666e814ac8p-7"
+   },
+   "warnings": []
+  },
+  "plain-small-lift": {
+   "ci_length": {
+    "f": "0x1.411ed9098f574p-4"
+   },
+   "dist_cdf_0": {
+    "f": "0x1.11a46d89647eep-4"
+   },
+   "dist_ppf_975": {
+    "f": "0x1.1b70b432dc268p-4"
+   },
+   "dist_sf_1": {
+    "f": "0x0.0p+0"
+   },
+   "effect": {
+    "f": "0x1.eb851eb851eb8p-6"
+   },
+   "has_distribution": true,
+   "left_bound": {
+    "f": "-0x1.2d7126b599864p-7"
+   },
+   "pvalue": {
+    "f": "0x1.11a46d89647eep-3"
+   },
+   "reject": false,
+   "right_bound": {
+    "f": "0x1.1b70b432dc268p-4"
+   },
+   "warnings": []
+  },
+  "tight-alpha": {
+   "ci_length": {
+    "f": "0x1.a52ffadd2f8e4p+2"
+   },
+   "dist_cdf_0": {
+    "f": "0x1.44ed0bb7cb20cp-3"
+   },
+   "dist_ppf_975": {
+    "f": "0x1.7ae0198f77fc2p+1"
+   },
+   "dist_sf_1": {
+    "f": "0x1.0000000000000p-1"
+   },
+   "effect": {
+    "f": "0x1.0000000000000p+0"
+   },
+   "has_distribution": true,
+   "left_bound": {
+    "f": "-0x1.252ffadd2f8c0p+1"
+   },
+   "pvalue": {
+    "f": "0x1.44ed0bb7cb20cp-2"
+   },
+   "reject": false,
+   "right_bound": {
+    "f": "0x1.1297fd6e97c84p+2"
+   },
+   "warnings": []
+  },
+  "zero-effect": {
+   "ci_length": {
+    "f": "0x1.f5c0331eeff85p+1"
+   },
+   "dist_cdf_0": {
+    "f": "0x1.0000000000000p-1"
+   },
+   "dist_ppf_975": {
+    "f": "0x1.f5c0331eeff84p+0"
+   },
+   "dist_sf_1": {
+    "f": "0x1.44ed0bb7cb20cp-3"
+   },
+   "effect": {
+    "f": "0x0.0p+0"
+   },
+   "has_distribution": true,
+   "left_bound": {
+    "f": "-0x1.f5c0331eeff86p+0"
+   },
+   "pvalue": {
+    "f": "0x1.0000000000000p+0"
+   },
+   "reject": false,
+   "right_bound": {
+    "f": "0x1.f5c0331eeff84p+0"
+   },
+   "warnings": []
+  }
+ },
+ "se_from_ci_length": {
+  "inf-length": {
+   "se": {
+    "f": "nan"
+   }
+  },
+  "micro-alpha": {
+   "se": {
+    "f": "0x1.f451ff5414328p-5"
+   }
+  },
+  "nan-length": {
+   "se": {
+    "f": "nan"
+   }
+  },
+  "negative-length": {
+   "se": {
+    "f": "nan"
+   }
+  },
+  "plain": {
+   "se": {
+    "f": "0x1.a1f78464b4a0ep-4"
+   }
+  },
+  "tight-alpha": {
+   "se": {
+    "f": "0x1.756f86fb2b0e5p-3"
+   }
+  },
+  "zero-length": {
+   "se": {
+    "f": "0x0.0p+0"
+   }
+  }
+ },
+ "ztest": {
+  "absolute-plain": {
+   "alpha": {
+    "f": "0x1.999999999999ap-5"
+   },
+   "ci_kind": "fixed",
+   "ci_length": {
+    "f": "0x1.4e50fcfc338f6p-5"
+   },
+   "cov_value_1": null,
+   "cov_value_2": null,
+   "diagnostics": {},
+   "dist_cdf_0": {
+    "f": "0x1.327815bf75f6dp-4"
+   },
+   "dist_ppf_975": {
+    "f": "0x1.2209c62c2e429p-5"
+   },
+   "dist_sf_1": {
+    "f": "0x0.0p+0"
+   },
+   "effect": {
+    "f": "0x1.eb851eb851eb8p-7"
+   },
+   "has_distribution": true,
+   "left_bound": {
+    "f": "-0x1.6239b6802a66cp-8"
+   },
+   "mde_1": null,
+   "mde_2": null,
+   "method_name": "z-test",
+   "method_params": {
+    "test_type": "absolute"
+   },
+   "name_1": "control",
+   "name_2": "treatment",
+   "pvalue": {
+    "f": "0x1.327815bf75f6dp-3"
+   },
+   "reject": false,
+   "right_bound": {
+    "f": "0x1.2209c62c2e429p-5"
+   },
+   "size_1": 1000,
+   "size_2": 1000,
+   "std_1": {
+    "f": "0x1.c3acfb4c60923p-8"
+   },
+   "std_2": {
+    "f": "0x1.fee85c6de9887p-8"
+   },
+   "value_1": {
+    "f": "0x1.999999999999ap-5"
+   },
+   "value_2": {
+    "f": "0x1.0a3d70a3d70a4p-4"
+   },
+   "warnings": []
+  },
+  "absolute-zero-control": {
+   "alpha": {
+    "f": "0x1.999999999999ap-5"
+   },
+   "ci_kind": "fixed",
+   "ci_length": {
+    "f": "0x1.6281e71567c54p-4"
+   },
+   "cov_value_1": null,
+   "cov_value_2": null,
+   "diagnostics": {},
+   "dist_cdf_0": {
+    "f": "0x1.81ae29182c22dp-7"
+   },
+   "dist_ppf_975": {
+    "f": "0x1.7e0dc05780af6p-4"
+   },
+   "dist_sf_1": {
+    "f": "0x0.0p+0"
+   },
+   "effect": {
+    "f": "0x1.999999999999ap-5"
+   },
+   "has_distribution": true,
+   "left_bound": {
+    "f": "0x1.b8bd94218ea28p-8"
+   },
+   "mde_1": null,
+   "mde_2": null,
+   "method_name": "z-test",
+   "method_params": {
+    "test_type": "absolute"
+   },
+   "name_1": "control",
+   "name_2": "treatment",
+   "pvalue": {
+    "f": "0x1.81ae29182c22dp-6"
+   },
+   "reject": true,
+   "right_bound": {
+    "f": "0x1.7e0dc05780af6p-4"
+   },
+   "size_1": 100,
+   "size_2": 100,
+   "std_1": {
+    "f": "0x0.0p+0"
+   },
+   "std_2": {
+    "f": "0x1.6514bc82e7848p-6"
+   },
+   "value_1": {
+    "f": "0x0.0p+0"
+   },
+   "value_2": {
+    "f": "0x1.999999999999ap-5"
+   },
+   "warnings": []
+  },
+  "degenerate-pooled-one": {
+   "alpha": {
+    "f": "0x1.999999999999ap-5"
+   },
+   "ci_kind": "fixed",
+   "ci_length": null,
+   "cov_value_1": null,
+   "cov_value_2": null,
+   "diagnostics": {},
+   "effect": {
+    "f": "0x0.0p+0"
+   },
+   "has_distribution": false,
+   "left_bound": null,
+   "mde_1": null,
+   "mde_2": null,
+   "method_name": "z-test",
+   "method_params": {},
+   "name_1": "control",
+   "name_2": "treatment",
+   "pvalue": null,
+   "reject": false,
+   "right_bound": null,
+   "size_1": 100,
+   "size_2": 100,
+   "std_1": {
+    "f": "0x0.0p+0"
+   },
+   "std_2": {
+    "f": "0x0.0p+0"
+   },
+   "value_1": {
+    "f": "0x1.0000000000000p+0"
+   },
+   "value_2": {
+    "f": "0x1.0000000000000p+0"
+   },
+   "warnings": [
+    "pooled proportion variance is zero (pooled proportion is 0 or 1); returning NaN test outputs"
+   ]
+  },
+  "degenerate-pooled-zero": {
+   "alpha": {
+    "f": "0x1.999999999999ap-5"
+   },
+   "ci_kind": "fixed",
+   "ci_length": null,
+   "cov_value_1": null,
+   "cov_value_2": null,
+   "diagnostics": {},
+   "effect": null,
+   "has_distribution": false,
+   "left_bound": null,
+   "mde_1": null,
+   "mde_2": null,
+   "method_name": "z-test",
+   "method_params": {},
+   "name_1": "control",
+   "name_2": "treatment",
+   "pvalue": null,
+   "reject": false,
+   "right_bound": null,
+   "size_1": 100,
+   "size_2": 100,
+   "std_1": {
+    "f": "0x0.0p+0"
+   },
+   "std_2": {
+    "f": "0x0.0p+0"
+   },
+   "value_1": {
+    "f": "0x0.0p+0"
+   },
+   "value_2": {
+    "f": "0x0.0p+0"
+   },
+   "warnings": [
+    "pooled proportion variance is zero (pooled proportion is 0 or 1); returning NaN test outputs",
+    "relative effect undefined: control proportion is zero or non-finite; returning NaN (see statistics-changes.md H5)"
+   ]
+  },
+  "extreme-z": {
+   "alpha": {
+    "f": "0x1.999999999999ap-5"
+   },
+   "ci_kind": "fixed",
+   "ci_length": {
+    "f": "0x1.5e856be597168p+7"
+   },
+   "cov_value_1": null,
+   "cov_value_2": null,
+   "diagnostics": {},
+   "dist_cdf_0": {
+    "f": "0x0.0p+0"
+   },
+   "dist_ppf_975": {
+    "f": "0x1.04d42b5f2cb8bp+11"
+   },
+   "dist_sf_1": {
+    "f": "0x1.0000000000000p+0"
+   },
+   "effect": {
+    "f": "0x1.f3c0000000000p+10"
+   },
+   "has_distribution": true,
+   "left_bound": {
+    "f": "0x1.ddd7a941a68e9p+10"
+   },
+   "mde_1": null,
+   "mde_2": null,
+   "method_name": "z-test",
+   "method_params": {},
+   "name_1": "control",
+   "name_2": "treatment",
+   "pvalue": {
+    "f": "0x0.0p+0"
+   },
+   "reject": true,
+   "right_bound": {
+    "f": "0x1.04d42b5f2cb8bp+11"
+   },
+   "size_1": 1000000,
+   "size_2": 1000000,
+   "std_1": {
+    "f": "0x1.0c6f713f91f36p-20"
+   },
+   "std_2": {
+    "f": "0x1.76c64d48f23c6p-15"
+   },
+   "value_1": {
+    "f": "0x1.0c6f7a0b5ed8dp-20"
+   },
+   "value_2": {
+    "f": "0x1.0624dd2f1a9fcp-9"
+   },
+   "warnings": []
+  },
+  "extreme-z-absolute": {
+   "alpha": {
+    "f": "0x1.0624dd2f1a9fcp-10"
+   },
+   "ci_kind": "fixed",
+   "ci_length": {
+    "f": "0x1.fcf31c786ef04p-11"
+   },
+   "cov_value_1": null,
+   "cov_value_2": null,
+   "diagnostics": {},
+   "dist_cdf_0": {
+    "f": "0x1.398ae4550b3c7p-138"
+   },
+   "dist_ppf_975": {
+    "f": "0x1.2c09a983c6c31p-9"
+   },
+   "dist_sf_1": {
+    "f": "0x0.0p+0"
+   },
+   "effect": {
+    "f": "0x1.0624dd2f1a9fcp-9"
+   },
+   "has_distribution": true,
+   "left_bound": {
+    "f": "0x1.8d0cf34019842p-10"
+   },
+   "mde_1": null,
+   "mde_2": null,
+   "method_name": "z-test",
+   "method_params": {
+    "test_type": "absolute"
+   },
+   "name_1": "control",
+   "name_2": "treatment",
+   "pvalue": {
+    "f": "0x1.398ae4550b3c7p-137"
+   },
+   "reject": true,
+   "right_bound": {
+    "f": "0x1.45c340be287e2p-9"
+   },
+   "size_1": 1000000,
+   "size_2": 1000000,
+   "std_1": {
+    "f": "0x1.a153f66a2cadfp-14"
+   },
+   "std_2": {
+    "f": "0x1.c8b2a88fa8525p-14"
+   },
+   "value_1": {
+    "f": "0x1.47ae147ae147bp-7"
+   },
+   "value_2": {
+    "f": "0x1.89374bc6a7efap-7"
+   },
+   "warnings": []
+  },
+  "relative-plain": {
+   "alpha": {
+    "f": "0x1.999999999999ap-5"
+   },
+   "ci_kind": "fixed",
+   "ci_length": {
+    "f": "0x1.a1e53c3b40734p-1"
+   },
+   "cov_value_1": null,
+   "cov_value_2": null,
+   "diagnostics": {},
+   "dist_cdf_0": {
+    "f": "0x1.327815bf75f6dp-4"
+   },
+   "dist_ppf_975": {
+    "f": "0x1.6a8c37b739d33p-1"
+   },
+   "dist_sf_1": {
+    "f": "0x1.95e9f2994e55ep-12"
+   },
+   "effect": {
+    "f": "0x1.3333333333333p-2"
+   },
+   "has_distribution": true,
+   "left_bound": {
+    "f": "-0x1.bac8242035004p-4"
+   },
+   "mde_1": null,
+   "mde_2": null,
+   "method_name": "z-test",
+   "method_params": {},
+   "name_1": "control",
+   "name_2": "treatment",
+   "pvalue": {
+    "f": "0x1.327815bf75f6dp-3"
+   },
+   "reject": false,
+   "right_bound": {
+    "f": "0x1.6a8c37b739d33p-1"
+   },
+   "size_1": 1000,
+   "size_2": 1000,
+   "std_1": {
+    "f": "0x1.c3acfb4c60923p-8"
+   },
+   "std_2": {
+    "f": "0x1.fee85c6de9887p-8"
+   },
+   "value_1": {
+    "f": "0x1.999999999999ap-5"
+   },
+   "value_2": {
+    "f": "0x1.0a3d70a3d70a4p-4"
+   },
+   "warnings": []
+  },
+  "relative-tight-alpha": {
+   "alpha": {
+    "f": "0x1.0624dd2f1a9fcp-10"
+   },
+   "ci_kind": "fixed",
+   "ci_length": {
+    "f": "0x1.a52ffadd2f8e5p-2"
+   },
+   "cov_value_1": null,
+   "cov_value_2": null,
+   "diagnostics": {},
+   "dist_cdf_0": {
+    "f": "0x1.7599e55c03940p-4"
+   },
+   "dist_ppf_975": {
+    "f": "0x1.a58ac43a22a6bp-3"
+   },
+   "dist_sf_1": {
+    "f": "0x1.8a564cba11230p-161"
+   },
+   "effect": {
+    "f": "0x1.5555555555550p-4"
+   },
+   "has_distribution": true,
+   "left_bound": {
+    "f": "-0x1.f50aa06509c34p-4"
+   },
+   "mde_1": null,
+   "mde_2": null,
+   "method_name": "z-test",
+   "method_params": {},
+   "name_1": "control",
+   "name_2": "treatment",
+   "pvalue": {
+    "f": "0x1.7599e55c03940p-3"
+   },
+   "reject": false,
+   "right_bound": {
+    "f": "0x1.27ed52c3ed1d8p-2"
+   },
+   "size_1": 5000,
+   "size_2": 5000,
+   "std_1": {
+    "f": "0x1.110862ffbc209p-8"
+   },
+   "std_2": {
+    "f": "0x1.1aebd885c67fep-8"
+   },
+   "value_1": {
+    "f": "0x1.89374bc6a7efap-4"
+   },
+   "value_2": {
+    "f": "0x1.a9fbe76c8b439p-4"
+   },
+   "warnings": []
+  },
+  "relative-zero-control": {
+   "alpha": {
+    "f": "0x1.999999999999ap-5"
+   },
+   "ci_kind": "fixed",
+   "ci_length": null,
+   "cov_value_1": null,
+   "cov_value_2": null,
+   "diagnostics": {},
+   "effect": null,
+   "has_distribution": false,
+   "left_bound": null,
+   "mde_1": null,
+   "mde_2": null,
+   "method_name": "z-test",
+   "method_params": {},
+   "name_1": "control",
+   "name_2": "treatment",
+   "pvalue": null,
+   "reject": false,
+   "right_bound": null,
+   "size_1": 100,
+   "size_2": 100,
+   "std_1": {
+    "f": "0x0.0p+0"
+   },
+   "std_2": {
+    "f": "0x1.6514bc82e7848p-6"
+   },
+   "value_1": {
+    "f": "0x0.0p+0"
+   },
+   "value_2": {
+    "f": "0x1.999999999999ap-5"
+   },
+   "warnings": [
+    "relative effect undefined: control proportion is zero or non-finite; returning NaN (see statistics-changes.md H5)"
+   ]
+  },
+  "with-mde": {
+   "alpha": {
+    "f": "0x1.999999999999ap-5"
+   },
+   "ci_kind": "fixed",
+   "ci_length": {
+    "f": "0x1.306baf06f4aa9p-2"
+   },
+   "cov_value_1": null,
+   "cov_value_2": null,
+   "diagnostics": {},
+   "dist_cdf_0": {
+    "f": "0x1.ac6e386487c10p-4"
+   },
+   "dist_ppf_975": {
+    "f": "0x1.f377dfca00db6p-3"
+   },
+   "dist_sf_1": {
+    "f": "0x1.573e9ef48e133p-108"
+   },
+   "effect": {
+    "f": "0x1.861861861861bp-4"
+   },
+   "has_distribution": true,
+   "left_bound": {
+    "f": "-0x1.b57df90fa1e72p-5"
+   },
+   "mde_1": {
+    "f": "0x1.bc7dfcab76522p-3"
+   },
+   "mde_2": {
+    "f": "0x1.a3d4beafc7964p-3"
+   },
+   "method_name": "z-test",
+   "method_params": {
+    "calculate_mde": true
+   },
+   "name_1": "control",
+   "name_2": "treatment",
+   "pvalue": {
+    "f": "0x1.ac6e386487c10p-3"
+   },
+   "reject": false,
+   "right_bound": {
+    "f": "0x1.f377dfca00db6p-3"
+   },
+   "size_1": 2000,
+   "size_2": 2100,
+   "std_1": {
+    "f": "0x1.05a1a9eb7ada2p-7"
+   },
+   "std_2": {
+    "f": "0x1.08f4022efb3d7p-7"
+   },
+   "value_1": {
+    "f": "0x1.3333333333333p-3"
+   },
+   "value_2": {
+    "f": "0x1.5075075075075p-3"
+   },
+   "warnings": []
+  }
+ }
+}

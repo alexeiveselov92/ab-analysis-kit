@@ -12,6 +12,12 @@ Built on statsmodels ``TTestIndPower`` / ``NormalIndPower`` exactly as the legac
 Legacy conventions preserved: ``size <= 1 or std == 0`` → ``inf`` MDE; the
 continuous MDE is rounded to 4 decimals; numpy division semantics (a zero mean
 under ``relative`` yields ±inf, never an exception).
+
+statsmodels is imported lazily inside the solve functions (M7 WP1 A2): eagerly
+importing it pulled statsmodels + pandas + patsy (~100 ms) into every
+``import abkit.stats``, which taxed ``abk validate``'s startup and violated the
+spirit of the "no pandas in the stats core" pledge on paths that never solve an
+MDE. The numbers are untouched — same solvers, same calls.
 """
 
 from __future__ import annotations
@@ -19,8 +25,6 @@ from __future__ import annotations
 from functools import lru_cache
 
 import numpy as np
-from statsmodels.stats.power import NormalIndPower, TTestIndPower
-from statsmodels.stats.proportion import proportion_effectsize
 
 from abkit.stats.exceptions import MethodParamError
 
@@ -47,6 +51,8 @@ def _ttest_effect_size_at_power(size: int, alpha: float, power: float, ratio: fl
     """Cached MDE-side solve: the effect size depends only on (n, α, power, ratio),
     so cumulative runs (same sizes every day, many metrics) hit the cache instead
     of re-running the brentq root-solve per call (review finding)."""
+    from statsmodels.stats.power import TTestIndPower
+
     return _as_scalar(
         TTestIndPower().solve_power(
             effect_size=None,
@@ -61,6 +67,8 @@ def _ttest_effect_size_at_power(size: int, alpha: float, power: float, ratio: fl
 
 @lru_cache(maxsize=4096)
 def _normal_effect_size_at_power(size: int, alpha: float, power: float, ratio: float) -> float:
+    from statsmodels.stats.power import NormalIndPower
+
     return _as_scalar(
         NormalIndPower().solve_power(
             effect_size=None,
@@ -120,6 +128,8 @@ def get_ttest_power(
     ratio: float = 1.0,
 ) -> float:
     """Achieved power for detecting ``mde`` at the given sample size."""
+    from statsmodels.stats.power import TTestIndPower
+
     _check_test_type(test_type)
     mean_adjusted = _adjusted_mean(mean, mde, test_type)
     effect_size = abs(mean - mean_adjusted) / std
@@ -145,6 +155,8 @@ def get_ttest_sample_size(
     ratio: float = 1.0,
 ) -> int:
     """Required per-group-1 sample size to detect ``mde`` at the given power."""
+    from statsmodels.stats.power import TTestIndPower
+
     _check_test_type(test_type)
     mean_adjusted = _adjusted_mean(mean, mde, test_type)
     effect_size = abs(mean - mean_adjusted) / std
@@ -241,6 +253,9 @@ def get_fraction_power(
     alpha: float = 0.05,
     ratio: float = 1.0,
 ) -> float:
+    from statsmodels.stats.power import NormalIndPower
+    from statsmodels.stats.proportion import proportion_effectsize
+
     _check_test_type(test_type)
     mde_absolute = prop * mde if test_type == "relative" else mde
     effect_size = proportion_effectsize(prop, prop + mde_absolute)
@@ -264,6 +279,9 @@ def get_fraction_sample_size(
     power: float = 0.8,
     ratio: float = 1.0,
 ) -> int:
+    from statsmodels.stats.power import NormalIndPower
+    from statsmodels.stats.proportion import proportion_effectsize
+
     _check_test_type(test_type)
     mde_absolute = prop * mde if test_type == "relative" else mde
     effect_size = proportion_effectsize(prop, prop + mde_absolute)

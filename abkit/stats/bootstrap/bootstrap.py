@@ -210,6 +210,9 @@ class BaseBootstrapMethod(BaseMethod):
         boot_data: FloatArray,
         effect: float,
         result_warnings: list[str],
+        *,
+        value_1: float | None = None,
+        value_2: float | None = None,
     ) -> TestResult:
         """Common bootstrap result computation (baseline §4; H4/H5/H9).
 
@@ -218,6 +221,10 @@ class BaseBootstrapMethod(BaseMethod):
         ``reject`` False, with an explanatory warning and an ``n_non_finite``
         diagnostic (H5). ``effect_distribution = norm(mean(boot), std(boot))``
         (catalogue parity; omitted when degenerate/non-finite).
+
+        ``value_1``/``value_2`` accept the caller's already-computed per-arm
+        point statistics (M7 WP1 A4 — the same ``stat_point`` values feed
+        ``_point_effect``); when omitted they are computed here.
         """
         stat = self._stat
         diagnostics: dict[str, float] = {}
@@ -250,8 +257,8 @@ class BaseBootstrapMethod(BaseMethod):
         return TestResult(
             name_1=sample_1.name,
             name_2=sample_2.name,
-            value_1=stat_point(sample_1.array, stat),
-            value_2=stat_point(sample_2.array, stat),
+            value_1=stat_point(sample_1.array, stat) if value_1 is None else value_1,
+            value_2=stat_point(sample_2.array, stat) if value_2 is None else value_2,
             std_1=sample_1.std,
             std_2=sample_2.std,
             size_1=sample_1.sample_size,
@@ -303,9 +310,9 @@ class BootstrapTest(BaseBootstrapMethod):
         )
         boot_data = self._boot_effect(boot_1, boot_2)
         result_warnings: list[str] = []
-        effect = self._point_effect(
-            stat_point(sample_1.array, self._stat),
-            stat_point(sample_2.array, self._stat),
-            result_warnings,
+        value_1 = stat_point(sample_1.array, self._stat)
+        value_2 = stat_point(sample_2.array, self._stat)
+        effect = self._point_effect(value_1, value_2, result_warnings)
+        return self._finalize(
+            sample_1, sample_2, boot_data, effect, result_warnings, value_1=value_1, value_2=value_2
         )
-        return self._finalize(sample_1, sample_2, boot_data, effect, result_warnings)

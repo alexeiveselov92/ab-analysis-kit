@@ -36,8 +36,21 @@ Purity (D5): plain primitives only.
 from __future__ import annotations
 
 import math
+from functools import lru_cache
 
-import scipy.stats as sps
+import scipy.special as special
+
+
+@lru_cache(maxsize=64)
+def _half_width_z(alpha: float) -> float:
+    """``ndtri(1 − alpha/2)`` — data-independent, cached per alpha (M7 WP1).
+
+    Bit-identical to the ``sps.norm.ppf(1 − alpha/2)`` it replaces (scipy's
+    ``norm._ppf`` IS ``ndtri``); only a handful of distinct alphas exist per
+    process, while the A/A scoring loop calls :func:`se_from_ci_length` once
+    per iteration per look.
+    """
+    return float(special.ndtri(1.0 - alpha / 2.0))
 
 
 def se_from_ci_length(ci_length: float, alpha: float) -> float:
@@ -57,8 +70,7 @@ def se_from_ci_length(ci_length: float, alpha: float) -> float:
     """
     if not math.isfinite(ci_length) or ci_length < 0.0:
         return float("nan")
-    z = float(sps.norm.ppf(1.0 - alpha / 2.0))
-    return ci_length / (2.0 * z)
+    return ci_length / (2.0 * _half_width_z(alpha))
 
 
 def sequentialize(
