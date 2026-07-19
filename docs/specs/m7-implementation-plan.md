@@ -860,6 +860,27 @@ the milestone.
 
 ### WP6 — policy: opt-in family sweep + N tied to alpha, CLI/docs/CHANGELOG
 
+> **As-built note (WP6 shipped, 2026-07-20).** Landed per the steps below with
+> these recorded specifics: (a) open question §4.1 resolved per the plan's own
+> recommendation — **warn above 100 000, never hard-cap**
+> (`AUTO_ITERATIONS_WARN_ABOVE`, a log-and-continue `DecisionEntry`); (b) the
+> deprecation-cycle risk item is addressed with a **one-release migration
+> notice** (a decision-log entry from the runner + a yellow CLI line) on any
+> bare multi-metric run, not a deprecation cycle; (c) `--family-sweep`
+> combined with `--metric` is logged-and-skipped rather than composing a
+> half-family over whichever panels happened to load; (d) the family sweep's
+> shared draw count resolves at the **tightest** member alpha (min α ⇒ max N)
+> so every member's rate gets the per-cell policy's precision; (e) the
+> persisted row's `iterations` column records the **resolved** per-cell N
+> (never the unresolved `None`), while the run-stamp keeps the raw setting so
+> auto and explicit-2000 runs stamp differently; (f) Auto mode
+> (`POST /validate`) keeps its explicit reduced N and deliberately does not
+> opt in to the family sweep (the D3 chip keys on per-cell rows only); (g) the
+> exit-gate e2e gained `family_sweep=True` at both `ValidateSettings` call
+> sites — its numbers are pinned byte-for-byte, `iterations=` was already
+> explicit — plus the packaged init-claude assets/guides/spec were synced in
+> the same PR (the three-bodies rule).
+
 **Goal:** ship the two behavior-changing policy decisions REPORT calls out
 (items 7 and 8): the family-sweep second pass (`runner.py:259-262`) stops
 auto-enabling and becomes an explicit opt-in, and the flat
@@ -1152,7 +1173,9 @@ start" line for M7 — each needs either a maintainer call or an empirical
 answer produced by the WP that can resolve it, before the *next* WP that
 depends on the answer proceeds.
 
-1. **Per-cell N-policy ceiling (needs a maintainer call before WP6 ships).**
+1. **Per-cell N-policy ceiling — RESOLVED (WP6, 2026-07-20): warn above
+   100 000, never hard-cap** (the plan's own recommendation, adopted as the
+   maintainer call; `runner.AUTO_ITERATIONS_WARN_ABOVE`). Original question:
    REPORT's `N ≥ ~200/alpha` grows unboundedly as alpha shrinks (e.g. a
    hypothetical 0.01% secondary tier → `N = 2,000,000`/cell). Should
    `runner.py` cap the auto-computed N at some ceiling (e.g. 50,000) with a

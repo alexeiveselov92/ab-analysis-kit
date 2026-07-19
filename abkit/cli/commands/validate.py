@@ -57,12 +57,14 @@ def run_validate(
     select: tuple[str, ...],
     method: tuple[str, ...],
     metric: str | None,
-    iterations: int,
+    iterations: int | None,
     inject_effect: float | None,
     scoring: str,
     report_path: str | None,
     force: bool,
     profile: str | None,
+    *,
+    family_sweep: bool = False,
 ) -> None:
     context = load_project_context(require_profiles=True)
     click.echo(f"Project root: {context.root}")
@@ -107,6 +109,7 @@ def run_validate(
             scoring,
             report_path,
             force,
+            family_sweep,
         )
         if status == "failed":
             failed += 1
@@ -127,6 +130,7 @@ def _validate_one(
     scoring,
     report_path,
     force,
+    family_sweep,
 ) -> str:
     from abkit.compute.recompute_backend import RecomputeBackend
     from abkit.database.internal_tables import InternalTablesManager
@@ -174,9 +178,17 @@ def _validate_one(
             extra_methods = [MethodConfig(name=name) for name in method_names]
             metric_sqls = {cfg.name: cfg.get_query_text(context.root) for _, cfg in context.metrics}
             settings = ValidateSettings(
-                iterations=iterations, inject_effect=inject_effect, mode=scoring
+                iterations=iterations,
+                inject_effect=inject_effect,
+                mode=scoring,
+                family_sweep=family_sweep,
             )
-            renderer("resample", f"{iterations} placebo splits/cell")
+            splits = (
+                f"{iterations} placebo splits/cell"
+                if iterations is not None
+                else "auto placebo splits/cell: max(2000, ceil(200/alpha)) at each cell's alpha"
+            )
+            renderer("resample", splits)
 
             result = run_validation(
                 backend,
@@ -199,6 +211,15 @@ def _validate_one(
             renderer("persist", f"{len(records)} _ab_aa_runs row(s)")
 
             _emit_matrix(experiment.name, result)
+            if not family_sweep and metric_filter is None and len(experiment.comparisons) >= 2:
+                # one-release migration notice for the 0.2.0 default flip (m7 WP6)
+                click.echo(
+                    click.style(
+                        "  │ note: the composed family sweep no longer runs by default — "
+                        "pass --family-sweep to include it (behavior change in 0.2.0)",
+                        fg="yellow",
+                    )
+                )
             tables.release_lock(experiment.name, "pipeline", "validate", status="completed")
         except BaseException as exc:  # incl. KeyboardInterrupt/SystemExit — never strand the lock
             tables.release_lock(

@@ -10,6 +10,7 @@ effective_alphas``) so the D3 calibration chip matches (recompute.py:245–315).
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -30,17 +31,63 @@ from abkit.validate.run_id import run_stamp
 from abkit.validate.scoring import CellScore, score_cell
 
 DEFAULT_ITERATIONS = 2000
+# The M7 WP6 auto-N policy (m7-implementation-plan.md WP6, REPORT item 8): the placebo
+# count scales with the cell's effective alpha so the FPR estimate's *relative* SE stays
+# roughly constant across tiers (SE(FPR)/α ≈ √((1−α)/(N·α)) — flat N starves tight
+# secondary-tier alphas). Above the warn threshold we log and continue, never cap (§4.1
+# maintainer call): silently truncating a user's configured alpha tier would be worse
+# than a long run now that the engine is vectorized.
+AUTO_ITERATIONS_PER_ALPHA = 200
+AUTO_ITERATIONS_WARN_ABOVE = 100_000
+
+
+def _default_iterations(alpha: float, *, per_alpha: int = AUTO_ITERATIONS_PER_ALPHA) -> int:
+    """The per-cell auto-N: ``max(DEFAULT_ITERATIONS, ceil(per_alpha / alpha))``.
+
+    ≈4000 at the 5% main tier, ≈40000 at a 0.5% secondary tier; the
+    ``DEFAULT_ITERATIONS`` floor keeps unusually loose alphas at today's baseline.
+    """
+    if alpha <= 0.0:  # a degenerate alpha fails its cell downstream; don't divide by it
+        return DEFAULT_ITERATIONS
+    return max(DEFAULT_ITERATIONS, math.ceil(per_alpha / alpha))
+
+
+def _resolve_iterations(
+    settings: ValidateSettings, alpha: float, label: str, log: list[DecisionEntry]
+) -> int:
+    """An explicit ``-n``/``iterations`` wins verbatim; otherwise the auto-N for this
+    alpha, with the uncapped log-and-continue warning above the §4.1 threshold."""
+    if settings.iterations is not None:
+        return settings.iterations
+    resolved = _default_iterations(alpha)
+    if resolved > AUTO_ITERATIONS_WARN_ABOVE:
+        log.append(
+            DecisionEntry(
+                "resample",
+                f"{label}: auto iterations {resolved} (≈{AUTO_ITERATIONS_PER_ALPHA}/α at "
+                f"effective α={alpha:g}) exceeds {AUTO_ITERATIONS_WARN_ABOVE} — continuing "
+                "uncapped; pass -n/--iterations to override",
+            )
+        )
+    return resolved
 
 
 @dataclass(frozen=True)
 class ValidateSettings:
-    """Resolved knobs for one validate invocation (the donor ``TuneSettings`` split)."""
+    """Resolved knobs for one validate invocation (the donor ``TuneSettings`` split).
 
-    iterations: int = DEFAULT_ITERATIONS
+    ``iterations=None`` (the default since M7 WP6) means the per-cell auto-N policy
+    (``_default_iterations`` over each cell's effective alpha); an explicit int is a
+    hard override for every cell. ``family_sweep`` opts in to the composed D9 pass —
+    it no longer auto-runs on every multi-metric invocation (it doubles the cost).
+    """
+
+    iterations: int | None = None
     inject_effect: float | None = None
     mode: str = "fpr"  # fpr | power | mde — the selection objective (D16)
     grid_cap: int = DEFAULT_GRID_CAP
     target_power: float = 0.8
+    family_sweep: bool = False
 
 
 @dataclass(frozen=True)
@@ -254,12 +301,31 @@ def run_validation(
         for cell in cells
     ]
 
-    # The composed multi-metric FWER/FDR sweep (D9) — only when the whole declared family
-    # was scored (a --metric filter or a single comparison has no family to compose).
+    # The composed multi-metric FWER/FDR sweep (D9) — opt-in since M7 WP6 (it roughly
+    # doubles the run), and only when the whole declared family was scored (a --metric
+    # filter or a single comparison has no family to compose).
     family = None
-    if metric_filter is None:
-        emit("composing multi-metric family (FWER/FDR)")
-        family = _run_family_sweep(experiment, project, panel_cache, share_a, settings, log)
+    if settings.family_sweep:
+        if metric_filter is not None:
+            log.append(
+                DecisionEntry(
+                    "family",
+                    "--family-sweep ignored: --metric restricts the run to one metric — "
+                    "no family to compose",
+                )
+            )
+        else:
+            emit("composing multi-metric family (FWER/FDR)")
+            family = _run_family_sweep(experiment, project, panel_cache, share_a, settings, log)
+    elif metric_filter is None and len(experiment.comparisons) >= 2:
+        # the one-release migration notice for the 0.2.0 default flip (WP6 risk item)
+        log.append(
+            DecisionEntry(
+                "family",
+                "family sweep skipped — opt in with --family-sweep (it ran by default "
+                "on multi-metric runs before 0.2.0)",
+            )
+        )
 
     return AaValidateResult(
         experiment=experiment.name,
@@ -267,6 +333,7 @@ def run_validation(
             experiment.name,
             now_iso,
             {
+                # None = the auto-N policy (per-cell Ns live on each row's `iterations`)
                 "iterations": settings.iterations,
                 "inject_effect": settings.inject_effect,
                 "mode": settings.mode,
@@ -365,11 +432,17 @@ def _run_family_sweep(
             nominal_family *= 1.0 - member.alpha
         nominal_family = 1.0 - nominal_family
     budget = min(1.0, nominal_family * headroom)
+    # Auto-N for the whole family: one shared draw count sized for the TIGHTEST member
+    # alpha (min α ⇒ max N), so every member's rejection rate — not just the loosest —
+    # is estimated at the per-cell policy's precision.
+    iterations = _resolve_iterations(
+        settings, min(member.alpha for member in members), "family", log
+    )
     try:
         score = sweep_family(
             members,
             correction=correction,
-            iterations=settings.iterations,
+            iterations=iterations,
             share_a=share_a,
             seed_parts=("aa-family", experiment.name),
             inject_effect=None,
@@ -424,6 +497,7 @@ def _score_one(
 ) -> CellResult:
     method_id = spec.method.method_config_id
     method_params = spec.method.canonical_params_json
+    iterations = _resolve_iterations(settings, spec.alpha, f"{spec.metric}/{spec.method.name}", log)
     base = {
         "metric": spec.metric,
         "method_name": spec.method.name,
@@ -431,7 +505,9 @@ def _score_one(
         "method_config_id": method_id,
         "mode": settings.mode,
         "alpha": spec.alpha,
-        "iterations": settings.iterations,
+        # the RESOLVED per-cell N (auto-policy or the explicit override) — the persisted
+        # row must record what actually ran, never the unresolved None
+        "iterations": iterations,
         "injected_effect": settings.inject_effect,
     }
     budget = _budget(project, spec.alpha, metric)
@@ -454,7 +530,7 @@ def _score_one(
         score = score_cell(
             panel,
             method,
-            iterations=settings.iterations,
+            iterations=iterations,
             seed_parts=("aa", experiment.name, spec.metric, method_id),
             share_a=share_a,
             inject_effect=settings.inject_effect,

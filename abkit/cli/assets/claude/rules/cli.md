@@ -124,8 +124,8 @@ re-run `abk run` afterward to recompute under the new config. Full reference:
 
 ```bash
 abk validate [--select <exp>] [--method <m>]... [--metric <m>] [--iterations N] \
-             [--inject-effect PCT] [--scoring fpr|power|mde] [--report [PATH]] \
-             [--force] [--profile NAME]
+             [--family-sweep] [--inject-effect PCT] [--scoring fpr|power|mde] \
+             [--report [PATH]] [--force] [--profile NAME]
 ```
 
 The A/A false-positive + power **matrix** — placebo label-permutation splits on
@@ -140,7 +140,12 @@ calibration chip.
 - `--method / -m` (repeatable) — score EXTRA registered methods beyond the declared
   comparison (the method-grid axis; see the selector model above).
 - `--metric` — validate only this metric (default: every declared comparison).
-- `--iterations / -n` (default 2000) — placebo A/A splits per cell.
+- `--iterations / -n` — placebo A/A splits per cell (default: auto,
+  `max(2000, ⌈200/α⌉)` at each cell's effective alpha; an explicit N overrides
+  every cell).
+- `--family-sweep` — also run the composed multi-metric FWER/FDR sweep (D9);
+  roughly doubles the cost. Opt-in since 0.2.0 (it used to auto-run whenever
+  `--metric` was omitted).
 - `--inject-effect PCT` — inject a relative effect (e.g. `0.05`) to measure
   power / achieved MDE / coverage.
 - `--scoring fpr|power|mde` (default `fpr`) — the objective for the "Recommended"

@@ -28,7 +28,9 @@ shuffle is in-memory only; it never touches the real assignment.
    labels destroys any true treatment effect → an **exact null** by construction (the
    standard permutation-A/A), while still exercising the real grid, cadence, cohort,
    and metric SQL.
-3. **A/A (false-positive):** repeat N times (default 2000); each split runs the
+3. **A/A (false-positive):** repeat N times (default since 0.2.0: auto per cell,
+   `max(2000, ⌈200/α⌉)` at the cell's effective alpha — ≈4000 at 5%, ≈40000 at
+   0.5%; `-n` overrides every cell, auto-N >100k warns but never caps); each split runs the
    candidate method(s) and records whether it *falsely* rejects H₀ at the effective
    α. **FPR** = share of placebo runs that flagged significance. The significance
    primitive is the readout's own **CI-excludes-zero** rule, not the raw `reject`
@@ -87,6 +89,9 @@ metrics under one shared assignment, corrected by two-tier Bonferroni (compute-t
 error rate** (any false rejection across the family) and **false-discovery rate**
 (mean false fraction among rejections) over one shared union-cohort placebo
 assignment per iteration, under the *same* composed rule the readout applies.
+**Opt-in since 0.2.0 via `--family-sweep`** (it roughly doubles the run; before
+0.2.0 it always ran when `--metric` was omitted — a bare multi-metric run now
+prints a one-release notice instead).
 
 On the complete null the two coincide (every rejection is false) and sit at the
 composed rule's **nominal rate** — ≈ α *per tier*, so ≈ 2α whole-family under the
@@ -104,7 +109,8 @@ family level. (Only `alpha_spending`/group-sequential stays a future item.)
 
 ```bash
 abk validate --select <exp> [--method <m>]... [--metric <m>] [--iterations N] \
-             [--inject-effect <rel>] [--scoring fpr|power|mde] [--report] [--force] [--profile]
+             [--family-sweep] [--inject-effect <rel>] [--scoring fpr|power|mde] \
+             [--report] [--force] [--profile]
 ```
 
 | Flag | Meaning |
@@ -112,7 +118,8 @@ abk validate --select <exp> [--method <m>]... [--metric <m>] [--iterations N] \
 | `--select`, `-s` | Experiment selector (name / glob / `tag:<tag>` / `*`; repeatable, default all). |
 | `--method`, `-m` | **Extra** registered method(s) to score **beyond** the declared comparison — this is the method-grid axis (repeatable). NOT `--select`. |
 | `--metric` | Validate only this metric (default: every declared comparison). |
-| `--iterations`, `-n` | Placebo A/A splits per cell (default 2000). More = tighter FPR estimate, more cost. |
+| `--iterations`, `-n` | Placebo A/A splits per cell (default: auto, `max(2000, ⌈200/α⌉)` per cell's effective alpha). An explicit N overrides every cell. |
+| `--family-sweep` | Also run the composed multi-metric FWER/FDR sweep (D9) — roughly doubles the cost. Opt-in since 0.2.0. |
 | `--inject-effect` | Inject this **relative** effect (e.g. `0.05`) to measure power / achieved MDE / coverage. |
 | `--scoring` | `fpr` (default) / `power` / `mde` — the objective for the **"Recommended" row only**. All columns are always computed regardless. |
 | `--report` | Emit a self-contained HTML matrix report (best-effort). Bare → `reports/<exp>__validate.html`; a dir or `.html` path overrides. |

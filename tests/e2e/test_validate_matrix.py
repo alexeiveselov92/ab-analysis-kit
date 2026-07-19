@@ -92,7 +92,10 @@ def _run(warehouse, experiment):
         grid,
         # inject a known effect so the power/coverage columns populate (the coverage
         # collapse on the broken cell is half the mis-specification story).
-        ValidateSettings(iterations=ITERATIONS, inject_effect=0.15),
+        # iterations= is EXPLICIT (bypasses the WP6 auto-N policy) and family_sweep=True
+        # preserves the pre-0.2.0 default-on behavior this gate's numbers were pinned
+        # under — the D9 sentinel-row assertions below still exercise the sweep.
+        ValidateSettings(iterations=ITERATIONS, inject_effect=0.15, family_sweep=True),
         now_iso=NOW_ISO,
     )
 
@@ -268,7 +271,9 @@ class TestValidateMatrixExitGate:
                 METRICS,
                 {name: cfg.get_query_text(None) for name, cfg in METRICS.items()},
                 grid,
-                ValidateSettings(iterations=200, inject_effect=0.15),
+                # explicit iterations= + family_sweep=True: byte-reproducibility must
+                # keep covering the composed-family rows exactly as before WP6
+                ValidateSettings(iterations=200, inject_effect=0.15, family_sweep=True),
                 now_iso=NOW_ISO,
             )
 

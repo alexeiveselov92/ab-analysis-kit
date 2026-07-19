@@ -155,3 +155,14 @@ def test_manager_closed_even_when_acquire_lock_raises(scaffolded, monkeypatch):
     result = runner.invoke(cli, ["validate", "--select", EXP, "--iterations", "20"])
     assert result.exit_code != 0  # the raise propagated (a real harness failure)
     assert closed["n"] >= 1  # …but the manager was closed in the finally — no leak
+
+
+def test_validate_help_documents_the_wp6_policy():
+    """m7 WP6: the help text names the auto-N-per-alpha default and the --family-sweep
+    opt-in (with its behavior-change callout) — no silent policy flip."""
+    result = runner.invoke(cli, ["validate", "--help"])
+    assert result.exit_code == 0
+    flat = " ".join(result.output.split())  # click wraps help text mid-phrase
+    assert "ceil(200/alpha)" in flat
+    assert "--family-sweep" in flat
+    assert "before 0.2.0 it always ran" in flat
