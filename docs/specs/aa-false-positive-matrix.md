@@ -261,3 +261,71 @@ bump — this is a validate-layer MODE transform, the D8 estimator reused verbat
 by the D8×D9 headline tests in `tests/validate/test_family_sweep.py` + the sequential-matrix
 e2e. **Only `alpha_spending`/group-sequential remains a v2 deferral** (a
 `scheme: alpha_spending` config error names it).
+
+## 9. Implementation note — the vectorized scoring engine (M7)
+
+**As of M7 (WP2–WP5), `score_cell` runs a block-streamed vectorized engine by
+default — with zero statistical numbers moved** (no `ALGORITHM_VERSION` bump;
+the exit-gate e2e above is byte-identical). The spec-level contract, so a
+future contributor finds the invariant here and not only in code comments:
+
+- **Dispatch is a plugin capability.** The five closed-form methods
+  (`t-test`, `z-test`, `cuped-t-test`, `paired-t-test`, `ratio-delta`) opt in
+  via `supports_vectorized` + `from_suffstats_array` (`abkit/stats`, WP2 —
+  bit-exact vs the scalar kernels by construction, `_libm_pow`); the bootstrap
+  family and any plugin without a batch kernel run the original per-iteration
+  loop, preserved verbatim as `_score_cell_scalar`. Validate never breaks for
+  a method that only implements `from_suffstats`.
+- **Block-streaming under one memory budget** (`vector_resample.py`, WP3 —
+  the bootstrap engine's `BLOCK_QUANTUM` discipline): placebo-mask blocks where
+  row *i* IS `placebo_mask(derive_seed(*parts, start+i))` (bit-identical by
+  construction), per-cutoff arm suffstats via one GEMM per block, everything —
+  block working set plus the hoisted prepared cutoffs — under a single shared
+  256 MiB cap. Blocking is a pure function of `(iterations, n_units)` plus
+  module constants, so persisted A/A numbers stay byte-reproducible
+  run-to-run (D13) **under a fixed BLAS configuration** — a different BLAS
+  build/thread count re-rounds continuous columns at ~1e-15 rel (counts and
+  curves unaffected; the Poisson bootstrap engine ships with the same scope).
+- **The scalar↔vectorized parity contract**, exhaustively gated by
+  `tests/validate/test_vector_parity.py` (≥50 seeds × 8 shapes —
+  sample/CUPED/absolute/fraction/ratio plus three adversarial stress shapes:
+  gap-heavy sparse, CUPED-at-the-`MIN_ARM_UNITS`-floor, saturating-clamp
+  injection — ± injection, a trip-wire pinning every `CellScore` field to a
+  parity class, plus scanned-and-pinned deterministic seeds for the rare
+  τ²-unanchorable and no-valid-horizon states): **integer counts, decisions,
+  curves, warnings and `achieved_mde` agree exactly** (both engines in one
+  process share one BLAS configuration, so exact asserts are CI-safe;
+  `achieved_mde` is bit-identical by construction — the vectorized MDE seam
+  rebuilds the control arm through the scalar `build_arm` on the row's own
+  mask after review round 1 caught the GEMM-column read flipping None↔0.0 at
+  the 2-unit-CUPED corr≡±1 knife-edge, a divergence that fed the
+  Recommended-row tie-break); **continuous means agree at rel-1e-9**
+  (GEMM/pairwise vs sequential `.sum()` reduction order, inside the
+  `|value|/σ ≲ 1e10` conditioning band — the WP3 finding; measured battery
+  deviations sit at ≤ ~2e-14, the bound is the principled band, not slop).
+  One **documented corrupt-input divergence** (pre-existing, WP4's batch main
+  pass): a fraction arm whose aggregate successes exceed its trials (per-unit
+  over-counting — a metric-SQL bug, statistically nonsensical) fails the cell
+  loudly on the scalar engine at `Fraction` construction, while the batch
+  main pass scores it (the pooled proportion can stay finite) and the MDE
+  seam skips such rows (reporting-only never kills a cell) — pinned by a
+  dedicated regression test; hardening the batch degenerate flag to also
+  reject `count > nobs` is a named follow-up, deliberately NOT done in M7
+  (an ULP-level `count ≈ nobs` knife-edge on legitimate fractional panels
+  could then fail cells the scalar engine scores).
+- **The honest limit of count exactness** (the §0.3(3) mandate, measured): a
+  CI bound *manufactured* onto the decision boundary (brentq-solved injected δ,
+  `|left_bound| ≲ 1e-15`) can flip that single decision between the engines —
+  both roundings are correct; the input is ill-conditioned at the boundary.
+  At ≥1e-9 offset from the boundary parity is exact. Both regimes are pinned
+  (`test_near_boundary_parity`, `test_at_exact_boundary_divergence_…`). This
+  is a property of *any* reduction-order change, not a defect: real cells sit
+  at generic positions, and the e2e matrices are byte-identical.
+- **The perf gate is executable** (`tests/validate/test_vector_perf.py` — the
+  track's "a rule without an executable gate does not hold" lesson): the
+  REPORT reference cell (2000 iterations × 100 grid cutoffs × 1000 units,
+  null + injected + sequential columns) must finish under a generous 10 s CI
+  bound sized against the **coverage-instrumented** measurement — the CI Test
+  job traces `--cov=abkit`, and the tracer roughly doubles the cell
+  (dev-measured ~1.3–1.7 s bare, ~2.2–2.5 s under coverage, vs ~25 s scalar —
+  the WP4 ~10× record).

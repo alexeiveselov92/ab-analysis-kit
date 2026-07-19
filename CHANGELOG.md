@@ -152,6 +152,66 @@ number change).
   shape (2000 iterations × 100 cutoffs, CUPED, n=2000, with injection):
   ~2.5 s vectorized vs ~25 s scalar (~10×); the dedicated parity + perf
   gates land in WP5.
+- **M7 WP5 — the exhaustive parity gate + the executable perf gate closing
+  the milestone's engine chain. Zero statistical numbers changed — every
+  existing golden reference (the validate-matrix and sequential-matrix e2e,
+  the sequential/family parity suites) passes unmodified.**
+  `tests/validate/test_vector_parity.py` runs the preserved scalar engine
+  against the vectorized default across ≥50 seeds × 8 shapes (sample / CUPED
+  / absolute test_type / fraction / ratio, plus three adversarial stress
+  shapes: a gap-heavy sparse shape where some splits degenerate and some
+  don't, CUPED at the `MIN_ARM_UNITS` floor, and a saturating-clamp fraction
+  injection), ± injection, asserting exact equality on every
+  count/decision/curve/warning field — including `achieved_mde`, see below —
+  and rel-1e-9 on continuous means, with a trip-wire pinning every
+  `CellScore` field to a parity class so a future field cannot dodge the
+  gate, a multi-block streaming test (quantum 1/7/128 — cross-block
+  accumulators and the ragged final block), and scanned-and-pinned
+  deterministic seeds for two rare-but-reachable states the battery alone
+  would undersample: the τ²-unanchorable cell ("always-valid column
+  skipped") and the no-valid-horizon cell (the milestone exit run passed at
+  `ABKIT_PARITY_SEEDS=200` — 1 600 engine-pair runs). The §0.3(3) mandatory
+  near-boundary stress manufactures the dangerous input outright: brentq
+  solves the injected δ that puts a split's CI bound exactly on the
+  significance boundary — at δ·(1±1e-9) parity stays exact (the bound sits
+  five orders of magnitude above the engines' ~1e-16 ULP divergence), and AT
+  the solved root (|bound| ≲ 1e-15, inside ULP ambiguity) the measured,
+  now-pinned honest limit is a single flipped decision confined to the
+  stressed iteration's power column — both roundings correct, real cells at
+  generic positions unaffected (the e2e matrices are byte-identical); two
+  scanned seeds whose null split is already significant keep the
+  negative-root bracket branch live rather than dead defensive code.
+  **Fixed under adversarial review round 1** (the one engine change in this
+  WP): the vectorized MDE seam now rebuilds each valid row's control arm
+  through the scalar `build_arm` on the row's own mask — bit-identical
+  `_analytic_mde` inputs by construction — instead of reading the GEMM
+  columns, which diverged at a knife-edge (a 2-unit CUPED arm has
+  metric↔covariate corr ≡ ±1; whichever engine's reduction rounds exactly
+  onto ±1 reports `achieved_mde=None` while the other reports `0.0`, and the
+  persisted column feeds the Recommended-row tie-break). `achieved_mde` is
+  therefore asserted **exact**, not rel-1e-9, and the GEMM-column
+  `_control_stats_from_row` helper (with its documented fractional-count
+  clamp caveat) is gone.
+  `tests/validate/test_vector_perf.py` asserts the REPORT reference cell
+  (2 methods × 2000 iterations × 100 grid cutoffs × 1000 units, null +
+  injected + sequential columns) under a generous CI-safe 10 s bound sized
+  against the **coverage-instrumented** run — the CI Test job traces
+  `--cov=abkit`, which roughly doubles the cell: dev-measured **~1.3–1.7 s
+  bare / ~2.2–2.5 s under coverage** (vs ~25 s scalar, same methodology),
+  with the scalar engine monkeypatched to fail loudly if dispatch ever
+  regresses. Adversarial review round 2 (fresh reviewer) additionally: caught
+  and fixed the MDE-seam rebuild crashing a whole fraction cell on corrupt
+  over-counted input (per-unit successes > trials) where the batch main pass
+  scores it — the row's MDE is now skipped, reporting-only stays
+  reporting-only, with the residual scalar-fails/batch-scores divergence on
+  such corrupt input documented in the spec §9 and pinned by a dedicated
+  regression test; re-examined the WP2 kernel-tolerance question (§4.3) —
+  already closed at *exact* (`assert_array_equal`, nothing to tighten); and
+  measured the battery's continuous-field deviations at ≤ ~2e-14 rel,
+  keeping the rel-1e-9 assertion as the principled conditioning-band bound,
+  not defensive slop. The spec gains the matching contract section
+  (`aa-false-positive-matrix.md` §9 "Implementation note") so the invariant
+  lives in the spec, not only in code comments.
 
 ### Fixed
 - **M7 WP0 — multi-arm Review mode dropped every verdict after the first
