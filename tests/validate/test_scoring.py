@@ -11,8 +11,10 @@ import math
 import numpy as np
 import pytest
 
+from abkit.stats.base import BaseMethod
 from abkit.stats.factory import create_method
 from abkit.stats.parametric.ttest import TTest
+from abkit.validate._types import ValidateError
 from abkit.validate.panel import PanelCutoff, PlaceboPanel
 from abkit.validate.scoring import _cell_tau2, _score_cell_scalar, score_cell
 from tests.validate._panels import fraction_panel, normal_panel
@@ -420,6 +422,53 @@ def test_scalar_fallback_stub_is_the_verbatim_scalar_engine():
     assert via_dispatch == registered_scalar
 
 
+def test_dispatch_fallback_method_never_enters_vectorized_engine(monkeypatch):
+    """The reverse routing pin: an opted-out method must never reach the batch
+    engine (the dispatch-equality assert alone is tautological through the
+    dispatcher — adversarial review round 1)."""
+    panel = normal_panel(n_units=300, n_cutoffs=2, seed=97)
+    stub = _ScalarOnlyTTest(alpha=ALPHA)
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("the vectorized engine must not run for a fallback method")
+
+    monkeypatch.setattr("abkit.validate.scoring._score_cell_vectorized", _boom)
+    score = score_cell(panel, stub, iterations=20, seed_parts=SEED_PARTS)
+    assert score.valid_iterations == 20
+
+
+def test_non_hoisted_prepare_branch_is_bit_identical(monkeypatch):
+    """Past the hoist budget every block re-prepares its cutoffs inline — a pure
+    memory policy that must not move a single bit (the prepare_cutoff contract;
+    coverage gap flagged by adversarial review round 1)."""
+    panel = normal_panel(n_units=400, n_cutoffs=4, seed=90)
+    method = create_method("t-test", alpha=0.2)
+    kwargs = {"iterations": 60, "seed_parts": SEED_PARTS, "inject_effect": 0.1}
+    default = score_cell(panel, method, **kwargs)
+    # scoring's budget only gates the hoist; block_rows keeps its own constant,
+    # so the blocking (and therefore every float) must stay identical
+    monkeypatch.setattr("abkit.validate.scoring.DEFAULT_MAX_BLOCK_BYTES", 0)
+    forced = score_cell(panel, method, **kwargs)
+    assert forced == default
+
+
+def test_lying_vectorized_flag_fails_the_cell_loudly():
+    """supports_vectorized=True without a working batch kernel must raise
+    ValidateError (the runner's per-cell isolation catches it and fails only
+    that row) — never an uncaught NotImplementedError that would abort the
+    whole matrix (adversarial review round 1)."""
+
+    class _KernellessTTest(TTest):
+        # revert the override → the raising BaseMethod default, flag still True
+        from_suffstats_array = BaseMethod.from_suffstats_array
+
+    method = _KernellessTTest(alpha=ALPHA)
+    assert method.supports_vectorized is True
+    panel = normal_panel(n_units=300, n_cutoffs=2, seed=89)
+    with pytest.raises(ValidateError, match="supports_vectorized=True"):
+        score_cell(panel, method, iterations=10, seed_parts=SEED_PARTS)
+
+
 def test_saturating_injection_warns_once_and_stays_in_parity():
     """A δ that saturates the proportion arm (count > nobs): the batch clamp +
     the one-shot warning mirror the scalar path exactly (inject.py columns seam)."""
@@ -432,12 +481,43 @@ def test_saturating_injection_warns_once_and_stays_in_parity():
     _assert_smoke_parity(vec, sca)
 
 
+def test_zero_pooled_denominator_falls_back_not_crashes():
+    """An exactly-zero pooled ratio denominator at the horizon used to raise an
+    uncaught ZeroDivisionError out of _point_estimate (pre-existing, shared by
+    both engines; the runner's per-cell isolation does NOT catch it → the whole
+    matrix aborted). Now it falls back to the per-row value_1 anchor as the
+    docstring always promised — and the two engines stay in parity through the
+    fallback path (adversarial review round 1)."""
+    n = 200
+    unit_idx = np.arange(n)
+    den = np.tile([1.0, -1.0], n // 2)  # pooled sum EXACTLY 0.0 (integer-valued floats)
+    rng = np.random.default_rng(13)
+    num = rng.normal(0.5, 0.2, size=n)
+    cutoff = PanelCutoff(
+        elapsed_days=7.0, is_horizon=True, unit_idx=unit_idx, values=num, secondary=den
+    )
+    panel = PlaceboPanel(
+        n_units=n,
+        cutoffs=(cutoff,),
+        covariate=None,
+        input_kind="ratio",
+        kept_grid_points=1,
+        total_grid_points=1,
+    )
+    method = create_method("ratio-delta", alpha=0.2, params={"test_type": "absolute"})
+    kwargs = {"iterations": 60, "seed_parts": SEED_PARTS, "inject_effect": 0.15}
+    vec = score_cell(panel, method, **kwargs)  # must NOT raise
+    sca = _score_cell_scalar(panel, method, **kwargs)  # must NOT raise
+    _assert_smoke_parity(vec, sca)
+    # splits are generally denominator-imbalanced ⇒ some rows scored through the
+    # per-row value_1 anchor (the fallback is genuinely exercised, not skipped)
+    assert vec.valid_iterations > 0
+
+
 def test_value_1_rows_mirror_each_methods_value_1():
     """The per-row truth-anchor fallback replicates each method's own value_1:
     raw control mean (t/CUPED), proportion (z-test), H5-guarded ratio (ratio-delta
-    → NaN on a zero/non-finite denominator mean, never a ZeroDivisionError). The
-    integration path needs a non-finite POOLED ratio with valid per-split arms —
-    unreachable with sane panels — so the helper is pinned directly."""
+    → NaN on a zero/non-finite denominator mean, never a ZeroDivisionError)."""
     from abkit.validate.scoring import _value_1_rows
 
     sample_cols = {"mean": np.array([1.5, -2.0])}

@@ -117,7 +117,10 @@ number change).
   consumes the WP2+WP3 primitives end to end: per block of iterations
   (`iter_blocks` over `block_rows(n_units)` — blocking is a pure function of
   `(iterations, n_units)` + module constants, so persisted A/A numbers stay
-  byte-reproducible run-to-run, D13), each cutoff is one `build_arm_batch`
+  byte-reproducible run-to-run under a fixed BLAS configuration, D13; a
+  different BLAS build/thread count re-rounds the GEMM's continuous columns
+  at ~1e-15 rel, counts unaffected — the same scope the Poisson bootstrap
+  engine ships with), each cutoff is one `build_arm_batch`
   GEMM + one `from_suffstats_array` call; the peeking first-crossing state
   streams per row in O(block) memory (never `block × cutoffs`), explicitly
   guarding the argmax-on-all-False footgun (regression-tested: a grid where
@@ -131,9 +134,19 @@ number change).
   regression). Methods without a batch kernel (`supports_vectorized=False`:
   the bootstrap family, any custom plugin) dispatch to `_score_cell_scalar`
   — a pure code move of the previous loop, pinned identical via a stub-method
-  test. Hoisting the per-cutoff GEMM operands (`prepare_cutoff`) is bounded
-  by the same 256 MiB budget as the block cap (past it, blocks re-prepare
-  per cutoff — bounded memory, identical bits). Measured at the reference
+  test; a plugin that *declares* `supports_vectorized=True` without a working
+  batch kernel fails its own cell loudly (`ValidateError`), never aborting
+  the whole matrix. The engine's live allocations share ONE
+  256 MiB ceiling: hoisting the per-cutoff GEMM operands (`prepare_cutoff`)
+  gets only what the block working set leaves of the cap (past the leftover,
+  blocks re-prepare per cutoff — bounded memory, identical bits either way,
+  equality-pinned by a forced-non-hoist test). Also fixed while under review
+  (pre-existing, shared by both engines, no scorable number moved): an
+  exactly-zero pooled ratio denominator crashed the whole matrix with an
+  uncaught `ZeroDivisionError` out of `_point_estimate` instead of falling
+  back to the per-iteration `value_1` truth anchor as documented — now
+  guarded like `ratio_delta._arm_linearisation`, regression-tested on both
+  engines. Measured at the reference
   shape (2000 iterations × 100 cutoffs, CUPED, n=2000, with injection):
   ~2.5 s vectorized vs ~25 s scalar (~10×); the dedicated parity + perf
   gates land in WP5.

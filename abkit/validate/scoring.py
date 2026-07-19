@@ -34,9 +34,14 @@ Two engines, one contract (M7 WP4 — docs/specs/m7-implementation-plan.md §WP4
   ``from_suffstats_array`` call scores them; the first-crossing/peeking state is
   streamed per row in O(block) memory, never O(block × cutoffs). Blocking is a
   pure function of ``(iterations, n_units)`` plus module constants, so persisted
-  A/A numbers stay byte-reproducible run-to-run (D13). Versus the scalar engine,
-  integer counts are expected exact and continuous means agree at rel-1e-9
-  inside the conditioning band (the vector_resample module docstring;
+  A/A numbers stay byte-reproducible run-to-run (D13) **under a fixed BLAS
+  configuration** — the same scope the Poisson bootstrap engine ships with: a
+  different BLAS build or thread count re-rounds the GEMM's continuous columns
+  at the ULP level (measured ~1e-15 rel between 1 and ≥2 OpenBLAS threads;
+  counts/curves unaffected — adversarial review round 1), far inside the
+  rel-1e-9 budget but not bit-identical across machines. Versus the scalar
+  engine, integer counts are expected exact and continuous means agree at
+  rel-1e-9 inside the conditioning band (the vector_resample module docstring;
   smoke-pinned in tests/validate/test_scoring.py, exhaustively gated in WP5).
 - **Scalar fallback** (``_score_cell_scalar``): a method that has not opted into
   the batch kernels (``supports_vectorized=False`` — the bootstrap family, any
@@ -75,6 +80,7 @@ from abkit.validate.inject import (
 from abkit.validate.panel import PlaceboPanel
 from abkit.validate.resample import ArmStats, build_arm, placebo_mask, present_positions
 from abkit.validate.vector_resample import (
+    _ROW_TEMP_BYTES,
     DEFAULT_MAX_BLOCK_BYTES,
     FloatArray,
     PreparedCutoff,
@@ -304,15 +310,26 @@ def score_cell(
             inject_effect=inject_effect,
             target_power=target_power,
         )
-    return _score_cell_vectorized(
-        panel,
-        method,
-        iterations=iterations,
-        seed_parts=seed_parts,
-        share_a=share_a,
-        inject_effect=inject_effect,
-        target_power=target_power,
-    )
+    try:
+        return _score_cell_vectorized(
+            panel,
+            method,
+            iterations=iterations,
+            seed_parts=seed_parts,
+            share_a=share_a,
+            inject_effect=inject_effect,
+            target_power=target_power,
+        )
+    except NotImplementedError as exc:
+        # A plugin that declares supports_vectorized=True without a working batch
+        # kernel must fail ITS cell loudly (ValidateError is what the runner's
+        # per-cell isolation catches) — never abort the whole matrix with an
+        # uncaught NotImplementedError (adversarial review round 1).
+        raise ValidateError(
+            f"{method.name}: supports_vectorized=True but its from_suffstats_array "
+            "batch kernel is not implemented — fix the plugin's kernel or set "
+            "supports_vectorized=False to use the scalar engine"
+        ) from exc
 
 
 @suppress_resample_warnings
@@ -616,7 +633,8 @@ def _score_cell_vectorized(  # noqa: PLR0912, PLR0915 — mirrors the scalar eng
     reporting-only MDE stays a python loop, but ``iterations``-shaped (horizon
     rows only) — never ``iterations × cutoffs`` (§WP4 risk list). Blocking
     derives from ``(iterations, n_units)`` + module constants ONLY, keeping the
-    scored numbers byte-reproducible run-to-run (D13).
+    scored numbers byte-reproducible run-to-run under a fixed BLAS
+    configuration (D13 — see the module docstring's thread-count scope).
     """
     if iterations <= 0:
         raise ValidateError(f"iterations must be positive, got {iterations}")
@@ -659,14 +677,19 @@ def _score_cell_vectorized(  # noqa: PLR0912, PLR0915 — mirrors the scalar eng
     # function of (iterations, n_units) — nothing machine- or env-dependent can
     # change the partition, so the float aggregates are byte-stable run-to-run.
     quantum = block_rows(panel.n_units)
-    scratch = np.empty((min(quantum, iterations), panel.n_units), dtype=np.float64)
+    block_height = min(quantum, iterations)
+    scratch = np.empty((block_height, panel.n_units), dtype=np.float64)
     # Hoisting prepared cutoffs is a pure perf/memory policy — consuming one is
-    # bit-identical to the inline build (prepare_cutoff docstring). Their k ≤ 5
-    # value columns are cap-INDEPENDENT overhead (8·k·n_present bytes per cutoff,
-    # vector_resample memory contract), and holding ALL cutoffs multiplies that
-    # by n_cutoffs — so hoist only while the total fits the same byte budget the
-    # block cap uses; past it, every block re-prepares per cutoff (bounded
-    # memory, re-touched bandwidth).
+    # bit-identical to the inline build (prepare_cutoff docstring), so this
+    # branch can never move a number. Their k ≤ 5 value columns are
+    # cap-INDEPENDENT overhead (8·k·n_present bytes per cutoff, vector_resample
+    # memory contract), and holding ALL cutoffs multiplies that by n_cutoffs —
+    # so the hoist gets only what the block working set (scratch + mask
+    # temporaries, the same _ROW_TEMP_BYTES accounting block_rows spends) leaves
+    # of ONE shared byte budget: the engine's live allocations stay under a
+    # single DEFAULT_MAX_BLOCK_BYTES ceiling, never two additive ones
+    # (adversarial review round 1). Past the leftover, every block re-prepares
+    # per cutoff: bounded memory, re-touched bandwidth, identical bits.
     if panel.input_kind == "ratio" or (
         panel.input_kind == "sample" and panel.covariate is not None
     ):
@@ -674,8 +697,9 @@ def _score_cell_vectorized(  # noqa: PLR0912, PLR0915 — mirrors the scalar eng
     else:
         value_columns = 2
     hoist_bytes = 8 * value_columns * sum(int(cut.unit_idx.size) for cut in panel.cutoffs)
+    hoist_budget = DEFAULT_MAX_BLOCK_BYTES - _ROW_TEMP_BYTES * block_height * panel.n_units
     prepared: list[PreparedCutoff] | None = None
-    if hoist_bytes <= DEFAULT_MAX_BLOCK_BYTES:
+    if hoist_bytes <= hoist_budget:
         prepared = [prepare_cutoff(panel.input_kind, cut, panel.covariate) for cut in panel.cutoffs]
 
     # ── Cross-block accumulators (python scalars + per-look histograms) ──────
@@ -998,6 +1022,14 @@ def _point_estimate(arm: object) -> float | None:
     if isinstance(arm, SufficientStats):
         return float(arm.mean)
     if isinstance(arm, RatioSufficientStats):
+        # Guard BEFORE touching .ratio: it divides python floats, so an exactly-
+        # zero pooled denominator mean raised ZeroDivisionError — which the
+        # runner's per-cell isolation does NOT catch, aborting the whole matrix
+        # instead of falling back to the per-iteration value_1 anchor as this
+        # docstring always promised (adversarial review round 1; same guard as
+        # ratio_delta._arm_linearisation). No previously-scorable input moves.
+        if arm.mean_den == 0.0 or not math.isfinite(arm.mean_den):
+            return None
         return float(arm.ratio) if math.isfinite(arm.ratio) else None
     return None
 
@@ -1031,8 +1063,10 @@ def _control_stats_from_row(
     kind (no analytic MDE). The Fraction ``count`` is clamped into ``[0, nobs]``:
     both are exact GEMM sums for integer-valued panels, but a fractional-valued
     panel could round ``count`` past ``nobs`` by one ULP where the scalar sums
-    land exactly equal — an ULP-sized input shift on a reporting-only value, not
-    a behavior change.
+    land exactly equal — there the scalar engine would CRASH the cell at
+    ``Fraction`` construction while this clamp scores it with an ULP-shifted
+    reporting-only value (a documented, strictly-friendlier divergence on a
+    pathological input — adversarial review round 1).
     """
     if input_kind == "fraction":
         nobs = float(columns["nobs"][i])
@@ -1055,8 +1089,10 @@ def _value_1_rows(input_kind: str, columns: dict[str, FloatArray]) -> FloatArray
     Matches each vectorized method's own ``value_1``: the raw control mean
     (t-test/CUPED), the control proportion (z-test), or the H5-guarded control
     ratio (ratio-delta: NaN when the denominator mean is zero/non-finite —
-    ``_arm_linearisation``'s rule). Used only as the absolute-effect truth
-    anchor when the pooled horizon estimate is unavailable.
+    ``_arm_linearisation``'s rule). Maps the WHOLE block, including degenerate
+    NaN-poisoned rows (NaN in → NaN out, masked by the caller's ``inj_valid``).
+    Used only as the absolute-effect truth anchor when the pooled horizon
+    estimate is unavailable.
     """
     with np.errstate(divide="ignore", invalid="ignore"):
         if input_kind == "fraction":
