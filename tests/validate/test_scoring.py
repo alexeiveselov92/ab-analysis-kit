@@ -486,6 +486,49 @@ def test_lying_vectorized_flag_fails_the_cell_loudly():
         score_cell(panel, method, iterations=10, seed_parts=SEED_PARTS)
 
 
+def test_empty_early_cutoff_is_a_silent_gap_in_both_engines():
+    """A non-horizon cutoff with ZERO present units (load.py only guards the
+    horizon) must flow through the hoist as a skipped entry: no stray
+    'Mean of empty slice' RuntimeWarning out of prepare_cutoff, identical gap
+    tallies in both engines (adversarial review round 2)."""
+    n = 300
+    rng = np.random.default_rng(17)
+    unit_idx = np.arange(n)
+    empty = PanelCutoff(
+        elapsed_days=1.0,
+        is_horizon=False,
+        unit_idx=np.array([], dtype=np.int64),
+        values=np.array([], dtype=np.float64),
+    )
+    later = tuple(
+        PanelCutoff(
+            elapsed_days=float(k + 2),
+            is_horizon=(k == 1),
+            unit_idx=unit_idx,
+            values=rng.normal(10.0, 3.0, size=n),
+        )
+        for k in range(2)
+    )
+    panel = PlaceboPanel(
+        n_units=n,
+        cutoffs=(empty, *later),
+        covariate=None,
+        input_kind="sample",
+        kept_grid_points=3,
+        total_grid_points=3,
+    )
+    method = create_method("t-test", alpha=0.2)
+    kwargs = {"iterations": 40, "seed_parts": SEED_PARTS, "inject_effect": 0.1}
+    import warnings as _warnings
+
+    with _warnings.catch_warnings():
+        _warnings.simplefilter("error", RuntimeWarning)  # any stray warning fails
+        vec = score_cell(panel, method, **kwargs)
+    sca = _score_cell_scalar(panel, method, **kwargs)
+    _assert_smoke_parity(vec, sca)
+    assert vec.valid_iterations > 0  # the empty look is a gap, not a poisoned cell
+
+
 def test_saturating_injection_warns_once_and_stays_in_parity():
     """A δ that saturates the proportion arm (count > nobs): the batch clamp +
     the one-shot warning mirror the scalar path exactly (inject.py columns seam)."""

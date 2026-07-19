@@ -321,13 +321,17 @@ def score_cell(
             target_power=target_power,
         )
     except NotImplementedError as exc:
-        # A plugin that declares supports_vectorized=True without a working batch
-        # kernel must fail ITS cell loudly (ValidateError is what the runner's
-        # per-cell isolation catches) — never abort the whole matrix with an
-        # uncaught NotImplementedError (adversarial review round 1).
+        # A plugin that declares supports_vectorized=True whose batch kernel
+        # raises NotImplementedError must fail ITS cell loudly (ValidateError is
+        # what the runner's per-cell isolation catches) — never abort the whole
+        # matrix with an uncaught NotImplementedError (adversarial review round
+        # 1). The wrapper spans the whole engine call, so the message names the
+        # raise honestly — the kernel may be missing entirely OR real but
+        # refusing this cell's input partway through (adversarial review round 2).
         raise ValidateError(
             f"{method.name}: supports_vectorized=True but its from_suffstats_array "
-            "batch kernel is not implemented — fix the plugin's kernel or set "
+            "batch kernel raised NotImplementedError (missing, or unsupported for "
+            "this cell's input) — extend the kernel or set "
             "supports_vectorized=False to use the scalar engine"
         ) from exc
 
@@ -698,9 +702,18 @@ def _score_cell_vectorized(  # noqa: PLR0912, PLR0915 — mirrors the scalar eng
         value_columns = 2
     hoist_bytes = 8 * value_columns * sum(int(cut.unit_idx.size) for cut in panel.cutoffs)
     hoist_budget = DEFAULT_MAX_BLOCK_BYTES - _ROW_TEMP_BYTES * block_height * panel.n_units
-    prepared: list[PreparedCutoff] | None = None
+    prepared: list[PreparedCutoff | None] | None = None
     if hoist_bytes <= hoist_budget:
-        prepared = [prepare_cutoff(panel.input_kind, cut, panel.covariate) for cut in panel.cutoffs]
+        # An empty cutoff (no present units yet — load.py only guards the
+        # HORIZON against emptiness) must not be prepared: build_arm_batch's own
+        # n_present == 0 early-return never consults `prepared`, and preparing
+        # it anyway np.mean()'s an empty array — a stray RuntimeWarning the
+        # scorer's AbkitStatsWarning filter does not (and must not) swallow
+        # (adversarial review round 2).
+        prepared = [
+            prepare_cutoff(panel.input_kind, cut, panel.covariate) if cut.unit_idx.size else None
+            for cut in panel.cutoffs
+        ]
 
     # ── Cross-block accumulators (python scalars + per-look histograms) ──────
     single_look_hits = 0
