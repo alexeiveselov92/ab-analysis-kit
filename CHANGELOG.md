@@ -31,12 +31,15 @@ number change).
 
 ### Changed
 - **M7 WP1 — scalar hot-path quick wins (hardening bucket A, A1–A8). No
-  statistical numbers changed**: byte parity with the pre-change code is
-  pinned by the new frozen-fixture golden gate
-  `tests/stats/test_normal_path_golden.py` (bit-identical
-  bounds/p-values/rejects across extreme-z and degenerate batteries, floats
-  compared by `float.hex`), and the whole stats+golden suite passes unmodified
-  (634 passed, 1 opt-in benchmark skipped). The wins:
+  statistical numbers changed**: the old-vs-new swap was verified **bit-exact
+  on the capture environment** against a fixture frozen from the pre-change
+  code, and the committed golden gate
+  `tests/stats/test_normal_path_golden.py` re-checks the battery (extreme-z,
+  degenerates, all six closed-form methods end-to-end) on every run — float
+  fields at the repo's golden relative 1e-9 (BLAS/libm builds differ across
+  machines in the last ULP; a formula change fails by orders of magnitude),
+  every reject/size/warning/flag field exactly. The whole stats+golden suite
+  passes unmodified (634 passed, 1 opt-in benchmark skipped). The wins:
   - **A1 — `scipy.special.ndtri`/`ndtr` replace the frozen `sps.norm` objects**
     on the closed-form significance path (`effects.normal_test`, the z-test,
     `sequential.se_from_ci_length`), with the sf tail computed as `ndtr(-z)`
