@@ -95,7 +95,14 @@ number change).
   parts split, overflow-scale data cannot leak `RuntimeWarning`s or a
   non-degenerate NaN row unnoticed, and malformed `count > nobs` fraction
   data is pinned to flow to a NaN gap (the scalar path crashes at
-  construction — the one documented build-level divergence).
+  construction — the one documented build-level divergence). Round 2 (fresh
+  reviewer, 2 major + 3 minor, all fixed): the hoist API rejects a
+  mismatched `(prepared, cut)` pair (an equal-sized-cutoffs mixup would
+  otherwise score silently-wrong numbers), the batch injection's deliberate
+  NaN-m2 divergence from the scalar `max(0.0, nan) == 0.0` quirk is
+  documented + regression-pinned (the batch keeps the gap poison), and panel
+  arrays are float64-normalized like the scalar constructors (a float32
+  panel would otherwise break rel-1e-9 parity at ordinary offsets).
   Measured at the reference shape (2000 iterations × 100 cutoffs, CUPED,
   n=2000): ~1.4 s for the full suffstats aggregation vs ~20 s for the
   equivalent scalar `build_arm` loop (~15×), before the WP4 significance-side

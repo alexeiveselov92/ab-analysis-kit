@@ -226,11 +226,16 @@ class PreparedCutoff:
     on; ``value_matrix`` is the stacked ``(n_present × k)`` column matrix each
     arm's weights contract against. Built by :func:`prepare_cutoff`; consuming
     a prepared cutoff is bit-identical to letting ``build_arm_batch`` build it
-    inline (same arrays, same call shapes).
+    inline (same arrays, same call shapes). ``cut`` records which cutoff the
+    operands were built from — ``build_arm_batch`` asserts identity, so a
+    wrong-loop-variable mixup can never silently score one cutoff's masks
+    against another cutoff's values (adversarial review round 2; a shape
+    check alone would miss equal-sized cutoffs).
     """
 
     shifts: tuple[float, ...]
     value_matrix: FloatArray
+    cut: PanelCutoff
 
 
 def prepare_cutoff(
@@ -240,7 +245,7 @@ def prepare_cutoff(
 ) -> PreparedCutoff:
     """Precompute one cutoff's :class:`PreparedCutoff` (see its docstring)."""
     shifts, value_columns = _shifted_columns(input_kind, cut, covariate)
-    return PreparedCutoff(shifts=shifts, value_matrix=np.stack(value_columns, axis=1))
+    return PreparedCutoff(shifts=shifts, value_matrix=np.stack(value_columns, axis=1), cut=cut)
 
 
 @dataclass(frozen=True)
@@ -263,7 +268,10 @@ class ArmStatsBatch:
     still carry inf/NaN moments from overflow-scale data, which surface as NaN
     CI bounds out of the WP2 kernels — a consumer must treat non-finite bounds
     as a gap exactly like the scalar path's ``_significance`` non-finite check
-    (scoring.py:140-153), never as a non-rejection.
+    (scoring.py:140-153), never as a non-rejection. ``frozen=True`` blocks
+    attribute rebinding only — the arrays themselves are freshly-owned but
+    mutable; consumers must not write into them (make a copy to transform,
+    e.g. ``inject_multiplicative_columns`` returns new arrays).
     """
 
     columns: dict[str, FloatArray]
@@ -283,10 +291,13 @@ def build_arm_batch(
     """Both arms' sufficient-statistic batches at one cutoff for a mask block.
 
     ``mask_block`` is ``(block × n_units)`` boolean arm-A membership over global
-    units (rows from :func:`placebo_mask_block`); the cutoff's present columns
-    are selected via ``cut.unit_idx`` BEFORE the float64 cast (the memory rule).
-    Returns ``(arm_a, arm_b)`` where arm A is the ``True`` side — the batch
-    mirror of the scalar ``present_positions`` + per-arm ``build_arm`` pair.
+    units (rows from :func:`placebo_mask_block`); the MASK's present columns are
+    sliced via ``cut.unit_idx`` while still boolean, BEFORE the float64 weights
+    cast — never cast the full-width block (the module's memory-contract rule).
+    Value/covariate arrays are normalized to float64 like the scalar
+    constructors (``_as_float_array``). Returns ``(arm_a, arm_b)`` where arm A
+    is the ``True`` side — the batch mirror of the scalar ``present_positions``
+    + per-arm ``build_arm`` pair.
 
     ``weights_scratch`` is a pure perf knob for a scorer loop: a preallocated
     float64 buffer of at least ``(block × n_units)`` reused across cutoffs
@@ -323,6 +334,12 @@ def build_arm_batch(
     # — see the module docstring's shifted-one-pass rationale.
     if prepared is None:
         prepared = prepare_cutoff(input_kind, cut, covariate)
+    elif prepared.cut is not cut:
+        raise ValueError(
+            "prepared was built from a different PanelCutoff than the one passed — "
+            "a mismatched hoist would silently score this cutoff's masks against "
+            "another cutoff's values"
+        )
     shifts, value_matrix = prepared.shifts, prepared.value_matrix
 
     # One GEMM per arm: every statistic of every iteration in the block in a
@@ -371,16 +388,22 @@ def _shifted_columns(
     flows to NaN CI bounds downstream — the same gap the scalar path reaches
     via ``_significance``'s non-finite check (adversarial review round 1).
     """
-    if input_kind == "fraction":
-        assert cut.secondary is not None  # validated by the caller
-        return (), (cut.values, cut.secondary)
+    # float64 normalization mirrors the scalar constructors' _as_float_array
+    # (samples.py:30): a float32 panel would otherwise stay float32 through the
+    # centering under NEP-50 promotion and break the rel-1e-9 parity gate at
+    # ORDINARY offsets (adversarial review round 2). No-copy when already f64.
+    values = np.asarray(cut.values, dtype=np.float64)
+    secondary = None if cut.secondary is None else np.asarray(cut.secondary, dtype=np.float64)
     with np.errstate(over="ignore", invalid="ignore"):
+        if input_kind == "fraction":
+            assert secondary is not None  # validated by the caller
+            return (), (values, secondary)
         if input_kind == "ratio":
-            assert cut.secondary is not None  # validated by the caller
-            shift_num = float(np.mean(cut.values))
-            shift_den = float(np.mean(cut.secondary))
-            centered_num = cut.values - shift_num
-            centered_den = cut.secondary - shift_den
+            assert secondary is not None  # validated by the caller
+            shift_num = float(np.mean(values))
+            shift_den = float(np.mean(secondary))
+            centered_num = values - shift_num
+            centered_den = secondary - shift_den
             return (shift_num, shift_den), (
                 centered_num,
                 np.square(centered_num),
@@ -388,11 +411,11 @@ def _shifted_columns(
                 np.square(centered_den),
                 centered_num * centered_den,
             )
-        shift_y = float(np.mean(cut.values))
-        centered_y = cut.values - shift_y
+        shift_y = float(np.mean(values))
+        centered_y = values - shift_y
         if covariate is None:
             return (shift_y,), (centered_y, np.square(centered_y))
-        covariate_present = covariate[cut.unit_idx]
+        covariate_present = np.asarray(covariate[cut.unit_idx], dtype=np.float64)
         shift_x = float(np.mean(covariate_present))
         centered_x = covariate_present - shift_x
         return (shift_y, shift_x), (

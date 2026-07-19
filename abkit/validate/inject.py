@@ -79,11 +79,16 @@ def inject_multiplicative_columns(
 
     Same algebra, same op order per element (``x * factor``,
     ``m2 * factor * factor`` clamped at 0, the Fraction ``count ≤ nobs``
-    clamp), applied array-wise — bit-exact vs the scalar path per row, pinned
-    by ``tests/validate/test_vector_resample.py``. NaN rows (a degenerate
-    arm's poison) propagate: NaN·factor and ``minimum(nan, nan)`` stay NaN.
-    ``input_kind`` follows ``BaseMethod.input_kind`` (sample | fraction |
-    ratio) exactly like ``build_arm_batch``.
+    clamp), applied array-wise — bit-exact vs the scalar path per row for
+    finite inputs, pinned by ``tests/validate/test_vector_resample.py``. One
+    DELIBERATE divergence on NaN ``m2``/``m2_num`` (adversarial review round
+    2): the scalar's ``max(0.0, nan)`` swallows a NaN to an exact-zero
+    variance — a latent scalar-side quirk (reachable only from overflow-scale
+    moments, out of WP3 scope) — while ``np.maximum(0.0, nan)`` here keeps
+    the NaN, preserving the "gaps, never zeros" poison; a regression test
+    pins the divergence so the batch is never "fixed" back to the scalar
+    quirk. ``input_kind`` follows ``BaseMethod.input_kind`` (sample |
+    fraction | ratio) exactly like ``build_arm_batch``.
     """
     factor = 1.0 + float(delta)
 
@@ -120,6 +125,8 @@ def injection_clamped_columns(
 
     NaN rows compare False — a degenerate gap is never reported as clamped.
     """
+    if not columns:
+        raise ValueError("injection_clamped_columns requires at least one suffstats column")
     if input_kind == "fraction":
         with np.errstate(invalid="ignore"):
             return columns["count"] * (1.0 + float(delta)) > columns["nobs"]

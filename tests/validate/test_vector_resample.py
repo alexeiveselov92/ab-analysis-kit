@@ -751,6 +751,54 @@ def test_inject_multiplicative_columns_preserves_nan_poison():
     assert not injection_clamped_columns("fraction", fraction_nan, 0.05)[0]
 
 
+def test_nan_m2_injection_divergence_is_deliberate():
+    """Adversarial review round 2: the SCALAR injection's ``max(0.0, nan)``
+    swallows a NaN m2 into an exact-zero variance (a latent scalar-side quirk,
+    reachable only from overflow-scale moments); the batch ``np.maximum`` keeps
+    the NaN poison — gaps, never zeros. Pinned so nobody ever "fixes" the
+    batch back to the scalar quirk."""
+    from abkit.validate.inject import inject_multiplicative, inject_multiplicative_columns
+
+    scalar = inject_multiplicative(SufficientStats(n=10, mean=1.0, m2=float("nan")), 0.05)
+    assert scalar.m2 == 0.0  # the scalar quirk, pinned as-is (shipped behavior)
+    batch = inject_multiplicative_columns(
+        "sample",
+        {"n": np.array([10.0]), "mean": np.array([1.0]), "m2": np.array([np.nan])},
+        0.05,
+    )
+    assert np.isnan(batch["m2"][0])  # the batch keeps the poison
+
+
+def test_prepared_cutoff_for_a_different_cut_is_rejected():
+    """The hoist API refuses a mismatched (prepared, cut) pair — equal-sized
+    cutoffs would otherwise silently score one cutoff's masks against another
+    cutoff's values (adversarial review round 2)."""
+    panel = growing_sample_panel(n_units=60, n_cutoffs=2, seed=93, with_covariate=False)
+    mask_block = placebo_mask_block(panel.n_units, 0.5, SEED_PARTS, 0, 4)
+    prepared_first = prepare_cutoff("sample", panel.cutoffs[0], None)
+    with pytest.raises(ValueError, match="different PanelCutoff"):
+        build_arm_batch("sample", panel.cutoffs[1], None, mask_block, prepared=prepared_first)
+
+
+def test_float32_panel_arrays_are_normalized_like_the_scalar_path():
+    """The scalar path casts through _as_float_array (float64); the batch path
+    must normalize too, or a float32 panel stays float32 through the centering
+    (NEP-50) and breaks rel-1e-9 parity at ORDINARY offsets (adversarial
+    review round 2)."""
+    rng = np.random.default_rng(94)
+    values64 = 1e4 + rng.normal(0.0, 3.0, size=200)
+    values32 = values64.astype(np.float32)
+    cut = PanelCutoff(elapsed_days=1.0, is_horizon=True, unit_idx=np.arange(200), values=values32)
+    mask_block = placebo_mask_block(200, 0.5, SEED_PARTS, 0, 8)
+    batch_a, _ = build_arm_batch("sample", cut, None, mask_block)
+    for i, mask_row in enumerate(mask_block):
+        pos_a, _ = present_positions(mask_row, cut.unit_idx)
+        scalar = build_arm("sample", values32, None, None, cut.unit_idx, pos_a)
+        assert scalar is not None
+        assert np.isclose(batch_a.columns["m2"][i], scalar.m2, rtol=1e-9, atol=0.0)
+        assert np.isclose(batch_a.columns["mean"][i], scalar.mean, rtol=1e-9, atol=0.0)
+
+
 def test_weights_scratch_is_a_pure_perf_knob():
     """A reused scratch buffer changes nothing but ULP-class float noise:
     counts/flags exact, float columns within rtol 1e-12, and validation
