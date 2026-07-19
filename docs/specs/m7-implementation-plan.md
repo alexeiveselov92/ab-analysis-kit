@@ -963,7 +963,11 @@ sweep both fast.
   omitted (default `False`), does run when passed, for a fixture experiment
   with more than one declared comparison.
 - `tests/e2e/test_validate_matrix.py` passes unmodified (explicit
-  `iterations=` bypasses the new default in both call sites).
+  `iterations=` bypasses the new default in both call sites). *(As built: the
+  `iterations=` half held, but the file DID gain `family_sweep=True` at both
+  `ValidateSettings` call sites — without it the default flip would silently
+  drop the D9 sentinel-row assertions this gate pins; see the as-built note
+  above, point (g). Its numbers are unchanged byte-for-byte.)*
 - CLI help text (`abk validate --help`) reflects both new/changed flags; the
   CLI smoke test (if one exists in `tests/cli/`) is updated.
 

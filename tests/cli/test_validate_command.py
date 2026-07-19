@@ -166,3 +166,19 @@ def test_validate_help_documents_the_wp6_policy():
     assert "ceil(200/alpha)" in flat
     assert "--family-sweep" in flat
     assert "before 0.2.0 it always ran" in flat
+
+
+def test_validate_migration_notice_prints_and_family_flag_silences_it(scaffolded):
+    """m7 WP6 review round 1: the one-release yellow migration notice is its own CLI
+    code path (distinct from the runner's DecisionEntry) — pin its text on a bare
+    multi-metric run, and its absence once --family-sweep is passed."""
+    bare = runner.invoke(cli, ["validate", "--select", EXP, "--iterations", "50"])
+    assert bare.exit_code == 0, bare.output
+    assert "no longer runs by default" in bare.output
+    assert "--family-sweep" in bare.output
+
+    opted = runner.invoke(
+        cli, ["validate", "--select", EXP, "--iterations", "50", "--family-sweep"]
+    )
+    assert opted.exit_code == 0, opted.output
+    assert "no longer runs by default" not in opted.output

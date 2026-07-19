@@ -191,8 +191,8 @@ false-positive + power matrix (aa-false-positive-matrix). It is **not** a config
 
 ```bash
 abk validate [--select <exp>]... [--method <m>]... [--metric <m>] [--iterations N] \
-             [--inject-effect PCT] [--scoring fpr|power|mde] [--report [PATH]] \
-             [--force] [--profile NAME]
+             [--family-sweep] [--inject-effect PCT] [--scoring fpr|power|mde] \
+             [--report [PATH]] [--force] [--profile NAME]
 ```
 
 | Option | Default | Meaning |
@@ -200,7 +200,8 @@ abk validate [--select <exp>]... [--method <m>]... [--metric <m>] [--iterations 
 | `--select`, `-s` | all experiments | Experiment selector (repeatable) |
 | `--method`, `-m` | — | Extra registered method(s) to score beyond the declared comparison (repeatable) |
 | `--metric` | every declared comparison | Validate only this metric |
-| `--iterations`, `-n` | `2000` | Placebo A/A splits per cell |
+| `--iterations`, `-n` | auto: `max(2000, ⌈200/α⌉)` per cell | Placebo A/A splits per cell, resolved at each cell's effective alpha (≈4000 at 5%, ≈40000 at 0.5%); an explicit N overrides every cell |
+| `--family-sweep` | off | Also run the composed multi-metric FWER/FDR sweep — roughly doubles the cost (opt-in since 0.2.0; it previously always ran when `--metric` was omitted) |
 | `--inject-effect` | none | Inject this relative effect (e.g. `0.05`) to measure power / achieved MDE / coverage |
 | `--scoring` | `fpr` | Selection objective for the "Recommended" row (`fpr`, `power`, `mde`) |
 | `--report [PATH]` | off | Emit a self-contained HTML matrix report (best-effort) |

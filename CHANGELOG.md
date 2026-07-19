@@ -33,7 +33,8 @@ number change).
   target — REPORT item 8); the default now resolves **per cell** at the
   cell's effective post-correction alpha (≈4000 at the 5% main tier, ≈40000
   at a 0.5% secondary tier), so a default run costs more iterations than
-  before — cheap after the WP1–WP5/WP7 vectorization (~10–90× per cell).
+  before — cheap after the WP1–WP5/WP7 vectorization (~10× per whole cell by
+  the WP5 perf gate, ~18× for the family sweep; individual kernels up to ~90×).
   `-n`/`--iterations` stays a hard override for every cell; the family sweep
   sizes its shared draw count at the tightest member alpha; the persisted
   row's `iterations` column records the resolved N that actually ran. Per the
