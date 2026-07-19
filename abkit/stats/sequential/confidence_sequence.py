@@ -38,7 +38,10 @@ from __future__ import annotations
 import math
 from functools import lru_cache
 
+import numpy as np
 import scipy.special as special
+
+from abkit.stats.effects import FloatArray
 
 
 @lru_cache(maxsize=64)
@@ -105,4 +108,63 @@ def sequentialize(
     # Always-valid p-value = min(1, 1/Lambda(0)); p <= alpha iff 0 is excluded.
     inv_lambda = math.sqrt(ratio) * math.exp(-(tau2 * effect * effect) / denom)
     pvalue = inv_lambda if inv_lambda < 1.0 else 1.0
+    return (lo, hi, pvalue)
+
+
+# --- the array-wise siblings (M7 WP2) ---------------------------------------------
+#
+# Strictly additive: the SAME closed-form math as the scalar functions above,
+# evaluated with numpy broadcasting for the validate hot path (one row per
+# iteration/look). ``tau2``/``alpha`` stay scalar — frozen once per cell by
+# ``_cell_tau2``, exactly like the scalar loop. Parity is pinned row-by-row by
+# ``tests/stats/sequential/test_sequential_arrays.py``.
+
+
+def se_from_ci_length_array(ci_length: FloatArray, alpha: float) -> FloatArray:
+    """Array-wise :func:`se_from_ci_length`: per-row SE by CI-inversion (D3).
+
+    NaN/negative ``ci_length`` rows → NaN (the scalar NaN-bound bucket), as a
+    mask instead of the scalar early return.
+    """
+    ci_length = np.asarray(ci_length, dtype=np.float64)
+    with np.errstate(invalid="ignore"):
+        se = ci_length / (2.0 * _half_width_z(alpha))
+        return np.where(~np.isfinite(ci_length) | (ci_length < 0.0), np.nan, se)
+
+
+def sequentialize_array(
+    effect: FloatArray, se: FloatArray, tau2: float, alpha: float
+) -> tuple[FloatArray, FloatArray, FloatArray]:
+    """Array-wise :func:`sequentialize`: per-row ``(lo, hi, av_pvalue)``.
+
+    Same contract: programming errors (``alpha`` out of range, non-positive
+    ``tau2`` — both scalar) raise ``ValueError``; a degenerate ROW (non-finite
+    ``effect``/``se`` or ``se <= 0``) is a NaN triple, never an exception.
+    """
+    if not 0.0 < alpha < 1.0:
+        raise ValueError(f"alpha must be in (0, 1), got {alpha!r}")
+    if not math.isfinite(tau2) or tau2 <= 0.0:
+        raise ValueError(f"tau2 (mixture variance) must be finite and positive, got {tau2!r}")
+    effect = np.asarray(effect, dtype=np.float64)
+    se = np.asarray(se, dtype=np.float64)
+
+    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+        degenerate = ~np.isfinite(effect) | ~np.isfinite(se) | (se <= 0.0)
+        # NaN-poison the SE: NaN propagates through radius/p-value exactly like
+        # the scalar early return, and np.where(inv_lambda < 1.0, …, 1.0) on a
+        # NaN row is masked away below before it could echo the scalar's
+        # else-branch 1.0.
+        se = np.where(degenerate, np.nan, se)
+
+        var = se * se
+        ln_inv_alpha = -math.log(alpha)
+        denom = 2.0 * var * (var + tau2)  # 2 V (V + tau^2), shared by radius and p-value
+        ratio = (var + tau2) / var
+        radius = np.sqrt((denom / tau2) * (ln_inv_alpha + 0.5 * np.log(ratio)))
+        lo = effect - radius
+        hi = effect + radius
+
+        # Always-valid p-value = min(1, 1/Lambda(0)); p <= alpha iff 0 is excluded.
+        inv_lambda = np.sqrt(ratio) * np.exp(-(tau2 * effect * effect) / denom)
+        pvalue = np.where(degenerate, np.nan, np.where(inv_lambda < 1.0, inv_lambda, 1.0))
     return (lo, hi, pvalue)

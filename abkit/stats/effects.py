@@ -23,8 +23,11 @@ from functools import lru_cache
 from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 import scipy.special as special
 import scipy.stats as sps
+
+FloatArray = npt.NDArray[np.float64]
 
 
 @lru_cache(maxsize=64)
@@ -201,4 +204,152 @@ def normal_test(estimate: EffectEstimate, alpha: float) -> NormalTest:
         reject=bool(pvalue < alpha),
         distribution=LazyNormal(estimate.effect, scale),
         warnings=result_warnings,
+    )
+
+
+# --- the array-wise significance kernel (M7 WP2) ----------------------------------
+#
+# The validate hot path calls the significance test once per (iteration, cutoff)
+# pair — hundreds of thousands of scalar calls per cell. These kernels are the
+# strictly additive array-wise siblings of the scalar functions above
+# (docs/specs/m7-implementation-plan.md §WP2): the SAME formulas evaluated with
+# numpy broadcasting, one row per comparison, with the alpha-only quantiles
+# computed once. The scalar paths are untouched; parity is pinned row-by-row by
+# tests/stats/test_vectorized_parity.py.
+#
+# Degenerate rows follow the "gaps, never zeros" contract of the scalar H5/NaN
+# branches: NaN outputs in place of per-row warning strings (validate never
+# reads warnings on this path), never an exception and never a silent zero.
+#
+# Power terms go through :func:`_libm_pow`, NOT numpy's ``**`` (adversarial
+# review round 1): numpy's integer-exponent power fast paths (multiply chains)
+# are not bit-identical to CPython's libm-``pow``-backed scalar ``**`` (glibc
+# pow is within ~0.5 ulp, not correctly rounded — even ``x**2`` can differ by
+# 1 ULP), and the three-term delta-method variance sum cancels catastrophically
+# for adversarial magnitude mixes, amplifying a 1-ULP term divergence far past
+# rel-1e-9 on the CI bounds (measured up to ~1.8e-4 in a fuzz before the fix).
+# Routing the array path through the SAME libm pow makes scalar↔array parity
+# exact BY CONSTRUCTION, on every platform — which is what lets the WP5
+# count-exactness gate rest on structure rather than luck.
+
+
+def _pow_or_inf(base: float, exponent: float) -> float:
+    """libm ``pow`` with IEEE overflow semantics (``±inf``, never a raise).
+
+    The scalar path's ``x ** k`` raises ``OverflowError`` past ~1e308 (a
+    pre-existing scalar hazard outside H5's reach); a batch must never be
+    poisoned by one such row, so overflow maps to the IEEE result instead.
+    """
+    try:
+        return math.pow(base, exponent)
+    except OverflowError:
+        return math.inf if base > 0.0 or exponent % 2.0 == 0.0 else -math.inf
+
+
+_LIBM_POW = np.frompyfunc(_pow_or_inf, 2, 1)
+
+
+def _libm_pow(x: FloatArray, exponent: float) -> FloatArray:
+    """Elementwise ``x ** exponent`` via the exact libm ``pow`` the scalar path uses."""
+    return _LIBM_POW(x, exponent).astype(np.float64)
+
+
+@dataclass
+class BatchEffectResult:
+    """Array-wise significance results — the slim, validate-only result rows.
+
+    One position per comparison row; NaN rows mark degenerate inputs (the
+    scalar NaN/H5 branches). Deliberately carries ONLY the five fields the
+    validate scoring loop reads (``effect``/bounds/``ci_length``/``pvalue``) —
+    no ``effect_distribution``, ``mde_*``, ``name_*``, per-arm stats or
+    ``warnings`` (all write-only on that path, m7-implementation-plan.md §0.1).
+    This is NOT a :class:`~abkit.stats.result.TestResult` replacement: the
+    pipeline/explore/report contract stays ``TestResult`` — never wire
+    ``abk run`` through this type.
+    """
+
+    effect: FloatArray
+    left_bound: FloatArray
+    right_bound: FloatArray
+    ci_length: FloatArray
+    pvalue: FloatArray
+
+
+def absolute_effect_array(
+    mean_1: FloatArray, mean_2: FloatArray, var_mean_1: FloatArray, var_mean_2: FloatArray
+) -> tuple[FloatArray, FloatArray]:
+    """Array-wise :func:`absolute_effect`: ``(effect, var)`` per row, same formulas.
+
+    Self-contained ``np.errstate`` like every sibling kernel — a non-finite row
+    (e.g. ``inf − inf``) must not warn even when a caller invokes this outside
+    its own errstate block.
+    """
+    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+        return mean_2 - mean_1, var_mean_1 + var_mean_2
+
+
+def relative_delta_effect_array(
+    mean_num: FloatArray,
+    var_num: FloatArray,
+    mean_den: FloatArray,
+    var_den: FloatArray,
+    covariance: FloatArray,
+) -> tuple[FloatArray, FloatArray]:
+    """Array-wise :func:`relative_delta_effect`: ``(effect, var)`` per row.
+
+    The H5 hygiene guard (zero/non-finite denominator mean → NaN) and the
+    numeric-instability guard (non-finite mu/var → NaN) become boolean masks.
+    ``np.where`` evaluates both branches eagerly, so the kernel body runs under
+    ``np.errstate`` — a degenerate row must never raise or warn (the array
+    mirror of the scalar guard's early return).
+    """
+    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+        relative_mu = mean_num / mean_den
+        # Power terms via libm pow — see the module-section comment: numpy's
+        # `**` is 1-ULP-off the scalar path's and the cancelling sum amplifies.
+        relative_var = (
+            var_num / _libm_pow(mean_den, 2.0)
+            + var_den * (_libm_pow(mean_num, 2.0) / _libm_pow(mean_den, 4.0))
+            - 2.0 * (mean_num / _libm_pow(mean_den, 3.0)) * covariance
+        )
+        degenerate = (
+            (mean_den == 0.0)
+            | ~np.isfinite(mean_den)
+            | ~np.isfinite(relative_mu)
+            | ~np.isfinite(relative_var)
+        )
+        effect = np.where(degenerate, np.nan, relative_mu)
+        var = np.where(degenerate, np.nan, relative_var)
+    return effect, var
+
+
+def normal_test_array(effect: FloatArray, var: FloatArray, alpha: float) -> BatchEffectResult:
+    """Array-wise :func:`normal_test` (baseline §3.1, the WP1 ndtri/ndtr form).
+
+    Per the scalar NaN branch: a degenerate row (non-finite effect/var or
+    ``var <= 0``) keeps its ``effect`` value verbatim and gets NaN
+    bounds/``ci_length``/``pvalue`` — a mask in place of the per-case warning
+    strings. ``reject`` is deliberately absent: validate derives significance
+    from the CI bounds (finite ``left > 0`` / ``right < 0``), never from a
+    pre-baked flag.
+    """
+    effect = np.asarray(effect, dtype=np.float64)
+    var = np.asarray(var, dtype=np.float64)
+    z_low, z_high = _two_sided_quantiles(alpha)
+    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+        degenerate = ~np.isfinite(effect) | ~np.isfinite(var) | (var <= 0.0)
+        # NaN-poisoning the scale propagates NaN through bounds/pvalue exactly
+        # like the scalar early return — no second masking pass needed.
+        scale = np.sqrt(np.where(degenerate, np.nan, var))
+        left_bound = z_low * scale + effect
+        right_bound = z_high * scale + effect
+        z_zero = (0.0 - effect) / scale  # cdf(0) standardization, scipy op order
+        pvalue = 2.0 * np.minimum(special.ndtr(z_zero), special.ndtr(-z_zero))
+        ci_length = right_bound - left_bound
+    return BatchEffectResult(
+        effect=effect,
+        left_bound=left_bound,
+        right_bound=right_bound,
+        ci_length=ci_length,
+        pvalue=pvalue,
     )

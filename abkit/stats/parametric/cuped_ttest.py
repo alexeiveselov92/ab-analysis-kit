@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import math
 import warnings
+from collections.abc import Mapping
 
 import numpy as np
 
@@ -34,13 +35,27 @@ from abkit.stats.base import (
     TEST_TYPE_PARAM,
     BaseMethod,
     require_pair_type,
+    suffstats_pair_columns,
 )
-from abkit.stats.effects import absolute_effect, normal_test, relative_delta_effect
+from abkit.stats.effects import (
+    BatchEffectResult,
+    FloatArray,
+    _libm_pow,
+    absolute_effect,
+    absolute_effect_array,
+    normal_test,
+    normal_test_array,
+    relative_delta_effect,
+    relative_delta_effect_array,
+)
 from abkit.stats.exceptions import AbkitStatsWarning, SampleValidationError
 from abkit.stats.power import get_cuped_ttest_mde
 from abkit.stats.registry import register
 from abkit.stats.result import TestResult
 from abkit.stats.samples import Sample, SufficientStats
+
+#: Column keys of the batch entry — the ``SufficientStats`` value + covariate moments.
+CUPED_ARRAY_KEYS = ("n", "mean", "m2", "cov_mean", "cov_m2", "cross_c")
 
 #: Legacy CUPED guard: warn when the value↔covariate correlation is below this.
 MIN_CORR_COEF = 0.5
@@ -66,6 +81,7 @@ def correlation_warning(method_name: str, arm_name: str, corr_coef: float) -> st
 class CupedTTest(BaseMethod):
     name = "cuped-t-test"
     requires_covariate = True
+    supports_vectorized = True
     param_specs = (
         TEST_TYPE_PARAM,
         CALCULATE_MDE_PARAM,
@@ -172,3 +188,60 @@ class CupedTTest(BaseMethod):
             method_warnings=method_warnings,
             diagnostics={"theta": theta},
         )
+
+    def from_suffstats_array(
+        self,
+        arrays_1: Mapping[str, FloatArray],
+        arrays_2: Mapping[str, FloatArray] | None = None,
+    ) -> BatchEffectResult:
+        """Array-wise ``from_suffstats`` (M7 WP2). Column keys: ``n``, ``mean``,
+        ``m2``, ``cov_mean``, ``cov_m2``, ``cross_c``.
+
+        The pooled-θ mixed-ddof formula verbatim (np.cov-parity numerator over
+        np.var-parity denominator, baseline fact #1) via numpy broadcasting;
+        parity pinned by ``tests/stats/test_vectorized_parity.py``. A
+        non-finite θ (zero pooled covariate variance) or ``n < 2`` row
+        NaN-poisons through to NaN outputs — the batch mirror of the scalar
+        warning + NaN path (the low-correlation advisory warning is scalar-only:
+        validate never reads warnings).
+        """
+        (
+            (n_1, mean_1, m2_1, cov_mean_1, cov_m2_1, cross_c_1),
+            (n_2, mean_2, m2_2, cov_mean_2, cov_m2_2, cross_c_2),
+        ) = suffstats_pair_columns(arrays_1, arrays_2, CUPED_ARRAY_KEYS, self.name)
+
+        with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+            # SufficientStats.__init__ truncates n via int(n) — mirror it, or a
+            # fractional-n row silently diverges (adversarial review round 2).
+            n_1 = np.trunc(n_1)
+            n_2 = np.trunc(n_2)
+            # Pooled θ, EXACT mixed ddof: cov1_value_covariate = cross_c/(n−1)
+            # (np.cov parity) summed over arms, over cov_var = cov_m2/n (np.var
+            # parity) summed over arms — the scalar property op order preserved.
+            theta_num = cross_c_1 / (n_1 - 1.0) + cross_c_2 / (n_2 - 1.0)
+            theta_den = cov_m2_1 / n_1 + cov_m2_2 / n_2
+            theta = theta_num / theta_den
+
+            mean_cup_1 = mean_1 - theta * cov_mean_1
+            mean_cup_2 = mean_2 - theta * cov_mean_2
+            # var0(cup_i) exactly from raw co-moments: m2 − 2θ·cross + θ²·cov_m2,
+            # over n; θ² via libm pow (bit parity with the scalar `**`).
+            theta_sq = _libm_pow(theta, 2.0)
+            var_cup_1 = (m2_1 - 2.0 * theta * cross_c_1 + theta_sq * cov_m2_1) / n_1
+            var_cup_2 = (m2_2 - 2.0 * theta * cross_c_2 + theta_sq * cov_m2_2) / n_2
+
+            if self.test_type == "absolute":
+                effect, var = absolute_effect_array(
+                    mean_cup_1, mean_cup_2, var_cup_1 / n_1, var_cup_2 / n_2
+                )
+            else:
+                # np.cov parity (ddof=1): cov(cup_1, y1) = (m2 − θ·cross_c)/(n1 − 1).
+                cov1_cup_value = (m2_1 - theta * cross_c_1) / (n_1 - 1.0)
+                effect, var = relative_delta_effect_array(
+                    mean_num=mean_cup_2 - mean_cup_1,
+                    var_num=var_cup_2 / n_2 + var_cup_1 / n_1,
+                    mean_den=mean_1,  # ORIGINAL control mean (baseline §3.3 subtlety)
+                    var_den=(m2_1 / n_1) / n_1,
+                    covariance=-cov1_cup_value / n_1,
+                )
+        return normal_test_array(effect, var, self.alpha)
