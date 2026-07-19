@@ -35,8 +35,8 @@ number change).
   pinned by the new frozen-fixture golden gate
   `tests/stats/test_normal_path_golden.py` (bit-identical
   bounds/p-values/rejects across extreme-z and degenerate batteries, floats
-  compared by `float.hex`), and the whole 631-test stats+golden suite passes
-  unmodified. The wins:
+  compared by `float.hex`), and the whole stats+golden suite passes unmodified
+  (634 passed, 1 opt-in benchmark skipped). The wins:
   - **A1 — `scipy.special.ndtri`/`ndtr` replace the frozen `sps.norm` objects**
     on the closed-form significance path (`effects.normal_test`, the z-test,
     `sequential.se_from_ci_length`), with the sf tail computed as `ndtr(-z)`
@@ -47,10 +47,12 @@ number change).
   - **A2 — statsmodels imports moved inside the power/MDE solves** —
     `import abkit.stats` no longer eagerly loads statsmodels+pandas+patsy
     (~0.5 s cold in this env); a subprocess test pins the deferral.
-  - **A3 — `TestResult.effect_distribution` is now a `LazyNormal` proxy** —
-    freezing the never-serialised scipy distribution is deferred to the first
-    attribute read (delegated reads are byte-identical); the `is not None`
-    truthiness contract and `to_dict()` behavior are pinned by a new test.
+  - **A3 — `TestResult.effect_distribution` is now a `LazyNormal` proxy on the
+    closed-form path** — freezing the never-serialised scipy distribution is
+    deferred to the first attribute read (delegated reads are byte-identical);
+    the `is not None` truthiness contract and `to_dict()` behavior are pinned
+    by a new test. (The bootstrap methods' `effect_distribution` stays eager —
+    negligible next to the resampling itself.)
   - **A4 — bootstrap result-assembly dedup** — per-arm `stat_point` values are
     computed once and passed into `_finalize`; `pvalue_sign` counts each side
     once and divides once (provably byte-identical, goldens intact).

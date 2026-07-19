@@ -55,6 +55,24 @@ METHOD_CLASSES: tuple[type[BaseMethod], ...] = tuple(
     )
 )
 
+# The registry trip-wire (mirrors SAFE_PARAMS in test_bootstrap_methods.py, M7
+# adversarial-review round-1 finding): an empty parametrize list makes pytest
+# silently collect ZERO sweep cases and exit green — exactly the vacuous-pass
+# failure mode A5 exists to prevent. Update deliberately when a closed-form
+# method is added or removed (alongside test_registry_completeness.py's pin).
+assert {cls.name for cls in METHOD_CLASSES} == {
+    "t-test",
+    "paired-t-test",
+    "z-test",
+    "cuped-t-test",
+    "paired-cuped-t-test",
+    "ratio-delta",
+}, (
+    "the registry-derived closed-form sweep is out of sync with the expected set: "
+    f"{sorted(cls.name for cls in METHOD_CLASSES)} — the contract sweeps below would "
+    "silently shrink; update this pin consciously along with the docs"
+)
+
 
 # --- ratio-delta ------------------------------------------------------------------------
 
