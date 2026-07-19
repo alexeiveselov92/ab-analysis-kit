@@ -61,7 +61,7 @@ from typing import Any, TypeVar, cast
 import numpy as np
 
 from abkit.stats.base import BaseMethod
-from abkit.stats.exceptions import AbkitStatsWarning
+from abkit.stats.exceptions import AbkitStatsWarning, SampleValidationError
 from abkit.stats.power import cuped_adjusted_std, get_fraction_mde, get_ttest_mde
 from abkit.stats.rng import derive_seed
 from abkit.stats.samples import Fraction, RatioSufficientStats, SufficientStats
@@ -825,15 +825,42 @@ def _score_cell_vectorized(  # noqa: PLR0912, PLR0915 — mirrors the scalar eng
 
         # Achieved MDE — reporting-only, `iterations`-shaped (valid horizon rows
         # only; ratio-delta has no analytic MDE, same as the scalar None branch).
+        # The control arm is REBUILT through the scalar `build_arm` on the row's
+        # own mask (already in memory) rather than read off the GEMM columns:
+        # bit-identical inputs to `_analytic_mde` by construction. Reading the
+        # batch columns instead diverged at a knife-edge — a 2-unit CUPED arm
+        # has corr ≡ ±1, and whichever engine's reduction rounds EXACTLY onto
+        # ±1 reports std 0 → MDE None while the other reports a ULP off → MDE
+        # 0.0, flipping a persisted column that feeds the Recommended-row
+        # tie-break (adversarial review round 1, WP5). O(valid_rows) scalar
+        # work on ONE cutoff — still `iterations`-shaped, never × cutoffs.
         if panel.input_kind != "ratio" and n_valid:
+            hc = panel.cutoffs[horizon_pos]
             for i in np.flatnonzero(valid_h):
-                control = _control_stats_from_row(
-                    panel.input_kind,
-                    panel.covariate is not None,
-                    horizon_a.columns,
-                    int(horizon_a.arm_sizes[i]),
-                    int(i),
-                )
+                pos_a, _pos_b = present_positions(mask_block[i], hc.unit_idx)
+                try:
+                    control = build_arm(
+                        panel.input_kind,
+                        hc.values,
+                        hc.secondary,
+                        panel.covariate,
+                        hc.unit_idx,
+                        pos_a,
+                    )
+                except SampleValidationError:
+                    # An over-counted fraction arm (per-unit successes > trials
+                    # — corrupt input) passes the batch main pass (the POOLED
+                    # z-test proportion can stay finite) but cannot construct a
+                    # Fraction here. Reporting-only means reporting-only: skip
+                    # the row's MDE, never kill the cell's already-computed
+                    # fpr/power (adversarial review round 2). The scalar engine
+                    # fails such a cell loudly at its own build_arm — a
+                    # pre-existing corrupt-input divergence of the batch main
+                    # pass (WP4), documented, not created here.
+                    continue
+                # A valid row (both arms ≥ MIN_ARM_UNITS, finite CI) always has
+                # a buildable control arm — same constant, same mask row.
+                assert control is not None
                 mde = _analytic_mde(control, method, ratio=ratio, target_power=target_power)
                 if mde is not None:
                     mde_values.append(mde)
@@ -1062,41 +1089,6 @@ def _injected_truth(method: BaseMethod, delta: float, pooled_estimate: float) ->
     if test_type == "relative":
         return float(delta)
     return float(delta) * pooled_estimate
-
-
-def _control_stats_from_row(
-    input_kind: str,
-    has_covariate: bool,
-    columns: dict[str, FloatArray],
-    arm_size: int,
-    i: int,
-) -> ArmStats:
-    """One valid horizon row's control arm as a scalar container (the MDE seam).
-
-    Feeds the unchanged ``_analytic_mde`` from the batch columns so the MDE
-    formula path is shared, not duplicated. Only called on non-degenerate rows
-    (finite columns, ``n ≥ MIN_ARM_UNITS``, ``nobs > 0``); never for the ratio
-    kind (no analytic MDE). The Fraction ``count`` is clamped into ``[0, nobs]``:
-    both are exact GEMM sums for integer-valued panels, but a fractional-valued
-    panel could round ``count`` past ``nobs`` by one ULP where the scalar sums
-    land exactly equal — there the scalar engine would CRASH the cell at
-    ``Fraction`` construction while this clamp scores it with an ULP-shifted
-    reporting-only value (a documented, strictly-friendlier divergence on a
-    pathological input — adversarial review round 1).
-    """
-    if input_kind == "fraction":
-        nobs = float(columns["nobs"][i])
-        return Fraction(count=min(float(columns["count"][i]), nobs), nobs=nobs)
-    if has_covariate:
-        return SufficientStats(
-            n=arm_size,
-            mean=float(columns["mean"][i]),
-            m2=float(columns["m2"][i]),
-            cov_mean=float(columns["cov_mean"][i]),
-            cov_m2=float(columns["cov_m2"][i]),
-            cross_c=float(columns["cross_c"][i]),
-        )
-    return SufficientStats(n=arm_size, mean=float(columns["mean"][i]), m2=float(columns["m2"][i]))
 
 
 def _value_1_rows(input_kind: str, columns: dict[str, FloatArray]) -> FloatArray:
