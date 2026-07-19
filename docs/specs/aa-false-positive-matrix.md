@@ -312,7 +312,11 @@ future contributor finds the invariant here and not only in code comments:
   dedicated regression test; hardening the batch degenerate flag to also
   reject `count > nobs` is a named follow-up, deliberately NOT done in M7
   (an ULP-level `count ≈ nobs` knife-edge on legitimate fractional panels
-  could then fail cells the scalar engine scores).
+  could then fail cells the scalar engine scores). **The same class holds
+  for the family sweep (WP7)**: the scalar engine crashes the sweep at
+  `Fraction` construction (surfaced by the runner as a failed family) while
+  the batch engine scores the family — pinned by its own regression test in
+  `test_family_vector_parity.py`; the named follow-up covers both engines.
 - **The honest limit of count exactness** (the §0.3(3) mandate, measured): a
   CI bound *manufactured* onto the decision boundary (brentq-solved injected δ,
   `|left_bound| ≲ 1e-15`) can flip that single decision between the engines —
@@ -329,3 +333,26 @@ future contributor finds the invariant here and not only in code comments:
   job traces `--cov=abkit`, and the tracer roughly doubles the cell
   (dev-measured ~1.3–1.7 s bare, ~2.2–2.5 s under coverage, vs ~25 s scalar —
   the WP4 ~10× record).
+- **The composed family sweep (D9) has its own vectorized engine (WP7)** —
+  `family.py`'s hot loop is separate from `score_cell`'s (the §0.3(1)
+  plan-review correction), so `sweep_family` carries the same
+  dispatch-on-`supports_vectorized` contract: block-streamed union masks +
+  per-member GEMM batches feed the UNCHANGED per-iteration
+  `composed_significance`, the scalar loop survives verbatim as the
+  any-member-not-opted-in fallback, and the parity gate
+  (`tests/validate/test_family_vector_parity.py`) asserts **every
+  `FamilyScore` field exact** on inputs both engines score (all columns are
+  count ratios, exact-fraction sums, or passthroughs — no rel-1e-9 class at
+  the family level; the corrupt-input divergence above is the one documented
+  exception, where the scalar engine refuses what the batch engine scores).
+  A structural kernel raise (a member whose method demands columns its panel
+  lacks) gaps that member in both engines — the batch engine carries the
+  scalar `except Exception` net, with `NotImplementedError` re-raised so a
+  lying `supports_vectorized` flag still fails loudly. Scope caveat (review
+  round 2): under `sequential=True` a member whose τ² *anchor* raises
+  structurally crashes BOTH engines identically inside the shared, unguarded
+  `_cell_tau2` (pre-existing, symmetric, runner-isolated); the engine net
+  covers members whose anchor degenerates to None instead — guarding
+  `_cell_tau2` itself is a named follow-up (it changes both engines at
+  once). Measured ~18× on a 3-member × 2000-iteration sequential reference,
+  byte-identical output.

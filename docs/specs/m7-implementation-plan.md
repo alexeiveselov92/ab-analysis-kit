@@ -1038,6 +1038,22 @@ blocking M7's `0.2.0` release.
 blocking the `0.2.0` release; WP6's opt-in flip is the load-bearing fix
 either way).
 
+> **As-built note (WP7 shipped, 2026-07-19).** Two deliberate deviations from
+> the steps above, both stricter than the plan's ask: (a) the parity gate is a
+> NEW file, `tests/validate/test_family_vector_parity.py` (mirroring WP5's own
+> delivery shape), leaving `test_family_sweep.py` untouched and green; (b) the
+> gate asserts **exact** equality on every `FamilyScore` field — no rel-1e-9
+> class at all — because every family column is a count ratio, an
+> exact-fraction sum accumulated in identical iteration order (the composition
+> stays the scalar `composed_significance` per iteration in both engines), or
+> a passthrough; there is no GEMM-order-dependent continuous mean at the
+> family level. `composed_significance` itself was left scalar per step 2's
+> scope option. The corrupt-fraction divergence class (scalar crashes /
+> batch scores) carries over from the scoring engines and is spec-documented
+> + regression-pinned for the family surface (aa-false-positive-matrix.md §9);
+> the batch engine additionally carries the scalar `except Exception` net so
+> a structural kernel raise gaps the member, never the sweep (review round 1).
+
 ---
 
 ## 2. Dependency graph / parallelism
