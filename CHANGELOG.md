@@ -140,7 +140,9 @@ number change).
   256 MiB ceiling: hoisting the per-cutoff GEMM operands (`prepare_cutoff`)
   gets only what the block working set leaves of the cap (past the leftover,
   blocks re-prepare per cutoff — bounded memory, identical bits either way,
-  equality-pinned by a forced-non-hoist test). Also fixed while under review
+  equality-pinned by forced-non-hoist tests over single- AND multi-block
+  partitions; the BLAS-scope boundary itself stays documented-not-CI-enforced,
+  same as the donor bootstrap engine's gate). Also fixed while under review
   (pre-existing, shared by both engines, no scorable number moved): an
   exactly-zero pooled ratio denominator crashed the whole matrix with an
   uncaught `ZeroDivisionError` out of `_point_estimate` instead of falling

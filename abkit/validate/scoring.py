@@ -1026,8 +1026,11 @@ def _point_estimate(arm: object) -> float | None:
         # zero pooled denominator mean raised ZeroDivisionError — which the
         # runner's per-cell isolation does NOT catch, aborting the whole matrix
         # instead of falling back to the per-iteration value_1 anchor as this
-        # docstring always promised (adversarial review round 1; same guard as
-        # ratio_delta._arm_linearisation). No previously-scorable input moves.
+        # docstring always promised (adversarial review round 1). The zero/
+        # non-finite check mirrors what _arm_linearisation applies to ARM means,
+        # minus its H5 warning — the pooled anchor is silent by design. ±0.0
+        # both take the guard; a denormal mean flows to an inf ratio and the
+        # isfinite check below. No previously-scorable input moves.
         if arm.mean_den == 0.0 or not math.isfinite(arm.mean_den):
             return None
         return float(arm.ratio) if math.isfinite(arm.ratio) else None

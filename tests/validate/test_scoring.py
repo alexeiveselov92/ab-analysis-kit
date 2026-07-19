@@ -451,6 +451,23 @@ def test_non_hoisted_prepare_branch_is_bit_identical(monkeypatch):
     forced = score_cell(panel, method, **kwargs)
     assert forced == default
 
+    # Multi-block leg (adversarial review round 2): a tiny quantum ⇒ 9 blocks ×
+    # 4 cutoffs, exercising fresh per-block re-prepares against the reused
+    # weights scratch. A changed partition may move floats at ULP scale (the
+    # vector_resample block contract), so this pair is compared to ITSELF —
+    # hoisted vs non-hoisted under the SAME partition must be bit-identical —
+    # and its counts to the partition-independent scalar engine.
+    monkeypatch.setattr("abkit.validate.scoring.block_rows", lambda n_units, *a, **kw: 7)
+    forced_multi = score_cell(panel, method, **kwargs)  # budget 0 → re-prepare per block
+    monkeypatch.setattr("abkit.validate.scoring.DEFAULT_MAX_BLOCK_BYTES", 1 << 40)
+    hoisted_multi = score_cell(panel, method, **kwargs)  # same partition, hoisted
+    assert forced_multi == hoisted_multi
+    sca = _score_cell_scalar(panel, method, **kwargs)
+    assert forced_multi.valid_iterations == sca.valid_iterations
+    assert forced_multi.fpr == sca.fpr
+    assert forced_multi.peeking_fpr == sca.peeking_fpr
+    assert forced_multi.peeking_curve == sca.peeking_curve
+
 
 def test_lying_vectorized_flag_fails_the_cell_loudly():
     """supports_vectorized=True without a working batch kernel must raise
