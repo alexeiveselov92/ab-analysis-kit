@@ -26,8 +26,16 @@ materialised at once (:func:`block_rows`). One deliberate divergence from the
 bootstrap contract: because mask rows are seed-independent (above), a block may
 shrink BELOW one quantum (floor: one row) when a single quantum of
 ``n_units``-wide temporaries would not fit the cap — the bootstrap engine
-cannot do this (its random stream is drawn in whole quanta), this engine can,
-so the cap is honored for arbitrarily large populations.
+cannot do this (its random stream is drawn in whole quanta), this engine can.
+(The engine's own ``iter_resample_blocks`` arithmetic is structurally unable to
+produce sub-quantum blocks, which is why only its constants are imported here
+rather than the block-count policy itself.) The cap governs the BLOCK-scaled
+working set only (:data:`_ROW_TEMP_BYTES` per row per unit); each cutoff
+additionally materialises ``k ≤ 5`` value columns of ``8·n_present`` bytes
+(:func:`prepare_cutoff`) that are cap-INDEPENDENT — the same class of fixed
+overhead as the bootstrap engine's ``stratum_values`` working set. At 1e6
+units a CUPED/ratio cutoff carries ~40 MB of such columns regardless of the
+cap; the memory tests assert both parts separately.
 
 WHAT THE BLOCK SIZE CAN AND CANNOT MOVE (measured — the honest contract)
 ========================================================================
@@ -84,15 +92,22 @@ SHIFTED ONE-PASS CO-MOMENTS (why this does not violate samples.py's rule)
 cancellation on offset data). The batch kernels use the *pooled-shifted*
 one-pass instead: every value column is centered ONCE per cutoff on its pooled
 mean (iteration-independent), and per-arm moments are recovered as
-``Σ_arm c² − (Σ_arm c)²/count``. Placebo arms are random subsets of that same
-pooled population, so an arm's mean sits within ``O(σ/√count)`` of the shift
-point and the subtracted term is ~``1/count`` of the leading term — benign
-cancellation, gated at rel-1e-9 against the scalar two-pass path by
-``tests/validate/test_vector_resample.py`` (matmul reduction order differs from
-``.sum()`` over a fancy-indexed slice anyway, so bit-parity is not the
-contract here; the mask layer above is the bit-exact one). Roundoff can leave a
-tiny negative ``m2`` where the scalar path is exactly 0 — clamped to 0.0 to
-keep the ``m2 ≥ 0`` container contract.
+``Σ_arm c² − (Σ_arm c)²/count``. The shift subtraction is exact (values and
+their pooled mean sit within a factor of two of each other — Sterbenz), after
+which the identity yields moments about the arm's EXACT mean; the scalar
+two-pass path instead centers on the float-ROUNDED arm mean, inflating its
+``m2`` by ``count · δ²`` with ``δ ≤ ulp(|value|)/2``. The two paths therefore
+diverge as roughly ``(eps · |value| / σ)² / 4`` relative (adversarial review
+round 1 corrected an earlier "arm mean is near the shift point" rationale —
+that deviation is real but is NOT what bounds the error): measured
+~1e-15 at ``|value|/σ = 1e8/3``, ~1e-10 at ``1e11/3``, breaking rel-1e-9 at
+``~1e12/3``. A metric with ``|value|/σ ≳ 1e11`` is conditioning-degenerate in
+float64 for ANY variance algorithm (adjacent representable values are
+``eps·|value|`` apart — the spread itself is quantization-dominated), so the
+rel-1e-9 parity gate is scoped to ``|value|/σ ≲ 1e10``; the tests pin a deep
+pass at 1e8, an edge pass at 1e10, and the measured ULP-inflation boundary at
+1e12. Roundoff can leave a tiny negative ``m2`` where the scalar path is
+exactly 0 — clamped to 0.0 to keep the ``m2 ≥ 0`` container contract.
 
 DEGENERATE ARMS ARE GAPS, NEVER ZEROS (scoring.py:26-27)
 ========================================================
@@ -126,7 +141,12 @@ IntArray = npt.NDArray[np.int64]
 
 #: Working-set bytes per mask row per unit (the engine's honesty rule — count the
 #: temporaries, engine.py:289-293): the bool mask row (1) + its present-slice
-#: copy (1) + the float64 weights buffer the GEMM consumes (8).
+#: copy (1) + the float64 weights buffer the GEMM consumes (8). NOTE:
+#: ``placebo_mask_block``'s construction phase has its OWN transient of the same
+#: order — each ``placebo_mask`` call holds an int64 permutation (8) plus a bool
+#: mask (1) per unit for one row at a time — which happens to fit the same
+#: budget only because int64 == float64 width; if ``placebo_mask`` internals
+#: ever change, re-check this coincidence (adversarial review round 1).
 _ROW_TEMP_BYTES = 10
 
 
@@ -179,19 +199,19 @@ def block_rows(
     return max(1, cap // bytes_per_row)
 
 
-def iter_blocks(iterations: int, block: int = BLOCK_QUANTUM) -> Iterator[tuple[int, int]]:
+def iter_blocks(iterations: int, quantum: int = BLOCK_QUANTUM) -> Iterator[tuple[int, int]]:
     """Yield ``(block_start, block_size)`` covering ``range(iterations)`` in order.
 
-    The last block may be short. Size the ``block`` argument with
-    :func:`block_rows` so the per-cutoff temporaries stay under the byte cap.
+    The last block may be short. Size ``quantum`` with :func:`block_rows` so
+    the per-cutoff temporaries stay under the byte cap.
     """
     if iterations <= 0:
         raise ValueError(f"iterations must be positive, got {iterations}")
-    if block <= 0:
-        raise ValueError(f"block must be positive, got {block}")
+    if quantum <= 0:
+        raise ValueError(f"quantum must be positive, got {quantum}")
     produced = 0
     while produced < iterations:
-        size = min(block, iterations - produced)
+        size = min(quantum, iterations - produced)
         yield (produced, size)
         produced += size
 
@@ -239,6 +259,11 @@ class ArmStatsBatch:
     ``degenerate`` marks rows where the scalar ``build_arm`` would return
     ``None`` — a gap, never a zero; those rows' columns are NaN. ``arm_sizes``
     is the raw per-row present-unit count (the ``MIN_ARM_UNITS`` gate input).
+    ``degenerate`` is the BUILD-level gap signal only: a non-degenerate row can
+    still carry inf/NaN moments from overflow-scale data, which surface as NaN
+    CI bounds out of the WP2 kernels — a consumer must treat non-finite bounds
+    as a gap exactly like the scalar path's ``_significance`` non-finite check
+    (scoring.py:140-153), never as a non-rejection.
     """
 
     columns: dict[str, FloatArray]
@@ -320,9 +345,10 @@ def build_arm_batch(
             )
         weights = weights_scratch[: mask_block.shape[0], :n_present]
     np.copyto(weights, present)
-    sums_a = weights @ value_matrix  # (block × k)
-    np.subtract(1.0, weights, out=weights)
-    sums_b = weights @ value_matrix
+    with np.errstate(over="ignore", invalid="ignore"):  # inf·0 inside the GEMM → NaN row
+        sums_a = weights @ value_matrix  # (block × k)
+        np.subtract(1.0, weights, out=weights)
+        sums_b = weights @ value_matrix
 
     arm_a = _finish_arm(input_kind, shifts, count_a, tuple(sums_a.T))
     arm_b = _finish_arm(input_kind, shifts, count_b, tuple(sums_b.T))
@@ -340,37 +366,42 @@ def _shifted_columns(
     iterations); products use ``np.square``/``*`` (exact multiplies — no ``**``,
     so the WP2 libm-pow ULP hazard never enters this layer). Fraction sums are
     plain non-negative totals — no centering, matching the scalar ``.sum()``.
+    ``errstate`` mirrors the WP2 kernels: ~1e150-scale values overflow
+    ``np.square`` to inf without warnings-as-errors noise; the inf/NaN then
+    flows to NaN CI bounds downstream — the same gap the scalar path reaches
+    via ``_significance``'s non-finite check (adversarial review round 1).
     """
     if input_kind == "fraction":
         assert cut.secondary is not None  # validated by the caller
         return (), (cut.values, cut.secondary)
-    if input_kind == "ratio":
-        assert cut.secondary is not None  # validated by the caller
-        shift_num = float(np.mean(cut.values))
-        shift_den = float(np.mean(cut.secondary))
-        centered_num = cut.values - shift_num
-        centered_den = cut.secondary - shift_den
-        return (shift_num, shift_den), (
-            centered_num,
-            np.square(centered_num),
-            centered_den,
-            np.square(centered_den),
-            centered_num * centered_den,
+    with np.errstate(over="ignore", invalid="ignore"):
+        if input_kind == "ratio":
+            assert cut.secondary is not None  # validated by the caller
+            shift_num = float(np.mean(cut.values))
+            shift_den = float(np.mean(cut.secondary))
+            centered_num = cut.values - shift_num
+            centered_den = cut.secondary - shift_den
+            return (shift_num, shift_den), (
+                centered_num,
+                np.square(centered_num),
+                centered_den,
+                np.square(centered_den),
+                centered_num * centered_den,
+            )
+        shift_y = float(np.mean(cut.values))
+        centered_y = cut.values - shift_y
+        if covariate is None:
+            return (shift_y,), (centered_y, np.square(centered_y))
+        covariate_present = covariate[cut.unit_idx]
+        shift_x = float(np.mean(covariate_present))
+        centered_x = covariate_present - shift_x
+        return (shift_y, shift_x), (
+            centered_y,
+            np.square(centered_y),
+            centered_x,
+            np.square(centered_x),
+            centered_y * centered_x,
         )
-    shift_y = float(np.mean(cut.values))
-    centered_y = cut.values - shift_y
-    if covariate is None:
-        return (shift_y,), (centered_y, np.square(centered_y))
-    covariate_present = covariate[cut.unit_idx]
-    shift_x = float(np.mean(covariate_present))
-    centered_x = covariate_present - shift_x
-    return (shift_y, shift_x), (
-        centered_y,
-        np.square(centered_y),
-        centered_x,
-        np.square(centered_x),
-        centered_y * centered_x,
-    )
 
 
 def _finish_arm(
@@ -383,12 +414,16 @@ def _finish_arm(
     degenerate = count < MIN_ARM_UNITS
     count_f = count.astype(np.float64)
 
-    with np.errstate(divide="ignore", invalid="ignore"):
+    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
         if input_kind == "fraction":
             successes, nobs = sums
-            # a zero-trial arm is degenerate — a gap, not a crash (build_arm parity)
+            # a zero-trial arm is degenerate — a gap, not a crash (build_arm parity);
+            # contiguous copies so no column aliases the shared GEMM output buffer
             degenerate = degenerate | (nobs <= 0)
-            columns = {"count": successes, "nobs": nobs}
+            columns = {
+                "count": np.ascontiguousarray(successes),
+                "nobs": np.ascontiguousarray(nobs),
+            }
         elif input_kind == "ratio":
             shift_num, shift_den = shifts
             s_num, s_num2, s_den, s_den2, s_nd = sums

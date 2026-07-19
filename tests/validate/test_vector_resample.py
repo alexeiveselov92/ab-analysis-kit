@@ -214,11 +214,10 @@ def test_block_rows_groups_whole_quanta_under_the_cap():
     # 1000 units -> one quantum of temporaries is 128 * 1000 * 10 = 1.28 MB;
     # a 4 MiB cap fits 3 whole quanta.
     assert block_rows(1000, 4 * 1024 * 1024) == 3 * BLOCK_QUANTUM
-    # the default cap comfortably fits many quanta of small populations
-    assert (
-        block_rows(1000)
-        == (DEFAULT_MAX_BLOCK_BYTES // (BLOCK_QUANTUM * 1000 * _ROW_TEMP_BYTES)) * BLOCK_QUANTUM
-    )
+    # the default cap comfortably fits many quanta of small populations:
+    # 268435456 // (128 * 1000 * 10) = 209 whole quanta -> 209 * 128 rows
+    # (hand-computed literal, not the function's own formula)
+    assert block_rows(1000) == 26752
 
 
 def test_block_rows_shrinks_below_one_quantum_for_huge_populations():
@@ -242,7 +241,7 @@ def test_iter_blocks_partitions_exactly():
     assert list(iter_blocks(4, 2)) == [(0, 2), (2, 2)]
     with pytest.raises(ValueError, match="iterations"):
         list(iter_blocks(0))
-    with pytest.raises(ValueError, match="block"):
+    with pytest.raises(ValueError, match="quantum"):
         list(iter_blocks(10, 0))
 
 
@@ -276,13 +275,32 @@ def test_build_arm_batch_parity_at_extreme_share():
     assert compared > 0
 
 
-def test_build_arm_batch_parity_on_offset_data():
-    """The shifted-one-pass rationale made executable: values at 1e8 + N(0, 1)
-    would fail catastrophically under the raw one-pass form samples.py forbids;
-    the pooled-shifted form must hold rel-1e-9."""
-    panel = growing_sample_panel(n_units=500, n_cutoffs=2, seed=31, with_covariate=True, offset=1e8)
+@pytest.mark.parametrize("offset", [1e8, 1e10], ids=["deep-pass-1e8", "edge-pass-1e10"])
+def test_build_arm_batch_parity_on_offset_data(offset):
+    """The shifted-one-pass rationale made executable: offset values would fail
+    catastrophically under the raw one-pass form samples.py forbids; the
+    pooled-shifted form holds rel-1e-9 through the |value|/sigma ~ 1e10/3 edge
+    of the documented conditioning band (module docstring)."""
+    panel = growing_sample_panel(
+        n_units=500, n_cutoffs=2, seed=31, with_covariate=True, offset=offset
+    )
     mask_block = placebo_mask_block(panel.n_units, 0.5, SEED_PARTS, 0, 16)
     compared = _assert_batch_matches_scalar(panel, mask_block)
+    assert compared > 0
+
+
+def test_offset_conditioning_boundary_is_documented_not_silent():
+    """Beyond |value|/sigma ~ 1e11 float64 itself is the limit: the scalar
+    two-pass centers on the ROUNDED arm mean (inflating its m2 by
+    count*ulp(|y|)^2/4) while the batch identity centers exactly, so the two
+    paths diverge past rel-1e-9 with NO bug on either side (adversarial review
+    round 1 measured ~5e-9 at offset 1e12, sigma 3). Pins that the divergence
+    stays ULP-inflation-sized (well under 1e-6), not one-pass-catastrophic."""
+    panel = growing_sample_panel(
+        n_units=500, n_cutoffs=2, seed=31, with_covariate=True, offset=1e12
+    )
+    mask_block = placebo_mask_block(panel.n_units, 0.5, SEED_PARTS, 0, 16)
+    compared = _assert_batch_matches_scalar(panel, mask_block, rtol=1e-6)
     assert compared > 0
 
 
@@ -367,18 +385,31 @@ def test_fraction_zero_trial_arm_is_a_gap_like_the_scalar_path():
         assert (scalar_a is None) == bool(batch_a.degenerate[i])
 
 
-def test_empty_cutoff_yields_all_degenerate_batches():
+@pytest.mark.parametrize(
+    ("input_kind", "with_covariate", "expected_keys"),
+    [
+        ("sample", False, TTEST_ARRAY_KEYS),
+        ("sample", True, CUPED_ARRAY_KEYS),
+        ("fraction", False, ZTEST_ARRAY_KEYS),
+        ("ratio", False, RATIO_DELTA_ARRAY_KEYS),
+    ],
+    ids=["sample", "cuped", "fraction", "ratio"],
+)
+def test_empty_cutoff_yields_all_degenerate_batches(input_kind, with_covariate, expected_keys):
+    empty = np.array([], dtype=np.float64)
     cut = PanelCutoff(
         elapsed_days=1.0,
         is_horizon=True,
         unit_idx=np.arange(0),
-        values=np.array([], dtype=np.float64),
+        values=empty,
+        secondary=empty if input_kind in ("fraction", "ratio") else None,
     )
+    covariate = np.ones(10) if with_covariate else None
     mask_block = placebo_mask_block(10, 0.5, SEED_PARTS, 0, 4)
-    batch_a, batch_b = build_arm_batch("sample", cut, None, mask_block)
+    batch_a, batch_b = build_arm_batch(input_kind, cut, covariate, mask_block)
     for batch in (batch_a, batch_b):
         assert batch.degenerate.all()
-        assert set(batch.columns) == set(TTEST_ARRAY_KEYS)
+        assert set(batch.columns) == set(expected_keys)
         for column in batch.columns.values():
             assert np.isnan(column).all()
 
@@ -590,12 +621,134 @@ def test_block_temporaries_stay_within_the_cap_at_a_million_units():
     assert peak < 3 * cap, f"peak {peak / 2**20:.1f} MiB breached 3x the {cap / 2**20:.0f} MiB cap"
 
 
+def test_cuped_block_temporaries_split_capped_and_fixed_parts_at_a_million_units():
+    """The CUPED/ratio worst case the round-1 contracts review flagged: the cap
+    governs ONLY the block-scaled working set; the k=5 shifted value columns +
+    the covariate slice are a cap-INDEPENDENT ~8*k*n_units fixed overhead per
+    cutoff (module docstring "the memory tests assert both parts separately").
+    The allowance is therefore 3x cap (block-scaled part + slack) PLUS the
+    explicit fixed-column budget — measured ~82 MB at these sizes."""
+    n_units = 1_000_000
+    cap = 32 * 1024 * 1024
+    rows = block_rows(n_units, cap)
+    rng = np.random.default_rng(72)
+    values = 5.0 + rng.normal(0.0, 1.0, size=n_units)
+    covariate = values * 0.6 + rng.normal(0.0, 1.0, size=n_units)
+    cut = PanelCutoff(elapsed_days=1.0, is_horizon=True, unit_idx=np.arange(n_units), values=values)
+    fixed_columns_budget = (5 + 1) * 8 * n_units  # k=5 columns + the covariate slice
+    tracemalloc.start()
+    try:
+        mask_block = placebo_mask_block(n_units, 0.5, SEED_PARTS, 0, rows)
+        build_arm_batch("sample", cut, covariate, mask_block)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 3 * cap + fixed_columns_budget, (
+        f"peak {peak / 2**20:.1f} MiB breached the split budget "
+        f"({(3 * cap + fixed_columns_budget) / 2**20:.0f} MiB)"
+    )
+
+
 def test_default_block_at_a_million_units_would_not_fit_the_default_cap():
     """Documents WHY the sub-quantum floor exists: one 128-row quantum's float64
     product buffer alone at 1e6 units is 1.02 GB >> the 256 MiB default cap."""
     one_quantum_product = BLOCK_QUANTUM * 1_000_000 * 8
     assert one_quantum_product > DEFAULT_MAX_BLOCK_BYTES
     assert block_rows(1_000_000) * 1_000_000 * _ROW_TEMP_BYTES <= DEFAULT_MAX_BLOCK_BYTES
+
+
+def test_malformed_fraction_count_above_nobs_flows_to_a_nan_gap_downstream():
+    """The one documented build-level divergence: successes > trials data
+    CRASHES the scalar path (Fraction validation) but flows through the batch
+    path as numbers (panel hygiene is upstream). Pin what actually happens
+    downstream: prop > 1 makes the z-test variance negative -> NaN CI bounds,
+    i.e. a gap — never a finite fake-significant row."""
+    method = create_method("z-test", alpha=0.05)
+    values = np.array([5.0, 4.0, 3.0, 2.0])  # per-unit "successes"
+    trials = np.ones(4)  # < successes: malformed upstream data
+    cut = PanelCutoff(
+        elapsed_days=1.0,
+        is_horizon=True,
+        unit_idx=np.arange(4),
+        values=values,
+        secondary=trials,
+    )
+    mask_block = np.array([[True, True, False, False]])
+    batch_a, batch_b = build_arm_batch("fraction", cut, None, mask_block)
+    assert not batch_a.degenerate[0] and not batch_b.degenerate[0]
+    # scalar-side the same arm raises at construction
+    with pytest.raises(Exception, match="count"):
+        Fraction(count=9.0, nobs=2.0)
+    result = method.from_suffstats_array(batch_a.columns, batch_b.columns)
+    assert np.isnan(result.left_bound[0]) and np.isnan(result.right_bound[0])
+
+
+def test_inject_multiplicative_columns_matches_the_scalar_injection():
+    """The WP3->WP4 injected-pass seam: the batch injection over
+    ArmStatsBatch.columns is BIT-exact vs inject_multiplicative given the same
+    inputs (same per-element op order), and clamping mirrors injection_clamped
+    per row — including a saturating Fraction row."""
+    from abkit.validate.inject import (
+        inject_multiplicative,
+        inject_multiplicative_columns,
+        injection_clamped,
+        injection_clamped_columns,
+    )
+
+    delta = 0.07
+    panels = {
+        "sample": growing_sample_panel(n_units=80, n_cutoffs=2, seed=95, with_covariate=False),
+        "cuped": growing_sample_panel(n_units=80, n_cutoffs=2, seed=96, with_covariate=True),
+        "fraction": fraction_panel(n_units=80, seed=97, base_rate=0.95),  # high rate: clamps
+        "ratio": ratio_panel(n_units=80, n_cutoffs=2, seed=98),
+    }
+    for label, panel in panels.items():
+        cut = panel.cutoffs[-1]
+        mask_block = placebo_mask_block(panel.n_units, 0.5, SEED_PARTS, 0, 8)
+        _, batch_b = build_arm_batch(panel.input_kind, cut, panel.covariate, mask_block)
+        injected = inject_multiplicative_columns(panel.input_kind, batch_b.columns, delta)
+        clamped = injection_clamped_columns(panel.input_kind, batch_b.columns, delta)
+        assert set(injected) == set(batch_b.columns), label
+        for i, mask_row in enumerate(mask_block):
+            _, pos_b = present_positions(mask_row, cut.unit_idx)
+            arm_b = build_arm(
+                panel.input_kind, cut.values, cut.secondary, panel.covariate, cut.unit_idx, pos_b
+            )
+            assert arm_b is not None
+            assert clamped[i] == injection_clamped(arm_b, delta), label
+            # bit-exactness of the injection ALGEBRA: feed the scalar arm's own
+            # column values through the batch function and compare exactly
+            scalar_columns = _scalar_arm_columns(arm_b)
+            assert scalar_columns is not None
+            exact_in = {key: np.array([value]) for key, value in scalar_columns.items()}
+            exact_out = inject_multiplicative_columns(panel.input_kind, exact_in, delta)
+            scalar_injected = _scalar_arm_columns(inject_multiplicative(arm_b, delta))
+            assert scalar_injected is not None
+            for key, expected in scalar_injected.items():
+                assert exact_out[key][0] == expected, f"{label}:{key} (bit-exact)"
+            # and the end-to-end batch row stays within the build-parity budget
+            for key, expected in scalar_injected.items():
+                assert np.isclose(
+                    injected[key][i], expected, rtol=1e-9, atol=0.0
+                ), f"{label}:{key}[{i}]"
+
+
+def test_inject_multiplicative_columns_preserves_nan_poison():
+    """A degenerate row's NaN poison must survive injection (gaps stay gaps)."""
+    from abkit.validate.inject import inject_multiplicative_columns, injection_clamped_columns
+
+    values = np.arange(1.0, 7.0)
+    cut = PanelCutoff(elapsed_days=1.0, is_horizon=True, unit_idx=np.arange(6), values=values)
+    mask_block = np.array([[True, False, False, False, False, False]])  # arm A degenerate
+    batch_a, _ = build_arm_batch("sample", cut, None, mask_block)
+    assert batch_a.degenerate[0]
+    injected = inject_multiplicative_columns("sample", batch_a.columns, 0.05)
+    for key in ("mean", "m2"):
+        assert np.isnan(injected[key][0]), key
+    fraction_nan = {"count": np.array([np.nan]), "nobs": np.array([np.nan])}
+    injected_fraction = inject_multiplicative_columns("fraction", fraction_nan, 0.05)
+    assert np.isnan(injected_fraction["count"][0])
+    assert not injection_clamped_columns("fraction", fraction_nan, 0.05)[0]
 
 
 def test_weights_scratch_is_a_pure_perf_knob():

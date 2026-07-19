@@ -51,6 +51,55 @@ number change).
   (~12×) for the relative t-test kernel, ~16 ms (~90×) for pow-free branches
   — the libm-pow routing deliberately trades a slice of the speedup for bit
   parity.
+- **M7 WP3 — the block-streamed vectorized placebo-resampling engine
+  (`abkit/validate/vector_resample.py`). Purely additive; no statistical
+  numbers changed — nothing consumes it yet (the M7 WP4 `score_cell` rewrite
+  will) and the scalar `resample.py` path is untouched.**
+  `placebo_mask_block` produces a block of placebo masks where row `i` IS
+  `placebo_mask(..., derive_seed(*seed_parts, block_start + i))` — the
+  permutation layer stays bit-identical to the scalar loop by construction.
+  `build_arm_batch` then collapses a whole block's per-arm sufficient
+  statistics at one cutoff into one GEMM per arm (pooled-shifted one-pass
+  co-moment columns; `sample`/CUPED/`fraction`/`ratio` kinds; columns keyed to
+  feed WP2's `from_suffstats_array` directly), with per-`(iteration, cutoff)`
+  degenerate gap masks (`MIN_ARM_UNITS`, zero-trial fraction arms) whose rows
+  are NaN-poisoned — gaps, never zeros. Blocking mirrors the bootstrap
+  engine's `BLOCK_QUANTUM`/256 MiB-cap arithmetic (`block_rows`/`iter_blocks`)
+  with one documented divergence: mask rows are seed-independent, so a block
+  may shrink below one quantum (down to one row), keeping the cap honored for
+  the block-scaled working set at any population size (the per-cutoff `k ≤ 5`
+  value columns are a cap-independent `8·k·n_units` fixed overhead, asserted
+  separately by the memory tests). The block-size contract is stated honestly
+  from measurement: masks/counts/degenerate flags are byte-identical under
+  ANY partition; float columns are byte-reproducible under a fixed partition
+  and ULP-class (gated rtol 1e-12) across different partitions — it was
+  measured that no float reduction (BLAS or numpy's own `sum(axis=1)`) keeps
+  the same row bit-stable across buffers with different row counts, so the
+  bootstrap engine's "any cap, same bytes" promise is provably out of reach
+  here and rel-1e-9 scalar parity (matmul-vs-`.sum()` reduction order) is the
+  numeric gate, pinned per row against the scalar `build_arm` across all four
+  input kinds, growing unit sets, extreme shares, offset (1e8) data and
+  mixed degenerate blocks in `tests/validate/test_vector_resample.py`.
+  Resolves m7 open question §4.4: cross-cutoff prefix sums are **permanently
+  inapplicable** (the full-window re-render makes per-unit values
+  non-appendable — refunds shrink `sum(...)` metrics, `max(...)`-shaped
+  metrics are not additive at all), recorded in the module docstring.
+  `inject.py` gains the batch mirror of the injected pass
+  (`inject_multiplicative_columns`/`injection_clamped_columns`, bit-exact vs
+  the scalar injection algebra per row) so the WP4 scorer's power/coverage
+  pass has its seam ready. Adversarial review round 1 (2 reviewers, 2 major
+  + 6 minor, all fixed): the rel-1e-9 parity band is scoped and pinned at its
+  real float64-conditioning boundary (`|value|/σ ≲ 1e10`; the scalar path's
+  rounded-arm-mean `m2` inflation is what diverges past it, measured ~5e-9 at
+  1e12), the CUPED/ratio memory profile is asserted with the capped and fixed
+  parts split, overflow-scale data cannot leak `RuntimeWarning`s or a
+  non-degenerate NaN row unnoticed, and malformed `count > nobs` fraction
+  data is pinned to flow to a NaN gap (the scalar path crashes at
+  construction — the one documented build-level divergence).
+  Measured at the reference shape (2000 iterations × 100 cutoffs, CUPED,
+  n=2000): ~1.4 s for the full suffstats aggregation vs ~20 s for the
+  equivalent scalar `build_arm` loop (~15×), before the WP4 significance-side
+  vectorization lands on top.
 
 ### Fixed
 - **M7 WP0 — multi-arm Review mode dropped every verdict after the first
