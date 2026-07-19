@@ -21,7 +21,9 @@ an exception.
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 
+import numpy as np
 import scipy.special as special
 
 from abkit.stats.base import (
@@ -30,12 +32,22 @@ from abkit.stats.base import (
     TEST_TYPE_PARAM,
     BaseMethod,
     require_pair_type,
+    suffstats_pair_columns,
 )
-from abkit.stats.effects import LazyNormal, NormalTest, _two_sided_quantiles
+from abkit.stats.effects import (
+    BatchEffectResult,
+    FloatArray,
+    LazyNormal,
+    NormalTest,
+    _two_sided_quantiles,
+)
 from abkit.stats.power import get_fraction_mde
 from abkit.stats.registry import register
 from abkit.stats.result import TestResult
 from abkit.stats.samples import Fraction
+
+#: Column keys of the batch entry — the ``Fraction`` sufficient statistics.
+ZTEST_ARRAY_KEYS = ("count", "nobs")
 
 
 @register(aliases=("ztest",))
@@ -43,6 +55,7 @@ class ZTest(BaseMethod):
     name = "z-test"
     input_kind = "fraction"
     param_specs = (TEST_TYPE_PARAM, CALCULATE_MDE_PARAM, POWER_PARAM)
+    supports_vectorized = True
 
     def from_samples(self, sample_1: Fraction, sample_2: Fraction) -> TestResult:
         return self.from_suffstats(sample_1, sample_2)
@@ -135,4 +148,59 @@ class ZTest(BaseMethod):
             mde_1=mde_1,
             mde_2=mde_2,
             method_warnings=result_warnings,
+        )
+
+    def from_suffstats_array(
+        self,
+        arrays_1: Mapping[str, FloatArray],
+        arrays_2: Mapping[str, FloatArray] | None = None,
+    ) -> BatchEffectResult:
+        """Array-wise ``from_suffstats`` (M7 WP2). Column keys: ``count``, ``nobs``.
+
+        The inline scalar formula reproduced verbatim — INCLUDING the legacy
+        sign quirk (z uses ``prop_1 − prop_2``, effect ``prop_2 − prop_1``) and
+        the relative-branch zero-``prop_1`` H5 guard, both as masks. Degenerate
+        rows (pooled proportion 0/1, zero control proportion, ``nobs = 0``) →
+        NaN, never an exception; parity is pinned by
+        ``tests/stats/test_vectorized_parity.py``.
+        """
+        (count_1, nobs_1), (count_2, nobs_2) = suffstats_pair_columns(
+            arrays_1, arrays_2, ZTEST_ARRAY_KEYS, self.name
+        )
+        nan = float("nan")
+
+        with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+            prop_1 = count_1 / nobs_1
+            prop_2 = count_2 / nobs_2
+            prop_combined = (count_1 + count_2) / (nobs_1 + nobs_2)
+            pooled_var = prop_combined * (1.0 - prop_combined) * (1.0 / nobs_1 + 1.0 / nobs_2)
+            std_effect = np.sqrt(pooled_var)
+
+            # Legacy sign quirk kept verbatim: z uses prop_1 − prop_2, effect prop_2 − prop_1.
+            valid_z = (std_effect > 0.0) & np.isfinite(std_effect)
+            z_stat = (prop_1 - prop_2) / std_effect
+            pvalue = np.where(
+                valid_z,
+                2.0 * np.minimum(special.ndtr(z_stat), special.ndtr(-z_stat)),
+                nan,
+            )
+
+            effect = prop_2 - prop_1
+            if self.test_type == "relative":
+                relative_bad = (prop_1 == 0.0) | ~np.isfinite(prop_1)
+                effect = np.where(relative_bad, nan, effect / prop_1)
+                std_effect = np.where(relative_bad, nan, std_effect / prop_1)
+                pvalue = np.where(relative_bad, nan, pvalue)
+
+            ci_valid = np.isfinite(effect) & np.isfinite(std_effect) & (std_effect > 0.0)
+            z_low, z_high = _two_sided_quantiles(self.alpha)
+            left_bound = np.where(ci_valid, z_low * std_effect + effect, nan)
+            right_bound = np.where(ci_valid, z_high * std_effect + effect, nan)
+            ci_length = right_bound - left_bound
+        return BatchEffectResult(
+            effect=effect,
+            left_bound=left_bound,
+            right_bound=right_bound,
+            ci_length=ci_length,
+            pvalue=pvalue,
         )

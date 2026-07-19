@@ -13,6 +13,45 @@ number change).
 
 ## [Unreleased]
 
+### Added
+- **M7 WP2 — the array-wise significance kernel (`supports_vectorized` +
+  `from_suffstats_array`). Purely additive; no statistical numbers changed —
+  every scalar path is untouched byte-for-byte.** A new opt-in plugin
+  capability (mirroring `supports_sequential`) lets a method expose a batch
+  significance entry: column arrays of per-arm sufficient statistics in, a
+  slim `BatchEffectResult` (`effect`/`left_bound`/`right_bound`/`ci_length`/
+  `pvalue`, one row per comparison) out, computed via numpy broadcasting with
+  the alpha-only quantiles evaluated once. Exactly five methods opt in —
+  `t-test`, `z-test`, `cuped-t-test`, `paired-t-test`, `ratio-delta` (pinned
+  by a capability-roster test); bootstrap stays scalar-only, exercising the
+  fallback the M7 WP4 engine will rely on. The sequential module gains the
+  same siblings (`se_from_ci_length_array`, `sequentialize_array`). Row-level
+  parity with the scalar `from_suffstats` is pinned by
+  `tests/stats/test_vectorized_parity.py` +
+  `tests/stats/sequential/test_sequential_arrays.py` across every guard
+  branch (H5 denominators, degenerate variances, pooled proportions 0/1,
+  extreme-z tails, heterogeneous 1e-4…1e4 magnitude mixes) — **bit-exact for
+  all five methods and both test types, by construction**: power terms route
+  through the same C-library `pow` the scalar `**` uses (`_libm_pow`),
+  because numpy's own integer-exponent power is 1 ULP off libm and the
+  cancelling delta-method variance sum amplifies that far past rel-1e-9
+  (found by adversarial review round 1, pinned by a cancellation regression
+  test); only the sequential siblings' `log`/`exp` keep the golden rel-1e-9
+  bound across libm/numpy builds (same-sign sums, no cancellation to amplify
+  — measured byte-identical on the capture environment). Degenerate batch
+  rows yield NaN ("gaps, never zeros") instead of per-row
+  warnings/exceptions — the one documented contract divergence (ddof-1
+  `n < 2` rows NaN-poison where the scalar raises) has its own regression
+  tests; mismatched per-arm row counts, 0-d/scalar columns and 2-D columns
+  all fail loudly (`SampleValidationError`), never broadcast or malform; and
+  the kernels mirror the scalar constructors' `int(n)` truncation
+  (`np.trunc`) so a fractional-`n` row cannot silently diverge (both from
+  adversarial review round 2). Measured on the M7 reference shape (200k rows
+  ≈ 2000 iterations × 100 cutoffs): ~120 ms batched vs ~1.4 s scalar-looped
+  (~12×) for the relative t-test kernel, ~16 ms (~90×) for pow-free branches
+  — the libm-pow routing deliberately trades a slice of the speedup for bit
+  parity.
+
 ### Fixed
 - **M7 WP0 — multi-arm Review mode dropped every verdict after the first
   (UI-only; no statistical number touched).** `abk explore`'s Review mode

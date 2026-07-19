@@ -20,13 +20,13 @@ import hashlib
 import itertools
 import math
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
 import numpy as np
 
-from abkit.stats.effects import NormalTest
+from abkit.stats.effects import BatchEffectResult, FloatArray, NormalTest
 from abkit.stats.exceptions import MethodParamError, SampleValidationError
 from abkit.stats.result import TestResult
 from abkit.stats.samples import RatioSample, Sample
@@ -205,6 +205,69 @@ def require_pair_type(method_name: str, group_1: Any, group_2: Any, expected: ty
             )
 
 
+def suffstats_columns(
+    arrays: Mapping[str, FloatArray] | None,
+    keys: Sequence[str],
+    method_name: str,
+    what: str,
+) -> tuple[FloatArray, ...]:
+    """Fetch + float64-cast the suffstats columns a batch kernel needs (M7 WP2).
+
+    The array mirror of ``require_pair_type``: clear input errors for the
+    ``from_suffstats_array`` entry — a missing column or ragged shapes raise
+    :class:`SampleValidationError` up front, never a downstream numpy error.
+    Column VALUES are trusted raw arrays (the vectorized engine builds them);
+    per-row degeneracy is the kernels' NaN business, not validation's.
+    """
+    if arrays is None:
+        raise SampleValidationError(f"{method_name}: {what} is required for from_suffstats_array")
+    missing = [key for key in keys if key not in arrays]
+    if missing:
+        raise SampleValidationError(
+            f"{method_name}: {what} is missing suffstats column(s) {missing}; "
+            f"required: {list(keys)}"
+        )
+    columns = tuple(np.asarray(arrays[key], dtype=np.float64) for key in keys)
+    for key, column in zip(keys, columns, strict=True):
+        if column.ndim != 1:
+            raise SampleValidationError(
+                f"{method_name}: {what} suffstats column {key!r} must be a 1-D array "
+                f"(one row per comparison), got ndim={column.ndim} — wrap scalars in a "
+                "length-1 array (adversarial review round 2: 0-d inputs crash or "
+                "silently malform the batch result)"
+            )
+    shapes = {column.shape for column in columns}
+    if len(shapes) > 1:
+        raise SampleValidationError(
+            f"{method_name}: {what} suffstats columns must share one shape, got "
+            f"{ {key: np.asarray(arrays[key]).shape for key in keys} }"
+        )
+    return columns
+
+
+def suffstats_pair_columns(
+    arrays_1: Mapping[str, FloatArray] | None,
+    arrays_2: Mapping[str, FloatArray] | None,
+    keys: Sequence[str],
+    method_name: str,
+) -> tuple[tuple[FloatArray, ...], tuple[FloatArray, ...]]:
+    """Two-arm :func:`suffstats_columns` with cross-arm row-count validation.
+
+    Mismatched per-arm batches must fail loudly here (adversarial review
+    round 1): without this check numpy would either broadcast a length-1 arm
+    silently across the other arm's rows or raise a bare shape ``ValueError``
+    deep inside a kernel — both worse than a clear input error.
+    """
+    columns_1 = suffstats_columns(arrays_1, keys, method_name, "arrays_1")
+    columns_2 = suffstats_columns(arrays_2, keys, method_name, "arrays_2")
+    if columns_1[0].shape != columns_2[0].shape:
+        raise SampleValidationError(
+            f"{method_name}: arrays_1 and arrays_2 must have the same row count, "
+            f"got {columns_1[0].shape} vs {columns_2[0].shape}"
+        )
+    return columns_1, columns_2
+
+
 def method_config_payload(
     method_name: str,
     identity_params: dict[str, Any],
@@ -258,6 +321,12 @@ class BaseMethod(ABC):
     #: instead of name-checking. Bootstrap percentile CIs are asymmetric → the
     #: bootstrap base sets this False (docs/specs/m5-implementation-plan.md D1).
     supports_sequential: ClassVar[bool] = True
+    #: Exposes the M7 WP2 array-wise significance kernel ``from_suffstats_array``
+    #: (the validate hot path). Opt-in, mirroring the ``supports_sequential``
+    #: precedent: the False default keeps every plugin fully functional through
+    #: the scalar ``from_suffstats`` fallback — a method without a batch kernel
+    #: is never special-cased, only iterated (m7-implementation-plan.md §WP2).
+    supports_vectorized: ClassVar[bool] = False
 
     def __init__(self, alpha: float = 0.05, **params: Any) -> None:
         if not 0.0 < alpha < 1.0:
@@ -343,6 +412,30 @@ class BaseMethod(ABC):
     @abstractmethod
     def from_suffstats(self, stats_1: Any, stats_2: Any) -> TestResult:
         """Compare from sufficient statistics (closed-form pipeline/explore entry)."""
+
+    def from_suffstats_array(
+        self,
+        arrays_1: Mapping[str, FloatArray],
+        arrays_2: Mapping[str, FloatArray] | None = None,
+    ) -> BatchEffectResult:
+        """The array-wise significance kernel — one row per comparison (M7 WP2).
+
+        Optional capability, gated by :attr:`supports_vectorized`: given
+        column arrays of per-arm sufficient-statistic components (each
+        method's docstring names its keys — the ``SufficientStats``/
+        ``Fraction``/``RatioSufficientStats`` field names), return a
+        :class:`~abkit.stats.effects.BatchEffectResult` computed via numpy
+        broadcasting, row-for-row parity with the scalar ``from_suffstats``
+        (pinned by ``tests/stats/test_vectorized_parity.py``). Paired methods
+        take ONE joint mapping (``arrays_2`` stays None), mirroring their
+        scalar signature. Degenerate rows yield NaN, never an exception
+        ("gaps, never zeros"). Default: not implemented — the validate engine
+        must fall back to the scalar loop, never fail the method.
+        """
+        raise NotImplementedError(
+            f"{self.name}: no array-wise significance kernel "
+            "(supports_vectorized=False); use the scalar from_suffstats path"
+        )
 
     # --- shared result assembly ----------------------------------------------
     def _result_from_normal_test(

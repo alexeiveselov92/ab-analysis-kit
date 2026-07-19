@@ -16,15 +16,30 @@ from __future__ import annotations
 
 import math
 from abc import abstractmethod
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
-from abkit.stats.base import TEST_TYPE_PARAM, BaseMethod, require_pair_type
-from abkit.stats.effects import EffectEstimate, normal_test, relative_delta_effect
+import numpy as np
+
+from abkit.stats.base import TEST_TYPE_PARAM, BaseMethod, require_pair_type, suffstats_columns
+from abkit.stats.effects import (
+    BatchEffectResult,
+    EffectEstimate,
+    FloatArray,
+    normal_test,
+    normal_test_array,
+    relative_delta_effect,
+    relative_delta_effect_array,
+)
 from abkit.stats.exceptions import SampleValidationError
 from abkit.stats.registry import register
 from abkit.stats.result import TestResult
 from abkit.stats.samples import PairedSufficientStats, Sample
+
+#: Column keys of the batch entry — the joint (y1, y2) moments per comparison
+#: row: pair count ``n``, per-arm means, raw centered second moments and the
+#: raw cross co-moment ``c_y1y2 = Σ(y1−ȳ1)(y2−ȳ2)`` (``JointMoments.comoment``).
+PAIRED_TTEST_ARRAY_KEYS = ("n", "mean_y1", "mean_y2", "m2_y1", "m2_y2", "c_y1y2")
 
 
 class BasePairedMethod(BaseMethod):
@@ -77,6 +92,7 @@ class BasePairedMethod(BaseMethod):
 class PairedTTest(BasePairedMethod):
     name = "paired-t-test"
     is_paired = True
+    supports_vectorized = True
     param_specs = (TEST_TYPE_PARAM,)
 
     def from_suffstats(self, stats_1: PairedSufficientStats, stats_2: None = None) -> TestResult:
@@ -124,3 +140,50 @@ class PairedTTest(BasePairedMethod):
             cov_value_1=cov_value_1,
             cov_value_2=cov_value_2,
         )
+
+    def from_suffstats_array(
+        self,
+        arrays_1: Mapping[str, FloatArray],
+        arrays_2: Mapping[str, FloatArray] | None = None,
+    ) -> BatchEffectResult:
+        """Array-wise ``from_suffstats`` (M7 WP2) — ONE joint mapping, like the
+        scalar paired signature (``arrays_2`` must stay None). Column keys:
+        ``n``, ``mean_y1``, ``mean_y2``, ``m2_y1``, ``m2_y2``, ``c_y1y2``.
+
+        The ``JointMoments`` linear-combination reads written out for the
+        (y1, y2) weight vectors — the same float operation sequence the
+        ``weights @ comoment @ weights`` chain performs, pinned by
+        ``tests/stats/test_vectorized_parity.py``. An ``n < 2`` row under
+        ``relative`` NaN-poisons (ddof=1 division by zero) instead of the
+        scalar's ``SampleValidationError`` — per-row degeneracy is a gap,
+        never a batch-wide exception.
+        """
+        if arrays_2 is not None:
+            raise SampleValidationError(
+                f"{self.name}: paired suffstats columns are joint by construction — pass one "
+                "mapping as arrays_1 (with arrays_2=None), not one per arm"
+            )
+        n, mean_y1, mean_y2, m2_y1, m2_y2, c_y1y2 = suffstats_columns(
+            arrays_1, PAIRED_TTEST_ARRAY_KEYS, self.name, "arrays_1"
+        )
+
+        with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+            difference_mean = mean_y2 - mean_y1
+            # w·C·wᵀ for w = (−1, +1): (m2_y1 − c) + (m2_y2 − c) — the matmul's
+            # own rounding sequence; then np.var parity (/n), then /n.
+            difference_mean_var = (((m2_y1 - c_y1y2) + (m2_y2 - c_y1y2)) / n) / n
+
+            if self.test_type == "absolute":
+                effect: FloatArray = difference_mean
+                var: FloatArray = difference_mean_var
+            else:
+                effect, var = relative_delta_effect_array(
+                    mean_num=difference_mean,
+                    var_num=difference_mean_var,
+                    mean_den=mean_y1,
+                    var_den=(m2_y1 / n) / n,
+                    # np.cov parity (ddof=1): −cov(y2−y1, y1)/n — baseline fact #1;
+                    # w_diff·C·w_y1ᵀ = c_y1y2 − m2_y1.
+                    covariance=-((c_y1y2 - m2_y1) / (n - 1.0)) / n,
+                )
+        return normal_test_array(effect, var, self.alpha)

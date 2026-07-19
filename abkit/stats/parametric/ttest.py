@@ -12,24 +12,42 @@ math path, so the dual-entry equivalence holds by construction.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
+import numpy as np
+
 from abkit.stats.base import (
     CALCULATE_MDE_PARAM,
     POWER_PARAM,
     TEST_TYPE_PARAM,
     BaseMethod,
     require_pair_type,
+    suffstats_pair_columns,
 )
-from abkit.stats.effects import absolute_effect, normal_test, relative_delta_effect
+from abkit.stats.effects import (
+    BatchEffectResult,
+    FloatArray,
+    absolute_effect,
+    absolute_effect_array,
+    normal_test,
+    normal_test_array,
+    relative_delta_effect,
+    relative_delta_effect_array,
+)
 from abkit.stats.power import get_ttest_mde
 from abkit.stats.registry import register
 from abkit.stats.result import TestResult
 from abkit.stats.samples import Sample, SufficientStats
+
+#: Column keys of the batch entry — the ``SufficientStats`` value moments.
+TTEST_ARRAY_KEYS = ("n", "mean", "m2")
 
 
 @register(aliases=("ttest",))
 class TTest(BaseMethod):
     name = "t-test"
     param_specs = (TEST_TYPE_PARAM, CALCULATE_MDE_PARAM, POWER_PARAM)
+    supports_vectorized = True
 
     def from_samples(self, sample_1: Sample, sample_2: Sample) -> TestResult:
         require_pair_type(self.name, sample_1, sample_2, Sample)
@@ -93,3 +111,38 @@ class TTest(BaseMethod):
             mde_1=mde_1,
             mde_2=mde_2,
         )
+
+    def from_suffstats_array(
+        self,
+        arrays_1: Mapping[str, FloatArray],
+        arrays_2: Mapping[str, FloatArray] | None = None,
+    ) -> BatchEffectResult:
+        """Array-wise ``from_suffstats`` (M7 WP2). Column keys: ``n``, ``mean``, ``m2``.
+
+        The same per-row formulas via numpy broadcasting (parity pinned by
+        ``tests/stats/test_vectorized_parity.py``); degenerate rows → NaN.
+        """
+        (n_1, mean_1, m2_1), (n_2, mean_2, m2_2) = suffstats_pair_columns(
+            arrays_1, arrays_2, TTEST_ARRAY_KEYS, self.name
+        )
+
+        with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+            # SufficientStats.__init__ truncates n via int(n) — mirror it, or a
+            # fractional-n row silently diverges (adversarial review round 2).
+            n_1 = np.trunc(n_1)
+            n_2 = np.trunc(n_2)
+            # Scalar op order preserved: var = m2/n (SufficientStats.var), then /n.
+            var_mean_1 = (m2_1 / n_1) / n_1
+            var_mean_2 = (m2_2 / n_2) / n_2
+
+            if self.test_type == "absolute":
+                effect, var = absolute_effect_array(mean_1, mean_2, var_mean_1, var_mean_2)
+            else:
+                effect, var = relative_delta_effect_array(
+                    mean_num=mean_2 - mean_1,
+                    var_num=var_mean_1 + var_mean_2,
+                    mean_den=mean_1,
+                    var_den=var_mean_1,
+                    covariance=-var_mean_1,  # num & denom share mean_1 (baseline §3.1)
+                )
+        return normal_test_array(effect, var, self.alpha)

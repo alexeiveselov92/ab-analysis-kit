@@ -23,12 +23,28 @@ plus a recorded warning, never an exception.
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 
-from abkit.stats.base import TEST_TYPE_PARAM, BaseMethod, require_pair_type
-from abkit.stats.effects import absolute_effect, normal_test, relative_delta_effect
+import numpy as np
+
+from abkit.stats.base import TEST_TYPE_PARAM, BaseMethod, require_pair_type, suffstats_pair_columns
+from abkit.stats.effects import (
+    BatchEffectResult,
+    FloatArray,
+    _libm_pow,
+    absolute_effect,
+    absolute_effect_array,
+    normal_test,
+    normal_test_array,
+    relative_delta_effect,
+    relative_delta_effect_array,
+)
 from abkit.stats.registry import register
 from abkit.stats.result import TestResult
 from abkit.stats.samples import RatioSample, RatioSufficientStats
+
+#: Column keys of the batch entry — the ``RatioSufficientStats`` fields.
+RATIO_DELTA_ARRAY_KEYS = ("n", "mean_num", "m2_num", "mean_den", "m2_den", "c_nd")
 
 
 def _arm_linearisation(
@@ -54,10 +70,34 @@ def _arm_linearisation(
     return ratio, var_unit, []
 
 
+def _arm_linearisation_array(
+    n: FloatArray,
+    mean_num: FloatArray,
+    m2_num: FloatArray,
+    mean_den: FloatArray,
+    m2_den: FloatArray,
+    c_nd: FloatArray,
+) -> tuple[FloatArray, FloatArray]:
+    """Array-wise :func:`_arm_linearisation`: per-row ``(R, var0_L)`` (M7 WP2).
+
+    The zero/non-finite-denominator H5 guard becomes a mask (NaN row, warning
+    dropped — validate never reads warnings); ``np.maximum``'s NaN propagation
+    matches the scalar ``max(nan, 0.0)`` on poisoned inputs.
+    """
+    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+        degenerate = (mean_den == 0.0) | ~np.isfinite(mean_den)
+        ratio = mean_num / mean_den
+        # R² and den² via libm pow (bit parity with the scalar `**`).
+        quadratic = np.maximum(m2_num - 2.0 * ratio * c_nd + _libm_pow(ratio, 2.0) * m2_den, 0.0)
+        var_unit = quadratic / (n * _libm_pow(mean_den, 2.0))
+        return np.where(degenerate, np.nan, ratio), np.where(degenerate, np.nan, var_unit)
+
+
 @register
 class RatioDelta(BaseMethod):
     name = "ratio-delta"
     input_kind = "ratio"
+    supports_vectorized = True
     param_specs = (TEST_TYPE_PARAM,)
 
     def from_samples(self, sample_1: RatioSample, sample_2: RatioSample) -> TestResult:
@@ -102,3 +142,41 @@ class RatioDelta(BaseMethod):
             size_2=stats_2.n,
             method_warnings=method_warnings,
         )
+
+    def from_suffstats_array(
+        self,
+        arrays_1: Mapping[str, FloatArray],
+        arrays_2: Mapping[str, FloatArray] | None = None,
+    ) -> BatchEffectResult:
+        """Array-wise ``from_suffstats`` (M7 WP2). Column keys: ``n``,
+        ``mean_num``, ``m2_num``, ``mean_den``, ``m2_den``, ``c_nd``.
+
+        Same per-arm linearisation + shared delta-method formulas via numpy
+        broadcasting; degenerate rows (zero/non-finite denominator mean) → NaN.
+        Parity pinned by ``tests/stats/test_vectorized_parity.py``.
+        """
+        cols_1, cols_2 = suffstats_pair_columns(
+            arrays_1, arrays_2, RATIO_DELTA_ARRAY_KEYS, self.name
+        )
+
+        with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+            # RatioSufficientStats.__init__ truncates n via int(n) — mirror it, or
+            # a fractional-n row silently diverges (adversarial review round 2).
+            n_1 = np.trunc(cols_1[0])
+            n_2 = np.trunc(cols_2[0])
+            ratio_1, var_unit_1 = _arm_linearisation_array(n_1, *cols_1[1:])
+            ratio_2, var_unit_2 = _arm_linearisation_array(n_2, *cols_2[1:])
+            var_ratio_1 = var_unit_1 / n_1
+            var_ratio_2 = var_unit_2 / n_2
+
+            if self.test_type == "absolute":
+                effect, var = absolute_effect_array(ratio_1, ratio_2, var_ratio_1, var_ratio_2)
+            else:
+                effect, var = relative_delta_effect_array(
+                    mean_num=ratio_2 - ratio_1,
+                    var_num=var_ratio_1 + var_ratio_2,
+                    mean_den=ratio_1,
+                    var_den=var_ratio_1,
+                    covariance=-var_ratio_1,  # independent arms: num & denom share only R̂1
+                )
+        return normal_test_array(effect, var, self.alpha)
