@@ -879,7 +879,15 @@ the milestone.
 > exit-gate e2e gained `family_sweep=True` at both `ValidateSettings` call
 > sites — its numbers are pinned byte-for-byte, `iterations=` was already
 > explicit — plus the packaged init-claude assets/guides/spec were synced in
-> the same PR (the three-bodies rule).
+> the same PR (the three-bodies rule). Adversarial rounds (2 code/contract
+> hunters + 1 fresh): round 1 found five docs/test-polish items (reference
+> CLI page drift was the largest), round 2 found the one real wiring gap —
+> the §4.1 warning lived only in `decision_log`, whose sole other consumer
+> is the Auto-mode JSON reply, so the CLI now echoes resample warnings as
+> yellow terminal lines (wiring pinned by
+> `test_auto_n_warning_reaches_the_terminal`). A tight alpha shared by a
+> cell and the family sweep may warn once per surface (distinct labels) —
+> intended, bounded by the cell count.
 
 **Goal:** ship the two behavior-changing policy decisions REPORT calls out
 (items 7 and 8): the family-sweep second pass (`runner.py:259-262`) stops

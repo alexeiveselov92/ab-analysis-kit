@@ -137,8 +137,10 @@ constant across tiers instead of starving tight secondary alphas. `-n`/`--iterat
 remains a hard override applied to every cell; the persisted row's `iterations`
 column always records the **resolved** N that actually ran. Per the §4.1 maintainer
 call the auto-N is **never hard-capped**: above 100 000 the runner logs a
-warn-and-continue decision entry (silently truncating a configured alpha tier would
-be worse than a long run now that the engine is vectorized). The family sweep sizes
+warn-and-continue decision entry, and the CLI echoes it as a yellow terminal
+warning — decision-log entries alone never reach `abk validate` stdout (silently
+truncating a configured alpha tier would be worse than a long run now that the
+engine is vectorized). The family sweep sizes
 its one shared draw count at the **tightest** member alpha. In the same WP the
 composed family sweep (D9) stopped auto-running on every multi-metric invocation —
 it is **opt-in via `--family-sweep`** (`ValidateSettings.family_sweep`, default

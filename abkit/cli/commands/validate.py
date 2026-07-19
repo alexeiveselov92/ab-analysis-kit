@@ -211,6 +211,13 @@ def _validate_one(
             renderer("persist", f"{len(records)} _ab_aa_runs row(s)")
 
             _emit_matrix(experiment.name, result)
+            # the §4.1 warn-uncapped safeguard must reach the terminal, not just the
+            # decision log (round-2 review finding: decision_log's only other consumer
+            # is the Auto-mode JSON reply — without this echo the warning is invisible
+            # exactly when a tight alpha tier makes the default run long)
+            for entry in result.decision_log:
+                if entry.stage == "resample" and "uncapped" in entry.message:
+                    click.echo(click.style(f"  │ warning: {entry.message}", fg="yellow"))
             if not family_sweep and metric_filter is None and len(experiment.comparisons) >= 2:
                 # one-release migration notice for the 0.2.0 default flip (m7 WP6)
                 click.echo(

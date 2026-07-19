@@ -39,8 +39,9 @@ number change).
   sizes its shared draw count at the tightest member alpha; the persisted
   row's `iterations` column records the resolved N that actually ran. Per the
   m7 §4.1 maintainer call the auto-N is **never hard-capped** — above 100 000
-  the runner logs a warn-and-continue decision entry instead of silently
-  truncating a configured alpha tier.
+  the runner logs a warn-and-continue decision entry, echoed by the CLI as a
+  yellow terminal warning, instead of silently truncating a configured alpha
+  tier.
   *Neither WP6 change moves a statistical number* — Monte-Carlo sample size
   and which passes run are not method math (no `ALGORITHM_VERSION` bump, no
   `statistics-changes.md` entry; the exact-null FPR/power columns stay

@@ -182,3 +182,19 @@ def test_validate_migration_notice_prints_and_family_flag_silences_it(scaffolded
     )
     assert opted.exit_code == 0, opted.output
     assert "no longer runs by default" not in opted.output
+
+
+def test_auto_n_warning_reaches_the_terminal(scaffolded, monkeypatch):
+    """m7 WP6 review round 2: the §4.1 warn-uncapped entry must be ECHOED by the CLI —
+    decision_log's only other consumer is the Auto-mode JSON reply, so without the
+    echo the safeguard is invisible right when a tight alpha makes the run long.
+    The formula itself is unit-tested; this pins the wiring, so the resolver is
+    stubbed small to keep the run fast."""
+    import abkit.validate.runner as runner_mod
+
+    monkeypatch.setattr(runner_mod, "_default_iterations", lambda alpha, **kw: 60)
+    monkeypatch.setattr(runner_mod, "AUTO_ITERATIONS_WARN_ABOVE", 1)
+    result = runner.invoke(cli, ["validate", "--select", EXP])  # no -n → the auto path
+    assert result.exit_code == 0, result.output
+    assert "warning:" in result.output and "uncapped" in result.output
+    assert "-n/--iterations to override" in result.output
