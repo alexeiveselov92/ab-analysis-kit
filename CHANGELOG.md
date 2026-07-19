@@ -107,6 +107,36 @@ number change).
   n=2000): ~1.4 s for the full suffstats aggregation vs ~20 s for the
   equivalent scalar `build_arm` loop (~15×), before the WP4 significance-side
   vectorization lands on top.
+- **M7 WP4 — `score_cell` now runs the vectorized engine for
+  `supports_vectorized` methods, with the original scalar loop preserved
+  verbatim as the fallback. No statistical numbers changed** — the e2e
+  validate/sequential matrix gates pass unmodified against the new default
+  path, and per-kind smoke-parity tests pin the two engines against each
+  other (integer tallies + count-ratio columns exactly equal; continuous
+  means at rel-1e-9, the WP3 reduction-order budget). The vectorized engine
+  consumes the WP2+WP3 primitives end to end: per block of iterations
+  (`iter_blocks` over `block_rows(n_units)` — blocking is a pure function of
+  `(iterations, n_units)` + module constants, so persisted A/A numbers stay
+  byte-reproducible run-to-run, D13), each cutoff is one `build_arm_batch`
+  GEMM + one `from_suffstats_array` call; the peeking first-crossing state
+  streams per row in O(block) memory (never `block × cutoffs`), explicitly
+  guarding the argmax-on-all-False footgun (regression-tested: a grid where
+  no null split ever crosses reports `peeking_fpr == 0.0`, not 1.0); the
+  always-valid D8 twin rides the same per-look `(effect, SE)` arrays through
+  `sequentialize_array` under the unchanged scalar τ² anchor; the injected
+  power/coverage pass reuses the held horizon batch through
+  `inject_multiplicative_columns` (same one-shot saturation warning); and
+  the reporting-only achieved-MDE loop stays scalar but strictly
+  `iterations`-shaped (never `iterations × cutoffs` — the §WP4 risk-list
+  regression). Methods without a batch kernel (`supports_vectorized=False`:
+  the bootstrap family, any custom plugin) dispatch to `_score_cell_scalar`
+  — a pure code move of the previous loop, pinned identical via a stub-method
+  test. Hoisting the per-cutoff GEMM operands (`prepare_cutoff`) is bounded
+  by the same 256 MiB budget as the block cap (past it, blocks re-prepare
+  per cutoff — bounded memory, identical bits). Measured at the reference
+  shape (2000 iterations × 100 cutoffs, CUPED, n=2000, with injection):
+  ~2.5 s vectorized vs ~25 s scalar (~10×); the dedicated parity + perf
+  gates land in WP5.
 
 ### Fixed
 - **M7 WP0 — multi-arm Review mode dropped every verdict after the first

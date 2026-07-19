@@ -25,6 +25,23 @@ Two passes per cell:
 
 Degenerate cutoffs (an arm too small, or NaN CI bounds from zero variance) are gaps,
 never zeros — tallied separately so they can never silently deflate the FPR.
+
+Two engines, one contract (M7 WP4 — docs/specs/m7-implementation-plan.md §WP4):
+
+- **Vectorized** (the default for ``supports_vectorized`` methods): a
+  block-streamed loop over ``vector_resample.iter_blocks`` — per cutoff, one
+  ``build_arm_batch`` GEMM builds the whole block's arm suffstats and one
+  ``from_suffstats_array`` call scores them; the first-crossing/peeking state is
+  streamed per row in O(block) memory, never O(block × cutoffs). Blocking is a
+  pure function of ``(iterations, n_units)`` plus module constants, so persisted
+  A/A numbers stay byte-reproducible run-to-run (D13). Versus the scalar engine,
+  integer counts are expected exact and continuous means agree at rel-1e-9
+  inside the conditioning band (the vector_resample module docstring;
+  smoke-pinned in tests/validate/test_scoring.py, exhaustively gated in WP5).
+- **Scalar fallback** (``_score_cell_scalar``): a method that has not opted into
+  the batch kernels (``supports_vectorized=False`` — the bootstrap family, any
+  custom plugin) runs the original per-iteration loop, moved verbatim — validate
+  never breaks for a plugin that only implements ``from_suffstats``.
 """
 
 from __future__ import annotations
@@ -44,10 +61,29 @@ from abkit.stats.power import cuped_adjusted_std, get_fraction_mde, get_ttest_md
 from abkit.stats.rng import derive_seed
 from abkit.stats.samples import Fraction, RatioSufficientStats, SufficientStats
 from abkit.stats.sequential import mixture_tau2, se_from_ci_length, sequentialize
+from abkit.stats.sequential.confidence_sequence import (
+    se_from_ci_length_array,
+    sequentialize_array,
+)
 from abkit.validate._types import ValidateError
-from abkit.validate.inject import inject_multiplicative, injection_clamped
+from abkit.validate.inject import (
+    inject_multiplicative,
+    inject_multiplicative_columns,
+    injection_clamped,
+    injection_clamped_columns,
+)
 from abkit.validate.panel import PlaceboPanel
 from abkit.validate.resample import ArmStats, build_arm, placebo_mask, present_positions
+from abkit.validate.vector_resample import (
+    DEFAULT_MAX_BLOCK_BYTES,
+    FloatArray,
+    PreparedCutoff,
+    block_rows,
+    build_arm_batch,
+    iter_blocks,
+    placebo_mask_block,
+    prepare_cutoff,
+)
 
 #: Default target power for the achieved-MDE column.
 DEFAULT_TARGET_POWER = 0.8
@@ -238,7 +274,6 @@ def _analytic_mde(
     return None  # ratio-delta and other families: no analytic MDE
 
 
-@suppress_resample_warnings
 def score_cell(
     panel: PlaceboPanel,
     method: BaseMethod,
@@ -254,6 +289,47 @@ def score_cell(
     ``seed_parts`` are the identity parts hashed into each iteration's placebo seed
     (``derive_seed(*seed_parts, i)``) — pass ``(experiment, metric, method_config_id)``
     so re-runs are byte-reproducible (D13). ``share_a`` is arm A's split share.
+
+    Dispatches on ``method.supports_vectorized`` (module docstring): the batch
+    engine for opted-in methods, the verbatim scalar loop for everything else —
+    a plugin that only implements ``from_suffstats`` must never break validate.
+    """
+    if not method.supports_vectorized:
+        return _score_cell_scalar(
+            panel,
+            method,
+            iterations=iterations,
+            seed_parts=seed_parts,
+            share_a=share_a,
+            inject_effect=inject_effect,
+            target_power=target_power,
+        )
+    return _score_cell_vectorized(
+        panel,
+        method,
+        iterations=iterations,
+        seed_parts=seed_parts,
+        share_a=share_a,
+        inject_effect=inject_effect,
+        target_power=target_power,
+    )
+
+
+@suppress_resample_warnings
+def _score_cell_scalar(
+    panel: PlaceboPanel,
+    method: BaseMethod,
+    *,
+    iterations: int,
+    seed_parts: tuple[object, ...],
+    share_a: float = 0.5,
+    inject_effect: float | None = None,
+    target_power: float = DEFAULT_TARGET_POWER,
+) -> CellScore:
+    """The original per-iteration scalar engine — a pure code move (M7 WP4).
+
+    Every method reaches identical numbers here as before the vectorized engine
+    existed; the WP5 parity gate runs THIS function against the batch path.
     """
     if iterations <= 0:
         raise ValidateError(f"iterations must be positive, got {iterations}")
@@ -520,6 +596,372 @@ def score_cell(
     )
 
 
+@suppress_resample_warnings
+def _score_cell_vectorized(  # noqa: PLR0912, PLR0915 — mirrors the scalar engine stage-for-stage
+    panel: PlaceboPanel,
+    method: BaseMethod,
+    *,
+    iterations: int,
+    seed_parts: tuple[object, ...],
+    share_a: float = 0.5,
+    inject_effect: float | None = None,
+    target_power: float = DEFAULT_TARGET_POWER,
+) -> CellScore:
+    """The block-streamed batch engine (M7 WP4) — same contract as the scalar loop.
+
+    Per block of iterations (``iter_blocks``), per cutoff: one ``build_arm_batch``
+    GEMM builds every row's arm suffstats and one ``from_suffstats_array`` call
+    yields the whole block's CI bounds; first-crossing (peeking) state streams
+    per row so nothing ``(block × cutoffs)``-shaped is ever held. The
+    reporting-only MDE stays a python loop, but ``iterations``-shaped (horizon
+    rows only) — never ``iterations × cutoffs`` (§WP4 risk list). Blocking
+    derives from ``(iterations, n_units)`` + module constants ONLY, keeping the
+    scored numbers byte-reproducible run-to-run (D13).
+    """
+    if iterations <= 0:
+        raise ValidateError(f"iterations must be positive, got {iterations}")
+    if not panel.cutoffs:
+        raise ValidateError("panel has no cutoffs")
+
+    horizon_pos = _horizon_index(panel)
+    ratio = (1.0 - share_a) / share_a  # n_treatment / n_control at the split
+    warnings: list[str] = []
+    alpha = method.alpha
+    n_cutoffs = len(panel.cutoffs)
+
+    # τ² is frozen once for the cell (D4) — identical scalar helper, same anchor seed.
+    tau2 = _cell_tau2(
+        panel,
+        method,
+        share_a=share_a,
+        anchor_seed=derive_seed(*seed_parts, "tau2-anchor"),
+    )
+
+    # The split-invariant pooled anchor for absolute-effect coverage — the same
+    # once-per-cell scalar computation as the scalar engine (m4 exit-gate, F2).
+    horizon_pooled: float | None = None
+    if inject_effect is not None:
+        hc = panel.cutoffs[horizon_pos]
+        pooled_arm = build_arm(
+            panel.input_kind,
+            hc.values,
+            hc.secondary,
+            panel.covariate,
+            hc.unit_idx,
+            np.arange(hc.unit_idx.size),
+        )
+        if pooled_arm is not None:
+            horizon_pooled = _point_estimate(pooled_arm)
+
+    # ── Deterministic blocking + hoisted per-cutoff GEMM operands ────────────
+    # ``quantum`` is a pure function of n_units + module constants (block_rows);
+    # the scratch shape of (min(quantum, iterations), n_units) is therefore a pure
+    # function of (iterations, n_units) — nothing machine- or env-dependent can
+    # change the partition, so the float aggregates are byte-stable run-to-run.
+    quantum = block_rows(panel.n_units)
+    scratch = np.empty((min(quantum, iterations), panel.n_units), dtype=np.float64)
+    # Hoisting prepared cutoffs is a pure perf/memory policy — consuming one is
+    # bit-identical to the inline build (prepare_cutoff docstring). Their k ≤ 5
+    # value columns are cap-INDEPENDENT overhead (8·k·n_present bytes per cutoff,
+    # vector_resample memory contract), and holding ALL cutoffs multiplies that
+    # by n_cutoffs — so hoist only while the total fits the same byte budget the
+    # block cap uses; past it, every block re-prepares per cutoff (bounded
+    # memory, re-touched bandwidth).
+    if panel.input_kind == "ratio" or (
+        panel.input_kind == "sample" and panel.covariate is not None
+    ):
+        value_columns = 5
+    else:
+        value_columns = 2
+    hoist_bytes = 8 * value_columns * sum(int(cut.unit_idx.size) for cut in panel.cutoffs)
+    prepared: list[PreparedCutoff] | None = None
+    if hoist_bytes <= DEFAULT_MAX_BLOCK_BYTES:
+        prepared = [prepare_cutoff(panel.input_kind, cut, panel.covariate) for cut in panel.cutoffs]
+
+    # ── Cross-block accumulators (python scalars + per-look histograms) ──────
+    single_look_hits = 0
+    peek_hits = 0
+    valid_iterations = 0
+    degenerate_horizon = 0
+    power_hits = 0
+    coverage_hits = 0
+    coverage_n = 0
+    exagg_values: list[float] = []
+    mde_values: list[float] = []
+    clamp_warned = False
+    first_cross_at_look = [0] * n_cutoffs
+
+    single_look_hits_seq = 0
+    peek_hits_seq = 0
+    power_hits_seq = 0
+    coverage_hits_seq = 0
+    exagg_values_seq: list[float] = []
+    first_cross_at_look_seq = [0] * n_cutoffs
+    width_fixed_sum = 0.0
+    width_seq_sum = 0.0
+    width_n = 0
+
+    for block_start, block_size in iter_blocks(iterations, quantum):
+        mask_block = placebo_mask_block(panel.n_units, share_a, seed_parts, block_start, block_size)
+
+        # Streaming first-crossing state — the exact `_first_significant_look`
+        # semantics: cutoffs arrive in grid order, so the first update per row IS
+        # the first significant look. Rows that never cross stay `uncrossed` and
+        # are excluded explicitly — argmax-on-all-False can never fabricate a
+        # crossing at look 0 here (§WP4 footgun).
+        uncrossed = np.ones(block_size, dtype=bool)
+        first_idx = np.zeros(block_size, dtype=np.int64)
+        first_eff = np.zeros(block_size, dtype=np.float64)
+        uncrossed_seq = np.ones(block_size, dtype=bool)
+        first_idx_seq = np.zeros(block_size, dtype=np.int64)
+        first_eff_seq = np.zeros(block_size, dtype=np.float64)
+
+        horizon_a = horizon_b = None
+        horizon_res = None
+        valid_h: np.ndarray | None = None
+        sig_h: np.ndarray | None = None
+        seq_sig_h: np.ndarray | None = None
+        width_seq_h: np.ndarray | None = None
+
+        for k, cut in enumerate(panel.cutoffs):
+            arm_a, arm_b = build_arm_batch(
+                panel.input_kind,
+                cut,
+                panel.covariate,
+                mask_block,
+                weights_scratch=scratch,
+                prepared=None if prepared is None else prepared[k],
+            )
+            res = method.from_suffstats_array(arm_a.columns, arm_b.columns)
+            # The scalar gap rule elementwise: an arm too small (degenerate) or a
+            # non-finite CI bound is a gap, never a non-rejection (scoring rule +
+            # ArmStatsBatch docstring). NaN comparisons are silently False.
+            look_valid = (
+                ~arm_a.degenerate
+                & ~arm_b.degenerate
+                & np.isfinite(res.left_bound)
+                & np.isfinite(res.right_bound)
+            )
+            sig_col = look_valid & ((res.left_bound > 0.0) | (res.right_bound < 0.0))
+
+            newly = uncrossed & sig_col
+            if newly.any():
+                first_idx[newly] = k
+                first_eff[newly] = res.effect[newly]
+                uncrossed[newly] = False
+
+            if tau2 is not None:
+                # The always-valid twin over the SAME per-look (effect, SE) —
+                # rows whose widened bounds are non-finite mirror the scalar
+                # `_always_valid_sig` → `_significance` None (a gap).
+                se_col = se_from_ci_length_array(res.ci_length, alpha)
+                lo_col, hi_col, _ = sequentialize_array(res.effect, se_col, tau2, alpha)
+                seq_sig_col = (
+                    look_valid
+                    & np.isfinite(lo_col)
+                    & np.isfinite(hi_col)
+                    & ((lo_col > 0.0) | (hi_col < 0.0))
+                )
+                newly_seq = uncrossed_seq & seq_sig_col
+                if newly_seq.any():
+                    first_idx_seq[newly_seq] = k
+                    first_eff_seq[newly_seq] = res.effect[newly_seq]
+                    uncrossed_seq[newly_seq] = False
+                if k == horizon_pos:
+                    seq_sig_h = seq_sig_col
+                    with np.errstate(invalid="ignore"):
+                        width_seq_h = hi_col - lo_col
+
+            if k == horizon_pos:
+                horizon_a, horizon_b, horizon_res = arm_a, arm_b, res
+                valid_h = look_valid
+                sig_h = sig_col
+
+        assert valid_h is not None and sig_h is not None  # the loop always visits horizon_pos
+        assert horizon_a is not None and horizon_b is not None and horizon_res is not None
+
+        # ── Horizon tallies (single-look FPR denominator = usable horizons) ──
+        n_valid = int(valid_h.sum())
+        valid_iterations += n_valid
+        degenerate_horizon += block_size - n_valid
+        single_look_hits += int(sig_h.sum())
+
+        # Achieved MDE — reporting-only, `iterations`-shaped (valid horizon rows
+        # only; ratio-delta has no analytic MDE, same as the scalar None branch).
+        if panel.input_kind != "ratio" and n_valid:
+            for i in np.flatnonzero(valid_h):
+                control = _control_stats_from_row(
+                    panel.input_kind,
+                    panel.covariate is not None,
+                    horizon_a.columns,
+                    int(horizon_a.arm_sizes[i]),
+                    int(i),
+                )
+                mde = _analytic_mde(control, method, ratio=ratio, target_power=target_power)
+                if mde is not None:
+                    mde_values.append(mde)
+
+        # ── Peeking: first-crossing tallies (ALL iterations, not just valid-
+        # horizon ones — the scalar loop counts a crossing even when the horizon
+        # itself is degenerate) ──
+        crossed = ~uncrossed
+        n_crossed = int(crossed.sum())
+        if n_crossed:
+            peek_hits += n_crossed
+            hist = np.bincount(first_idx[crossed], minlength=n_cutoffs)
+            for k in range(n_cutoffs):
+                first_cross_at_look[k] += int(hist[k])
+            exagg_values.extend(np.abs(first_eff[crossed]).tolist())
+
+        if tau2 is not None:
+            assert seq_sig_h is not None and width_seq_h is not None
+            # A gap seq horizon (seq_sig None scalar-side) counts as non-significant.
+            single_look_hits_seq += int((valid_h & seq_sig_h).sum())
+            width_mask = valid_h & np.isfinite(horizon_res.ci_length) & np.isfinite(width_seq_h)
+            n_width = int(width_mask.sum())
+            if n_width:
+                width_fixed_sum += float(horizon_res.ci_length[width_mask].sum())
+                width_seq_sum += float(width_seq_h[width_mask].sum())
+                width_n += n_width
+            crossed_seq = ~uncrossed_seq
+            n_crossed_seq = int(crossed_seq.sum())
+            if n_crossed_seq:
+                peek_hits_seq += n_crossed_seq
+                hist_seq = np.bincount(first_idx_seq[crossed_seq], minlength=n_cutoffs)
+                for k in range(n_cutoffs):
+                    first_cross_at_look_seq[k] += int(hist_seq[k])
+                exagg_values_seq.extend(np.abs(first_eff_seq[crossed_seq]).tolist())
+
+        # ── Injected pass (horizon only — `iterations`-shaped, valid rows only,
+        # mirroring the scalar `horizon_control is not None` gate) ──
+        if inject_effect is not None and n_valid:
+            clamped = injection_clamped_columns(panel.input_kind, horizon_b.columns, inject_effect)
+            if not clamp_warned and bool((clamped & valid_h).any()):
+                warnings.append(
+                    "injected effect saturated a proportion arm (count > nobs) — MDE unreachable"
+                )
+                clamp_warned = True
+            b_inj = inject_multiplicative_columns(
+                panel.input_kind, horizon_b.columns, inject_effect
+            )
+            res_inj = method.from_suffstats_array(horizon_a.columns, b_inj)
+            inj_valid = valid_h & np.isfinite(res_inj.left_bound) & np.isfinite(res_inj.right_bound)
+            coverage_n += int(inj_valid.sum())
+            power_hits += int(
+                (inj_valid & ((res_inj.left_bound > 0.0) | (res_inj.right_bound < 0.0))).sum()
+            )
+
+            # Truth anchor: the fixed pooled estimate when available (same scalar
+            # helper); the per-row control value_1 fallback mirrors each method's
+            # own value_1 (mean / prop / H5-guarded ratio) — reachable only for a
+            # non-finite pooled ratio, since a degenerate pooled arm implies
+            # degenerate per-iteration arms (no valid rows at all).
+            truth: float | FloatArray
+            if horizon_pooled is not None:
+                truth = _injected_truth(method, inject_effect, horizon_pooled)
+            else:
+                test_type = method.test_type if "test_type" in method.params else "relative"
+                if test_type == "relative":
+                    truth = float(inject_effect)
+                else:
+                    truth = float(inject_effect) * _value_1_rows(
+                        panel.input_kind, horizon_a.columns
+                    )
+            coverage_hits += int(
+                (inj_valid & (res_inj.left_bound <= truth) & (truth <= res_inj.right_bound)).sum()
+            )
+
+            if tau2 is not None:
+                # Same injected result, widened — power_seq gated on finite bounds
+                # (the scalar sig_seq-is-not-None check); coverage_seq is NOT
+                # (the scalar compares lo ≤ truth ≤ hi directly, NaN → False).
+                se_inj = se_from_ci_length_array(res_inj.ci_length, alpha)
+                lo_s, hi_s, _ = sequentialize_array(res_inj.effect, se_inj, tau2, alpha)
+                power_hits_seq += int(
+                    (
+                        inj_valid
+                        & np.isfinite(lo_s)
+                        & np.isfinite(hi_s)
+                        & ((lo_s > 0.0) | (hi_s < 0.0))
+                    ).sum()
+                )
+                coverage_hits_seq += int((inj_valid & (lo_s <= truth) & (truth <= hi_s)).sum())
+
+    # ── Final assembly — the scalar engine's tail, verbatim ──────────────────
+    fpr = single_look_hits / valid_iterations if valid_iterations else None
+    peeking_fpr = peek_hits / valid_iterations if valid_iterations else None
+    peeking_curve: tuple[tuple[float, float], ...] = ()
+    if valid_iterations:
+        cumulative = 0
+        curve: list[tuple[float, float]] = []
+        for k, cut in enumerate(panel.cutoffs):
+            cumulative += first_cross_at_look[k]
+            curve.append((float(cut.elapsed_days), cumulative / valid_iterations))
+        peeking_curve = tuple(curve)
+    power = power_hits / coverage_n if coverage_n else None
+    coverage = coverage_hits / coverage_n if coverage_n else None
+    achieved_mde = float(np.mean(mde_values)) if mde_values else None
+    effect_exaggeration = float(np.mean(exagg_values)) if exagg_values else None
+
+    has_seq = tau2 is not None
+    fpr_sequential = (
+        single_look_hits_seq / valid_iterations if (has_seq and valid_iterations) else None
+    )
+    peeking_fpr_sequential = (
+        peek_hits_seq / valid_iterations if (has_seq and valid_iterations) else None
+    )
+    power_sequential = power_hits_seq / coverage_n if (has_seq and coverage_n) else None
+    coverage_sequential = coverage_hits_seq / coverage_n if (has_seq and coverage_n) else None
+    effect_exaggeration_sequential = (
+        float(np.mean(exagg_values_seq)) if (has_seq and exagg_values_seq) else None
+    )
+    ci_width = width_fixed_sum / width_n if (has_seq and width_n) else None
+    ci_width_sequential = width_seq_sum / width_n if (has_seq and width_n) else None
+    peeking_curve_sequential: tuple[tuple[float, float], ...] = ()
+    if has_seq and valid_iterations:
+        cumulative_seq = 0
+        curve_seq: list[tuple[float, float]] = []
+        for k, cut in enumerate(panel.cutoffs):
+            cumulative_seq += first_cross_at_look_seq[k]
+            curve_seq.append((float(cut.elapsed_days), cumulative_seq / valid_iterations))
+        peeking_curve_sequential = tuple(curve_seq)
+
+    if valid_iterations == 0:
+        warnings.append(
+            "no iteration produced a usable horizon cutoff — the population is too small to score"
+        )
+    if method.supports_sequential and not has_seq and valid_iterations:
+        warnings.append(
+            "always-valid column skipped — τ² could not be anchored (degenerate horizon)"
+        )
+
+    return CellScore(
+        iterations=iterations,
+        valid_iterations=valid_iterations,
+        fpr=fpr,
+        peeking_fpr=peeking_fpr,
+        power=power,
+        coverage=coverage,
+        achieved_mde=achieved_mde,
+        effect_exaggeration=effect_exaggeration,
+        injected_effect=inject_effect,
+        degenerate_horizon=degenerate_horizon,
+        kept_grid_points=panel.kept_grid_points,
+        total_grid_points=panel.total_grid_points,
+        peeking_curve=peeking_curve,
+        tau2=tau2,
+        fpr_sequential=fpr_sequential,
+        peeking_fpr_sequential=peeking_fpr_sequential,
+        peeking_curve_sequential=peeking_curve_sequential,
+        power_sequential=power_sequential,
+        coverage_sequential=coverage_sequential,
+        effect_exaggeration_sequential=effect_exaggeration_sequential,
+        ci_width=ci_width,
+        ci_width_sequential=ci_width_sequential,
+        warnings=tuple(warnings),
+    )
+
+
 def _horizon_index(panel: PlaceboPanel) -> int:
     """The horizon cutoff's index (the flagged one, else the last)."""
     for k, cut in enumerate(panel.cutoffs):
@@ -572,3 +1014,57 @@ def _injected_truth(method: BaseMethod, delta: float, pooled_estimate: float) ->
     if test_type == "relative":
         return float(delta)
     return float(delta) * pooled_estimate
+
+
+def _control_stats_from_row(
+    input_kind: str,
+    has_covariate: bool,
+    columns: dict[str, FloatArray],
+    arm_size: int,
+    i: int,
+) -> ArmStats:
+    """One valid horizon row's control arm as a scalar container (the MDE seam).
+
+    Feeds the unchanged ``_analytic_mde`` from the batch columns so the MDE
+    formula path is shared, not duplicated. Only called on non-degenerate rows
+    (finite columns, ``n ≥ MIN_ARM_UNITS``, ``nobs > 0``); never for the ratio
+    kind (no analytic MDE). The Fraction ``count`` is clamped into ``[0, nobs]``:
+    both are exact GEMM sums for integer-valued panels, but a fractional-valued
+    panel could round ``count`` past ``nobs`` by one ULP where the scalar sums
+    land exactly equal — an ULP-sized input shift on a reporting-only value, not
+    a behavior change.
+    """
+    if input_kind == "fraction":
+        nobs = float(columns["nobs"][i])
+        return Fraction(count=min(float(columns["count"][i]), nobs), nobs=nobs)
+    if has_covariate:
+        return SufficientStats(
+            n=arm_size,
+            mean=float(columns["mean"][i]),
+            m2=float(columns["m2"][i]),
+            cov_mean=float(columns["cov_mean"][i]),
+            cov_m2=float(columns["cov_m2"][i]),
+            cross_c=float(columns["cross_c"][i]),
+        )
+    return SufficientStats(n=arm_size, mean=float(columns["mean"][i]), m2=float(columns["m2"][i]))
+
+
+def _value_1_rows(input_kind: str, columns: dict[str, FloatArray]) -> FloatArray:
+    """Per-row control point estimates — the batch mirror of ``TestResult.value_1``.
+
+    Matches each vectorized method's own ``value_1``: the raw control mean
+    (t-test/CUPED), the control proportion (z-test), or the H5-guarded control
+    ratio (ratio-delta: NaN when the denominator mean is zero/non-finite —
+    ``_arm_linearisation``'s rule). Used only as the absolute-effect truth
+    anchor when the pooled horizon estimate is unavailable.
+    """
+    with np.errstate(divide="ignore", invalid="ignore"):
+        if input_kind == "fraction":
+            return cast(FloatArray, columns["count"] / columns["nobs"])
+        if input_kind == "ratio":
+            den = columns["mean_den"]
+            return cast(
+                FloatArray,
+                np.where(np.isfinite(den) & (den != 0.0), columns["mean_num"] / den, np.nan),
+            )
+        return columns["mean"]
