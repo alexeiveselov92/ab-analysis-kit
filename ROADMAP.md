@@ -207,7 +207,12 @@ below and in the milestone docs). Core (M7–M12): ~42 sessions; extension
   review rounds with written findings + the implementation-plan doc in
   [docs/specs/](docs/specs/). Session estimates are **not contracts** — a WP
   that doesn't fit a session simply continues into the next one. After M7 and
-  M8: retro-calibrate the remaining estimates against actuals.
+  M8: retro-calibrate the remaining estimates against actuals (**M7 ✅ done:
+  actual 7 PRs/sessions for all 8 WPs — at the track table's coarse ~7-session
+  figure, but *under* the detailed m7 plan, whose per-WP lines sum to ~9.5–10.5
+  (WP2/WP3/WP4 each budgeted 2 sessions but each landed in one). So the coarse
+  M8+ figures stand, if anything conservative; the detailed multi-session WP
+  estimates are the ones worth trimming — revisit after M8**).
 - **M7–M12: statistical numbers do not move anywhere.** Parity/golden gates
   (exact on integer counts + mandatory near-boundary stress fixtures, rel-1e-9
   on continuous values); the grep for `ALGORITHM_VERSION` bumps stays empty.
@@ -236,18 +241,32 @@ below and in the milestone docs). Core (M7–M12): ~42 sessions; extension
   "1.x versioned"→M13+M14; the v2 incremental engine→M9; v2 methods→M15;
   owned randomization→M16; app integration→M17.
 
-### M7 — validate: vectorization + iteration policy → `0.2.0` 📋
-Design contract: [m7-implementation-plan.md](docs/specs/m7-implementation-plan.md).
-The 800k-iteration nested Python loop (`scoring.py`) becomes a numpy
-block-streaming engine with **the same numbers** (minutes → sub-seconds):
-scipy hot-path swap (`ndtr(-z)` bit-parity) + lazy imports (WP1), batch
-closed-form significance kernels in `abkit.stats` (`from_suffstats_array`,
-WP2), the vectorized permutation matrix (`vector_resample`, bit-identical to
-`placebo_mask` by construction, WP3), the `score_cell` rewrite with scalar
-fallback (WP4), the parity + perf gate (WP5), and the iteration policy —
-`--family-sweep` goes opt-in, default iterations `max(2000, ceil(200/α))`
-(WP6; stretch WP7 vectorizes `family.py`, which has its own loop). Carries the
-live multi-arm explore Review-mode bug fix (WP0) and hardening bucket A.
+### M7 — validate: vectorization + iteration policy → `0.2.0` ✅ SHIPPED
+Implementation record: [m7-implementation-plan.md](docs/specs/m7-implementation-plan.md)
+(the amended design contract — done table, per-WP as-built notes, exit-gate
+record). All eight WPs landed, **including the stretch**: the 800k-iteration
+nested Python loop (`scoring.py`) became a numpy block-streaming engine with
+**the same numbers** — scipy hot-path swap + lazy imports + bucket A1–A8, up
+to ~149× on `normal_test` (WP1, rides WP0's live multi-arm Review-mode fix);
+the batch significance kernels (`from_suffstats_array`, bit-exact vs the
+scalar path via `_libm_pow`, WP2); the block-streamed permutation engine
+(`vector_resample`, masks bit-identical to `placebo_mask` by construction,
+WP3); the `score_cell` dispatcher with verbatim scalar fallback, ~10×/cell
+(WP4); the exhaustive scalar↔vectorized parity gate + executable perf gate
+(WP5); the vectorized family sweep, ~18× (stretch WP7); and the iteration
+policy — `--family-sweep` opt-in + per-cell default `max(2000, ceil(200/α))`,
+warn-never-cap above 100k (WP6). **Zero statistical numbers moved** (no
+`ALGORITHM_VERSION` bump; both e2e matrix gates byte-identical; the
+documented engine-parity boundaries — fixed-BLAS byte-repro, the
+exactly-solved-boundary flip — are test-pinned properties, not drift).
+**Retro-calibration datum:** the track table's coarse estimate was ~7 sessions
+(one WP per session, 7 WP + 1 stretch); the detailed per-WP lines in this doc
+sum to ~9.5–10.5 (WP2/WP3/WP4 each budgeted 2 sessions). Actual: 7
+implementation PRs (#38–#44) for all 8 WPs + this exit-gate/release session —
+so delivery hit the coarse figure and beat the detailed one (WP2/WP3/WP4 each
+closed in a single session). The coarse M8+ figures stand (if anything
+conservative); the detailed multi-session WP estimates are the ones to trim —
+revisit after M8.
 
 ### M8 — assignments: no-copy default + incremental copy → `0.3.0` 📋
 Design contract: [m8-implementation-plan.md](docs/specs/m8-implementation-plan.md).

@@ -1,17 +1,18 @@
 # M7 Implementation Plan — validate: vectorization + iteration policy
 
-> **As-designed contract for M7, not yet implemented.** Written 2026-07-18 as part
-> of the approved (2026-07-18) polish track M7–M17
-> ([ROADMAP.md "The polish track"](../../ROADMAP.md)), in the shape of
+> **Implementation record — M7 shipped in full (WP0–WP7 including the
+> stretch), 2026-07-19/20; version bumped to `0.2.0`, release-ready pending
+> the maintainer's `v0.2.0` tag/publish (G1) step.** Written 2026-07-18 as the
+> as-designed contract for M7 (part of the approved polish track M7–M17,
+> [ROADMAP.md "The polish track"](../../ROADMAP.md)), in the shape of
 > [m6-implementation-plan.md](m6-implementation-plan.md) /
-> [m4-implementation-plan.md](m4-implementation-plan.md). M7 targets release
-> **`0.2.0`**. This document is the contract the implementation sessions execute
-> WP by WP; at the milestone exit gate it is amended in place into the
-> implementation record (the M4–M6 pattern — a "done" table, an as-built note per
-> WP where reality diverged from the plan, the adversarial-review log). Until
-> that exit gate lands, nothing described below exists in the codebase yet —
-> every WP is phrased as future work ("WP2 adds…", "the gate asserts…"), never as
-> a claim that the code is already there.
+> [m4-implementation-plan.md](m4-implementation-plan.md); amended in place at
+> the milestone exit gate into this record (the M4–M6 pattern). The WP bodies
+> below keep the original future-tense contract wording ("WP2 adds…") as the
+> designed baseline; the **"done" table** below, the **per-WP as-built notes**
+> (blockquotes at each WP), and the **exit-gate record** appended to §3 are
+> the authoritative as-built account, including the adversarial-review log
+> (two rounds ran on *every* WP, not only WP4/WP5).
 >
 > Governing specs: [aa-false-positive-matrix.md](aa-false-positive-matrix.md) (the
 > `abk validate` contract this milestone reimplements the *engine* of, without
@@ -25,6 +26,28 @@
 > code-verified facts: `~/.claude/plans/abkit-v2-details/verify_validate.json`.
 > No donor — every WP below is new abkit-native work (unlike M2/M3/M6's
 > detectkit ports).
+
+## Status — all work packages shipped (the "done" table)
+
+| WP | Landed as | Squash-merge | Load-bearing as-built delta (details in the per-WP notes) |
+|---|---|---|---|
+| WP0 — multi-arm Review-mode fix + limitations note | PR #38 | `80650b6`, 2026-07-19 | docs home = `docs/guides/experiments.md` (resolves §4.6) |
+| WP1 — scalar hot path, hardening bucket A1–A8 | PR #38 | `80650b6`, 2026-07-19 | frozen-fixture golden gate is rel-1e-9 on floats (BLAS ULPs don't cross machines); bit-parity old-vs-new proven once on the capture machine |
+| WP2 — array-wise significance kernel | PR #39 | `af370ad`, 2026-07-19 | **bit-exact** scalar↔batch parity via `_libm_pow` routing (resolves §4.3) |
+| WP3 — `vector_resample` block-streamed engine | PR #40 | `b7b6e57`, 2026-07-19 | float aggregates are byte-repro under **fixed** blocking only (block-size bit-invariance is unachievable in principle); §4.4 closed: prefix-sum permanently inapplicable |
+| WP4 — `score_cell` dispatcher + vectorized body | PR #41 | `aae8140`, 2026-07-19 | D13 restated "under a fixed BLAS configuration" (thread count moves continuous columns ~1e-15) |
+| WP5 — parity gate + executable perf gate | PR #42 | `f1f692a`, 2026-07-19 | exactly-solved CI boundaries may flip one decision between engines (pinned); MDE seam anchors control stats via scalar `build_arm` |
+| WP6 — policy: opt-in `--family-sweep` + per-cell auto-N | PR #44 | `fd50ca3`, 2026-07-20 | §4.1: warn above 100 000, never hard-cap; one-release migration notice |
+| WP7 — (stretch) `family.py` vectorization | PR #43 | `fc8d796`, 2026-07-20 | landed *inside* M7 (resolves §4.5); family parity gate is exact-only, stricter than planned |
+
+**Zero statistical numbers moved anywhere in the milestone** — no
+`ALGORITHM_VERSION` bump in any PR (the exit-gate grep over
+`68d3fa8..fd50ca3` finds no version change; the only textual mention added is
+a golden-test docstring), no `statistics-changes.md` entry, `abkit.stats`
+purity intact, both e2e matrix gates byte-identical. The engine speedups the
+milestone set out to deliver, as measured at the WP5/WP7 gates: ~10× per
+whole validate cell, ~18× for the family sweep, up to ~149× on the WP1
+`normal_test` kernel alone.
 
 ## 0. Scope, posture & decisions
 
@@ -204,6 +227,18 @@ graph.
 
 ### WP0 — the live multi-arm Review-mode bug (mini, rides with WP1)
 
+> **As-built note (WP0 shipped with WP1, PR #38, 2026-07-19).** Landed per the
+> steps: the single `payload.verdicts.find(...)` became a per-pair `.filter`
+> render (one verdict line per declared pair, existing marker classes reused),
+> pinned by new 2-arm-unchanged + 3-arm jsdom smoke assertions over a 3-arm
+> fixture variant; the rebuilt `explore.js` shipped in the same PR through the
+> CI freshness gate. The "known multi-arm limitations" note lives in
+> `docs/guides/experiments.md` (the §4.6 open point, resolved by the session as
+> planned) and says exactly what the plan asked: control-vs-each readout (no
+> winner rollup until M14), `abk plan` sizes off the first declared pair,
+> `abk validate`'s placebo split is two-arm. No downstream Review-mode reader
+> assumed one-verdict-per-metric (the risk-list check came back clean).
+
 **Goal:** fix the one near-decision multi-arm correctness-adjacent bug the
 hardening backlog names for "Now" — Review mode in `abk explore` silently
 shows only the first control-vs-treatment pair's verdict per metric in any
@@ -276,6 +311,31 @@ rather than shown a misleading single-verdict row.
 ---
 
 ### WP1 — scalar hot-path quick wins: ndtri/ndtr swap, lazy statsmodels import, lazy `effect_distribution`
+
+> **As-built note (WP1 shipped, PR #38, 2026-07-19).** The full bucket A1–A8
+> landed per the steps: the ndtri/ndtr swap measured **~149×** on
+> `normal_test` alone (283.8 µs → 1.9 µs per call), the lazy statsmodels
+> import removed ~0.5 s from cold `import abkit.stats`, and lazy
+> `effect_distribution` shipped as a `LazyNormal` proxy — where review caught
+> and fixed a pickle-recursion bug (the proxy's `__getattr__` recursed on
+> copy/pickle `__slots__`-protocol probes). A7's `_result_from_normal_test`,
+> the A4/A8 dedups, and A5/A6 (registry-parametrized contract suites + the
+> registry-completeness gate) all landed as planned. **The one real deviation
+> is the golden gate's tolerance discipline, a lesson for every future frozen
+> -fixture gate:** bit-for-bit comparison against a frozen fixture does NOT
+> transfer across machines — the method fixtures pass through BLAS (`np.dot`
+> inside `SufficientStats.from_sample`), and CI runners produce different
+> last-ULP floats for the *unchanged pre-WP1 code*. The first CI run failed
+> exactly there (cuped-absolute, all three Python jobs). The shipped pattern:
+> old-vs-new bit-parity is proven once on the capture machine (including a
+> 200 000-case bitwise property check in review round 2); the committed gate
+> — `tests/stats/test_normal_path_golden.py` + the fixture
+> `tests/stats/fixtures/normal_path_golden.json` (float.hex, extreme-z rows,
+> frozen from the pre-WP1 code at `68d3fa8`; regenerate only from a pre-WP1
+> checkout) — compares floats at rel-1e-9 (the `tests/golden/` standard) and
+> integers/flags/warnings exactly. Adversarial rounds: round 1 confirmed two
+> findings (a trip-wire for the `METHOD_CLASSES` roster; a CHANGELOG accuracy
+> fix), round 2 found zero.
 
 **Goal:** apply **hardening bucket A in full** (A1–A8,
 `stats-core-review.md:70-77`) directly to the **existing scalar** code path
@@ -405,6 +465,34 @@ existing method test files), `tests/stats/test_bootstrap_methods.py` +
 
 ### WP2 — pure array-wise significance kernel in `abkit/stats` (`BaseMethod.supports_vectorized` + `from_suffstats_array`)
 
+> **As-built note (WP2 shipped, PR #39, 2026-07-19).** Landed per the steps:
+> `supports_vectorized` on exactly the five planned methods (roster-pinned;
+> `paired-cuped-t-test` deliberately does **not** inherit the capability — it
+> derives from `BasePairedMethod`, outside the suffstats-scorable set), the
+> slim 5-field `BatchEffectResult`, three array kernels in `effects.py`, and
+> the sequential siblings `se_from_ci_length_array`/`sequentialize_array`.
+> **§4.3 is resolved: bit-exact scalar↔batch parity IS achievable on every
+> platform — but only by construction, not by accident.** Review round 1
+> found that numpy's `**` differs from C-library `pow` by 1 ULP (even for
+> `x**2`; glibc `pow` is not correctly rounded), and the catastrophic
+> cancellation in the three-term delta-method variance amplifies that to
+> ~1.8e-4 *relative* at CI boundaries — far past rel-1e-9. Fix: every power
+> term on the batch path routes through `effects._libm_pow`
+> (`np.frompyfunc(math.pow)`, `OverflowError → ±inf`), making parity
+> bit-exact by construction; the parity tests demand exact equality for all
+> 5 methods × 2 test types. The sequential siblings keep `np.log`/`np.exp`
+> (same-sign sums, no cancellation to amplify) under the golden rel-1e-9
+> bound — measured byte-identical on the capture environment. Round 2 found
+> two more: 0-d columns broke the `frompyfunc → .astype` chain (fix: a
+> "column = 1-D" input contract raising `SampleValidationError`) and
+> fractional `n` diverged from the scalar path's `int(n)` truncation (fix: a
+> `np.trunc` mirror in ttest/cuped/ratio; z-test/paired don't truncate —
+> matching their scalar behavior, deliberate). Documented batch divergences,
+> pinned by tests: a ddof-1 row with `n < 2` yields a NaN row where the
+> scalar raises ("gaps, never zeros" — validate never feeds such a row to the
+> scalar either). Measured cost of the libm routing: ~120 ms per 200k-row
+> relative batch (~16 ms pow-free) — still orders past the scalar loop.
+
 **Goal:** add an **optional** plugin capability, mirroring the existing
 `supports_sequential` precedent (`base.py:259`), so the suffstats-scorable
 parametric families that `abk validate` already calls via `from_suffstats` —
@@ -516,6 +604,43 @@ still called scalar-wise 200,000 times).
 ---
 
 ### WP3 — vectorized permutation-mask + block-streamed suffstats aggregation engine
+
+> **As-built note (WP3 shipped, PR #40, 2026-07-19).** `vector_resample.py`
+> landed per the steps — `placebo_mask_block` (row *i* is literally
+> `placebo_mask(derive_seed(*parts, start + i))`, bit-identical by
+> construction), `block_rows`/`iter_blocks` (the engine's cap arithmetic plus
+> a sub-quantum floor down to one row — legal here because masks are
+> seed-per-row, blocking-independent, which the donor bootstrap engine's
+> draw-order contract cannot allow), and `build_arm_batch` → one GEMM per arm
+> per cutoff over pooled-shifted one-pass co-moments (sample/CUPED/fraction/
+> ratio; column keys shared with WP2's `*_ARRAY_KEYS`), degenerate flags per
+> `(iteration, cutoff)` with NaN-poisoned stat rows. Two WP4 seams shipped
+> here: `prepare_cutoff` (hoisting, identity-guarded `prepared.cut is cut`)
+> and `weights_scratch` (~−25%). `inject.py` gained
+> `inject_multiplicative_columns`/`injection_clamped_columns` (bit-exact
+> mirror of scalar injection; one deliberate pinned divergence — scalar
+> `max(0.0, nan) == 0.0` swallows a NaN-m2 gap, the batch path preserves it).
+> **The load-bearing empirical finding: bit-invariance of float aggregates to
+> block size is unachievable in principle** — both BLAS (M-dependent kernels)
+> and plain `np.sum(axis=1)` round the same row differently under different
+> buffer heights. The honest, shipped contract: masks/counts/flags exact
+> under ANY blocking; float aggregates byte-reproducible under a FIXED
+> blocking (D13 holds — WP4 derives its blocking deterministically from
+> `(iterations, n_units)`), rtol-1e-12 across blockings. A BLAS-free
+> multiply-and-sum variant was 10–20× slower with no stability gain — GEMM
+> stays (the Poisson engine precedent: matmul already lives under a
+> byte-repro e2e). Second finding: the rel-1e-9 scalar-parity claim has a
+> conditioning boundary at `|value|/σ ≲ 1e10` — beyond it the *scalar* itself
+> drifts (m2 inflation from the rounded arm mean, `count·ulp(|y|)²/4`;
+> ~5e-9 measured at 1e12/3) — pinned by 1e8/1e10/1e12 fixtures. §4.4 is
+> closed empirically: **cross-cutoff prefix-sum is permanently inapplicable**
+> (refund-style and max-style metrics make per-cutoff values non-monotone;
+> recorded in the module comment as the plan required). Reviews: round 1
+> (numerics + contracts) 2 major / 6 minor, round 2 (fresh reviewer) 2 major
+> / 3 minor — all fixed, incl. float32-input normalization (`asarray(f64)`,
+> without which parity broke on ordinary value offsets) and the memory-claim
+> split into capped vs fixed parts (k ≤ 5 per-unit columns of `8·k·n_units`
+> bytes sit outside the block cap). 58 new tests.
 
 **Goal:** a new module implementing the `(iterations × n_units)`
 permutation-mask generation and the per-cutoff sufficient-statistic
@@ -636,6 +761,39 @@ matmul calls per iteration-block — the dominant win.
 
 ### WP4 — rewrite `score_cell` to run the vectorized engine, with scalar fallback for non-opted-in methods
 
+> **As-built note (WP4 shipped, PR #41, 2026-07-19).** `score_cell` became a
+> dispatcher on `method.supports_vectorized` → `_score_cell_vectorized`
+> (block-streamed: `iter_blocks` × `build_arm_batch` × `from_suffstats_array`,
+> with O(block) *streaming* first-crossing state — the argmax-on-all-False
+> footgun the plan warned about is impossible by construction, no
+> `(iterations × cutoffs)` significance matrix is ever materialized) /
+> `_score_cell_scalar` (a verbatim code move, confirmed by mechanical diff).
+> The MDE/exaggeration loop stayed `iterations`-shaped via per-row horizon
+> stats; the injected pass reuses the horizon batch; `_value_1_rows` anchors
+> the value_1 fallback. Ten smoke-parity cases (5 input kinds × ±inject)
+> pinned counts/curves/ratio fields EXACT and continuous fields rel-1e-9
+> ahead of WP5's full battery. Measured ~10× on the reference cell (≈2.5 s vs
+> ≈25 s, CUPED 2000 iterations × 100 cutoffs × 2000 units, with injection).
+> Reviews (round 1: two hunters, 2 major / 5 minor; round 2: fresh, 0 major /
+> 5 minor — all fixed) produced four load-bearing findings: (1) **the GEMM
+> engine's byte-reproducibility depends on the BLAS thread configuration**
+> (OpenBLAS 1 vs ≥2 threads moves continuous columns ~1e-15 rel; counts
+> stable; the scalar engine is thread-invariant) → D13 is now stated "under a
+> fixed BLAS configuration" everywhere, per the Poisson-engine precedent;
+> (2) the hoisted prepared-cutoff buffers now take the *remainder* of the
+> single 256 MiB cap after the block working set (the draft had two additive
+> budgets); (3) a lying plugin (`supports_vectorized = True` without a
+> kernel) raises `ValidateError` — caught per cell — instead of a
+> `NotImplementedError` that would kill the whole matrix; (4) a pre-existing
+> crash shared by both engines: an exactly-zero pooled ratio `mean_den`
+> reached `ZeroDivisionError` in `_point_estimate` past the runner's catch →
+> guarded like `_arm_linearisation`, which also unblocked the value_1
+> fallback (integration-covered with ±1 denominators). Round-2 polish: the
+> hoist no longer prepares *empty* cutoffs (`load.py` only guards the horizon
+> — the "Mean of empty slice" RuntimeWarning was production-reachable), and
+> the missing-kernel diagnostic honestly reads "missing OR refusing this
+> input".
+
 **Goal:** replace `scoring.py`'s
 `for i in range(iterations): for k, cut in enumerate(panel.cutoffs):`
 (`scoring.py:322,335`) with a block-streamed loop over WP3's `iter_blocks()`,
@@ -754,6 +912,40 @@ degenerate tallies) that must all be reproduced.
 ---
 
 ### WP5 — parity gate, perf gate, and the milestone exit-gate hardening pass
+
+> **As-built note (WP5 shipped, PR #42, 2026-07-19).**
+> `tests/validate/test_vector_parity.py` landed wider than the plan's floor:
+> **8 fixture shapes** (sample/cuped/absolute/fraction/ratio + adversarial
+> sparse/cuped-sparse/clamp) × 50 seeds per shape by default
+> (`ABKIT_PARITY_SEEDS` env raises it; the exit run used 200 = 1600
+> scalar↔vectorized pairs, all green), with the exact class covering counts +
+> curves + warnings + `achieved_mde`, the continuous class at rel-1e-9
+> (measured ≤ 2e-14), a trip-wire pinning `CellScore` field completeness,
+> multi-block runs (quantum 1/7/128), and rare branches pinned on scanned
+> deterministic seeds (τ²-unanchorable {2029, 14168, 18071, 18617};
+> no-valid-horizon; overcounted-fraction {0, 1, 3}; negative-root boundary
+> {108, 124}). **The §0.3(3) near-boundary stress fixture produced the
+> milestone's subtlest finding: at an *exactly solved* CI boundary (brentq
+> inversion, `|left_bound| ≲ 1e-15`) the two engines legitimately flip one
+> decision (GEMM vs `.sum()` last-ULP; measured as power 0.5 vs 0.6 on one
+> seed) — pinned by a dedicated "≤ 1 hit, power only" test; at ±1e-9 offsets
+> parity is strictly exact.** The perf gate runs the reference case
+> (2 methods × 2000 iterations × 100 cutoffs × 1000 units) under 10 s
+> CI-safe (the CI Test job runs under `--cov`, ~2×: measured ~1.3–1.7 s bare,
+> ~2.2–2.5 s cov-on, vs ~25 s scalar). Review round 1's MAJOR (sonnet fuzz,
+> 26/9000 cases): CUPED at `n = 2` ⇒ correlation ≡ ±1, a knife-edge where
+> `achieved_mde` flipped None↔0.0 between engines (persisted; feeds the
+> Recommended-row tie-break) → fixed by anchoring the MDE seam's control
+> stats through scalar `build_arm` on the mask row (bit-identity by
+> construction; `_control_stats_from_row` deleted). Round 2's MAJOR: that fix
+> crashed on corrupt fraction data (per-unit successes > trials with a finite
+> pooled CI) → try/except-skip per row; the residual divergence class —
+> scalar fails the cell, batch scores it, on *corrupt* data only — is
+> documented in `aa-false-positive-matrix.md §9` and regression-pinned.
+> Hardening the batch degenerate flag (`count > nobs`) is a named follow-up,
+> deliberately NOT taken: an ULP-tolerant `count ≈ nobs` check would kill
+> legitimate cells. The spec's §9 "Implementation note" (step 5) shipped in
+> the same PR.
 
 **Goal:** build the honest cross-implementation regression gate this
 milestone's entire numeric safety rests on, plus the performance regression
@@ -1071,7 +1263,7 @@ blocking M7's `0.2.0` release.
 blocking the `0.2.0` release; WP6's opt-in flip is the load-bearing fix
 either way).
 
-> **As-built note (WP7 shipped, 2026-07-19).** Two deliberate deviations from
+> **As-built note (WP7 shipped, 2026-07-19/20; PR #43, `fc8d796`).** Two deliberate deviations from
 > the steps above, both stricter than the plan's ask: (a) the parity gate is a
 > NEW file, `tests/validate/test_family_vector_parity.py` (mirroring WP5's own
 > delivery shape), leaving `test_family_sweep.py` untouched and green; (b) the
@@ -1176,6 +1368,51 @@ touch any of `docs/`, `.claude/rules/`, or the packaged `init-claude` assets;
 the wheel-namelist + `pip install` smoke gates pass; tag → `publish.yml` is
 the maintainer's G1 step, never taken autonomously.
 
+> **✅ Exit-gate record (run 2026-07-20, the `0.2.0` release session).**
+> Every gate above was executed against `main` at `fd50ca3` (all eight WP
+> squashes merged):
+>
+> - **Full suite:** 1859 passed, 3 skipped (1 Docker-dependent e2e —
+>   `test_first_run_clickhouse.py`; 1 backend-parametrize skip on a mocked
+>   MySQL affected-rows assertion; 1 opt-in `ABK_BENCH` microbenchmark),
+>   including `tests/e2e/test_validate_matrix.py` byte-for-byte
+>   (worked-example table + two-fresh-runs reproducibility, explicit
+>   `iterations=2000` + `family_sweep=True` per the WP6 as-built note),
+>   `tests/e2e/test_sequential_matrix.py` (now exercising the vectorized
+>   family path), `tests/validate/test_sequential_parity.py`, and
+>   `tests/validate/test_family_sweep.py` — all green unmodified. Web suite
+>   38/38.
+> - **Parity gates:** `test_vector_parity.py` — 8 shapes × 50 seeds standard
+>   (the exit run at `ABKIT_PARITY_SEEDS=200` = 1600 pairs, green);
+>   `test_family_vector_parity.py` — exact-only across its 5 shapes (exit run
+>   1000 pairs, green). Exact counts everywhere; continuous fields measured
+>   ≤ 2e-14 against the rel-1e-9 gate.
+> - **Perf gate:** `test_vector_perf.py` green in CI under coverage
+>   (reference case < 10 s bound; measured ~1.3–1.7 s bare, ~2.2–2.5 s
+>   cov-on, vs ~25 s scalar).
+> - **No `ALGORITHM_VERSION` bump:** the grep over the milestone diff
+>   (`68d3fa8..fd50ca3`) finds zero version changes in `abkit/` (the single
+>   textual hit is the WP1 golden-test docstring *naming* the invariant); no
+>   `statistics-changes.md` entry exists for M7, as required.
+> - **Adversarial review:** two rounds ran on **every** WP (the per-WP
+>   as-built notes above carry each round's findings and fixes) — the §3
+>   requirement named WP4/WP5 specifically; both got their two rounds
+>   (WP4: 2 major/10 minor total; WP5: the R1 `achieved_mde` knife-edge, the
+>   R1 gate-critic pair — parity-coverage gaps on the τ²-unanchorable /
+>   `valid_iterations==0` branches + an overstated perf margin — and the R2
+>   corrupt-fraction crash; PR #42's body carries the itemized list, and the
+>   WP5 as-built note above narrates the two engine-changing majors), and the
+>   two named hunt targets came back with the two documented boundary findings
+>   (the fixed-blocking byte-repro contract; the exactly-solved-boundary
+>   single-decision flip), both pinned by dedicated tests rather than fixed
+>   away (they are properties of floating-point GEMM, not bugs).
+> - **Release step:** executed in the exit-gate PR — `__version__ = "0.2.0"`,
+>   CHANGELOG cut dated 2026-07-20, ROADMAP/CLAUDE.md/`.claude/rules/`
+>   flipped to "M7 shipped", the three-way docs sync already landed with WP6
+>   (packaged assets/guides/spec state the opt-in flag + auto-N); the
+>   wheel-namelist + `pip install` smoke gates run in the same PR's CI; the
+>   `v0.2.0` tag push remains the maintainer's G1 call.
+
 ---
 
 ## 4. Open questions / before-start decisions
@@ -1196,43 +1433,38 @@ depends on the answer proceeds.
    log-and-continue safeguard rather than silently truncating a user's
    configured alpha tier. Affects `docs/specs/aa-false-positive-matrix.md`
    wording (WP6, step 6).
-2. **Is `BaseMethod.from_suffstats_array` required or optional? (Determines
-   whether WP2/WP4 are a breaking plugin-contract change.)** Recommended
-   design (and the one this doc assumes throughout): **optional**, gated by
-   `supports_vectorized = False` as the base-class default — mirroring
-   `supports_sequential`'s existing precedent (`base.py:259`) — with
-   `score_cell` falling back to the scalar loop for any non-opted-in method.
-   This is purely additive to the plugin contract, not breaking.
-3. **Is WP2's array-kernel bit-parity claim actually achievable, or does it
-   need rel-1e-9 from the start?** numpy/`scipy.special` vectorized ufunc code
-   paths can use different internal loop unrolling than the scalar
-   `sps.norm(...).ppf/cdf/sf` path, even though the array kernel evaluates the
-   *same formula* via broadcasting rather than a summation reorder. This must
-   be measured empirically in WP2's own golden test before WP5 relies on it
-   as "exact" rather than falling back to rel-1e-9 there too —
-   **WP2's own test result is the arbiter**; document whichever tolerance it
-   empirically requires and do not assume exactness in advance.
-4. **Does full-window recompute rule out ANY cross-cutoff optimization, not
-   just the naive one?** Because `RecomputeBackend` re-renders
-   `[start_ts, end_ts)` fresh per cutoff (`recompute_backend.py:3-4`), a
-   continuing unit's per-cutoff value may be genuinely non-monotone
-   -appendable (could even decrease, e.g. refunds) — which would rule out any
-   prefix-sum-across-cutoffs optimization entirely, not merely the naive
-   append-only one. WP3 empirically checks this against a couple of real
-   metric SQL patterns (e.g. a revenue metric with credits/refunds) before
-   deciding whether to leave a TODO for a future cross-cutoff prefix-sum
-   stretch optimization, or declare it permanently inapplicable in a code
-   comment — either finding is acceptable, but the comment must record which.
-5. **Stretch WP7: attempt it immediately after WP2/WP3 land, or defer it to a
-   later session/milestone?** No hard answer required before WP0–WP6 start —
-   this is a scheduling call the implementation sessions make in the moment,
-   based on how much capacity the milestone has left once WP5's exit gate is
-   in sight. Either answer is compatible with this contract; WP7 not landing
-   in M7 is an explicitly acceptable outcome (§1, WP7).
-6. **Where does WP0's "known multi-arm limitations" doc note live —
-   `docs/guides/explore.md` or `docs/guides/experiments.md`?** Not a blocking
-   decision; the implementing session picks whichever reads more naturally
-   next to existing content and records the choice in the WP0 PR.
+2. **Is `BaseMethod.from_suffstats_array` required or optional? — RESOLVED
+   (WP2, 2026-07-19): optional, exactly as recommended.**
+   `supports_vectorized = False` is the base-class default (mirroring
+   `supports_sequential`, `base.py:259`); `score_cell` falls back to the
+   scalar loop for any non-opted-in method (bootstrap exercises the fallback
+   for real). Purely additive to the plugin contract, not breaking — the
+   roster test pins exactly five opted-in methods.
+3. **Is WP2's array-kernel bit-parity claim actually achievable? — RESOLVED
+   (WP2, 2026-07-19): yes, bit-exact on every platform, but only by
+   construction.** The empirical arbiter (WP2's own golden test) found the
+   hazard was not ufunc loop-unrolling but numpy `**` vs C-library `pow`
+   (1 ULP apart, amplified to ~1.8e-4 rel by the cancelling delta-method
+   variance sum); routing all batch power terms through `effects._libm_pow`
+   made scalar↔batch parity bit-exact for all five methods and both test
+   types, enforced as exact equality by the tests. Only the sequential
+   siblings' `log`/`exp` keep a rel-1e-9 gate (same-sign sums, measured
+   byte-identical on the capture environment).
+4. **Does full-window recompute rule out ANY cross-cutoff optimization? —
+   RESOLVED (WP3, 2026-07-19): yes, permanently.** Refund-style (a
+   continuing unit's cumulative value can decrease) and max-style metric SQL
+   both make per-cutoff values non-monotone-appendable, ruling out every
+   prefix-sum-across-cutoffs scheme, not just the naive append-only one.
+   Recorded in `vector_resample.py`'s module comment as "permanently
+   inapplicable" per this question's own protocol.
+5. **Stretch WP7 scheduling — RESOLVED (2026-07-19/20): attempted immediately
+   after WP5 closed, landed inside M7** (PR #43, `fc8d796`, merged before
+   WP6's policy WP #44). The capacity was there because WP2–WP5 each fit their
+   sessions; the family sweep is therefore both opt-in (WP6) *and* vectorized
+   (~18×) in `0.2.0`.
+6. **Where does WP0's "known multi-arm limitations" note live? — RESOLVED
+   (WP0, 2026-07-19): `docs/guides/experiments.md`**, next to the existing
+   experiment-shape content, as recorded in the WP0/WP1 PR (#38).
 
 ---
 

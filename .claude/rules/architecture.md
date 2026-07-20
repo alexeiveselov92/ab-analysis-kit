@@ -1,9 +1,10 @@
 # abkit architecture — as built
 
 > The contributor/assistant condensation of the system **as it exists in code**.
-> Reflects: **M1 + M2 + M3 + M4 + M5 + M6 shipped** (`__version__ = 0.1.2`,
-> released on PyPI; M3's WP9 testcontainers hardening deferred to a
-> Docker-equipped environment).
+> Reflects: **M1 + M2 + M3 + M4 + M5 + M6 + M7 shipped** (`__version__ = 0.2.0`,
+> release-ready — M1–M6 published on PyPI @ `0.1.2`, the `v0.2.0` tag/publish
+> is the maintainer's pending G1 step; M3's WP9 testcontainers hardening
+> deferred to a Docker-equipped environment).
 > Design contracts for what is being *built next* (1.x hardening) live in
 > [docs/specs/](../../docs/specs/) + [ROADMAP.md](../../ROADMAP.md); this file must
 > never claim unbuilt code exists.
@@ -59,12 +60,18 @@ abkit/
                          #   subsample), runner (cell enum + effective alpha +
                          #   select + verdicts), persistence/result/run_id
                          #   (per-cell _ab_aa_runs rows, D4), _types;
-                         #   ✅ M5: family (D9 composed FWER/FDR union-cohort sweep)
+                         #   ✅ M5: family (D9 composed FWER/FDR union-cohort sweep);
+                         #   ✅ M7: vector_resample (block-streamed GEMM engine) +
+                         #   score_cell/sweep_family dispatchers w/ verbatim scalar
+                         #   fallback; opt-in --family-sweep; per-cell auto-N
   planning/              # ✅ M5: sizing (pure required-N/MDE/power over stats.power) —
                          #   the `abk plan` engine; read-only, refuses ratio/bootstrap
-  stats/                 # ✅ M1: the pure numpy core (details below)
+  stats/                 # ✅ M1: the pure numpy core (details below);
+                         #   ✅ M7: supports_vectorized + from_suffstats_array
+                         #   (5-method roster) + effects._libm_pow batch kernels
     sequential/          # ✅ M5: the always-valid confidence sequence
-                         #   (confidence_sequence, mixture τ², apply.to_always_valid)
+                         #   (confidence_sequence, mixture τ², apply.to_always_valid;
+                         #   ✅ M7: *_array siblings)
   utils/                 # stdlib-only: json_utils (canonical hash path),
                          #   datetime_utils (naive-UTC), env_interpolation
 web/                     # ✅ M3: the dev-only TS toolchain (never wheel-shipped)
@@ -82,6 +89,9 @@ tests/
   stats/sequential/ planning/  # ✅ M5 (+ validate/test_family_sweep.py,
                          #   pipeline/test_correction_rule.py, cli/test_plan_command.py,
                          #   the sequential-matrix exit-gate e2e in tests/e2e/)
+                         # ✅ M7: stats/test_vectorized_parity.py + test_normal_path_golden.py,
+                         #   validate/test_vector_{resample,parity,perf}.py,
+                         #   validate/test_family_vector_parity.py (exact-only)
   _helpers/fake_db.py    # in-memory manager with SQL-backend semantics
   _helpers/synthetic_ab.py  # SyntheticWarehouse (3 metric kinds, shuffle mode,
                          #   seed_null_events — the exact-null A/A fixture)
@@ -176,6 +186,47 @@ Docker-equipped environment.
   the Apply gate is unchanged. Bootstrap A/A stayed an opt-in follow-up (D7);
   sidedness/winsorization are arbitrated-not-implemented (D14).
 
+### M7 vectorization facts an assistant must know
+
+- **`score_cell` and `sweep_family` are dispatchers** on
+  `method.supports_vectorized`: the vectorized bodies block-stream
+  `vector_resample.iter_blocks × build_arm_batch × from_suffstats_array`; the
+  scalar bodies are verbatim code moves — a method without a batch kernel
+  (all bootstrap, any new plugin) automatically takes the scalar path.
+  A lying flag (`True` without a kernel) raises `ValidateError`, caught
+  per cell.
+- **Batch-kernel pow terms route through `effects._libm_pow`** — numpy `**`
+  is 1 ULP off C-library `pow` and the cancelling delta-method variance sum
+  amplifies that to ~1e-4 rel at CI bounds; with libm routing the
+  scalar↔batch parity is **bit-exact by construction** (parity tests demand
+  exact for all 5 opted-in methods; roster-pinned: t-test, z-test,
+  cuped-t-test, paired-t-test, ratio-delta).
+- **Float aggregates are byte-reproducible only under FIXED blocking + a
+  fixed BLAS configuration (D13 as restated in M7)** — block-size and
+  thread-count bit-invariance is unachievable in principle (GEMM and even
+  `np.sum(axis=1)` round per buffer height). Masks/counts/flags are exact
+  under ANY blocking; continuous columns get rtol-1e-12 across blockings.
+  Never write a byte-equality assertion on continuous columns across block
+  sizes or BLAS thread counts.
+- **The parity gates are the milestone's safety net** —
+  `tests/validate/test_vector_parity.py` (8 shapes × 50 seeds, env
+  `ABKIT_PARITY_SEEDS` raises it; exact counts/curves/warnings, continuous
+  rel-1e-9) and `test_family_vector_parity.py` (**exact-only** — every family
+  column is a count fraction/exact sum/passthrough); `test_vector_perf.py` is
+  the executable perf gate (<10 s reference under coverage). At an *exactly
+  solved* CI boundary (|bound| ≲ 1e-15) the engines may legitimately flip one
+  decision — pinned, not a bug.
+- **Iteration policy (WP6):** `ValidateSettings.iterations=None` → per-cell
+  `max(2000, ⌈200/α⌉)` at the cell's EFFECTIVE alpha (family sweep sizes at
+  the tightest member alpha); auto-N warns above 100 000, never hard-caps;
+  persisted rows record the RESOLVED N. `--family-sweep` is opt-in
+  (default off; with `--metric` it is logged-and-skipped; explore Auto mode
+  never opts in — the D3 chip keys on per-cell rows only).
+- **`decision_log` entries do NOT reach the CLI user** — their only other
+  consumer is the Auto-mode JSON reply; any user-facing warning must be
+  explicitly echoed as a CLI line (the WP6 round-2 lesson, pinned by
+  `test_auto_n_warning_reaches_the_terminal`).
+
 ## The stats core (`abkit.stats`) — the implemented system
 
 **Purity invariant (hard):** numpy/scipy/statsmodels + stdlib only; never
@@ -245,7 +296,7 @@ identity param orphans the prior results series.
 - Stratification uses Hamilton apportionment; Poisson bootstrap is mean-only
   (guarded); zero denominators → NaN + warning (H5), never an exception.
 
-## M5 + M6 as built (specs are canonical)
+## M5 + M6 + M7 as built (specs are canonical)
 
 **M5 shipped** (the implementation record is
 [m5-implementation-plan.md](../../docs/specs/m5-implementation-plan.md)): the always-valid
@@ -271,10 +322,25 @@ behind the WP10 exit gate (`tests/e2e/test_release_readiness.py` + ≥2 adversar
 is `alpha_spending`/group-sequential (a `scheme: alpha_spending` config error names it); the
 tagged PyPI publish is the maintainer's G1 step.
 
-**Next — the polish track M7–M17 → `0.2.0`…`0.12.0`** (approved 2026-07-18; it
-absorbs the whole "Post-baseline hardening" backlog — see the track section in
-[ROADMAP.md](../../ROADMAP.md) and the as-designed contracts
-[m7](../../docs/specs/m7-implementation-plan.md)…[m12](../../docs/specs/m12-implementation-plan.md);
+**M7 shipped** (the record is
+[m7-implementation-plan.md](../../docs/specs/m7-implementation-plan.md) — done
+table, per-WP as-built notes, exit-gate log; release-ready as `0.2.0`): the validate
+vectorization + iteration-policy milestone — the WP0 live multi-arm
+Review-mode fix, the WP1 scalar hot path + hardening bucket A1–A8 (~149× on
+`normal_test`), the WP2 batch significance kernels
+(`supports_vectorized`/`from_suffstats_array`, bit-exact via `_libm_pow`),
+the WP3 `vector_resample` block-streamed GEMM engine, the WP4 `score_cell`
+dispatcher (~10×/cell), the WP5 parity + executable perf gates, the stretch
+WP7 vectorized family sweep (~18×), and the WP6 policy (opt-in
+`--family-sweep`, per-cell auto-N, warn-never-cap). **Zero statistical
+numbers moved** — no `ALGORITHM_VERSION` bump, both e2e matrix gates
+byte-identical; see "M7 vectorization facts" above for the working contracts.
+
+**Next — the polish track continues: M8–M17 → `0.3.0`…`0.12.0`** (track
+approved 2026-07-18; it absorbs the whole "Post-baseline hardening" backlog —
+see the track section in [ROADMAP.md](../../ROADMAP.md) and the as-designed
+contracts
+[m8](../../docs/specs/m8-implementation-plan.md)…[m12](../../docs/specs/m12-implementation-plan.md);
 M13–M17 are contours, each opens with a design session). One WP = one session =
 one PR; **M7–M12 move no statistical number** (parity gates + empty
 `ALGORITHM_VERSION` grep); M13/M15 use full change control. The M8→M9 contract:
@@ -284,14 +350,16 @@ Read before coding:
 - The M5 as-built + the math → [m5-implementation-plan.md](../../docs/specs/m5-implementation-plan.md),
   [statistics-changes.md §4](../../docs/specs/statistics-changes.md),
   [cumulative-intervals.md §6](../../docs/specs/cumulative-intervals.md)
-- The A/A matrix contracts (M4 + M5 + M6 as-built) → [aa-false-positive-matrix.md](../../docs/specs/aa-false-positive-matrix.md)
+- The A/A matrix contracts (M4 + M5 + M6 + M7 as-built, incl. the §9
+  implementation note) → [aa-false-positive-matrix.md](../../docs/specs/aa-false-positive-matrix.md)
 - The blocking must-fix checklist → [quorum-review.md](../../docs/specs/quorum-review.md)
 - The cockpit & readout as-built contracts → [data-contract-and-reporting.md §5](../../docs/specs/data-contract-and-reporting.md),
   [cli-and-dx.md §2](../../docs/specs/cli-and-dx.md)
 - The implementation records → [m2](../../docs/specs/m2-implementation-plan.md),
   [m3](../../docs/specs/m3-implementation-plan.md),
   [m4](../../docs/specs/m4-implementation-plan.md),
-  [m5](../../docs/specs/m5-implementation-plan.md)
+  [m5](../../docs/specs/m5-implementation-plan.md),
+  [m7](../../docs/specs/m7-implementation-plan.md)
 
 ## Invariants (do not violate)
 

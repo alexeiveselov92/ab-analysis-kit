@@ -13,6 +13,19 @@ number change).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-20
+
+M7 — validate: vectorization + iteration policy (the first polish-track
+release; implementation record: `docs/specs/m7-implementation-plan.md`).
+**No statistical numbers changed anywhere in the milestone** (no
+`ALGORITHM_VERSION` bump, goldens and both e2e matrix gates byte-identical,
+`abkit.stats` purity held): the A/A validate engine went from minutes of
+nested Python loops to seconds of block-streamed numpy — ~10× per validate
+cell, ~18× for the composed family sweep, up to ~149× on the closed-form
+significance kernel — behind exhaustive scalar↔vectorized parity gates, and
+two run-policy defaults changed (the opt-in `--family-sweep` and the
+per-cell auto-N tied to alpha; see the WP6 entries under "Changed").
+
 ### Changed
 - **M7 WP6 — the composed family sweep (D9) is opt-in: `--family-sweep`.
   BEHAVIOR CHANGE.** `abk validate` no longer auto-runs the multi-metric
@@ -49,6 +62,49 @@ number change).
   numbers under its explicit `iterations=`). This is deliberately distinct
   from the byte-identical WP1 hot-path fix below — do not conflate the two
   categories.
+
+- **M7 WP1 — scalar hot-path quick wins (hardening bucket A, A1–A8). No
+  statistical numbers changed**: the old-vs-new swap was verified **bit-exact
+  on the capture environment** against a fixture frozen from the pre-change
+  code, and the committed golden gate
+  `tests/stats/test_normal_path_golden.py` re-checks the battery (extreme-z,
+  degenerates, all six closed-form methods end-to-end) on every run — float
+  fields at the repo's golden relative 1e-9 (BLAS/libm builds differ across
+  machines in the last ULP; a formula change fails by orders of magnitude),
+  every reject/size/warning/flag field exactly. The whole stats+golden suite
+  passes unmodified (634 passed, 1 opt-in benchmark skipped). The wins:
+  - **A1 — `scipy.special.ndtri`/`ndtr` replace the frozen `sps.norm` objects**
+    on the closed-form significance path (`effects.normal_test`, the z-test,
+    `sequential.se_from_ci_length`), with the sf tail computed as `ndtr(-z)`
+    (never `1 − ndtr(z)`, which drifts for extreme z). Alpha-only quantiles are
+    now computed once per alpha (`lru_cache`), not per comparison. Measured:
+    `normal_test` 283.8 → 1.9 µs/call (**~149×** on the `abk validate`/explore
+    closed-form hot path).
+  - **A2 — statsmodels imports moved inside the power/MDE solves** —
+    `import abkit.stats` no longer eagerly loads statsmodels+pandas+patsy
+    (~0.5 s cold in this env); a subprocess test pins the deferral.
+  - **A3 — `TestResult.effect_distribution` is now a `LazyNormal` proxy on the
+    closed-form path** — freezing the never-serialised scipy distribution is
+    deferred to the first attribute read (delegated reads are byte-identical);
+    the `is not None` truthiness contract and `to_dict()` behavior are pinned
+    by a new test. (The bootstrap methods' `effect_distribution` stays eager —
+    negligible next to the resampling itself.)
+  - **A4 — bootstrap result-assembly dedup** — per-arm `stat_point` values are
+    computed once and passed into `_finalize`; `pvalue_sign` counts each side
+    once and divides once (provably byte-identical, goldens intact).
+  - **A7 — shared `BaseMethod._result_from_normal_test`** — the six
+    closed-form methods' copy-pasted ~20-kwarg `TestResult` tails now assemble
+    in one place (field-drift risk removed), pinned field-by-field by the
+    golden gate.
+  - **A8 — `samples.py` micro-dedups** — `SufficientStats.from_sample` reuses
+    the `Sample`'s already-computed covariate mean; `from_ratio_sample` computes
+    each mean once; `RatioSufficientStats` gains the same `m2 ≥ 0` validation
+    `SufficientStats` already had.
+  - **A5/A6 — registry-driven contract tests + a completeness gate** — the
+    universal method contracts (dual-entry, seed-exclusion, `to_dict`,
+    quarantine) are parametrized off the plugin registry so a new method is
+    auto-swept in, and a new completeness test fails if a `BaseMethod` subclass
+    is importable but silently unregistered.
 
 ### Added
 - **M7 WP2 — the array-wise significance kernel (`supports_vectorized` +
@@ -298,6 +354,19 @@ number change).
   or `sequential=False`), and guarding `_cell_tau2` itself is a named
   follow-up since it would change both engines' behavior at once.
 
+- **The polish track M7–M17 (`0.2.0` … `0.12.0`) planned into the repo** — docs
+  only, no behavior change, no statistical numbers touched: the approved
+  (2026-07-18) track section in `ROADMAP.md` (milestone map + versioning +
+  the coverage map over the data-flow audit's 15 items and the entire
+  post-baseline hardening backlog + the cross-cutting discipline, incl. the
+  M7–M12 "numbers do not move" parity gates and the M8→M9
+  `build_cohort_backend` blocker contract), six as-designed contracts
+  `docs/specs/m7…m12-implementation-plan.md` (from the code-verified WP
+  breakdowns), and the verified pain audit committed as
+  `docs/research/2026-07-data-flow-audit/REPORT.md` (four verification
+  corrections recorded in its banner). M13–M17 stay contours — each opens
+  with its own design session.
+
 ### Fixed
 - **M7 WP0 — multi-arm Review mode dropped every verdict after the first
   (UI-only; no statistical number touched).** `abk explore`'s Review mode
@@ -313,64 +382,6 @@ number change).
   is not k-arm-aware today: no experiment-level winner rollup (M14), `abk plan`
   sizes off the first declared pair only, and `abk validate`'s placebo split is
   two-arm (control share vs the rest pooled).
-
-### Changed
-- **M7 WP1 — scalar hot-path quick wins (hardening bucket A, A1–A8). No
-  statistical numbers changed**: the old-vs-new swap was verified **bit-exact
-  on the capture environment** against a fixture frozen from the pre-change
-  code, and the committed golden gate
-  `tests/stats/test_normal_path_golden.py` re-checks the battery (extreme-z,
-  degenerates, all six closed-form methods end-to-end) on every run — float
-  fields at the repo's golden relative 1e-9 (BLAS/libm builds differ across
-  machines in the last ULP; a formula change fails by orders of magnitude),
-  every reject/size/warning/flag field exactly. The whole stats+golden suite
-  passes unmodified (634 passed, 1 opt-in benchmark skipped). The wins:
-  - **A1 — `scipy.special.ndtri`/`ndtr` replace the frozen `sps.norm` objects**
-    on the closed-form significance path (`effects.normal_test`, the z-test,
-    `sequential.se_from_ci_length`), with the sf tail computed as `ndtr(-z)`
-    (never `1 − ndtr(z)`, which drifts for extreme z). Alpha-only quantiles are
-    now computed once per alpha (`lru_cache`), not per comparison. Measured:
-    `normal_test` 283.8 → 1.9 µs/call (**~149×** on the `abk validate`/explore
-    closed-form hot path).
-  - **A2 — statsmodels imports moved inside the power/MDE solves** —
-    `import abkit.stats` no longer eagerly loads statsmodels+pandas+patsy
-    (~0.5 s cold in this env); a subprocess test pins the deferral.
-  - **A3 — `TestResult.effect_distribution` is now a `LazyNormal` proxy on the
-    closed-form path** — freezing the never-serialised scipy distribution is
-    deferred to the first attribute read (delegated reads are byte-identical);
-    the `is not None` truthiness contract and `to_dict()` behavior are pinned
-    by a new test. (The bootstrap methods' `effect_distribution` stays eager —
-    negligible next to the resampling itself.)
-  - **A4 — bootstrap result-assembly dedup** — per-arm `stat_point` values are
-    computed once and passed into `_finalize`; `pvalue_sign` counts each side
-    once and divides once (provably byte-identical, goldens intact).
-  - **A7 — shared `BaseMethod._result_from_normal_test`** — the six
-    closed-form methods' copy-pasted ~20-kwarg `TestResult` tails now assemble
-    in one place (field-drift risk removed), pinned field-by-field by the
-    golden gate.
-  - **A8 — `samples.py` micro-dedups** — `SufficientStats.from_sample` reuses
-    the `Sample`'s already-computed covariate mean; `from_ratio_sample` computes
-    each mean once; `RatioSufficientStats` gains the same `m2 ≥ 0` validation
-    `SufficientStats` already had.
-  - **A5/A6 — registry-driven contract tests + a completeness gate** — the
-    universal method contracts (dual-entry, seed-exclusion, `to_dict`,
-    quarantine) are parametrized off the plugin registry so a new method is
-    auto-swept in, and a new completeness test fails if a `BaseMethod` subclass
-    is importable but silently unregistered.
-
-### Added
-- **The polish track M7–M17 (`0.2.0` … `0.12.0`) planned into the repo** — docs
-  only, no behavior change, no statistical numbers touched: the approved
-  (2026-07-18) track section in `ROADMAP.md` (milestone map + versioning +
-  the coverage map over the data-flow audit's 15 items and the entire
-  post-baseline hardening backlog + the cross-cutting discipline, incl. the
-  M7–M12 "numbers do not move" parity gates and the M8→M9
-  `build_cohort_backend` blocker contract), six as-designed contracts
-  `docs/specs/m7…m12-implementation-plan.md` (from the code-verified WP
-  breakdowns), and the verified pain audit committed as
-  `docs/research/2026-07-data-flow-audit/REPORT.md` (four verification
-  corrections recorded in its banner). M13–M17 stay contours — each opens
-  with its own design session.
 
 ## [0.1.2] - 2026-07-09
 

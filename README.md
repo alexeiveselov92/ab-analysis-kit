@@ -11,21 +11,21 @@ stabilization chart), writes them to a clean warehouse table any BI can read, an
 gives you a local cockpit to tune the analysis and a harness to prove your method is
 actually calibrated.
 
-> **Status: `0.1.0` (Alpha) — the first release, prepared** (milestones **M1–M6**). The
+> **Status: `0.2.0` (Alpha) — release-ready** (milestones **M1–M7**; `0.1.2` is the
+> latest published on PyPI, the `v0.2.0` tag/publish is the maintainer's pending step). The
 > statistical core, the declarative config / DB / pipeline layer, the explore cockpit +
-> self-contained reports, `abk validate`, opt-in sequential analysis + `abk plan`, and the
-> DX layer (`abk init-claude`, docs site, Prefect scaffolding) are all shipped. The tagged
-> PyPI publish is the maintainer's pending step. Docs: [abkit.pipelab.dev](https://abkit.pipelab.dev).
+> self-contained reports, `abk validate` (now numpy-vectorized — minutes → sub-seconds),
+> opt-in sequential analysis + `abk plan`, and the DX layer (`abk init-claude`, docs site,
+> Prefect scaffolding) are all shipped. Docs: [abkit.pipelab.dev](https://abkit.pipelab.dev).
 
 ## Install
-
-Once `0.1.0` is published to PyPI (a maintainer tags `v0.1.0`; until then install from
-source — `pip install -e ".[dev]"`):
 
 ```bash
 pip install ab-analysis-kit          # Python 3.10+; add a DB extra for real data:
 pip install "ab-analysis-kit[clickhouse]"   # or [postgres] / [mysql] / [all-db]
 ```
+
+(For `0.2.0` before its tag lands, install from source — `pip install -e ".[dev]"`.)
 
 `abk --version` and `abk --help` work with no database driver; you can even lint a
 config (`abk run --steps validate`) with no database at all. See the

@@ -22,7 +22,7 @@ The as-built condensation for contributors/assistants (detectkit-style):
 Design contracts for what is being *built next* stay in [docs/specs/](docs/specs/)
 (canonical for M2+ work — table below). Keep rules ↔ docs in sync per milestone.
 
-## Status: M1–M6 shipped (`0.1.2` on PyPI) — polish track M7–M17 approved
+## Status: M1–M7 shipped — `0.2.0` release-ready (M1–M6 on PyPI @ `0.1.2`); polish track M7–M17 in flight
 
 **Done — M1, the pure statistical core** (`abkit.stats`, importable standalone;
 see [ROADMAP.md](ROADMAP.md) for the deferred-cleanup list): data model with the
@@ -113,18 +113,40 @@ changes across M2–M6** (no `ALGORITHM_VERSION` moved, goldens intact at rel-1e
 `alpha_spending`/group-sequential. Released: `0.1.0` → `0.1.1` (docs fact-check)
 → `0.1.2` (explore/CLI DX polish), all on PyPI.
 
-**Next — the polish track M7–M17 → `0.2.0`…`0.12.0` (approved 2026-07-18).**
-The code-verified pain audit
+**Done — M7, validate vectorization + iteration policy → `0.2.0`** (see
+[ROADMAP.md](ROADMAP.md) M7 and
+[m7-implementation-plan.md](docs/specs/m7-implementation-plan.md) for the
+record — done table, per-WP as-built notes, exit-gate log): all eight WPs
+incl. the stretch — the live multi-arm Review-mode fix (WP0), the scalar hot
+path + hardening bucket A1–A8 (up to ~149× on `normal_test`; WP1), the opt-in
+batch kernels (`supports_vectorized`/`from_suffstats_array`, bit-exact vs the
+scalar path via `_libm_pow`, 5 methods; WP2), the block-streamed
+`vector_resample` engine (masks bit-identical to `placebo_mask` by
+construction; WP3), the `score_cell` dispatcher with verbatim scalar fallback
+(~10×/cell; WP4), the exhaustive parity + executable perf gates (WP5), the
+vectorized family sweep (~18×; stretch WP7), and the WP6 policy —
+`--family-sweep` opt-in + per-cell auto-N `max(2000, ⌈200/α⌉)`,
+warn-never-cap above 100k. **Zero statistical numbers moved** (no
+`ALGORITHM_VERSION` bump; both e2e matrix gates byte-identical; the two
+documented engine-parity boundaries — fixed-BLAS byte-repro, the
+exactly-solved-boundary flip — are test-pinned properties). Release-ready as
+`0.2.0` — version bumped, CHANGELOG cut; the `v0.2.0` tag/publish is the
+maintainer's pending G1 step (latest on PyPI is still `0.1.2`).
+
+**Next — the polish track continues: M8–M17 → `0.3.0`…`0.12.0` (track
+approved 2026-07-18).** The code-verified pain audit
 ([docs/research/2026-07-data-flow-audit/REPORT.md](docs/research/2026-07-data-flow-audit/REPORT.md))
-plus the entire hardening backlog, one minor release per milestone: M7 validate
-vectorization → M8 assignment no-copy default → M9 additive engine + CUPED
-Tier-E → M10 timestamps + both schema breaks → M11 `abk dashboard` → M12
-notifications → M13–M17 (versioned stats, multi-arm decisions, new methods,
-owned randomization, app integration — contours, design-session-first). The
+plus the entire hardening backlog, one minor release per milestone: M8
+assignment no-copy default → M9 additive engine + CUPED Tier-E → M10
+timestamps + both schema breaks → M11 `abk dashboard` → M12 notifications →
+M13–M17 (versioned stats, multi-arm decisions, new methods, owned
+randomization, app integration — contours, design-session-first). The
 track section in [ROADMAP.md](ROADMAP.md) is the map; the as-designed contracts
-are [m7](docs/specs/m7-implementation-plan.md)–[m12](docs/specs/m12-implementation-plan.md)
-implementation plans. Discipline: one WP = one session = one PR; **M7–M12 move
-no statistical number** (parity gates); M13/M15 go through full change control.
+are [m8](docs/specs/m8-implementation-plan.md)–[m12](docs/specs/m12-implementation-plan.md)
+implementation plans ([m7](docs/specs/m7-implementation-plan.md) is now the
+implementation record). Discipline: one WP = one session = one PR; **M7–M12
+move no statistical number** (parity gates); M13/M15 go through full change
+control.
 
 Design contracts stay in [docs/specs/](docs/specs/) (canonical). Read the relevant
 spec before writing code:
