@@ -1,9 +1,10 @@
 """Exposures mixin: ``_ab_exposures`` operations.
 
-The persisted assignment cohort — loaded ONCE per run by the exposure loader
-(quorum must-fix "persist the cohort once"), JOINed by every metric query via
-the packaged macro, and the SRM gate's count source. READ-ONLY for compute:
-only ``replace_exposures`` (the loader) and ``purge_experiment`` write here.
+The persisted assignment cohort (cohort-copy mode only since m8 WP4 — the
+no-copy default never writes here), JOINed by every metric query via the
+packaged macro, and the SRM gate's count source in copy mode. READ-ONLY for
+compute: only ``replace_exposures`` (the full resync), the WP5 incremental
+append (``insert_exposures_incremental``) and ``purge_experiment`` write here.
 """
 
 from __future__ import annotations
@@ -33,19 +34,43 @@ class _ExposuresMixin(_InternalTablesBase):
         optionally ``stratum`` arrays (the exposure loader validates shapes);
         ``experiment`` and the ``loaded_at`` version are stamped here.
         """
+        self._require_exposure_columns(data)
+        full_table_name = self._manager.get_full_table_name(TABLE_EXPOSURES, use_internal=True)
+        self._manager.delete_rows(
+            full_table_name, "experiment = %(e)s", {"e": experiment}, sync=True
+        )
+        return self._insert_exposure_rows(experiment, data)
+
+    def insert_exposures_incremental(self, experiment: str, data: dict[str, np.ndarray]) -> int:
+        """Append exposure rows WITHOUT the preceding delete (m8 WP5).
+
+        The incremental-copy write path: chunked ``conflict_strategy='ignore'``
+        inserts exactly like :meth:`replace_exposures`'s loop, append-only.
+        Idempotent under re-insert: the ``(experiment, unit_id)`` PK plus the
+        ``loaded_at`` LWW version collapse a re-sent unit to one row
+        (``ReplacingMergeTree`` FINAL on ClickHouse, version-aware upsert on
+        PG/MySQL) — NOTE the LWW means a unit re-appearing in a LATER batch
+        with a different ``exposure_ts`` keeps the LATER batch's value, unlike
+        the full reload's global earliest-wins dedup; only malformed
+        (duplicate-row) input can reach that divergence, and the run-level
+        validation warning has already fired on it.
+        """
+        self._require_exposure_columns(data)
+        return self._insert_exposure_rows(experiment, data)
+
+    @staticmethod
+    def _require_exposure_columns(data: dict[str, np.ndarray]) -> None:
         required = ("unit_id", "variant", "exposure_ts")
         missing = [c for c in required if c not in data]
         if missing:
             raise ValueError(f"exposure data is missing columns: {missing}")
 
+    def _insert_exposure_rows(self, experiment: str, data: dict[str, np.ndarray]) -> int:
+        """The one chunked, stamped insert loop both write paths share."""
         num_rows = len(data["unit_id"])
-        full_table_name = self._manager.get_full_table_name(TABLE_EXPOSURES, use_internal=True)
-
-        self._manager.delete_rows(
-            full_table_name, "experiment = %(e)s", {"e": experiment}, sync=True
-        )
         if num_rows == 0:
             return 0
+        full_table_name = self._manager.get_full_table_name(TABLE_EXPOSURES, use_internal=True)
 
         loaded_at = self.next_version_ts()
         stratum = data.get("stratum")
@@ -173,6 +198,24 @@ class _ExposuresMixin(_InternalTablesBase):
         if not rows:
             return None
         return self._normalize_max_timestamp(rows[0].get("first_ts"))
+
+    def get_last_exposure_timestamp(self, experiment: str) -> datetime | None:
+        """Latest persisted ``exposure_ts`` — the incremental copy's watermark.
+
+        The mirror image of :meth:`get_first_exposure_ts` (``MAX`` for ``MIN``,
+        same normalisation: ClickHouse's epoch-sentinel ``max()`` over an empty
+        selection reads as ``None``). ``None`` means no cohort rows exist yet —
+        the copy engine backfills from the experiment start (m8 WP5).
+        """
+        full_table_name = self._manager.get_full_table_name(TABLE_EXPOSURES, use_internal=True)
+        rows = self._manager.execute_query(
+            f"SELECT max(exposure_ts) AS last_ts FROM {full_table_name} "
+            "WHERE experiment = %(e)s",
+            {"e": experiment},
+        )
+        if not rows:
+            return None
+        return self._normalize_max_timestamp(rows[0].get("last_ts"))
 
     def count_exposures(self, experiment: str) -> int:
         """Total cohort size (deduped)."""

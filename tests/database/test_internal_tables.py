@@ -187,6 +187,62 @@ class TestExposures:
         tables.replace_exposures("exp1", self._cohort(3))
         assert tables.get_first_exposure_ts("exp1") == datetime(2024, 1, 1, 10, 0, 0)
 
+    def test_last_exposure_timestamp_none_on_empty_cohort(self, tables):
+        assert tables.get_last_exposure_timestamp("exp1") is None
+
+    def test_last_exposure_timestamp_is_the_max(self, tables):
+        tables.replace_exposures("exp1", self._cohort(3))
+        assert tables.get_last_exposure_timestamp("exp1") == datetime(2024, 1, 1, 10, 0, 2)
+        # scoped per experiment, like the MIN mirror
+        assert tables.get_last_exposure_timestamp("other") is None
+
+    def test_insert_incremental_appends_without_delete(self, tables, backend):
+        deletes: list[tuple] = []
+        original = backend.delete_rows
+
+        def spy(*args, **kwargs):
+            deletes.append(args)
+            return original(*args, **kwargs)
+
+        backend.delete_rows = spy
+        tables.replace_exposures("exp1", self._cohort(2))
+        assert len(deletes) == 1  # the full reload deletes...
+
+        extra = {
+            "unit_id": np.array(["u8", "u9"], dtype=object),
+            "variant": np.array(["control", "treatment"], dtype=object),
+            "exposure_ts": np.array(
+                [datetime(2024, 1, 2, 10), datetime(2024, 1, 2, 11)], dtype=object
+            ),
+        }
+        written = tables.insert_exposures_incremental("exp1", extra)
+        assert written == 2
+        assert len(deletes) == 1  # ...the incremental append NEVER does
+        assert tables.count_exposures("exp1") == 4
+
+    def test_insert_incremental_is_idempotent_under_reinsert(self, tables):
+        cohort = self._cohort(3)
+        tables.insert_exposures_incremental("exp1", cohort)
+        tables.insert_exposures_incremental("exp1", cohort)  # the same batch twice
+        # (experiment, unit_id) PK + loaded_at LWW collapse the re-send
+        assert tables.count_exposures("exp1") == 3
+        assert tables.get_exposure_counts("exp1") == {"control": 2, "treatment": 1}
+
+    def test_insert_incremental_missing_columns_raises(self, tables):
+        with pytest.raises(ValueError, match="missing columns"):
+            tables.insert_exposures_incremental(
+                "exp1", {"unit_id": np.array(["u1"], dtype=object)}
+            )
+
+    def test_insert_incremental_empty_batch_writes_nothing(self, tables):
+        empty = {
+            "unit_id": np.array([], dtype=object),
+            "variant": np.array([], dtype=object),
+            "exposure_ts": np.array([], dtype=object),
+        }
+        assert tables.insert_exposures_incremental("exp1", empty) == 0
+        assert tables.count_exposures("exp1") == 0
+
     def test_exposure_count_stream_asof_boundaries(self, tables):
         """The sub-day SRM stream (WP5): cumulative counts with exposure_ts <
         each EXCLUSIVE boundary. cohort(4) exposes control@:00/:02, treatment@:01/:03."""

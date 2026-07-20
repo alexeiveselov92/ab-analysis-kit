@@ -78,8 +78,10 @@ class Explore:
         self.tables = InternalTablesManager(self.warehouse)
         document = experiment_payload("exp_srv", metric, method)
         if cohort_copy:
-            # m8 WP4: the opt-in persisted-copy mode (the default is direct)
+            # m8 WP4: the opt-in persisted-copy mode (the default is direct);
+            # WP5's incremental engine requires the ab_added_filters hook
             document["assignment"]["cohort_copy"] = {"enabled": True}
+            document["assignment"]["query"] += " WHERE 1 = 1 {{ ab_added_filters }}"
         self.experiment = ExperimentConfig.model_validate(document)
         if run:
             run_pipeline(self.warehouse, self.tables, self.experiment)

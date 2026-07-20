@@ -664,7 +664,12 @@ class TestCohortModeParity:
     @staticmethod
     def _copy_experiment(**overrides) -> ExperimentConfig:
         assignment = {
-            "query": "SELECT user_id, variant, exposure_ts FROM assignments",
+            # copy mode requires the {{ ab_added_filters }} injection point —
+            # the WP5 incremental engine lands its batch bounds there
+            "query": (
+                "SELECT user_id, variant, exposure_ts FROM assignments "
+                "WHERE 1 = 1 {{ ab_added_filters }}"
+            ),
             "variants": ["control", "treatment"],
             "expected_split": {"control": 0.5, "treatment": 0.5},
             "cohort_copy": {"enabled": True},
@@ -739,3 +744,93 @@ class TestCohortModeParity:
         assert verdicts["direct"] == verdicts["copy"]
         # the fixture is built to trip at look 2 — prove the gate actually bit
         assert [flag for _, flag, _, _ in verdicts["direct"]] == [False, True, True, True]
+
+
+class TestIncrementalCopySeam:
+    """m8 WP5: the driver's copy-mode write is the incremental engine."""
+
+    @staticmethod
+    def _spy_deletes(warehouse) -> list[tuple]:
+        deletes: list[tuple] = []
+        original = warehouse.delete_rows
+
+        def spy(*args, **kwargs):
+            deletes.append(args)
+            return original(*args, **kwargs)
+
+        warehouse.delete_rows = spy
+        return deletes
+
+    def test_second_run_only_appends_the_delta(self, warehouse, tables):
+        experiment = TestCohortModeParity._copy_experiment()
+        outcome = run(warehouse, tables, experiment=experiment)
+        assert outcome.status == "completed", outcome.error
+        assert len(warehouse._rows["_ab_exposures"]) == 300
+
+        deletes = self._spy_deletes(warehouse)
+        # the source grows: 4 new units exposed AFTER the watermark
+        for i, ts in enumerate(
+            (START + timedelta(days=2), START + timedelta(days=3)), start=900
+        ):
+            warehouse.cohort.append((f"c{i}", "control", ts))
+            warehouse.cohort.append((f"t{i}", "treatment", ts))
+        second = run(warehouse, tables, experiment=experiment)
+        assert second.status == "completed", second.error
+
+        exposures = warehouse._rows["_ab_exposures"]
+        assert len(exposures) == 304  # grew by exactly the delta
+        # append-only: no delete touched the persisted cohort on the re-run
+        assert not any("_ab_exposures" in str(args[0]) for args in deletes)
+        # the SRM snapshot still counts the LIVE source in copy mode
+        assert second.exposures_loaded == 304
+
+    def test_resync_cohort_full_reloads_the_copy(self, warehouse, tables):
+        experiment = TestCohortModeParity._copy_experiment()
+        run(warehouse, tables, experiment=experiment)
+        deletes = self._spy_deletes(warehouse)
+
+        outcome = run(warehouse, tables, experiment=experiment, resync_cohort=True)
+        assert outcome.status == "completed", outcome.error
+        assert any("_ab_exposures" in str(args[0]) for args in deletes)
+        assert len(warehouse._rows["_ab_exposures"]) == 300
+
+    def test_resync_cohort_is_a_noop_in_direct_mode(self, warehouse, tables):
+        lines: list[str] = []
+        outcome = run(warehouse, tables, resync_cohort=True, log=lines.append)
+        assert outcome.status == "completed", outcome.error
+        assert warehouse._rows.get("_ab_exposures", []) == []
+        assert any("no effect in direct mode" in line for line in lines)
+
+    def test_copy_trailing_the_compute_watermark_warns(self, warehouse, tables):
+        # a live experiment (horizon in the future) with data_lag 0 (default)
+        # but maturity_delay 1d: the copy stops a full day before the newest
+        # computable cutoff → that cutoff reads a partial cohort
+        late_ts = datetime(2024, 7, 19, 22, 0)  # inside the withheld window
+        warehouse.cohort.append(("late1", "control", late_ts))
+        assignment = {
+            "query": (
+                "SELECT user_id, variant, exposure_ts FROM assignments "
+                "WHERE 1 = 1 {{ ab_added_filters }}"
+            ),
+            "variants": ["control", "treatment"],
+            "expected_split": {"control": 0.5, "treatment": 0.5},
+            "cohort_copy": {"enabled": True, "maturity_delay": "1d"},
+        }
+        experiment = make_experiment(assignment=assignment, end_date="2024-08-30")
+        outcome = run(
+            warehouse, tables, experiment=experiment, now_utc=datetime(2024, 7, 20, 12)
+        )
+        assert outcome.status == "completed", outcome.error
+        trailing = [w for w in outcome.warnings if "cohort copy trails" in w]
+        assert trailing, outcome.warnings
+        assert "data_lag" in trailing[0]
+        # the withheld-window unit is absent from the copy (closed intervals only)
+        assert all(
+            r["unit_id"] != "late1" for r in warehouse._rows["_ab_exposures"]
+        )
+
+    def test_matured_experiment_never_warns(self, warehouse, tables):
+        # horizon long past, everything matured: coverage reaches the horizon
+        outcome = run(warehouse, tables, experiment=TestCohortModeParity._copy_experiment())
+        assert outcome.status == "completed", outcome.error
+        assert not any("cohort copy trails" in w for w in outcome.warnings)

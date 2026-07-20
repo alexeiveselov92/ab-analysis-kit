@@ -40,6 +40,14 @@ _ITEM_RE = re.compile(
 )
 
 
+#: the m8 WP5 incremental-copy batch bounds, as injected through
+#: ``{{ ab_added_filters }}``: ``col >= 'ts' AND col < 'ts'``
+_BATCH_BOUNDS_RE = re.compile(
+    r"(\w+) >= '(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})' "
+    r"AND \1 < '(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})'"
+)
+
+
 def serve_assignment_pushdown(project, normalized_query: str, raw_rows: list[dict]) -> list[dict]:
     """Evaluate the WP2 exposure pushdown over scripted assignment rows.
 
@@ -48,12 +56,27 @@ def serve_assignment_pushdown(project, normalized_query: str, raw_rows: list[dic
     ``LIMIT 1`` column probe and the ``GROUP BY`` MIN/COUNT aggregation share the
     ONE fake-DB implementation (``manager._project``) with the real SQL evaluator.
 
+    - the WP5 batch bounds (``col >= 'ts' AND col < 'ts'``, injected through
+      ``{{ ab_added_filters }}``) are applied FIRST, with real-backend
+      semantics: a bound on a column the scripted rows do not carry raises the
+      unknown-column error ClickHouse/PG/MySQL would raise.
     - ``SELECT * ... LIMIT 1`` (no ``GROUP BY``) → the first raw row verbatim, so
       the missing-column check sees the source's ACTUAL columns.
     - the aggregation → ``project`` (the manager's own ``_project``) over the
       parsed select-list + ``GROUP BY`` columns.
     """
     rows = [dict(r) for r in raw_rows]
+    bounds = _BATCH_BOUNDS_RE.search(normalized_query)
+    if bounds:
+        col = bounds.group(1)
+        lo = datetime.strptime(bounds.group(2), "%Y-%m-%d %H:%M:%S")
+        hi = datetime.strptime(bounds.group(3), "%Y-%m-%d %H:%M:%S")
+        if any(col not in r for r in rows):
+            raise ValueError(
+                f"unknown column '{col}' in the assignment source "
+                "(the fake mirrors a real backend's unknown-column error)"
+            )
+        rows = [r for r in rows if lo <= r[col] < hi]
     if "GROUP BY" not in normalized_query.upper():
         return rows[:1]
     items = normalized_query.split(" FROM (", 1)[0][len("SELECT ") :]

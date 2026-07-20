@@ -124,6 +124,7 @@ def run_run(
     force: bool,
     workers: int,
     report_path: str | None = None,
+    resync_cohort: bool = False,
 ) -> None:
     try:
         parsed_steps = PipelineStep.parse(steps)
@@ -218,6 +219,7 @@ def run_run(
         max_workers=max(1, workers),
         force=force,
         full_refresh_window=full_refresh_window,
+        resync_cohort=resync_cohort,
         log=log,
     )
 

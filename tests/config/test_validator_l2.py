@@ -266,3 +266,33 @@ class TestRenderSmoke:
         metric = make_metric(query=MACRO_QUERY + " {{ mystery }}")
         report = run_l2(make_experiment(), [metric])
         assert any("mystery" in e for e in report.errors)
+
+    def test_cohort_copy_requires_the_added_filters_hook(self):
+        """m8 WP5: the incremental copy's batch bounds land in
+        {{ ab_added_filters }} — copy mode without the reference fails lint."""
+        exp = make_experiment(
+            assignment={
+                "query": ASSIGNMENT_QUERY,  # no ab_added_filters reference
+                "variants": ["control", "treatment"],
+                "expected_split": {"control": 0.5, "treatment": 0.5},
+                "cohort_copy": {"enabled": True},
+            }
+        )
+        report = run_l2(exp, [make_metric()])
+        assert any("ab_added_filters" in e for e in report.errors)
+
+    def test_cohort_copy_with_the_hook_passes(self):
+        exp = make_experiment(
+            assignment={
+                "query": ASSIGNMENT_QUERY + " WHERE 1 = 1 {{ ab_added_filters }}",
+                "variants": ["control", "treatment"],
+                "expected_split": {"control": 0.5, "treatment": 0.5},
+                "cohort_copy": {"enabled": True},
+            }
+        )
+        report = run_l2(exp, [make_metric()])
+        assert not any("ab_added_filters" in e for e in report.errors)
+
+    def test_direct_mode_never_requires_the_hook(self):
+        report = run_l2(make_experiment(), [make_metric()])  # default: no copy
+        assert not any("ab_added_filters" in e for e in report.errors)

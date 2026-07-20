@@ -354,6 +354,17 @@ def _render_smoke(
                     f"'{token}' (unit_key, variant, exposure_ts are the exposure "
                     "contract)"
                 )
+        # m8 WP5: the incremental copy injects its watermark batch bounds
+        # through {{ ab_added_filters }} — without the reference the bounds
+        # silently vanish, so the copy engine refuses at run time; catch it
+        # here first, before any DB work.
+        if experiment.assignment.cohort_copy.enabled and "ab_added_filters" not in assignment_sql:
+            report.errors.append(
+                f"experiment '{experiment.name}': assignment SQL must reference "
+                "{{ ab_added_filters }} when cohort_copy.enabled — the "
+                "incremental copy injects its watermark batch bounds there "
+                "(add e.g. 'WHERE 1 = 1 {{ ab_added_filters }}')"
+            )
 
     for comparison in experiment.comparisons:
         metric = metrics_by_name.get(comparison.metric)

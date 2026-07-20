@@ -1,5 +1,6 @@
 """Loaders: Jinja templating + the packaged macro + exposure/metric loading."""
 
+from abkit.loaders.exposure_copy import CopyOutcome, copy_exposures_incremental
 from abkit.loaders.exposure_loader import load_exposures, persist_snapshot
 from abkit.loaders.exposure_source import (
     EmptyCohortError,
@@ -24,9 +25,11 @@ from abkit.loaders.query_template import (
 )
 
 __all__ = [
+    "CopyOutcome",
     "EmptyCohortError",
     "ExposureLoadError",
     "ExposureSnapshot",
+    "copy_exposures_incremental",
     "MetricLoadError",
     "MetricLoadResult",
     "QueryTemplate",
