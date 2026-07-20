@@ -224,7 +224,7 @@ def copy_exposures_incremental(
     fast_path = cfg.update_column == "exposure_ts"
     watermark = tables.get_last_exposure_timestamp(name) if fast_path else None
     resumed = watermark is not None
-    if resumed:
+    if watermark is not None:
         step = cfg.batch_interval_seconds()
         offset = int((watermark - origin).total_seconds() // step)
         # snap DOWN to the containing bucket's floor: the partially-persisted
