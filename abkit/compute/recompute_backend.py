@@ -45,17 +45,31 @@ def dialect_of(manager: BaseDatabaseManager) -> str:
 
 
 class RecomputeBackend:
-    """Loads one comparison's data per cutoff by full-window recomputation."""
+    """Loads one comparison's data per cutoff by full-window recomputation.
+
+    The cohort-source mode (m8-implementation-plan.md WP3) is fixed at
+    construction and threads into EVERY render through ``_builtins()`` — the
+    metric window render and the CUPED covariate pre-period render alike:
+    ``direct_source_sql=None`` (default) keeps today's persisted
+    ``exposures_table`` join; a rendered assignment SQL string switches the
+    ``ab_cohort_source`` builtin to the deduping direct-join subquery
+    (``has_stratum`` shapes its stratum projection — WP4's
+    ``build_cohort_backend`` factory supplies both from the probe).
+    """
 
     def __init__(
         self,
         manager: BaseDatabaseManager,
         experiment: ExperimentConfig,
         exposures_table: str = "_ab_exposures",
+        direct_source_sql: str | None = None,
+        has_stratum: bool = True,
     ) -> None:
         self._manager = manager
         self._experiment = experiment
         self._exposures_table = exposures_table
+        self._direct_source_sql = direct_source_sql
+        self._has_stratum = has_stratum
         self._template = QueryTemplate()
         self._covariate_cache: dict[str, dict[str, float]] = {}
 
@@ -78,6 +92,8 @@ class RecomputeBackend:
             dialect=dialect_of(self._manager),
             apply_exposure_filter=apply_exposure_filter,
             cov_window=cov_window,
+            direct_source_sql=self._direct_source_sql,
+            has_stratum=self._has_stratum,
         )
 
     def _preperiod_window(self, lookback: str | int, grid: Grid) -> RenderWindow:

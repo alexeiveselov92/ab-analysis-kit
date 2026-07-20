@@ -46,6 +46,7 @@ from typing import Any
 
 from abkit.config.experiment_config import ExperimentConfig
 from abkit.database.manager import BaseDatabaseManager
+from abkit.loaders.query_template import as_derived_table
 from abkit.utils.datetime_utils import to_naive_utc
 
 
@@ -69,21 +70,6 @@ class ExposureSnapshot:
     has_stratum: bool
 
 
-def _as_derived_table(rendered_sql: str, alias: str) -> str:
-    """Wrap the rendered assignment SQL as a derived table, syntax-safely.
-
-    Pre-WP2 the rendered SQL was executed DIRECTLY, so a trailing ``;`` or a
-    trailing ``-- line comment`` (both common copy-paste artifacts) ran fine.
-    WP2 nests it inside ``FROM (<rendered>) <alias>``, where a trailing ``;``
-    terminates the statement early and a trailing line comment swallows the
-    closing paren/alias — a syntax error on ClickHouse/PostgreSQL/MySQL. Strip
-    the trailing terminator and put the closing paren on its OWN line so neither
-    artifact can break the wrap (a WP2 review finding).
-    """
-    inner = rendered_sql.rstrip(" \t\r\n;")
-    return f"(\n{inner}\n) {alias}"
-
-
 def probe_has_stratum(manager: BaseDatabaseManager, rendered_sql: str) -> bool:
     """Fetch ONE row of the rendered source and report whether it has stratum.
 
@@ -93,7 +79,7 @@ def probe_has_stratum(manager: BaseDatabaseManager, rendered_sql: str) -> bool:
     factory, which needs ``has_stratum`` for the ``ab_cohort_source`` builtin.
     """
     rows = manager.execute_query(
-        f"SELECT * FROM {_as_derived_table(rendered_sql, '_abk_probe')} LIMIT 1"
+        f"SELECT * FROM {as_derived_table(rendered_sql, '_abk_probe')} LIMIT 1"
     )
     return bool(rows) and "stratum" in rows[0]
 
@@ -104,7 +90,7 @@ def _pushdown_sql(unit_key: str, rendered_sql: str, has_stratum: bool) -> str:
     return (
         f"SELECT {unit_key}, variant, MIN(exposure_ts) AS exposure_ts"
         f"{stratum_sel}, COUNT(*) AS ab_row_count "
-        f"FROM {_as_derived_table(rendered_sql, '_abk_raw')} "
+        f"FROM {as_derived_table(rendered_sql, '_abk_raw')} "
         f"GROUP BY {unit_key}, variant"
     )
 
@@ -130,7 +116,7 @@ def validate_and_snapshot(
     # references exposure_ts, or the DB raises an unknown-column error instead
     # of the friendly "must SELECT ..." message (the §0.5(d) text gate).
     probe = manager.execute_query(
-        f"SELECT * FROM {_as_derived_table(rendered_sql, '_abk_probe')} LIMIT 1"
+        f"SELECT * FROM {as_derived_table(rendered_sql, '_abk_probe')} LIMIT 1"
     )
     if not probe:
         raise ExposureLoadError(

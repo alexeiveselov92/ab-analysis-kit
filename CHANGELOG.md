@@ -14,6 +14,22 @@ number change).
 ## [Unreleased]
 
 ### Added
+- **M8 WP3 — the `ab_cohort_source` builtin: one cohort fragment, two source
+  modes.** The packaged assignment macro's `exposed_units()` now reads its
+  cohort through the new `ab_cohort_source` builtin, built in Python
+  (`query_template.build_builtins`) as either the persisted `_ab_exposures`
+  table (+`FINAL` on ClickHouse — today's behavior, still the default,
+  rendered byte-identically) or a deduping `GROUP BY` subquery wrapping the
+  rendered assignment SQL directly (`direct_source_sql` — the M8 no-copy
+  read path; `MIN(exposure_ts)` per `(unit, variant)`, the same aggregation
+  as the WP2 validation pushdown). `RecomputeBackend` accepts
+  `direct_source_sql`/`has_stratum` and threads them into every render,
+  including the CUPED pre-period covariate render; `ab_exposures_table`
+  stays available for external template consumers. Call sites still
+  construct copy-mode backends — the mode switch is centralized in WP4's
+  `build_cohort_backend` factory (`docs/specs/m8-implementation-plan.md`
+  WP3, §0.5(e)). No `ALGORITHM_VERSION` bump — zero statistical numbers
+  changed (direct-vs-copy load parity is test-pinned).
 - **M8 WP1 — the `assignment.cohort_copy` config block (parse-only for now).**
   `AssignmentConfig` gains an opt-in `cohort_copy` block (`enabled`,
   `update_column`, `batch_interval`, `batch_intervals_per_round_trip`,

@@ -97,13 +97,44 @@ class SyntheticWarehouse(FakeDatabaseManager):
             return serve_assignment_pushdown(self._project, flat, raw)
         return super().execute_query(query, params)
 
+    def _cohort_join_map(self, flat: str) -> dict[str, datetime]:
+        """The unit → exposure_ts map the metric query's cohort fragment names.
+
+        Copy mode (no ``_abk_raw`` wrap) keeps the historical shortcut: the
+        scripted cohort verbatim. A direct-mode fragment (m8 WP3) is held to
+        real-backend semantics instead: every column its SELECT list references
+        must exist in the assignment source rows — ``MIN(stratum)`` against the
+        stratum-less scripted source raises the fake's unknown-column error
+        exactly where ClickHouse/PG/MySQL would (the has_stratum contract) —
+        and exposure_ts is the deduped ``MIN()`` per unit.
+        """
+        if "_abk_raw" not in flat:
+            return {u: ts for u, _, ts in self.cohort}
+        source_columns = {"user_id", "variant", "exposure_ts"}  # the scripted rows
+        unit_projection = re.search(r"\(SELECT (\w+) AS unit_id", flat)
+        assert unit_projection, f"direct cohort fragment lost its unit projection: {flat}"
+        referenced = [unit_projection.group(1)]
+        if "MIN(stratum)" in flat:
+            referenced.append("stratum")
+        for column in referenced:
+            if column not in source_columns:
+                raise ValueError(
+                    f"unknown column '{column}' in the direct cohort source "
+                    "(the fake mirrors a real backend's unknown-column error)"
+                )
+        earliest: dict[str, datetime] = {}
+        for unit, _, ts in self.cohort:
+            if unit not in earliest or ts < earliest[unit]:
+                earliest[unit] = ts
+        return earliest
+
     def _aggregate(self, flat: str, events: list) -> list[dict[str, Any]]:
         match = _WINDOW_RE.search(flat)
         assert match, f"metric SQL lost its window filter: {flat}"
         w_start = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S")
         w_end = datetime.strptime(match.group(2), "%Y-%m-%d %H:%M:%S")
         exposure_filter = "exposure_ts" in flat.split("WHERE experiment")[-1]
-        exposure_by_unit = {u: ts for u, _, ts in self.cohort}
+        exposure_by_unit = self._cohort_join_map(flat)
         sums: dict[tuple[str, str], dict[str, float]] = {}
         for unit, variant, ts, values in events:
             if not (w_start <= ts < w_end):

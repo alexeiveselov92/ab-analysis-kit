@@ -73,6 +73,68 @@ class TestBuiltins:
         assert builtins["ab_end_ts"] == "2024-07-03 12:00:00"
 
 
+DIRECT_SQL = "SELECT user_id, variant, exposure_ts, stratum FROM analytics.assignments"
+
+
+class TestCohortSource:
+    """The ab_cohort_source builtin — m8-implementation-plan.md WP3."""
+
+    def test_copy_mode_clickhouse_reads_final(self):
+        assert make_builtins()["ab_cohort_source"] == "abkit_internal._ab_exposures FINAL"
+
+    def test_copy_mode_sql_backends_have_no_final(self):
+        for dialect in ("postgres", "mysql"):
+            builtins = make_builtins(dialect=dialect)
+            assert builtins["ab_cohort_source"] == "abkit_internal._ab_exposures"
+
+    def test_direct_mode_wraps_the_rendered_sql_verbatim(self):
+        builtins = make_builtins(direct_source_sql=DIRECT_SQL)
+        source = builtins["ab_cohort_source"]
+        assert DIRECT_SQL in source  # the rendered assignment SQL, byte-verbatim
+        assert source.startswith(
+            "(SELECT user_id AS unit_id, variant, MIN(exposure_ts) AS exposure_ts, "
+            "MIN(stratum) AS stratum, 'signup_test' AS experiment FROM ("
+        )
+        # the outer alias is mandatory — PG/MySQL reject an unaliased derived table
+        assert source.endswith("GROUP BY user_id, variant) _abk_cohort")
+        # dedup lives in the GROUP BY, never in a table engine
+        assert "FINAL" not in source
+        # ab_exposures_table stays available for external consumers in BOTH modes
+        assert builtins["ab_exposures_table"] == "abkit_internal._ab_exposures"
+
+    def test_direct_mode_stratum_less_source_projects_null(self):
+        source = make_builtins(direct_source_sql=DIRECT_SQL, has_stratum=False)["ab_cohort_source"]
+        assert "NULL AS stratum" in source
+        assert "MIN(stratum)" not in source
+
+    def test_direct_mode_survives_trailing_terminator(self):
+        """The WP2 review finding, shared: a trailing ';' or line comment in the
+        rendered assignment SQL must not break the FROM (...) wrap."""
+        stripped = make_builtins(direct_source_sql=DIRECT_SQL + " ;\n")["ab_cohort_source"]
+        assert ";" not in stripped
+        commented = make_builtins(direct_source_sql=DIRECT_SQL + "\n-- provenance note")[
+            "ab_cohort_source"
+        ]
+        assert "\n) _abk_raw" in commented  # the closing paren escapes the comment line
+
+    def test_direct_mode_dedup_is_in_lockstep_with_the_validation_pushdown(self):
+        """build_builtins' direct-mode aggregation and the WP2 validation
+        pushdown (exposure_source._pushdown_sql) must dedupe IDENTICALLY —
+        same MIN() aggregates, same derived-table wrap, same GROUP BY — or the
+        cohort the metrics join could diverge from the cohort the SRM gate
+        counted (the §0.5(e) semantic-parity contract both docstrings cite)."""
+        from abkit.loaders.exposure_source import _pushdown_sql
+        from abkit.loaders.query_template import as_derived_table
+
+        shared_core = f"FROM {as_derived_table(DIRECT_SQL, '_abk_raw')} GROUP BY user_id, variant"
+        pushdown = _pushdown_sql("user_id", DIRECT_SQL, has_stratum=True)
+        builtin = make_builtins(direct_source_sql=DIRECT_SQL)["ab_cohort_source"]
+        for fragment in (pushdown, builtin):
+            assert shared_core in fragment
+            assert "MIN(exposure_ts) AS exposure_ts" in fragment
+            assert "MIN(stratum) AS stratum" in fragment
+
+
 class TestRender:
     def test_strict_undefined_hard_fails(self):
         with pytest.raises(TemplateRenderError, match="undefined"):
@@ -154,6 +216,50 @@ SELECT {{ ab.stratum_col() }} AS s FROM t {{ ab.exposed_units() }}""",
             make_builtins(),
         )
         assert "_abk_exposures._abk_stratum" in sql
+
+    def test_copy_mode_render_is_byte_identical_to_pre_wp3(self):
+        """§0.4.3 applied to the render itself: the pre-WP3 FROM line ended in
+        a '{% endif %}' BLOCK tag, so trim_blocks ate the newline and collapsed
+        FROM + WHERE onto one physical line; the comment tag on the new line
+        must reproduce that byte-exactly (a WP3 review finding — a bare
+        '{{ ab_cohort_source }}' line keeps its newline and moves every
+        provenance copy of the executed SQL)."""
+        sql = QueryTemplate().render(MACRO_SQL, make_builtins())
+        assert "FROM abkit_internal._ab_exposures FINAL    WHERE experiment = 'signup_test'" in sql
+        pg = QueryTemplate().render(MACRO_SQL, make_builtins(dialect="postgres"))
+        assert "FROM abkit_internal._ab_exposures    WHERE experiment = 'signup_test'" in pg
+
+    def test_direct_mode_join(self):
+        sql = QueryTemplate().render(MACRO_SQL, make_builtins(direct_source_sql=DIRECT_SQL))
+        assert "FROM (SELECT user_id AS unit_id" in sql
+        assert DIRECT_SQL in sql
+        # the retained WHERE experiment predicate matches the projected literal
+        assert "'signup_test' AS experiment" in sql
+        assert "WHERE experiment = 'signup_test'" in sql
+        assert "abkit_internal._ab_exposures" not in sql  # no persisted-table read
+
+    def test_two_modes_differ_only_in_the_cohort_source(self):
+        """The WP3 rendered-SQL snapshot gate: outside the ab_cohort_source
+        substitution the two modes render byte-identically."""
+        copy_builtins = make_builtins()
+        direct_builtins = make_builtins(direct_source_sql=DIRECT_SQL)
+        copy_sql = QueryTemplate().render(MACRO_SQL, copy_builtins)
+        direct_sql = QueryTemplate().render(MACRO_SQL, direct_builtins)
+        direct_fragment = direct_builtins["ab_cohort_source"]
+        assert direct_sql.count(direct_fragment) == 1
+        assert direct_sql.replace(direct_fragment, copy_builtins["ab_cohort_source"]) == copy_sql
+
+    def test_stratum_col_renders_against_a_stratum_less_direct_source(self):
+        """ab.stratum_col() must stay renderable when the direct source has no
+        stratum column — the builtin projects NULL AS stratum, so StrictUndefined
+        (and the DB's unknown-column error) never trips."""
+        sql = QueryTemplate().render(
+            """{% import 'abkit_assignment.jinja' as ab %}
+SELECT {{ ab.stratum_col() }} AS s FROM t {{ ab.exposed_units() }}""",
+            make_builtins(direct_source_sql=DIRECT_SQL, has_stratum=False),
+        )
+        assert "_abk_exposures._abk_stratum" in sql
+        assert "NULL AS stratum" in sql
 
     def test_ab_cov_builtins_absent_without_cov_window(self):
         """Referencing ab_cov_* without a covariate hard-fails (StrictUndefined)
