@@ -13,6 +13,19 @@ number change).
 
 ## [Unreleased]
 
+### Added
+- **M8 WP1 — the `assignment.cohort_copy` config block (parse-only for now).**
+  `AssignmentConfig` gains an opt-in `cohort_copy` block (`enabled`,
+  `update_column`, `batch_interval`, `batch_intervals_per_round_trip`,
+  `maturity_delay`) carrying the incremental-copy knobs for M8's
+  no-copy-default read-path flip (`docs/specs/m8-implementation-plan.md` WP1).
+  The knobs validate at config-parse time (`Interval` grammar;
+  identifier-shaped `update_column` when enabled) but change no behavior yet —
+  the direct-join default and the incremental copy engine land across M8
+  WP2–WP5. Named `cohort_copy`, not `copy`: a pydantic field named `copy`
+  shadows `BaseModel.copy` and warns at import (m8 plan §4 Q1, settled at
+  WP1). No `ALGORITHM_VERSION` bump — zero statistical numbers changed.
+
 ## [0.2.0] - 2026-07-20
 
 M7 — validate: vectorization + iteration policy (the first polish-track
