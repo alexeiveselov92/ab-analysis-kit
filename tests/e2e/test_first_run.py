@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
-from fake_db import FakeDatabaseManager
+from fake_db import FakeDatabaseManager, serve_assignment_pushdown
 
 import abkit.config.profile as profile_mod
 from abkit.cli.main import cli
@@ -65,7 +65,7 @@ class SeedMirrorWarehouse(FakeDatabaseManager):
     def execute_query(self, query, params=None):
         flat = " ".join(query.split())
         if "example_ab_assignments" in flat:
-            return [
+            raw = [
                 {
                     "user_id": f"user_{i}",
                     "variant": _variant(i),
@@ -73,6 +73,7 @@ class SeedMirrorWarehouse(FakeDatabaseManager):
                 }
                 for i in range(USERS)
             ]
+            return serve_assignment_pushdown(self._project, flat, raw)
         if "example_signup_events" in flat:
             match = _WINDOW_RE.search(flat)
             assert match, f"scaffolded metric SQL lost its window filter: {flat}"

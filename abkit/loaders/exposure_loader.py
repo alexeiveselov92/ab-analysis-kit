@@ -6,11 +6,17 @@ interval). The assignment source is READ-ONLY: abkit never randomizes and
 never writes back into it; ``replace_exposures`` is idempotent per experiment
 (delete-then-insert), so a re-run self-heals and the SRM gate re-checks the
 fresh counts (plan R9).
+
+M8 WP2 moved the validation/dedup mechanism into ``exposure_source``: the
+row-by-row Python loop is now a single pushdown ``GROUP BY`` query (see that
+module's docstring). This loader stays the thin orchestrator that renders,
+snapshots, and persists. WP2 keeps today's full-reload persistence in BOTH
+modes; the no-copy default flip lands in WP4's ``build_cohort_backend`` and the
+incremental copy engine in WP5 (m8-implementation-plan.md).
 """
 
 from __future__ import annotations
 
-import warnings
 from typing import Any
 
 import numpy as np
@@ -18,12 +24,10 @@ import numpy as np
 from abkit.config.experiment_config import ExperimentConfig
 from abkit.database.internal_tables import InternalTablesManager
 from abkit.database.manager import BaseDatabaseManager
+from abkit.loaders.exposure_source import ExposureLoadError, validate_and_snapshot
 from abkit.loaders.query_template import QueryTemplate
-from abkit.utils.datetime_utils import to_naive_utc
 
-
-class ExposureLoadError(Exception):
-    """Raised when the assignment result violates the exposure contract."""
+__all__ = ["ExposureLoadError", "load_exposures"]
 
 
 def load_exposures(
@@ -53,69 +57,20 @@ def load_exposures(
     """
     template = template or QueryTemplate()
     rendered = template.render(assignment_sql, builtins)
-    rows = manager.execute_query(rendered)
 
-    if not rows:
-        raise ExposureLoadError(
-            f"assignment query for experiment '{experiment.name}' returned no rows "
-            "— check the assignment SQL and its filters"
-        )
+    # The pushdown GROUP BY validation + dedup (exposure_source.validate_and_snapshot):
+    # same contract, same error/warning wording, one aggregated result set instead
+    # of the whole raw cohort materialized in Python.
+    snapshot = validate_and_snapshot(manager, experiment, rendered)
 
-    unit_key = experiment.unit_key
-    required = (unit_key, "variant", "exposure_ts")
-    missing = [c for c in required if c not in rows[0]]
-    if missing:
-        raise ExposureLoadError(
-            f"assignment query must SELECT {list(required)} (missing: {missing}). "
-            "Columns present: " + ", ".join(sorted(rows[0]))
-        )
-    has_stratum = "stratum" in rows[0]
-
-    declared = set(experiment.assignment.variants)
-    seen: dict[Any, tuple[str, Any, Any]] = {}  # unit -> (variant, exposure_ts, stratum)
-    duplicate_rows = 0
-    for row in rows:
-        unit = row[unit_key]
-        variant = row["variant"]
-        if variant not in declared:
-            raise ExposureLoadError(
-                f"assignment returned variant '{variant}' not declared in "
-                f"assignment.variants {sorted(declared)}"
-            )
-        exposure_ts = to_naive_utc(row["exposure_ts"])
-        stratum = row.get("stratum") if has_stratum else None
-        if unit in seen:
-            prev_variant, prev_ts, prev_stratum = seen[unit]
-            if prev_variant != variant:
-                raise ExposureLoadError(
-                    f"unit '{unit}' is assigned to BOTH '{prev_variant}' and "
-                    f"'{variant}' — the assignment source is corrupted; "
-                    "every downstream effect would be untrustworthy"
-                )
-            duplicate_rows += 1
-            if exposure_ts is not None and (prev_ts is None or exposure_ts < prev_ts):
-                seen[unit] = (variant, exposure_ts, stratum)
-        else:
-            seen[unit] = (variant, exposure_ts, stratum)
-
-    if duplicate_rows:
-        warnings.warn(
-            f"assignment for '{experiment.name}' returned {duplicate_rows} duplicate "
-            f"unit rows — deduped to the earliest exposure_ts. Is the assignment "
-            "query one-row-per-unit?",
-            stacklevel=2,
-        )
-
-    units = list(seen)
+    # Persist the deduped cohort (WP2 keeps full-reload persistence in both
+    # modes — the no-copy default flip is WP4, incremental copy is WP5).
+    units = list(snapshot.by_unit)
     data = {
         "unit_id": np.array([str(u) for u in units], dtype=object),
-        "variant": np.array([seen[u][0] for u in units], dtype=object),
-        "exposure_ts": np.array([seen[u][1] for u in units], dtype=object),
-        "stratum": np.array([seen[u][2] for u in units], dtype=object),
+        "variant": np.array([snapshot.by_unit[u][0] for u in units], dtype=object),
+        "exposure_ts": np.array([snapshot.by_unit[u][1] for u in units], dtype=object),
+        "stratum": np.array([snapshot.by_unit[u][2] for u in units], dtype=object),
     }
     tables.replace_exposures(experiment.name, data)
-
-    counts: dict[str, int] = {}
-    for variant, _, _ in seen.values():
-        counts[variant] = counts.get(variant, 0) + 1
-    return counts
+    return snapshot.counts

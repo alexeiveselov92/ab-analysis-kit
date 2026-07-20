@@ -19,7 +19,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 import pytest
-from fake_db import FakeDatabaseManager
+from fake_db import FakeDatabaseManager, serve_assignment_pushdown
 
 from abkit.config import ExperimentConfig, MetricConfig, ProjectConfig
 from abkit.database.internal_tables import InternalTablesManager
@@ -79,7 +79,8 @@ class SyntheticWarehouse(FakeDatabaseManager):
                 for (unit, variant), total in sorted(sums.items())
             ]
         if "FROM assignments" in flat:
-            return [{"user_id": u, "variant": v, "exposure_ts": ts} for u, v, ts in self.cohort]
+            raw = [{"user_id": u, "variant": v, "exposure_ts": ts} for u, v, ts in self.cohort]
+            return serve_assignment_pushdown(self._project, flat, raw)
         return super().execute_query(query, params)
 
 
