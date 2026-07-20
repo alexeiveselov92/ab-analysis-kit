@@ -216,6 +216,8 @@ class TestRun:
         result = runner.invoke(cli, ["run", "--select", "signup_test", "--resync-cohort"])
         assert result.exit_code == 0, result.output
         assert warehouse._rows.get("_ab_exposures", []) == []
+        # the no-effect notice must reach the terminal, not just the log sink
+        assert "no effect in direct mode" in result.output
 
 
 class TestUnlock:

@@ -140,6 +140,32 @@ class TestGuards:
         with pytest.raises(ValueError, match="unknown column"):
             copy_once(manager, tables, experiment)
 
+    def test_token_hidden_in_a_sql_comment_still_raises(self, manager, tables):
+        """The guard proves a LIVE render, not a substring — a token parked in
+        a comment must not pass (review-confirmed silent-bounds hazard)."""
+        experiment = make_experiment(
+            assignment={
+                "query": (
+                    "-- remember ab_added_filters when editing\n"
+                    "SELECT user_id, variant, exposure_ts FROM assignments"
+                )
+            }
+        )
+        with pytest.raises(ExposureLoadError, match="must render"):
+            copy_once(manager, tables, experiment)
+
+    def test_token_in_a_jinja_comment_still_raises(self, manager, tables):
+        experiment = make_experiment(
+            assignment={
+                "query": (
+                    "SELECT user_id, variant, exposure_ts FROM assignments "
+                    "{# ab_added_filters #}"
+                )
+            }
+        )
+        with pytest.raises(ExposureLoadError, match="must render"):
+            copy_once(manager, tables, experiment)
+
 
 class TestFirstRunBackfill:
     def test_backfills_everything_matured_from_experiment_start(self, manager, tables):
@@ -219,28 +245,30 @@ class TestWatermarkResume:
             manager, tables, make_experiment(), now=NOW + timedelta(days=3)
         )
         assert outcome.resumed is True
-        # the boundary row (ts == watermark) is deliberately re-read — units
-        # sharing the watermark ts must never be lost — and idempotently
-        # LWW-upserted, so "rows touched" is 2 while the SET grows by 1
+        # resume re-scans from the WATERMARK'S BUCKET FLOOR (grid-anchored) —
+        # the partially-persisted bucket is re-read and its units are
+        # idempotently LWW-upserted, so "rows touched" is 2 while the SET
+        # grows by 1
+        assert outcome.covered_from == START  # floor of the Jul 1 02:00 watermark
         assert outcome.rows_written == 2
         assert set(persisted(tables, manager)) == {"u1", "u2"}
         assert len(manager._rows["_ab_exposures"]) == 2  # no duplicate u1 row
-        # resume scanned from the watermark, not the experiment start
-        assert outcome.covered_from == START + timedelta(hours=2)
         assert len(manager.assignment_queries) > first_pass_queries
 
-    def test_resume_with_no_new_matured_interval_is_a_noop(self, manager, tables):
-        watermark = START + timedelta(hours=2)
-        manager.scripted_rows = [row("u1", "control", watermark)]
-        copy_once(manager, tables, make_experiment())
-        queries_after_first = len(manager.assignment_queries)
+    def test_second_pass_in_the_same_bucket_holds_coverage(self, manager, tables):
+        """Coverage is the deterministic grid bound, never the (lower) data
+        maximum — a closed-enrollment cohort must not read as trailing
+        forever (a review-confirmed false-warning source)."""
+        manager.scripted_rows = [row("u1", "control", START + timedelta(hours=2))]
+        first = copy_once(manager, tables, make_experiment())
 
         outcome = copy_once(
-            manager, tables, make_experiment(), now=watermark + timedelta(hours=12)
+            manager, tables, make_experiment(), now=NOW + timedelta(hours=1)
         )
-        assert outcome.rows_written == 0
-        assert outcome.covered_through == watermark  # the copy still covers through it
-        assert len(manager.assignment_queries) == queries_after_first
+        assert outcome.rows_written in (0, 1)  # the re-scan only LWW-upserts u1
+        assert outcome.covered_through == first.covered_through == START + timedelta(days=10)
+        assert set(persisted(tables, manager)) == {"u1"}
+        assert len(manager._rows["_ab_exposures"]) == 1
 
     def test_late_arriving_row_below_watermark_is_missed_forever(self, manager, tables):
         """The DISCLOSED donor limitation (m8 §4 Q3, doc-only): a row earlier
@@ -329,6 +357,43 @@ class TestCustomUpdateColumn:
         snapshot = persisted(tables, manager)
         assert set(snapshot) == {"u2"}
         assert snapshot["u2"] == ("treatment", START + timedelta(hours=3))
+
+    def test_resume_never_bounds_update_column_by_the_exposure_watermark(
+        self, manager, tables
+    ):
+        """Review-confirmed MAJOR: MAX(exposure_ts) says nothing about another
+        column's frontier — bounding updated_at by it silently drops
+        legitimate new rows forever. A custom update_column therefore takes
+        no watermark fast-path and re-scans from the experiment start."""
+        experiment = make_experiment(
+            assignment={"cohort_copy": {"enabled": True, "update_column": "updated_at"}}
+        )
+        # a unit whose exposure_ts is FAR AHEAD of its own update stamp
+        manager.scripted_rows = [
+            row(
+                "u_future",
+                "control",
+                START + timedelta(days=20),
+                updated_at=START + timedelta(hours=2),
+            )
+        ]
+        first = copy_once(manager, tables, experiment)
+        assert first.resumed is False
+        assert set(persisted(tables, manager)) == {"u_future"}
+
+        # a brand-new ordinary unit, matured on updated_at but with an
+        # exposure_ts far BELOW the persisted MAX(exposure_ts)
+        manager.scripted_rows.append(
+            row(
+                "u_new",
+                "treatment",
+                START + timedelta(days=2),
+                updated_at=START + timedelta(days=11),
+            )
+        )
+        second = copy_once(manager, tables, experiment, now=NOW + timedelta(days=3))
+        assert second.resumed is False  # no persisted cursor for a custom column
+        assert "u_new" in persisted(tables, manager)
 
 
 class TestFilterComposition:

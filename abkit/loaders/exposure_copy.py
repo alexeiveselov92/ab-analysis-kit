@@ -5,13 +5,23 @@ delete-then-reinsert-everything full reload with the detectkit donor's
 watermark / closed-interval / batch discipline
 (``detectkit/orchestration/task_manager/_load_step.py``):
 
-1. **Watermark resume** — ``MAX(exposure_ts)`` over the persisted copy; a
-   first run backfills from the experiment's tz-snapped start
-   (``grid.start_ts``, the driver-identical window origin).
-2. **Closed intervals only** — the copy window ``[actual_from, actual_to)``
-   is snapped back to the last whole ``batch_interval`` boundary after
-   subtracting ``maturity_delay``; the still-open interval is withheld until
-   it closes (never persisted half-full, then never re-read).
+1. **Grid-anchored closed intervals** — batch buckets are
+   ``[grid.start_ts + k·batch_interval, grid.start_ts + (k+1)·batch_interval)``,
+   anchored to the experiment's tz-snapped start exactly like the donor's
+   interval grid (never to a floating data maximum). Only buckets that have
+   fully CLOSED — their end is at or before ``now - maturity_delay`` — are
+   loaded; the open bucket waits (never persisted half-full, then never
+   re-read). The covered boundary is therefore a deterministic function of
+   ``(grid.start_ts, now, maturity_delay, batch_interval)`` — see
+   :func:`closed_interval_bound` — not of what data happened to arrive.
+2. **Watermark resume** — with the default ``update_column='exposure_ts'``
+   the resume point is ``MAX(exposure_ts)`` over the persisted copy, snapped
+   DOWN to its bucket floor (the containing bucket is re-scanned; re-sent
+   units are idempotent LWW upserts). A custom ``update_column`` has no
+   persisted cursor to resume from — ``exposure_ts``'s maximum says nothing
+   about another column's frontier — so it re-scans from the experiment
+   start EVERY run (still batched, still closed-intervals-only on the custom
+   column; the cost equals the old full reload's read, minus the delete).
 3. **Batched round trips** — the window is covered in chunks of
    ``batch_intervals_per_round_trip × batch_interval``; each chunk re-renders
    the assignment SQL with the chunk's bounds appended to
@@ -19,19 +29,25 @@ watermark / closed-interval / batch discipline
    injection point — no new jinja surface) and appends the deduped result via
    ``insert_exposures_incremental`` (no delete, ever).
 
-**The assignment SQL must reference ``{{ ab_added_filters }}``** — it is the
-one place the batch bounds can land. A template without it would silently
-re-read the whole source every batch AND break the closed-interval discipline,
-so the engine refuses loudly instead (and ``abk run``'s config lint catches it
-before any DB work).
+**The assignment SQL must render ``{{ ab_added_filters }}`` live** — it is
+the one place the batch bounds can land. The engine PROVES the reference by
+rendering the template once with a sentinel filter and checking the sentinel
+survives into the SQL (a bare substring test would be fooled by the token
+sitting in a SQL or jinja comment); without it the whole source would be
+silently re-read every batch AND the closed-interval discipline would break,
+so the engine refuses loudly instead (and ``abk run``'s config lint runs the
+same sentinel check before any DB work).
 
 **KNOWN LIMITATION (donor behavior, settled doc-only — m8 §4 Q3):** a row
-whose ``update_column`` value is EARLIER than the current watermark but which
-only APPEARS in the source later (a backfilled or corrected assignment) is
-silently and permanently missed by the persisted copy — the opposite asymmetry
-from the no-copy default, which re-reads the full live source every run.
-A mutating or backfilling source should stay on the no-copy default, or
-recover with ``abk run --resync-cohort`` (the full delete + reinsert).
+whose ``update_column`` value lands in an already-scanned closed bucket but
+which only APPEARS in the source later (a backfilled or corrected
+assignment) is silently and permanently missed by the persisted copy — the
+opposite asymmetry from the no-copy default, which re-reads the full live
+source every run. A mutating or backfilling source should stay on the
+no-copy default, or recover with ``abk run --resync-cohort`` (the full
+delete + reinsert, gated through :func:`resync_snapshot` so the rewritten
+copy can never advance the watermark past the closed/matured boundary the
+routine engine honors).
 
 **Ordering dependency (NOT safe to call standalone):** the run-level
 whole-cohort validation (``validate_and_snapshot``) must have passed moments
@@ -45,7 +61,7 @@ Freshness note: the copy trails the live source by ``maturity_delay`` plus
 the open interval (< one ``batch_interval``). Cutoffs are computed through
 ``now - data_lag``, so keep ``data_lag >= maturity_delay + batch_interval``
 or the newest cutoffs read a partial cohort (the driver surfaces a warning
-when the coverage falls short).
+when a computable cutoff exceeds the deterministic covered boundary).
 """
 
 from __future__ import annotations
@@ -58,22 +74,32 @@ from typing import Any
 
 import numpy as np
 
-from abkit.config.experiment_config import ExperimentConfig
+from abkit.config.experiment_config import CohortCopyConfig, ExperimentConfig
 from abkit.core.period_planner import Grid
 from abkit.database.internal_tables import InternalTablesManager
 from abkit.database.manager import BaseDatabaseManager
 from abkit.loaders.exposure_source import (
     ExposureLoadError,
+    ExposureSnapshot,
     _pushdown_sql,
     render_assignment_sql,
 )
 from abkit.loaders.query_template import QueryTemplate
 from abkit.utils.datetime_utils import to_naive_utc
 
-__all__ = ["CopyOutcome", "copy_exposures_incremental"]
+__all__ = [
+    "CopyOutcome",
+    "closed_interval_bound",
+    "copy_exposures_incremental",
+    "resync_snapshot",
+]
 
 #: SQL-safe timestamp format for the injected bounds (shared by CH/PG/MySQL)
 _TS_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+#: rendered-through proof that {{ ab_added_filters }} is a LIVE reference —
+#: harmless SQL, greppable, never matches real user filters
+BOUNDS_PROBE_SENTINEL = "AND 1 = 1 /* abk-bounds-probe */"
 
 
 @dataclass
@@ -82,14 +108,66 @@ class CopyOutcome:
 
     rows_written: int = 0
     round_trips: int = 0
-    #: inclusive lower bound of the window this pass scanned (None = no pass ran)
+    #: inclusive lower bound of the window this pass scanned (None = no scan ran)
     covered_from: datetime | None = None
-    #: EXCLUSIVE upper bound the persisted copy is known to cover after this
-    #: pass — the snapped closed-interval edge (or the resumed watermark when
-    #: nothing new had matured). None = the copy is empty and nothing matured.
+    #: EXCLUSIVE upper bound the persisted copy covers after this pass — the
+    #: deterministic grid-anchored closed boundary (closed_interval_bound),
+    #: reported even when this pass had nothing new to scan. None = no bucket
+    #: has closed yet, the copy is necessarily empty.
     covered_through: datetime | None = None
-    #: True when a watermark existed (resume), False on the first-run backfill
+    #: True when the exposure_ts watermark fast-path resumed from a persisted
+    #: cohort (always False for a custom update_column — no persisted cursor)
     resumed: bool = False
+
+
+def closed_interval_bound(
+    cfg: CohortCopyConfig, origin: datetime, now: datetime
+) -> datetime | None:
+    """The EXCLUSIVE grid-anchored boundary of the last closed, matured bucket.
+
+    ``origin + k·batch_interval`` for the largest ``k`` with the bucket end at
+    or before ``now - maturity_delay``; ``None`` when no bucket has closed
+    yet. Deterministic — never a function of the data — so the driver's
+    coverage warning and the resync gate can share it with the engine.
+    """
+    matured = now - timedelta(seconds=cfg.maturity_delay_seconds())
+    step = cfg.batch_interval_seconds()
+    if matured <= origin:
+        return None
+    periods = int((matured - origin).total_seconds() // step)
+    if periods < 1:
+        return None
+    return origin + timedelta(seconds=periods * step)
+
+
+def resync_snapshot(
+    experiment: ExperimentConfig, grid: Grid, snapshot: ExposureSnapshot, *, now: datetime
+) -> ExposureSnapshot:
+    """Gate a full validated snapshot for the ``--resync-cohort`` rewrite.
+
+    The resync must never advance the incremental watermark past the
+    closed/matured boundary routine operation honors: persisting the raw
+    (ungated) snapshot would push ``MAX(exposure_ts)`` up to ``now`` and
+    permanently fence out rows that were still inside the open bucket at
+    resync time (a review-confirmed regression). Rows at or past the
+    boundary are simply left for the next incremental pass to pick up once
+    their bucket closes; ``NULL`` exposure timestamps pass through (they
+    never move the watermark). A custom ``update_column`` takes no watermark
+    fast-path at all (module docstring), so its resync stays ungated.
+    """
+    cfg = experiment.assignment.cohort_copy
+    if cfg.update_column != "exposure_ts":
+        return snapshot
+    bound = closed_interval_bound(cfg, grid.start_ts, now)
+    by_unit = {
+        unit: value
+        for unit, value in snapshot.by_unit.items()
+        if value[1] is None or (bound is not None and value[1] < bound)
+    }
+    counts: dict[str, int] = {}
+    for variant, _, _ in by_unit.values():
+        counts[variant] = counts.get(variant, 0) + 1
+    return ExposureSnapshot(counts=counts, by_unit=by_unit, has_stratum=snapshot.has_stratum)
 
 
 def _batch_added_filters(base: str, update_column: str, lo: datetime, hi: datetime) -> str:
@@ -127,51 +205,75 @@ def copy_exposures_incremental(
     """
     cfg = experiment.assignment.cohort_copy
     name = experiment.name
+    template = template or QueryTemplate()
 
     def _log(line: str) -> None:
         if log is not None:
             log(line)
 
-    query_text = experiment.assignment.get_query_text(project_root)
-    if "ab_added_filters" not in query_text:
+    # Prove {{ ab_added_filters }} is a LIVE render reference: a sentinel
+    # filter must survive into the rendered SQL. A substring test on the
+    # template text would be fooled by the token inside a SQL/jinja comment
+    # (review-confirmed) — then every batch would silently re-read the whole
+    # source and the closed-interval discipline would be fiction.
+    probe = render_assignment_sql(
+        manager,
+        experiment,
+        project_root,
+        grid,
+        template,
+        added_filters_override=BOUNDS_PROBE_SENTINEL,
+    )
+    if BOUNDS_PROBE_SENTINEL not in probe:
         raise ExposureLoadError(
-            f"assignment SQL for experiment '{name}' must reference "
+            f"assignment SQL for experiment '{name}' must render "
             "{{ ab_added_filters }} when cohort_copy.enabled — the incremental "
             "copy injects its watermark batch bounds there (add e.g. "
             "'WHERE 1 = 1 {{ ab_added_filters }}' to the assignment query, or "
             "disable cohort_copy)"
         )
 
-    watermark = tables.get_last_exposure_timestamp(name)
+    origin = grid.start_ts
+    bound = closed_interval_bound(cfg, origin, now)
+    if bound is None:
+        _log(f"LOAD  {name}: cohort copy — no batch interval has closed yet, waiting")
+        return CopyOutcome()
+
+    # The exposure_ts watermark fast-path only applies to the column it
+    # actually measures; a custom update_column re-scans from the experiment
+    # start every run (module docstring point 2 — review-confirmed: bounding
+    # updated_at by MAX(exposure_ts) silently drops legitimate rows).
+    fast_path = cfg.update_column == "exposure_ts"
+    watermark = tables.get_last_exposure_timestamp(name) if fast_path else None
     resumed = watermark is not None
-    actual_from = watermark if watermark is not None else grid.start_ts
-    actual_to = now - timedelta(seconds=cfg.maturity_delay_seconds())
+    if resumed:
+        step = cfg.batch_interval_seconds()
+        offset = int((watermark - origin).total_seconds() // step)
+        # snap DOWN to the containing bucket's floor: the partially-persisted
+        # bucket is re-scanned, re-sent units are idempotent LWW upserts
+        scan_from = origin + timedelta(seconds=max(0, offset) * step)
+    else:
+        scan_from = origin
+    if scan_from >= bound:
+        # everything closed is already covered (only reachable when persisted
+        # data sits at/past the boundary — e.g. an ungated legacy write)
+        _log(f"LOAD  {name}: cohort copy — nothing matured yet, waiting")
+        return CopyOutcome(covered_through=bound, resumed=resumed)
 
     step_seconds = cfg.batch_interval_seconds()
-    if actual_to <= actual_from:
-        _log(f"LOAD  {name}: cohort copy — nothing matured yet, waiting")
-        return CopyOutcome(covered_through=watermark, resumed=resumed)
-    total_points = int((actual_to - actual_from).total_seconds() // step_seconds)
-    if total_points < 1:
-        _log(f"LOAD  {name}: cohort copy — nothing matured yet, waiting")
-        return CopyOutcome(covered_through=watermark, resumed=resumed)
-    # Snap back to the last CLOSED interval boundary (donor _load_step arithmetic).
-    actual_to = actual_from + timedelta(seconds=total_points * step_seconds)
-
     chunk_seconds = step_seconds * cfg.batch_intervals_per_round_trip
-    num_round_trips = -(-int((actual_to - actual_from).total_seconds()) // chunk_seconds)
-    origin = "watermark" if resumed else "experiment start"
+    num_round_trips = -(-int((bound - scan_from).total_seconds()) // chunk_seconds)
+    origin_label = "watermark bucket" if resumed else "experiment start"
     _log(
-        f"LOAD  {name}: cohort copy from {actual_from:{_TS_FORMAT}} ({origin}) "
-        f"to {actual_to:{_TS_FORMAT}} in {num_round_trips} round trip(s)"
+        f"LOAD  {name}: cohort copy from {scan_from:{_TS_FORMAT}} ({origin_label}) "
+        f"to {bound:{_TS_FORMAT}} in {num_round_trips} round trip(s)"
     )
 
-    template = template or QueryTemplate()
     unit_key = experiment.unit_key
-    outcome = CopyOutcome(covered_from=actual_from, covered_through=actual_to, resumed=resumed)
-    current = actual_from
-    while current < actual_to:
-        batch_to = min(current + timedelta(seconds=chunk_seconds), actual_to)
+    outcome = CopyOutcome(covered_from=scan_from, covered_through=bound, resumed=resumed)
+    current = scan_from
+    while current < bound:
+        batch_to = min(current + timedelta(seconds=chunk_seconds), bound)
         rendered = render_assignment_sql(
             manager,
             experiment,

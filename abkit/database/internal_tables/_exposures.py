@@ -188,10 +188,18 @@ class _ExposuresMixin(_InternalTablesBase):
         return arrival_rate(per_variant, variants)
 
     def get_first_exposure_ts(self, experiment: str) -> datetime | None:
-        """Earliest exposure timestamp (diagnostics/plan)."""
+        """Earliest exposure timestamp (diagnostics/plan).
+
+        FINAL-deduped: since the m8 WP5 incremental append, multiple physical
+        versions of a unit's row are ROUTINE on ClickHouse pre-merge (the
+        boundary-bucket re-scan legitimately re-inserts units), so every
+        timestamp read must collapse versions or risk reading a superseded
+        value (quorum "correctness under async merge").
+        """
         full_table_name = self._manager.get_full_table_name(TABLE_EXPOSURES, use_internal=True)
         rows = self._manager.execute_query(
-            f"SELECT min(exposure_ts) AS first_ts FROM {full_table_name} "
+            f"SELECT min(exposure_ts) AS first_ts "
+            f"FROM {full_table_name}{self._manager.final_modifier} "
             "WHERE experiment = %(e)s",
             {"e": experiment},
         )
@@ -206,10 +214,16 @@ class _ExposuresMixin(_InternalTablesBase):
         same normalisation: ClickHouse's epoch-sentinel ``max()`` over an empty
         selection reads as ``None``). ``None`` means no cohort rows exist yet —
         the copy engine backfills from the experiment start (m8 WP5).
+
+        FINAL-deduped — a correctness-sensitive read: a non-FINAL ``MAX`` over
+        coexisting pre-merge row versions could return a stale, superseded
+        timestamp and permanently inflate the resume watermark (a
+        review-confirmed failure mode; the LWW value is the truth).
         """
         full_table_name = self._manager.get_full_table_name(TABLE_EXPOSURES, use_internal=True)
         rows = self._manager.execute_query(
-            f"SELECT max(exposure_ts) AS last_ts FROM {full_table_name} "
+            f"SELECT max(exposure_ts) AS last_ts "
+            f"FROM {full_table_name}{self._manager.final_modifier} "
             "WHERE experiment = %(e)s",
             {"e": experiment},
         )

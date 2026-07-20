@@ -42,7 +42,7 @@ from abkit.core.exposure_counting import bucket_timestamps, count_stream
 from abkit.core.period_planner import backlog_seconds, generate_grid, pending_cutoffs
 from abkit.database.internal_tables import InternalTablesManager
 from abkit.database.manager import BaseDatabaseManager
-from abkit.loaders.exposure_copy import copy_exposures_incremental
+from abkit.loaders.exposure_copy import copy_exposures_incremental, resync_snapshot
 from abkit.loaders.exposure_loader import persist_snapshot
 from abkit.loaders.exposure_source import build_cohort_backend
 from abkit.loaders.query_template import RenderWindow
@@ -226,7 +226,13 @@ def run_experiment(
                     f"LOAD  {experiment.name}: --resync-cohort — "
                     "full cohort reload (delete + reinsert)"
                 )
-                persist_snapshot(tables, experiment.name, snapshot)
+                # gated to the closed/matured boundary: an ungated rewrite
+                # would advance MAX(exposure_ts) past what routine incremental
+                # operation ever produces, permanently fencing out rows still
+                # inside the open bucket (review-confirmed watermark poisoning)
+                persist_snapshot(
+                    tables, experiment.name, resync_snapshot(experiment, grid, snapshot, now=now)
+                )
             else:
                 copy_result = copy_exposures_incremental(
                     manager,

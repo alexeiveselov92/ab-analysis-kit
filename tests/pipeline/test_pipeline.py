@@ -834,3 +834,53 @@ class TestIncrementalCopySeam:
         outcome = run(warehouse, tables, experiment=TestCohortModeParity._copy_experiment())
         assert outcome.status == "completed", outcome.error
         assert not any("cohort copy trails" in w for w in outcome.warnings)
+
+    def test_closed_enrollment_rerun_never_false_warns(self, warehouse, tables):
+        """Review-confirmed: coverage is the deterministic grid bound, not the
+        data maximum — a cohort whose source stopped producing rows must not
+        read as 'trailing' on every subsequent run forever."""
+        experiment = TestCohortModeParity._copy_experiment(end_date="2024-08-30")
+        first = run(warehouse, tables, experiment=experiment)
+        assert first.status == "completed", first.error
+        assert not any("cohort copy trails" in w for w in first.warnings)
+
+        second = run(
+            warehouse, tables, experiment=experiment, now_utc=NOW + timedelta(hours=3)
+        )
+        assert second.status == "completed", second.error
+        assert not any("cohort copy trails" in w for w in second.warnings)
+
+    def test_resync_cannot_poison_the_watermark(self, warehouse, tables):
+        """Review-confirmed regression guard: --resync-cohort persists only
+        rows below the closed/matured boundary. An ungated rewrite would
+        advance MAX(exposure_ts) to ~now and permanently fence out units that
+        were still inside the open/maturity window at resync time."""
+        assignment = {
+            "query": (
+                "SELECT user_id, variant, exposure_ts FROM assignments "
+                "WHERE 1 = 1 {{ ab_added_filters }}"
+            ),
+            "variants": ["control", "treatment"],
+            "expected_split": {"control": 0.5, "treatment": 0.5},
+            "cohort_copy": {"enabled": True, "maturity_delay": "1d"},
+        }
+        experiment = make_experiment(assignment=assignment, end_date="2024-08-30")
+        t0 = datetime(2024, 7, 20, 12)
+        run(warehouse, tables, experiment=experiment, now_utc=t0)
+
+        # a unit exposed 2h before the resync — still inside the maturity window
+        warehouse.cohort.append(("freshA", "control", t0 - timedelta(hours=2)))
+        resync = run(
+            warehouse, tables, experiment=experiment, resync_cohort=True, now_utc=t0
+        )
+        assert resync.status == "completed", resync.error
+        exposures = warehouse._rows["_ab_exposures"]
+        assert all(r["unit_id"] != "freshA" for r in exposures)  # gated out
+
+        # a routine later run picks the SAME unit up once its bucket matures —
+        # nothing was fenced out by the resync
+        later = run(
+            warehouse, tables, experiment=experiment, now_utc=t0 + timedelta(days=3)
+        )
+        assert later.status == "completed", later.error
+        assert any(r["unit_id"] == "freshA" for r in warehouse._rows["_ab_exposures"])

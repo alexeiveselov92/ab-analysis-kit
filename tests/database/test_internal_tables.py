@@ -196,6 +196,22 @@ class TestExposures:
         # scoped per experiment, like the MIN mirror
         assert tables.get_last_exposure_timestamp("other") is None
 
+    def test_watermark_reads_are_final_deduped_under_pre_merge_duplicates(self, tables):
+        """Review-confirmed: the WP5 incremental append makes coexisting
+        pre-merge row versions ROUTINE on ClickHouse; a non-FINAL MIN/MAX
+        could read a stale, superseded timestamp and permanently inflate the
+        resume watermark. Both watermark reads must see the LWW value."""
+        one = {
+            "unit_id": np.array(["u1"], dtype=object),
+            "variant": np.array(["control"], dtype=object),
+            "exposure_ts": np.array([datetime(2024, 1, 5, 10)], dtype=object),
+        }
+        corrected = dict(one, exposure_ts=np.array([datetime(2024, 1, 1, 10)], dtype=object))
+        tables.insert_exposures_incremental("exp1", one)
+        tables.insert_exposures_incremental("exp1", corrected)  # newer loaded_at wins
+        assert tables.get_last_exposure_timestamp("exp1") == datetime(2024, 1, 1, 10)
+        assert tables.get_first_exposure_ts("exp1") == datetime(2024, 1, 1, 10)
+
     def test_insert_incremental_appends_without_delete(self, tables, backend):
         deletes: list[tuple] = []
         original = backend.delete_rows

@@ -59,7 +59,10 @@ assignment:                      # READ-ONLY exposure source (abkit does not ran
     enabled: false               # true → persist into _ab_exposures incrementally (watermark +
                                  # closed-interval batches, the detectkit donor discipline; M8 WP5)
     update_column: exposure_ts   # watermark column the incremental copy filters on (must be a
-                                 # plain identifier; existence is probed at run time)
+                                 # plain identifier; existence is probed at run time). Only the
+                                 # default exposure_ts carries a persisted resume cursor; a custom
+                                 # column re-scans from the experiment start every run (still
+                                 # batched, closed-intervals-only on that column)
     batch_interval: 1d           # closed-interval batch step of the copy loop
     batch_intervals_per_round_trip: 30   # intervals per load round trip (interval count, not rows)
     maturity_delay: 0            # ignore source rows younger than now() - maturity_delay (0 = none)

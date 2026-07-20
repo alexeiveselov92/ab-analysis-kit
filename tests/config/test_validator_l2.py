@@ -281,6 +281,20 @@ class TestRenderSmoke:
         report = run_l2(exp, [make_metric()])
         assert any("ab_added_filters" in e for e in report.errors)
 
+    def test_cohort_copy_hook_in_a_comment_fails_lint(self):
+        """The lint proves a LIVE render (sentinel survives), not a substring —
+        a token parked in a SQL comment must not pass (review finding)."""
+        exp = make_experiment(
+            assignment={
+                "query": ASSIGNMENT_QUERY + " -- ab_added_filters",
+                "variants": ["control", "treatment"],
+                "expected_split": {"control": 0.5, "treatment": 0.5},
+                "cohort_copy": {"enabled": True},
+            }
+        )
+        report = run_l2(exp, [make_metric()])
+        assert any("ab_added_filters" in e for e in report.errors)
+
     def test_cohort_copy_with_the_hook_passes(self):
         exp = make_experiment(
             assignment={
