@@ -13,6 +13,42 @@ number change).
 
 ## [Unreleased]
 
+### Changed
+- **M8 WP4 — the no-copy default: assignments are read DIRECTLY; the
+  `build_cohort_backend` factory is the one source-mode switch. BEHAVIOR
+  CHANGE.** By default (`assignment.cohort_copy.enabled: false`) `abk run` no
+  longer writes `_ab_exposures`: metric SQL joins the deduping
+  `ab_cohort_source` subquery over the live assignment SQL (WP3), the SRM
+  gate/sub-day count stream/`abk plan` arrival rate/report SRM chip all
+  derive from the same validated in-memory snapshot, and read-only commands
+  (`abk plan`, `abk validate`, `abk explore`, tuning RELOAD/Auto-validate,
+  `--report`) see the LIVE source at invocation time instead of the last
+  run's frozen copy — the audit's accepted cost/freshness tradeoff. Setting
+  `cohort_copy.enabled: true` keeps today's persisted-copy behavior end to
+  end (full-reload write; the incremental engine lands in WP5). Every
+  cohort reader goes through the new
+  `exposure_source.build_cohort_backend(...)` factory — the binding
+  inter-milestone contract (m8 plan §0.5(e)): copy mode stays query-free for
+  read-only callers, direct mode renders + validates the source once
+  (cross-variant corruption now fails loudly at every surface). The sub-day
+  SRM bisect bucketing and the arrival-rate arithmetic moved to the shared
+  pure `abkit/core/exposure_counting.py`, used by BOTH the `_ab_exposures`
+  mixin and the direct-mode paths — one implementation, no drift. No
+  `ALGORITHM_VERSION` bump — zero statistical numbers changed: the
+  cross-command parity gate (`tests/e2e/test_cohort_mode_parity.py`) pins
+  `_ab_results`/`_ab_aa_runs`/the baked explore payload identical across
+  modes (+ the tuning `/reload` reply in
+  `tests/tuning/test_server.py`), and the driver-level gates pin result rows
+  + the sub-day SRM verdict stream
+  (`tests/pipeline/test_pipeline.py::TestCohortModeParity`).
+  Adversarial-review hardening in the same change: `abk explore` fails the
+  house way (clean `ClickException`, actionable message) when the live
+  source empties or corrupts at startup; `--report` on `abk run`/`abk
+  validate` reuses the invocation's own validated snapshot for the SRM chip
+  (never executes the assignment source twice); and a direct-mode
+  `build_report_payload` call without a manager shows honest ZERO counts
+  instead of silently reading a stale copy-era `_ab_exposures`.
+
 ### Added
 - **M8 WP3 — the `ab_cohort_source` builtin: one cohort fragment, two source
   modes.** The packaged assignment macro's `exposed_units()` now reads its

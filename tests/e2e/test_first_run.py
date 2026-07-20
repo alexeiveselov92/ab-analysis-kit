@@ -64,16 +64,12 @@ class SeedMirrorWarehouse(FakeDatabaseManager):
 
     def execute_query(self, query, params=None):
         flat = " ".join(query.split())
-        if "example_ab_assignments" in flat:
-            raw = [
-                {
-                    "user_id": f"user_{i}",
-                    "variant": _variant(i),
-                    "exposure_ts": EXPOSURE_TS,
-                }
-                for i in range(USERS)
-            ]
-            return serve_assignment_pushdown(self._project, flat, raw)
+        # metric SQL FIRST: in direct mode (m8 WP4 no-copy default) the metric
+        # query EMBEDS the assignment SQL as the ab_cohort_source subquery, so
+        # the assignment table name alone no longer identifies an
+        # assignment-only (probe/pushdown) query — SyntheticWarehouse routes
+        # the same way. The cohort join needs no map here: the generation rule
+        # assigns every user at the one EXPOSURE_TS, identically in both modes.
         if "example_signup_events" in flat:
             match = _WINDOW_RE.search(flat)
             assert match, f"scaffolded metric SQL lost its window filter: {flat}"
@@ -105,6 +101,16 @@ class SeedMirrorWarehouse(FakeDatabaseManager):
                     row["gross_usd"] = per_unit[user_idx]["gross_usd"]
                 rows.append(row)
             return rows
+        if "example_ab_assignments" in flat:
+            raw = [
+                {
+                    "user_id": f"user_{i}",
+                    "variant": _variant(i),
+                    "exposure_ts": EXPOSURE_TS,
+                }
+                for i in range(USERS)
+            ]
+            return serve_assignment_pushdown(self._project, flat, raw)
         return super().execute_query(query, params)
 
 

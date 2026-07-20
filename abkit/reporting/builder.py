@@ -31,6 +31,7 @@ import math
 from collections.abc import Mapping
 from datetime import datetime
 from itertools import combinations
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -40,6 +41,12 @@ from abkit.config.metric_config import MetricConfig
 from abkit.config.project_config import ProjectConfig
 from abkit.core.period_planner import generate_grid
 from abkit.database.internal_tables import InternalTablesManager
+from abkit.database.manager import BaseDatabaseManager
+from abkit.loaders.exposure_source import (
+    EmptyCohortError,
+    render_assignment_sql,
+    validate_and_snapshot,
+)
 from abkit.pipeline.readout import ExperimentReadout, PairVerdict, evaluate, srm_summary
 from abkit.reporting.calibration import build_calibration_block
 from abkit.utils.datetime_utils import to_naive_utc
@@ -321,6 +328,9 @@ def build_report_payload(
     start: datetime | None = None,
     end: datetime | None = None,
     max_points: int = REPORT_POINT_BUDGET,
+    manager: BaseDatabaseManager | None = None,
+    project_root: Path | None = None,
+    cohort_counts: dict[str, int] | None = None,
 ) -> dict:
     """Read ``_ab_results`` for one experiment and assemble the §5.3 payload.
 
@@ -332,6 +342,17 @@ def build_report_payload(
     read-time) and names the payload; ``metric_configs`` supplies the metric
     descriptions (D6). On a never-run project (no ``_ab_results`` table) every
     key is still present with empty series — reporting never creates schema.
+
+    The SRM chip's observed counts follow the m8 WP4 source-mode switch:
+    ``cohort_counts`` (a snapshot the caller already validated — the
+    explore/run/validate call sites thread theirs through, so one invocation
+    never executes the source twice) wins outright; otherwise copy mode reads
+    the persisted ``_ab_exposures`` and direct mode — given ``manager`` +
+    ``project_root`` — snapshots the live assignment source (an empty source
+    reads as zero counts, like a missing table did). A direct-mode call
+    without a ``manager`` shows ZEROS: the persisted table is not maintained
+    in direct mode, so reading it could silently present a stale copy-era
+    cohort as current — zeros are the honest "no source available" face.
     """
     if start is not None:
         start = to_naive_utc(start)
@@ -385,8 +406,24 @@ def build_report_payload(
     # chip names the gate via `srm.kind` so this reads correctly, not as χ².
     srm_flag, srm_pvalue = srm_summary(experiment, declared_rows)
     observed_counts: dict[str, int] = {}
-    if ready and tables.exposures_table_exists():
-        observed_counts = tables.get_exposure_counts(experiment.name)
+    if cohort_counts is not None:
+        observed_counts = dict(cohort_counts)
+    elif ready:
+        if experiment.assignment.cohort_copy.enabled:
+            if tables.exposures_table_exists():
+                observed_counts = tables.get_exposure_counts(experiment.name)
+        elif manager is not None:
+            # direct mode (m8 WP4): the persisted copy is not written — snapshot
+            # the live source for the chip's counts. Empty source → zeros (the
+            # same face a missing table showed); genuine contract violations
+            # propagate to the caller's best-effort report guard. Without a
+            # manager the counts stay ZERO — never the possibly-stale
+            # persisted table (see the docstring).
+            try:
+                rendered = render_assignment_sql(manager, experiment, project_root, grid)
+                observed_counts = validate_and_snapshot(manager, experiment, rendered).counts
+            except EmptyCohortError:
+                observed_counts = {}
     # zero-fill declared variants, mirroring the driver's SRM gate input
     observed = {variant: int(observed_counts.get(variant, 0)) for variant in variants}
 

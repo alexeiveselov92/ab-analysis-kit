@@ -42,16 +42,38 @@ from __future__ import annotations
 import warnings
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from abkit.config.experiment_config import ExperimentConfig
+from abkit.core.period_planner import Grid
 from abkit.database.manager import BaseDatabaseManager
-from abkit.loaders.query_template import as_derived_table
+from abkit.database.tables import TABLE_EXPOSURES
+from abkit.loaders.query_template import (
+    QueryTemplate,
+    RenderWindow,
+    as_derived_table,
+    build_builtins,
+)
 from abkit.utils.datetime_utils import to_naive_utc
+
+if TYPE_CHECKING:  # runtime import stays inside the factory (loaders → compute edge)
+    from abkit.compute.recompute_backend import RecomputeBackend
 
 
 class ExposureLoadError(Exception):
     """Raised when the assignment result violates the exposure contract."""
+
+
+class EmptyCohortError(ExposureLoadError):
+    """The assignment source returned no rows.
+
+    A subclass so read-only surfaces (``abk plan``'s arrival rate, the report
+    SRM chip) can politely SKIP a not-yet-launched experiment without string-
+    matching the message, while genuine contract violations (missing columns,
+    cross-variant conflicts) keep failing loudly. Existing handlers/tests that
+    catch :class:`ExposureLoadError` see no behavior change.
+    """
 
 
 @dataclass
@@ -119,7 +141,7 @@ def validate_and_snapshot(
         f"SELECT * FROM {as_derived_table(rendered_sql, '_abk_probe')} LIMIT 1"
     )
     if not probe:
-        raise ExposureLoadError(
+        raise EmptyCohortError(
             f"assignment query for experiment '{experiment.name}' returned no rows "
             "— check the assignment SQL and its filters"
         )
@@ -171,3 +193,86 @@ def validate_and_snapshot(
         )
 
     return ExposureSnapshot(counts=counts, by_unit=seen, has_stratum=has_stratum)
+
+
+def render_assignment_sql(
+    manager: BaseDatabaseManager,
+    experiment: ExperimentConfig,
+    project_root: Path | None,
+    grid: Grid,
+    template: QueryTemplate | None = None,
+) -> str:
+    """Render the experiment's assignment SQL over the grid's FULL window.
+
+    The driver-identical render (m8 WP4 step 1): the window is
+    ``[grid.start_ts, grid.horizon_ts)`` — the same tz-snapped edges the
+    analysis windows use — so the direct-join source, the validation
+    pushdown, and the persisted copy all see the one cohort definition.
+    """
+    from abkit.compute.recompute_backend import dialect_of
+
+    builtins = build_builtins(
+        experiment_id=experiment.name,
+        unit_key=experiment.unit_key,
+        variants=experiment.assignment.variants,
+        added_filters=experiment.assignment.added_filters,
+        window=RenderWindow(start_ts=grid.start_ts, end_ts=grid.horizon_ts),
+        data_database=manager.data_location,
+        internal_database=manager.internal_location,
+        exposures_table=TABLE_EXPOSURES,
+        dialect=dialect_of(manager),
+    )
+    template = template or QueryTemplate()
+    return template.render(experiment.assignment.get_query_text(project_root), builtins)
+
+
+def build_cohort_backend(
+    manager: BaseDatabaseManager,
+    experiment: ExperimentConfig,
+    project_root: Path | None,
+    grid: Grid,
+    *,
+    with_snapshot: bool = False,
+) -> tuple[RecomputeBackend, ExposureSnapshot | None]:
+    """The ONE copy-vs-direct switch every cohort reader goes through.
+
+    The binding inter-milestone contract (m8-implementation-plan.md §0.5(e)):
+    no caller — present or future (M9's STATE writer/tail-scan included) —
+    hand-rolls cohort SQL or re-implements this branch.
+
+    - **copy mode** (``assignment.cohort_copy.enabled``): the backend joins
+      the persisted ``_ab_exposures`` table — today's read path, unchanged
+      and query-free here. The snapshot is rendered/validated only when
+      ``with_snapshot=True`` (the driver, which persists it and feeds the
+      SRM gate); read-only callers get ``None`` and stay cheap.
+    - **direct mode** (the default): renders the assignment SQL once,
+      validates it (``validate_and_snapshot`` — the cross-variant hard error
+      fires HERE, before any metric joins a corrupted live source), and
+      threads the rendered SQL + the probed ``has_stratum`` into the
+      backend's ``ab_cohort_source`` builtin. The render + one aggregation
+      query per invocation is the documented no-copy cost/freshness
+      tradeoff (WP4 risk note): read-only commands see the LIVE source, not
+      the last run's frozen copy.
+
+    Read-only by design: persistence stays with the caller that owns writes
+    (the driver's copy-mode ``persist_snapshot``) — ``abk validate``/explore
+    must never write ``_ab_exposures``.
+    """
+    from abkit.compute.recompute_backend import RecomputeBackend
+
+    copy_enabled = experiment.assignment.cohort_copy.enabled
+    if copy_enabled and not with_snapshot:
+        return RecomputeBackend(manager, experiment, exposures_table=TABLE_EXPOSURES), None
+
+    rendered = render_assignment_sql(manager, experiment, project_root, grid)
+    snapshot = validate_and_snapshot(manager, experiment, rendered)
+    if copy_enabled:
+        backend = RecomputeBackend(manager, experiment, exposures_table=TABLE_EXPOSURES)
+    else:
+        backend = RecomputeBackend(
+            manager,
+            experiment,
+            direct_source_sql=rendered,
+            has_stratum=snapshot.has_stratum,
+        )
+    return backend, snapshot

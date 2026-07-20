@@ -27,7 +27,6 @@ from synthetic_ab import (
     SyntheticWarehouse,
     build_session,
     experiment_payload,
-    make_experiment,
     persisted,
     run_pipeline,
     seed_all_events,
@@ -68,12 +67,20 @@ def http_get(url: str):
 class Explore:
     """One served explore session over the synthetic warehouse."""
 
-    def __init__(self, tmp_path, method=T_TEST, metric="arpu", echo=None, run=True):
+    def __init__(
+        self, tmp_path, method=T_TEST, metric="arpu", echo=None, run=True, cohort_copy=False
+    ):
+        from abkit.config import ExperimentConfig
+
         self.warehouse = SyntheticWarehouse()
         seed_cohort(self.warehouse)
         seed_all_events(self.warehouse)
         self.tables = InternalTablesManager(self.warehouse)
-        self.experiment = make_experiment("exp_srv", metric, method)
+        document = experiment_payload("exp_srv", metric, method)
+        if cohort_copy:
+            # m8 WP4: the opt-in persisted-copy mode (the default is direct)
+            document["assignment"]["cohort_copy"] = {"enabled": True}
+        self.experiment = ExperimentConfig.model_validate(document)
         if run:
             run_pipeline(self.warehouse, self.tables, self.experiment)
         self.session = build_session(self.warehouse, self.tables, self.experiment)
@@ -81,12 +88,9 @@ class Explore:
         self.echo_lines: list[str] = []
 
         experiments = tmp_path / "experiments"
-        experiments.mkdir(exist_ok=True)
+        experiments.mkdir(parents=True, exist_ok=True)
         self.path = experiments / "exp_srv.yml"
-        self.path.write_text(
-            yaml.safe_dump(experiment_payload("exp_srv", metric, method), sort_keys=False),
-            encoding="utf-8",
-        )
+        self.path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
 
         payload = build_explore_payload(self.session, self.engine, {"experiment": "exp_srv"})
         self.server, self.url = build_explore_server(
@@ -256,6 +260,27 @@ class TestReload:
         finally:
             explore.stop()
 
+    def test_reload_series_is_cohort_mode_invariant(self, tmp_path):
+        """m8 WP4 cross-command parity: ``POST /reload`` answers identical
+        series whether the factory-built backend reads the live assignment
+        source (the direct default) or the persisted ``_ab_exposures`` copy
+        (``cohort_copy.enabled``, populated by the run pipeline)."""
+        knobs = {
+            "name": "cuped-t-test",
+            "params": {"test_type": "relative", "covariate_lookback": "14d"},
+        }
+        replies: dict[str, dict] = {}
+        for mode, copy_enabled in (("direct", False), ("copy", True)):
+            explore = Explore(tmp_path / mode, method=CUPED, cohort_copy=copy_enabled)
+            try:
+                status, reply = http(explore.endpoint("reload"), recompute_request(method=knobs))
+                assert status == 200, reply
+                reply.pop("request_id", None)
+                replies[mode] = reply
+            finally:
+                explore.stop()
+        assert replies["direct"] == replies["copy"]
+
 
 class TestAutoValidate:
     """WP6/D11: Auto mode runs a reduced server-side ``abk validate``, greens the
@@ -333,7 +358,10 @@ class TestAutoValidate:
         assert status == 200
         edit = {
             "comparisons": [
-                {"metric": "arpu", "method": {"name": "t-test", "params": {"test_type": "absolute"}}}
+                {
+                    "metric": "arpu",
+                    "method": {"name": "t-test", "params": {"test_type": "absolute"}},
+                }
             ]
         }
         status, detail = http(explore.endpoint("apply"), edit)

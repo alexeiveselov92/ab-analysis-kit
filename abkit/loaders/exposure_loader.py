@@ -9,10 +9,12 @@ fresh counts (plan R9).
 
 M8 WP2 moved the validation/dedup mechanism into ``exposure_source``: the
 row-by-row Python loop is now a single pushdown ``GROUP BY`` query (see that
-module's docstring). This loader stays the thin orchestrator that renders,
-snapshots, and persists. WP2 keeps today's full-reload persistence in BOTH
-modes; the no-copy default flip lands in WP4's ``build_cohort_backend`` and the
-incremental copy engine in WP5 (m8-implementation-plan.md).
+module's docstring). Since WP4 the driver goes through
+``exposure_source.build_cohort_backend`` and persists — in copy mode only —
+via :func:`persist_snapshot`; the no-copy default never writes
+``_ab_exposures``. :func:`load_exposures` remains the one-call
+render+validate+persist orchestrator (the copy-mode full-reload path) that
+the WP5 incremental engine extends (m8-implementation-plan.md).
 """
 
 from __future__ import annotations
@@ -24,10 +26,33 @@ import numpy as np
 from abkit.config.experiment_config import ExperimentConfig
 from abkit.database.internal_tables import InternalTablesManager
 from abkit.database.manager import BaseDatabaseManager
-from abkit.loaders.exposure_source import ExposureLoadError, validate_and_snapshot
+from abkit.loaders.exposure_source import (
+    ExposureLoadError,
+    ExposureSnapshot,
+    validate_and_snapshot,
+)
 from abkit.loaders.query_template import QueryTemplate
 
-__all__ = ["ExposureLoadError", "load_exposures"]
+__all__ = ["ExposureLoadError", "load_exposures", "persist_snapshot"]
+
+
+def persist_snapshot(
+    tables: InternalTablesManager, experiment_name: str, snapshot: ExposureSnapshot
+) -> int:
+    """Persist a validated snapshot as the full ``_ab_exposures`` cohort.
+
+    The copy-mode write path (full reload: delete + chunked reinsert —
+    ``replace_exposures``; the WP5 incremental engine replaces this call in
+    the driver). Returns the number of exposure rows written.
+    """
+    units = list(snapshot.by_unit)
+    data = {
+        "unit_id": np.array([str(u) for u in units], dtype=object),
+        "variant": np.array([snapshot.by_unit[u][0] for u in units], dtype=object),
+        "exposure_ts": np.array([snapshot.by_unit[u][1] for u in units], dtype=object),
+        "stratum": np.array([snapshot.by_unit[u][2] for u in units], dtype=object),
+    }
+    return tables.replace_exposures(experiment_name, data)
 
 
 def load_exposures(
@@ -63,14 +88,5 @@ def load_exposures(
     # of the whole raw cohort materialized in Python.
     snapshot = validate_and_snapshot(manager, experiment, rendered)
 
-    # Persist the deduped cohort (WP2 keeps full-reload persistence in both
-    # modes — the no-copy default flip is WP4, incremental copy is WP5).
-    units = list(snapshot.by_unit)
-    data = {
-        "unit_id": np.array([str(u) for u in units], dtype=object),
-        "variant": np.array([snapshot.by_unit[u][0] for u in units], dtype=object),
-        "exposure_ts": np.array([snapshot.by_unit[u][1] for u in units], dtype=object),
-        "stratum": np.array([snapshot.by_unit[u][2] for u in units], dtype=object),
-    }
-    tables.replace_exposures(experiment.name, data)
+    persist_snapshot(tables, experiment.name, snapshot)
     return snapshot.counts

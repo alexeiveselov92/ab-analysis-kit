@@ -68,6 +68,8 @@ def _emit_experiment_report(
     context,
     report_path: str,
     generated_at: str,
+    manager=None,
+    cohort_counts: dict[str, int] | None = None,
 ) -> None:
     """Build + write one experiment readout; prints the house report line.
 
@@ -81,6 +83,12 @@ def _emit_experiment_report(
         project=context.project,
         metric_configs=context.metrics_by_name,
         generated_at=generated_at,
+        # the SRM chip's counts (m8 WP4): reuse the run's own validated
+        # snapshot when the LOAD stage produced one; otherwise the builder
+        # derives them (live-source snapshot in direct mode)
+        manager=manager,
+        project_root=context.root,
+        cohort_counts=cohort_counts,
     )
     if payload["period"]["end"] == 0:
         click.echo("  │ Report: no persisted results, skipped")
@@ -266,6 +274,8 @@ def run_run(
                     context,
                     report_path,
                     generated_at or "",
+                    manager=report_manager,
+                    cohort_counts=outcome.exposure_counts or None,
                 )
             except Exception as report_error:  # never fail the run on a report
                 click.echo(click.style(f"  │ Report skipped: {report_error}", fg="yellow"))

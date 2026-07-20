@@ -163,7 +163,9 @@ def _plan_one(
     try:
         tables = InternalTablesManager(manager)
         has_results = tables.results_table_exists()
-        rate_control, rate_source = _resolve_arrival_rate(experiment, arrival_rate, tables)
+        rate_control, rate_source = _resolve_arrival_rate(
+            experiment, arrival_rate, tables, manager, context.root, grid
+        )
         for comparison in comparisons:
             plans.append(
                 _plan_comparison(
@@ -186,14 +188,19 @@ def _plan_one(
     _emit_plan(experiment, project, alphas, power, looks, grid, rows_per_refresh, plans)
 
 
-def _resolve_arrival_rate(experiment, override: float | None, tables) -> tuple[float | None, str]:
+def _resolve_arrival_rate(
+    experiment, override: float | None, tables, manager, project_root, grid
+) -> tuple[float | None, str]:
     """Control-arm units/day for the runtime/ASN axis (WP-A), or ``(None, reason)``.
 
     ``--arrival-rate`` is total traffic across all arms → split to the control arm by the
     normalized ``expected_split`` (so it lines up with required-N, which is per control
-    arm). Absent an override the rate is derived read-only from ``_ab_exposures``; a
-    never-run project (no exposures) or a backfilled cohort spanning ~one instant yields
-    no rate — runtime is then SKIPPED with a reason, never guessed.
+    arm). Absent an override the rate is derived read-only from the cohort source: the
+    persisted ``_ab_exposures`` copy under ``assignment.cohort_copy.enabled``, otherwise
+    (the m8 WP4 no-copy default) a fresh in-memory snapshot of the live assignment
+    source — re-executed at invocation time, the documented cost/freshness tradeoff.
+    An empty cohort or a backfilled cohort spanning ~one instant yields no rate —
+    runtime is then SKIPPED with a reason, never guessed.
     """
     variants = experiment.assignment.variants
     control = variants[0]
@@ -208,21 +215,64 @@ def _resolve_arrival_rate(experiment, override: float | None, tables) -> tuple[f
             override * control_share,
             f"--arrival-rate {override:g}/day → {control_share:.0%} control",
         )
-    if not tables.exposures_table_exists():
-        return None, "no _ab_exposures yet — pass --arrival-rate <units/day>"
-    arrivals = tables.get_arrival_rate(experiment.name, list(variants))
-    if arrivals is None:
-        # get_arrival_rate returns None for BOTH an empty cohort and a one-instant window;
-        # disambiguate so the skip reason is truthful (a never-run experiment in a project
-        # where OTHER experiments have run reaches here with zero rows for this one).
-        if tables.count_exposures(experiment.name) == 0:
-            return None, "no exposures for this experiment yet — pass --arrival-rate <units/day>"
-        return None, "arrival rate underivable (exposures span ~one instant) — pass --arrival-rate"
-    rates, window_days = arrivals
+
+    if experiment.assignment.cohort_copy.enabled:
+        # copy mode: the persisted-table derivation, unchanged
+        if not tables.exposures_table_exists():
+            return None, "no _ab_exposures yet — pass --arrival-rate <units/day>"
+        arrivals = tables.get_arrival_rate(experiment.name, list(variants))
+        if arrivals is None:
+            # get_arrival_rate returns None for BOTH an empty cohort and a one-instant
+            # window; disambiguate so the skip reason is truthful (a never-run experiment
+            # in a project where OTHER experiments have run reaches here with zero rows).
+            if tables.count_exposures(experiment.name) == 0:
+                return (
+                    None,
+                    "no exposures for this experiment yet — pass --arrival-rate <units/day>",
+                )
+            return (
+                None,
+                "arrival rate underivable (exposures span ~one instant) — pass --arrival-rate",
+            )
+        rates, window_days = arrivals
+        source = f"_ab_exposures over {window_days:.1f} observed days"
+    else:
+        # direct mode (m8 WP4): snapshot the live source; the SAME rate arithmetic
+        # through core.exposure_counting — the two modes can never drift. A genuine
+        # contract violation (missing columns, cross-variant) still fails the plan
+        # loudly; only the not-yet-launched empty source politely skips.
+        from abkit.core.exposure_counting import arrival_rate as shared_arrival_rate
+        from abkit.core.exposure_counting import bucket_timestamps
+        from abkit.loaders.exposure_source import (
+            EmptyCohortError,
+            render_assignment_sql,
+            validate_and_snapshot,
+        )
+
+        try:
+            rendered = render_assignment_sql(manager, experiment, project_root, grid)
+            snapshot = validate_and_snapshot(manager, experiment, rendered)
+        except EmptyCohortError:
+            return (
+                None,
+                "assignment source returned no rows yet — pass --arrival-rate <units/day>",
+            )
+        per_variant = bucket_timestamps(
+            ((variant, ts) for variant, ts, _ in snapshot.by_unit.values()), list(variants)
+        )
+        arrivals = shared_arrival_rate(per_variant, list(variants))
+        if arrivals is None:
+            return (
+                None,
+                "arrival rate underivable (exposures span ~one instant) — pass --arrival-rate",
+            )
+        rates, window_days = arrivals
+        source = f"assignment source over {window_days:.1f} observed days"
+
     rate_control = rates.get(control, 0.0)
     if rate_control <= 0.0:
         return None, "no control-arm exposures — pass --arrival-rate <units/day>"
-    return rate_control, f"_ab_exposures over {window_days:.1f} observed days"
+    return rate_control, source
 
 
 def _plan_comparison(

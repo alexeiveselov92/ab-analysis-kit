@@ -48,8 +48,9 @@ def run_explore(
     no_serve: bool,
     no_open: bool,
 ) -> None:
-    from abkit.compute.recompute_backend import RecomputeBackend
+    from abkit.core.period_planner import generate_grid
     from abkit.database.internal_tables import InternalTablesManager
+    from abkit.loaders.exposure_source import ExposureLoadError, build_cohort_backend
     from abkit.reporting import build_report_payload
     from abkit.tuning import (
         RecomputeEngine,
@@ -133,7 +134,27 @@ def run_explore(
         metric_sql_by_name = {
             name: metrics_by_name[name].get_query_text(context.root) for name in configured_metrics
         }
-        backend = RecomputeBackend(manager, experiment)
+        # the WP4 factory (the same grid parameters load_session enumerates):
+        # copy mode joins the persisted cohort, direct mode the live source
+        grid = generate_grid(
+            experiment.start_date,
+            experiment.end_date,
+            experiment.cadence_segments(),
+            tz=experiment.timezone,
+            limit=context.project.limits.max_looks,
+        )
+        try:
+            backend, cohort_snapshot = build_cohort_backend(manager, experiment, context.root, grid)
+        except ExposureLoadError as exc:
+            # direct mode validates the LIVE source at startup — a source
+            # that emptied or corrupted since the last run must fail the
+            # house way (ClickException → clean non-zero exit), never a
+            # raw traceback (the module-docstring rule)
+            raise click.ClickException(
+                f"cohort source failed validation: {exc} — fix the assignment "
+                "source, or set assignment.cohort_copy.enabled to explore the "
+                "last persisted cohort"
+            ) from exc
         session = load_session(
             experiment,
             metrics_by_name,
@@ -150,6 +171,10 @@ def run_explore(
             project=context.project,
             metric_configs=metrics_by_name,
             generated_at=now_utc_naive().strftime("%Y-%m-%d %H:%M UTC"),
+            # direct mode: reuse the factory's validated snapshot for the SRM
+            # chip (no second source execution); copy mode reads the persisted
+            # table inside the builder (cohort_snapshot is None)
+            cohort_counts=None if cohort_snapshot is None else cohort_snapshot.counts,
         )
         payload = build_explore_payload(session, engine, report_payload)
         if metric is not None:

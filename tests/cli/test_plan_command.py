@@ -12,6 +12,7 @@ from datetime import datetime
 
 import pytest
 from click.testing import CliRunner
+from fake_db import FakeDatabaseManager, serve_assignment_pushdown
 
 import abkit.config.profile as profile_mod
 from abkit.cli.commands.plan import _plan_comparison
@@ -366,18 +367,21 @@ def test_build_runtime_asn_note_for_non_sequential_and_bootstrap():
     assert rt.days_to_required_n == 5.0  # 5000 / 1000
 
 
-def _seq_experiment() -> ExperimentConfig:
+def _seq_experiment(cohort_copy: bool = False) -> ExperimentConfig:
+    assignment: dict = {
+        "query": "SELECT 1",
+        "variants": ["control", "t"],
+        "expected_split": {"control": 0.5, "t": 0.5},
+    }
+    if cohort_copy:
+        assignment["cohort_copy"] = {"enabled": True}
     return ExperimentConfig.model_validate(
         {
             "name": "e",
             "start_date": "2024-07-01",
             "end_date": "2024-07-14",
             "unit_key": "u",
-            "assignment": {
-                "query": "SELECT 1",
-                "variants": ["control", "t"],
-                "expected_split": {"control": 0.5, "t": 0.5},
-            },
+            "assignment": assignment,
             "comparisons": [{"metric": "cr", "is_main_metric": True, "method": {"name": "z-test"}}],
             "sequential": {"enabled": True, "scheme": "always_valid"},
         }
@@ -425,9 +429,10 @@ def test_fmt_rate_keeps_a_sub_one_rate_visible():
 
 
 def test_resolve_arrival_rate_distinguishes_empty_cohort_from_one_instant():
+    """Copy mode (m8 WP4): the persisted-table derivation stays reachable, unchanged."""
     from abkit.cli.commands.plan import _resolve_arrival_rate
 
-    exp = _seq_experiment()
+    exp = _seq_experiment(cohort_copy=True)
 
     class _Tables:
         def __init__(self, arrivals, count):
@@ -442,12 +447,65 @@ def test_resolve_arrival_rate_distinguishes_empty_cohort_from_one_instant():
         def count_exposures(self, name):
             return self._count
 
+    # copy mode never touches the assignment source: manager/root/grid are unused
+    def resolve(tables):
+        return _resolve_arrival_rate(exp, None, tables, None, None, None)
+
     # empty cohort for THIS experiment (table exists, zero rows) ⇒ the empty-case message
-    rate, reason = _resolve_arrival_rate(exp, None, _Tables(None, 0))
+    rate, reason = resolve(_Tables(None, 0))
     assert rate is None and "no exposures for this experiment yet" in reason
     # a one-instant window (rows exist, but max == min) ⇒ the ~one-instant message
-    rate, reason = _resolve_arrival_rate(exp, None, _Tables(None, 5))
+    rate, reason = resolve(_Tables(None, 5))
     assert rate is None and "one instant" in reason
     # a real derived rate flows through untouched
-    rate, reason = _resolve_arrival_rate(exp, None, _Tables(({"control": 500.0, "t": 500.0}, 30.0), 30000))
+    rate, reason = resolve(_Tables(({"control": 500.0, "t": 500.0}, 30.0), 30000))
     assert rate == 500.0 and "observed days" in reason
+
+
+class _ScriptedSource(FakeDatabaseManager):
+    """Serves the assignment probe/pushdown from scripted rows (direct mode)."""
+
+    def __init__(self, raw: list[dict]):
+        super().__init__()
+        self._raw = raw
+
+    def execute_query(self, query, params=None):
+        flat = " ".join(query.split())
+        if "_abk_probe" in flat or "_abk_raw" in flat:
+            return serve_assignment_pushdown(self._project, flat, self._raw)
+        return super().execute_query(query, params)
+
+
+def test_resolve_arrival_rate_direct_mode_snapshots_the_live_source():
+    """Direct mode (the m8 WP4 no-copy default): the rate comes from a fresh
+    snapshot of the live assignment source — never from ``_ab_exposures`` —
+    via the SAME core.exposure_counting arithmetic the copy-mode mixin uses."""
+    from abkit.cli.commands.plan import _resolve_arrival_rate
+
+    exp = _seq_experiment()  # cohort_copy defaults to disabled
+    grid = generate_grid(exp.start_date, exp.end_date, exp.cadence_segments(), tz=exp.timezone)
+
+    def resolve(raw):
+        # tables=None proves the persisted-table path is never touched
+        return _resolve_arrival_rate(exp, None, None, _ScriptedSource(raw), None, grid)
+
+    # two units/arm over exactly 2 observed days ⇒ 1 unit/day/arm, source-labeled
+    rows = [
+        {"u": f"u{i}", "variant": v, "exposure_ts": datetime(2024, 7, 1 + 2 * (i % 2), 0, 0)}
+        for i, v in enumerate(["control", "control", "t", "t"])
+    ]
+    rate, reason = resolve(rows)
+    assert rate == pytest.approx(1.0)
+    assert "assignment source over 2.0 observed days" in reason
+
+    # a one-instant cohort (backfill) ⇒ skipped with the ~one-instant message
+    instant = [
+        {"u": f"u{i}", "variant": v, "exposure_ts": datetime(2024, 7, 1, 8, 0)}
+        for i, v in enumerate(["control", "t"])
+    ]
+    rate, reason = resolve(instant)
+    assert rate is None and "one instant" in reason
+
+    # a not-yet-launched source (no rows) politely skips, never fails the plan
+    rate, reason = resolve([])
+    assert rate is None and "assignment source returned no rows yet" in reason
