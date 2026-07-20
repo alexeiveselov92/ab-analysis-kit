@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-__version__ = "0.1.2"
+__version__ = "0.2.0"
 
 #: Symbols re-exported lazily from ``abkit.stats`` (PEP 562) so importing
 #: ``abkit`` for ``__version__`` (the CLI path) stays numpy-free and fast.

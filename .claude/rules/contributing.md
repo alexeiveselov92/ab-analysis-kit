@@ -51,10 +51,18 @@ CI runs the full matrix on every push; keep it green.
    (`seed` must be identity-excluded for bootstrap methods).
 3. Implement **both** entries where the math allows: `from_samples` and
    `from_suffstats` (dual-entry equivalence is tested).
-4. Tests: known-answer test; dual-entry equivalence; params/identity hash
+4. (Optional, M7) If the method can score suffstats **arrays**, opt in to the
+   vectorized validate path: set `supports_vectorized = True` + implement
+   `from_suffstats_array` → `BatchEffectResult`, route every power term
+   through `effects._libm_pow` (numpy `**` is 1 ULP off libm — the parity
+   gates demand bit-exact scalar↔batch agreement), and extend the
+   capability-roster test in `tests/stats/test_vectorized_parity.py`.
+   Without the flag the method just takes the scalar fallback — never
+   required.
+5. Tests: known-answer test; dual-entry equivalence; params/identity hash
    addition to `tests/stats/test_identity.py`; golden test if reproducing a
    legacy method.
-5. Never touch the pipeline/DB/CLI to make a method work — if you need to,
+6. Never touch the pipeline/DB/CLI to make a method work — if you need to,
    the design is wrong (methods are plugins).
 
 ## Changing a statistical number (change control — hard rule)
