@@ -105,7 +105,7 @@ compute → persist.
 
 ```bash
 abk run [--select <exp>]... [--exclude <sel>]... [--steps validate,plan,load,compute] \
-        [--from TS] [--to TS] [--full-refresh] [--workers N] \
+        [--from TS] [--to TS] [--full-refresh] [--resync-cohort] [--workers N] \
         [--report [PATH]] [--force] [--profile NAME]
 ```
 
@@ -117,6 +117,7 @@ abk run [--select <exp>]... [--exclude <sel>]... [--steps validate,plan,load,com
 | `--from` | — | Full-refresh window start (with `--full-refresh`) |
 | `--to` | — | Full-refresh window end, exclusive (with `--full-refresh`) |
 | `--full-refresh` | off | Re-open already-computed cutoffs in `[--from, --to)` and recompute |
+| `--resync-cohort` | off | Copy mode only: full cohort resync (delete + reinsert) instead of the incremental append |
 | `--workers` | `1` | Worker threads across experiments (each gets its own DB connection) |
 | `--report [PATH]` | off | Emit a self-contained HTML readout per experiment |
 | `--force` | off | Take over a held lock (use with care) |
@@ -126,6 +127,15 @@ The run is **incremental by an anti-join**: only cutoffs past the `data_lag`
 watermark and not already computed are (re)computed, so re-running is idempotent. Use
 `--full-refresh` with both `--from` and `--to` to reprocess a window after changing a
 metric query or a method param.
+
+With `assignment.cohort_copy.enabled`, the persisted cohort is loaded
+**incrementally** (watermark + closed-interval batches): the still-open
+`batch_interval` bucket and rows younger than `maturity_delay` wait until they
+mature, and a row backfilled *below* the watermark is never picked up — that is
+the documented cost of the copy. `--resync-cohort` forces the old full
+delete + reinsert to recover such a copy; it never touches results windows
+(`--full-refresh` keeps that job) and is a no-op in the direct (no-copy)
+default.
 
 **`--steps` tokens** are `validate`, `plan`, `load`, `compute` (any unknown token
 errors with the valid list). **`--steps validate` alone is the config lint** — it
