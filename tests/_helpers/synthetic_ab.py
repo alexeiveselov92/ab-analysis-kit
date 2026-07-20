@@ -14,7 +14,7 @@ import re
 from datetime import datetime, timedelta
 from typing import Any
 
-from fake_db import FakeDatabaseManager
+from fake_db import FakeDatabaseManager, serve_assignment_pushdown
 
 from abkit.compute.recompute_backend import RecomputeBackend
 from abkit.config import ExperimentConfig, MetricConfig, ProjectConfig
@@ -93,7 +93,8 @@ class SyntheticWarehouse(FakeDatabaseManager):
             if table in flat:
                 return self._aggregate(flat, events)
         if "FROM assignments" in flat:
-            return [{"user_id": u, "variant": v, "exposure_ts": ts} for u, v, ts in self.cohort]
+            raw = [{"user_id": u, "variant": v, "exposure_ts": ts} for u, v, ts in self.cohort]
+            return serve_assignment_pushdown(self._project, flat, raw)
         return super().execute_query(query, params)
 
     def _aggregate(self, flat: str, events: list) -> list[dict[str, Any]]:

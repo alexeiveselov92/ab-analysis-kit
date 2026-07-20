@@ -1,6 +1,12 @@
 """Loaders: Jinja templating + the packaged macro + exposure/metric loading."""
 
-from abkit.loaders.exposure_loader import ExposureLoadError, load_exposures
+from abkit.loaders.exposure_loader import load_exposures
+from abkit.loaders.exposure_source import (
+    ExposureLoadError,
+    ExposureSnapshot,
+    probe_has_stratum,
+    validate_and_snapshot,
+)
 from abkit.loaders.metric_loader import (
     MetricLoadError,
     MetricLoadResult,
@@ -16,6 +22,7 @@ from abkit.loaders.query_template import (
 
 __all__ = [
     "ExposureLoadError",
+    "ExposureSnapshot",
     "MetricLoadError",
     "MetricLoadResult",
     "QueryTemplate",
@@ -25,4 +32,6 @@ __all__ = [
     "load_covariate_from_preperiod",
     "load_exposures",
     "load_metric",
+    "probe_has_stratum",
+    "validate_and_snapshot",
 ]

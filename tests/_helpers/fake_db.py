@@ -40,6 +40,28 @@ _ITEM_RE = re.compile(
 )
 
 
+def serve_assignment_pushdown(project, normalized_query: str, raw_rows: list[dict]) -> list[dict]:
+    """Evaluate the WP2 exposure pushdown over scripted assignment rows.
+
+    Fake managers that serve assignment SQL by returning raw scripted rows (they
+    do not parse the ``FROM (<subquery>)`` wrapper) route through here so the
+    ``LIMIT 1`` column probe and the ``GROUP BY`` MIN/COUNT aggregation share the
+    ONE fake-DB implementation (``manager._project``) with the real SQL evaluator.
+
+    - ``SELECT * ... LIMIT 1`` (no ``GROUP BY``) → the first raw row verbatim, so
+      the missing-column check sees the source's ACTUAL columns.
+    - the aggregation → ``project`` (the manager's own ``_project``) over the
+      parsed select-list + ``GROUP BY`` columns.
+    """
+    rows = [dict(r) for r in raw_rows]
+    if "GROUP BY" not in normalized_query.upper():
+        return rows[:1]
+    items = normalized_query.split(" FROM (", 1)[0][len("SELECT ") :]
+    items_raw = [i.strip() for i in items.split(",")]
+    group_cols = [c.strip() for c in normalized_query.split(" GROUP BY ", 1)[1].split(",")]
+    return project(rows, items_raw, False, group_cols)
+
+
 def _coerce(value: Any) -> Any:
     """numpy → plain Python, NaN → None (mirrors the real managers)."""
     if value is None:

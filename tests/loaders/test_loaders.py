@@ -6,7 +6,7 @@ from datetime import datetime
 
 import numpy as np
 import pytest
-from fake_db import FakeDatabaseManager
+from fake_db import FakeDatabaseManager, serve_assignment_pushdown
 
 from abkit.config import ExperimentConfig, MetricConfig
 from abkit.database.internal_tables import InternalTablesManager
@@ -23,7 +23,13 @@ from abkit.loaders import (
 
 class ScriptedQueryManager(FakeDatabaseManager):
     """Delegates ``_ab_*`` queries to the in-memory store; serves scripted rows
-    for user-facing (fact/assignment) SQL."""
+    for user-facing (fact/assignment) SQL.
+
+    The assignment path is now the WP2 pushdown: the ``LIMIT 1`` column probe
+    returns the first scripted row verbatim, while the ``GROUP BY`` aggregation
+    is delegated to the base manager's own ``_project`` so there is exactly one
+    MIN/COUNT implementation shared with the real fake-DB SQL evaluator.
+    """
 
     def __init__(self):
         super().__init__()
@@ -31,10 +37,17 @@ class ScriptedQueryManager(FakeDatabaseManager):
         self.executed_user_sql: list[str] = []
 
     def execute_query(self, query, params=None):
-        if "user_revenue" in query or "assignments" in query:
+        normalized = " ".join(query.split())
+        if "user_revenue" in normalized:
             self.executed_user_sql.append(query)
             return [dict(r) for r in self.scripted_rows]
+        if "assignments" in normalized:
+            self.executed_user_sql.append(query)
+            return self._serve_assignment(normalized)
         return super().execute_query(query, params)
+
+    def _serve_assignment(self, normalized):
+        return serve_assignment_pushdown(self._project, normalized, self.scripted_rows)
 
 
 @pytest.fixture
