@@ -59,6 +59,60 @@ class CadenceSegment(BaseModel):
         return None if self.until is None else Interval(self.until).seconds
 
 
+class CohortCopyConfig(BaseModel):
+    """Opt-in persisted cohort copy (m8-implementation-plan.md WP1; default off).
+
+    When ``enabled``, exposures are persisted into ``_ab_exposures``
+    incrementally — watermark on ``update_column``, closed-interval batches
+    (the detectkit donor discipline); the knobs here parameterize that copy
+    loop (declarative-config.md §2). When disabled (the default), metric SQL
+    joins the deduped assignment source directly and nothing is persisted.
+    ``batch_intervals_per_round_trip`` is measured in interval-*counts*, not
+    row-counts.
+    """
+
+    enabled: bool = Field(default=False)
+    update_column: str = Field(
+        default="exposure_ts",
+        description="Watermark column the incremental copy filters on",
+    )
+    batch_interval: int | str = Field(
+        default="1d", description="Closed-interval batch step of the copy loop"
+    )
+    batch_intervals_per_round_trip: int = Field(
+        default=30,
+        gt=0,
+        description="Batch intervals covered by one load round trip (interval count)",
+    )
+    maturity_delay: int | str = Field(
+        default=0,
+        description="Ignore source rows younger than now() - maturity_delay (0 = none)",
+    )
+
+    @field_validator("batch_interval")
+    @classmethod
+    def _batch_interval_parses(cls, v: int | str) -> int | str:
+        Interval(v)  # raises ValueError on bad grammar / non-positive
+        return v
+
+    @field_validator("maturity_delay")
+    @classmethod
+    def _maturity_delay_parses(cls, v: int | str) -> int | str:
+        # 0 = no delay; Interval rejects non-positive (the data_lag pattern).
+        if v == 0:
+            return v
+        Interval(v)  # raises ValueError on bad grammar / non-positive
+        return v
+
+    def batch_interval_seconds(self) -> int:
+        return Interval(self.batch_interval).seconds
+
+    def maturity_delay_seconds(self) -> int:
+        if self.maturity_delay == 0:
+            return 0
+        return Interval(self.maturity_delay).seconds
+
+
 class AssignmentConfig(BaseModel):
     """The READ-ONLY exposure source — abkit does not randomize."""
 
@@ -66,6 +120,13 @@ class AssignmentConfig(BaseModel):
     query_file: Path | None = Field(default=None, description="Path to assignment SQL file")
     added_filters: str = Field(
         default="", description="Optional extra SQL fragment (must start with AND)"
+    )
+    # Named cohort_copy (not `copy`) — a field named `copy` shadows the
+    # deprecated-but-present BaseModel.copy and pydantic warns at import time
+    # (m8-implementation-plan.md §4 Q1, settled at WP1).
+    cohort_copy: CohortCopyConfig = Field(
+        default_factory=CohortCopyConfig,
+        description="Opt-in persisted cohort copy + its incremental-load knobs",
     )
     variants: list[str] = Field(..., description="Variant names; FIRST is control (name_1)")
     expected_split: dict[str, float] = Field(
@@ -127,6 +188,17 @@ class AssignmentConfig(BaseModel):
         total = sum(self.expected_split.values())
         if abs(total - 1.0) > 1e-6:
             raise ValueError(f"expected_split must sum to 1.0, got {total}")
+        return self
+
+    @model_validator(mode="after")
+    def validate_cohort_copy_update_column(self) -> AssignmentConfig:
+        # Cheap identifier-shaped sanity gate only — the real existence check
+        # is the run-time column probe (m8-implementation-plan.md WP1 step 4).
+        if self.cohort_copy.enabled and not self.cohort_copy.update_column.isidentifier():
+            raise ValueError(
+                "assignment.cohort_copy.update_column must be a plain column "
+                f"identifier, got {self.cohort_copy.update_column!r}"
+            )
         return self
 
     def get_query_text(self, project_root: Path | None = None) -> str:

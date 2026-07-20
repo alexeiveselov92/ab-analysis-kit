@@ -31,7 +31,9 @@ class ProjectTablesConfig(BaseModel):
     Overrides are NOT supported yet: the internal-tables mixins are keyed by
     the canonical constants, so a renamed table would split the read and
     write paths. The block exists (and validates) so the config surface is
-    stable when renaming lands.
+    stable when renaming lands. Per-experiment source reference does not need
+    this — see ``AssignmentConfig.cohort_copy``; unblocking table-name
+    overrides generally remains future work (m8-implementation-plan.md §0.4.2).
     """
 
     experiments: str = Field(default="_ab_experiments")

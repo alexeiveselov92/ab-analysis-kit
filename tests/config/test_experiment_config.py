@@ -237,6 +237,67 @@ class TestAssignment:
             )
 
 
+class TestCohortCopy:
+    """M8 WP1: the opt-in ``assignment.cohort_copy`` block (additive-only)."""
+
+    def _payload(self, **copy_block) -> dict:
+        payload = base_payload()
+        payload["assignment"]["cohort_copy"] = copy_block
+        return payload
+
+    def test_default_disabled_with_donor_knob_defaults(self):
+        config = ExperimentConfig.model_validate(base_payload())
+        cohort_copy = config.assignment.cohort_copy
+        assert cohort_copy.enabled is False
+        assert cohort_copy.update_column == "exposure_ts"
+        assert cohort_copy.batch_interval == "1d"
+        assert cohort_copy.batch_intervals_per_round_trip == 30
+        assert cohort_copy.maturity_delay == 0
+        assert cohort_copy.batch_interval_seconds() == 86400
+        assert cohort_copy.maturity_delay_seconds() == 0
+
+    def test_accepts_int_seconds_and_interval_strings(self):
+        config = ExperimentConfig.model_validate(
+            self._payload(enabled=True, batch_interval=3600, maturity_delay="1d")
+        )
+        cohort_copy = config.assignment.cohort_copy
+        assert cohort_copy.enabled is True
+        assert cohort_copy.batch_interval_seconds() == 3600
+        assert cohort_copy.maturity_delay_seconds() == 86400
+
+    def test_bad_batch_interval_grammar_fails_at_parse(self):
+        with pytest.raises(ValidationError, match="Unknown time unit"):
+            ExperimentConfig.model_validate(self._payload(batch_interval="1fortnight"))
+
+    def test_non_positive_batch_interval_rejected(self):
+        with pytest.raises(ValidationError, match="positive"):
+            ExperimentConfig.model_validate(self._payload(batch_interval=0))
+
+    def test_maturity_delay_zero_ok_negative_rejected(self):
+        config = ExperimentConfig.model_validate(self._payload(maturity_delay=0))
+        assert config.assignment.cohort_copy.maturity_delay_seconds() == 0
+        with pytest.raises(ValidationError, match="positive"):
+            ExperimentConfig.model_validate(self._payload(maturity_delay=-60))
+
+    def test_round_trip_count_must_be_positive(self):
+        with pytest.raises(ValidationError):
+            ExperimentConfig.model_validate(self._payload(batch_intervals_per_round_trip=0))
+
+    def test_update_column_gate_fires_only_when_enabled(self):
+        with pytest.raises(ValidationError, match="plain column identifier"):
+            ExperimentConfig.model_validate(
+                self._payload(enabled=True, update_column="exposure ts")
+            )
+        with pytest.raises(ValidationError, match="plain column identifier"):
+            ExperimentConfig.model_validate(self._payload(enabled=True, update_column=""))
+        # Disabled: the cheap gate deliberately does not fire (WP1 step 4) —
+        # the run-time column probe (WP2) is the real check.
+        config = ExperimentConfig.model_validate(
+            self._payload(enabled=False, update_column="not an identifier")
+        )
+        assert config.assignment.cohort_copy.enabled is False
+
+
 class TestComparisons:
     def test_duplicate_metric_refs(self):
         payload = base_payload()

@@ -829,6 +829,13 @@ explicit sign-off before or during the WP that depends on it.
    separate from `assignment:`? (WP1) — **recommendation:** pick one name at
    WP1 and thread it consistently through every later WP; this doc uses
    `assignment.copy` throughout as the working name.
+   **SETTLED at WP1: `assignment.cohort_copy`.** Not bikeshedding — a
+   technical forcing: a pydantic field named `copy` shadows the
+   deprecated-but-present `BaseModel.copy` and pydantic v2 emits a
+   `UserWarning` at import time (verified against pydantic 2.x in-repo).
+   Every later WP reads `experiment.assignment.cohort_copy.*` where this doc's
+   WP2–WP7 prose says `assignment.copy.*`; the Python model is
+   `CohortCopyConfig` (exported from `abkit.config`).
 2. **Should a CLI escape hatch (e.g. `abk run --resync-cohort`) be added** to
    force the OLD full delete+reinsert for disaster recovery of a
    previously-copied cohort, and does its name collide with the EXISTING

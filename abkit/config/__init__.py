@@ -8,6 +8,7 @@ from abkit.config.discovery import (
 from abkit.config.experiment_config import (
     AssignmentConfig,
     CadenceSegment,
+    CohortCopyConfig,
     ComparisonConfig,
     ExperimentConfig,
     SequentialConfig,
@@ -33,6 +34,7 @@ from abkit.config.validator import (
 __all__ = [
     "AssignmentConfig",
     "CadenceSegment",
+    "CohortCopyConfig",
     "ComparisonConfig",
     "ExperimentConfig",
     "MethodConfig",

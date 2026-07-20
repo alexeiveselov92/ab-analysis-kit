@@ -41,6 +41,19 @@ timezone: UTC                    # interprets date-typed fields & daily midnight
 assignment:                      # READ-ONLY exposure source (abkit does not randomize)
   query_file: sql/assignment.sql # must SELECT unit_key, variant, exposure_ts [, stratum]
   added_filters: ""              # optional extra SQL fragment (must start with AND); escape hatch
+  cohort_copy:                   # opt-in persisted cohort copy (M8; named at WP1 — a field named
+                                 # `copy` shadows pydantic's BaseModel.copy). Default off: metric
+                                 # SQL joins the deduped assignment source directly and nothing is
+                                 # persisted. Enable for a heavy multi-join or mutating source.
+                                 # NOTE: the knobs parse from M8 WP1; the direct-join default and
+                                 # the incremental engine are wired across M8 WP2–WP5.
+    enabled: false               # true → persist into _ab_exposures incrementally (watermark +
+                                 # closed-interval batches, the detectkit donor discipline)
+    update_column: exposure_ts   # watermark column the incremental copy filters on (must be a
+                                 # plain identifier; existence is probed at run time)
+    batch_interval: 1d           # closed-interval batch step of the copy loop
+    batch_intervals_per_round_trip: 30   # intervals per load round trip (interval count, not rows)
+    maturity_delay: 0            # ignore source rows younger than now() - maturity_delay (0 = none)
   variants: [control, treatment] # name_1 = first = control; name_2 = treatment
   expected_split: {control: 0.5, treatment: 0.5}   # drives the SRM chi-square gate
 
