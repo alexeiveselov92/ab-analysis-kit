@@ -299,6 +299,27 @@ class TestWatermarkResume:
         copy_once(manager, tables, experiment)
         assert persisted(tables, manager)["u1"] == ("control", late)
 
+    def test_resume_rescan_takes_the_window_minimum_on_duplicate_input(
+        self, manager, tables
+    ):
+        """Pinned DISCLOSED divergence (round 2, same LWW class): a resume
+        re-scan window that no longer sees a duplicate unit's earliest row
+        LWW-overwrites the persisted earliest with the window's own minimum.
+        Only reachable on malformed multi-row-per-unit input — the run-level
+        duplicate warning has already fired on it every run."""
+        manager.scripted_rows = [
+            row("dup", "control", datetime(2024, 7, 7, 5)),
+            row("dup", "control", datetime(2024, 7, 9, 12)),
+            row("z", "treatment", datetime(2024, 7, 9, 18)),  # sets the watermark
+        ]
+        copy_once(manager, tables, make_experiment(), now=datetime(2024, 7, 10))
+        assert persisted(tables, manager)["dup"] == ("control", datetime(2024, 7, 7, 5))
+
+        outcome = copy_once(manager, tables, make_experiment(), now=datetime(2024, 7, 12))
+        assert outcome.resumed is True
+        # the re-scan window [Jul 9, Jul 12) sees only the later duplicate
+        assert persisted(tables, manager)["dup"] == ("control", datetime(2024, 7, 9, 12))
+
 
 class TestBatchingInvariance:
     def test_round_trip_size_never_changes_the_persisted_rows(self, manager, tables):

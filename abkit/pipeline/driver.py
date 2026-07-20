@@ -42,8 +42,7 @@ from abkit.core.exposure_counting import bucket_timestamps, count_stream
 from abkit.core.period_planner import backlog_seconds, generate_grid, pending_cutoffs
 from abkit.database.internal_tables import InternalTablesManager
 from abkit.database.manager import BaseDatabaseManager
-from abkit.loaders.exposure_copy import copy_exposures_incremental, resync_snapshot
-from abkit.loaders.exposure_loader import persist_snapshot
+from abkit.loaders.exposure_copy import copy_exposures_incremental
 from abkit.loaders.exposure_source import build_cohort_backend
 from abkit.loaders.query_template import RenderWindow
 from abkit.pipeline._types import STATUS_COMPLETED, STATUS_FAILED, PipelineStep, RunOutcome
@@ -222,46 +221,48 @@ def run_experiment(
         copy_enabled = experiment.assignment.cohort_copy.enabled
         if copy_enabled:
             if resync_cohort:
+                # Rebuild THROUGH the incremental engine (delete + reload from
+                # the experiment start): one write path, so the resync honors
+                # the same closed/matured discipline as routine operation — an
+                # ungated snapshot rewrite would persist unmatured rows and
+                # advance the watermark past what the engine ever produces
+                # (review rounds 1+2). The from-scratch re-scan is also what
+                # HEALS a copy poisoned by the late-arrival limitation.
                 log(
-                    f"LOAD  {experiment.name}: --resync-cohort — "
-                    "full cohort reload (delete + reinsert)"
+                    f"LOAD  {experiment.name}: --resync-cohort — rebuilding the "
+                    "persisted cohort (delete + incremental reload)"
                 )
-                # gated to the closed/matured boundary: an ungated rewrite
-                # would advance MAX(exposure_ts) past what routine incremental
-                # operation ever produces, permanently fencing out rows still
-                # inside the open bucket (review-confirmed watermark poisoning)
-                persist_snapshot(
-                    tables, experiment.name, resync_snapshot(experiment, grid, snapshot, now=now)
+                tables.delete_exposures(experiment.name)
+            copy_result = copy_exposures_incremental(
+                manager,
+                tables,
+                experiment,
+                project_root,
+                grid,
+                now=now,
+                has_stratum=snapshot.has_stratum,
+                log=log,
+            )
+            # Freshness disclosure (m8 WP5 risk note): metrics join the
+            # persisted copy, which only covers CLOSED, matured intervals
+            # (the SRM counts below deliberately stay on the LIVE validated
+            # snapshot — randomization health is measured at the source).
+            # A cutoff computed past that coverage reads a partial cohort
+            # and stays frozen that way (recompute never revisits a
+            # computed cutoff) — warn iff a computable cutoff exceeds it.
+            coverage = copy_result.covered_through or grid.start_ts
+            last_computable = max(
+                (c.end_ts for c in grid.cutoffs if c.end_ts <= watermark_ts),
+                default=None,
+            )
+            if last_computable is not None and coverage < last_computable:
+                outcome.warnings.append(
+                    f"cohort copy trails the compute watermark: exposures "
+                    f"copied through {coverage:%Y-%m-%d %H:%M:%S}, cutoffs "
+                    f"computed through {last_computable:%Y-%m-%d %H:%M:%S} — "
+                    "cutoffs in between see a partial cohort; set data_lag >= "
+                    "cohort_copy.maturity_delay + batch_interval to align"
                 )
-            else:
-                copy_result = copy_exposures_incremental(
-                    manager,
-                    tables,
-                    experiment,
-                    project_root,
-                    grid,
-                    now=now,
-                    has_stratum=snapshot.has_stratum,
-                    log=log,
-                )
-                # Freshness disclosure (m8 WP5 risk note): metrics join the
-                # persisted copy, which only covers CLOSED, matured intervals.
-                # A cutoff computed past that coverage reads a partial cohort
-                # and stays frozen that way (recompute never revisits a
-                # computed cutoff) — warn iff a computable cutoff exceeds it.
-                coverage = copy_result.covered_through or grid.start_ts
-                last_computable = max(
-                    (c.end_ts for c in grid.cutoffs if c.end_ts <= watermark_ts),
-                    default=None,
-                )
-                if last_computable is not None and coverage < last_computable:
-                    outcome.warnings.append(
-                        f"cohort copy trails the compute watermark: exposures "
-                        f"copied through {coverage:%Y-%m-%d %H:%M:%S}, cutoffs "
-                        f"computed through {last_computable:%Y-%m-%d %H:%M:%S} — "
-                        "cutoffs in between see a partial cohort; set data_lag >= "
-                        "cohort_copy.maturity_delay + batch_interval to align"
-                    )
         elif resync_cohort:
             log(
                 f"LOAD  {experiment.name}: --resync-cohort has no effect in "

@@ -73,21 +73,27 @@ number change).
   corruption fails loudly before any copy write; the persisted write path is
   append-only (`insert_exposures_incremental`, never `delete_rows`).
   `abk run --resync-cohort` (m8 plan §4 Q2 — a dedicated flag;
-  `--full-refresh` keeps its results-window semantics) forces the old full
-  delete + reinsert for disaster recovery, gated to the same closed/matured
-  boundary so the rewrite can never advance the watermark past what routine
-  operation produces; it is a no-op in the direct (no-copy) default. KNOWN
-  LIMITATION, disclosed not masked (§4 Q3, doc-only): the donor watermark
-  model permanently misses a row backfilled into an already-scanned closed
-  bucket — a mutating source should stay on the no-copy default or recover
-  via `--resync-cohort`; on malformed duplicate input a cross-batch
-  duplicate resolves to the LATER batch's `exposure_ts` (LWW) instead of the
-  full reload's global earliest (test-pinned). `abk run` warns when a
-  computable cutoff exceeds the copy's deterministic coverage (align
-  `data_lag >= maturity_delay + batch_interval`). No `ALGORITHM_VERSION`
-  bump — zero statistical numbers changed: the cross-mode e2e parity gate
-  and the pipeline parity tests now exercise the incremental engine on the
-  copy leg and stay byte-identical.
+  `--full-refresh` keeps its results-window semantics) recovers a poisoned
+  copy by deleting it and rebuilding from the experiment start THROUGH the
+  same engine — one write path, so the rebuild honors the identical
+  closed/matured discipline (never persists unmatured rows, never advances
+  the watermark past routine operation) and the from-scratch re-scan is what
+  picks up backfilled rows; a no-op in the direct (no-copy) default. KNOWN
+  LIMITATIONS, disclosed not masked (§4 Q3, doc-only): routine runs miss a
+  row backfilled into an already-scanned closed bucket (recover via
+  `--resync-cohort` or stay on the no-copy default); on malformed
+  multi-row-per-unit input — already loudly warned about every run — a
+  duplicate whose rows straddle two scan windows (round trips of one run, or
+  a prior run's window vs a resume re-scan) resolves to the later window's
+  minimum instead of the full reload's global earliest (both test-pinned).
+  In copy mode the SRM gate/report counts deliberately measure the LIVE
+  validated source; the persisted copy metrics join trails it by the open
+  bucket + `maturity_delay`, and `abk run` warns when a computable cutoff
+  exceeds the copy's deterministic coverage (align `data_lag >=
+  maturity_delay + batch_interval`). No `ALGORITHM_VERSION` bump — zero
+  statistical numbers changed: the cross-mode e2e parity gate and the
+  pipeline parity tests now exercise the incremental engine on the copy leg
+  and stay byte-identical.
 - **M8 WP3 — the `ab_cohort_source` builtin: one cohort fragment, two source
   modes.** The packaged assignment macro's `exposed_units()` now reads its
   cohort through the new `ab_cohort_source` builtin, built in Python

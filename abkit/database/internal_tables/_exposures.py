@@ -35,11 +35,20 @@ class _ExposuresMixin(_InternalTablesBase):
         ``experiment`` and the ``loaded_at`` version are stamped here.
         """
         self._require_exposure_columns(data)
+        self.delete_exposures(experiment)
+        return self._insert_exposure_rows(experiment, data)
+
+    def delete_exposures(self, experiment: str) -> None:
+        """Drop the experiment's persisted cohort (sync — a rebuild follows).
+
+        The ``abk run --resync-cohort`` first step (m8 WP5 round 2): the copy
+        is then rebuilt through the incremental engine, so the rewrite honors
+        the same closed/matured discipline as routine operation.
+        """
         full_table_name = self._manager.get_full_table_name(TABLE_EXPOSURES, use_internal=True)
         self._manager.delete_rows(
             full_table_name, "experiment = %(e)s", {"e": experiment}, sync=True
         )
-        return self._insert_exposure_rows(experiment, data)
 
     def insert_exposures_incremental(self, experiment: str, data: dict[str, np.ndarray]) -> int:
         """Append exposure rows WITHOUT the preceding delete (m8 WP5).

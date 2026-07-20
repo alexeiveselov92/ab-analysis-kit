@@ -41,13 +41,23 @@ same sentinel check before any DB work).
 **KNOWN LIMITATION (donor behavior, settled doc-only — m8 §4 Q3):** a row
 whose ``update_column`` value lands in an already-scanned closed bucket but
 which only APPEARS in the source later (a backfilled or corrected
-assignment) is silently and permanently missed by the persisted copy — the
-opposite asymmetry from the no-copy default, which re-reads the full live
-source every run. A mutating or backfilling source should stay on the
-no-copy default, or recover with ``abk run --resync-cohort`` (the full
-delete + reinsert, gated through :func:`resync_snapshot` so the rewritten
-copy can never advance the watermark past the closed/matured boundary the
-routine engine honors).
+assignment) is silently missed by the persisted copy — the opposite
+asymmetry from the no-copy default, which re-reads the full live source
+every run. A mutating or backfilling source should stay on the no-copy
+default, or recover with ``abk run --resync-cohort``: the driver deletes the
+persisted cohort and rebuilds it through THIS engine from the experiment
+start (one write path — the resync honors the same closed/matured
+discipline, never persists unmatured rows, and the from-scratch re-scan is
+what picks the late rows up).
+
+**KNOWN LIMITATION (malformed duplicate input only):** ``MIN(exposure_ts)``
+is computed per scan window and rows land via a last-write-wins upsert, so a
+unit with MULTIPLE source rows (already loudly warned about by the run-level
+validation) whose duplicates straddle two scan windows — two round trips of
+one run, or a previous run's window vs a later run's watermark-bucket
+re-scan — resolves to the LATER window's minimum, not the full reload's
+global earliest. On a well-formed one-row-per-unit cohort no divergence is
+possible.
 
 **Ordering dependency (NOT safe to call standalone):** the run-level
 whole-cohort validation (``validate_and_snapshot``) must have passed moments
@@ -80,7 +90,6 @@ from abkit.database.internal_tables import InternalTablesManager
 from abkit.database.manager import BaseDatabaseManager
 from abkit.loaders.exposure_source import (
     ExposureLoadError,
-    ExposureSnapshot,
     _pushdown_sql,
     render_assignment_sql,
 )
@@ -91,7 +100,6 @@ __all__ = [
     "CopyOutcome",
     "closed_interval_bound",
     "copy_exposures_incremental",
-    "resync_snapshot",
 ]
 
 #: SQL-safe timestamp format for the injected bounds (shared by CH/PG/MySQL)
@@ -138,36 +146,6 @@ def closed_interval_bound(
     if periods < 1:
         return None
     return origin + timedelta(seconds=periods * step)
-
-
-def resync_snapshot(
-    experiment: ExperimentConfig, grid: Grid, snapshot: ExposureSnapshot, *, now: datetime
-) -> ExposureSnapshot:
-    """Gate a full validated snapshot for the ``--resync-cohort`` rewrite.
-
-    The resync must never advance the incremental watermark past the
-    closed/matured boundary routine operation honors: persisting the raw
-    (ungated) snapshot would push ``MAX(exposure_ts)`` up to ``now`` and
-    permanently fence out rows that were still inside the open bucket at
-    resync time (a review-confirmed regression). Rows at or past the
-    boundary are simply left for the next incremental pass to pick up once
-    their bucket closes; ``NULL`` exposure timestamps pass through (they
-    never move the watermark). A custom ``update_column`` takes no watermark
-    fast-path at all (module docstring), so its resync stays ungated.
-    """
-    cfg = experiment.assignment.cohort_copy
-    if cfg.update_column != "exposure_ts":
-        return snapshot
-    bound = closed_interval_bound(cfg, grid.start_ts, now)
-    by_unit = {
-        unit: value
-        for unit, value in snapshot.by_unit.items()
-        if value[1] is None or (bound is not None and value[1] < bound)
-    }
-    counts: dict[str, int] = {}
-    for variant, _, _ in by_unit.values():
-        counts[variant] = counts.get(variant, 0) + 1
-    return ExposureSnapshot(counts=counts, by_unit=by_unit, has_stratum=snapshot.has_stratum)
 
 
 def _batch_added_filters(base: str, update_column: str, lo: datetime, hi: datetime) -> str:

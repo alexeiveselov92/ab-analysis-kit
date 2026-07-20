@@ -784,7 +784,9 @@ class TestIncrementalCopySeam:
         # the SRM snapshot still counts the LIVE source in copy mode
         assert second.exposures_loaded == 304
 
-    def test_resync_cohort_full_reloads_the_copy(self, warehouse, tables):
+    def test_resync_cohort_rebuilds_the_copy_through_the_engine(self, warehouse, tables):
+        """--resync-cohort = delete + a from-scratch reload through the SAME
+        incremental engine (round 2: one write path, one discipline)."""
         experiment = TestCohortModeParity._copy_experiment()
         run(warehouse, tables, experiment=experiment)
         deletes = self._spy_deletes(warehouse)
@@ -793,6 +795,50 @@ class TestIncrementalCopySeam:
         assert outcome.status == "completed", outcome.error
         assert any("_ab_exposures" in str(args[0]) for args in deletes)
         assert len(warehouse._rows["_ab_exposures"]) == 300
+
+    def test_resync_heals_a_late_arrival_gap(self, warehouse, tables):
+        """The flag's purpose: a backfilled row below the watermark is missed
+        by routine runs (the disclosed §4 Q3 limitation) — the resync's
+        from-scratch re-scan recovers it."""
+        experiment = TestCohortModeParity._copy_experiment(end_date="2024-08-30")
+        run(warehouse, tables, experiment=experiment)
+        # advance the watermark into a later bucket first — a backfill into
+        # the watermark's OWN bucket is rescued by the floor re-scan
+        warehouse.cohort.append(("later", "treatment", START + timedelta(days=5)))
+        run(warehouse, tables, experiment=experiment)
+
+        # a backfilled assignment row, below the watermark's bucket floor
+        warehouse.cohort.append(("backfilled", "control", START + timedelta(days=2)))
+        routine = run(warehouse, tables, experiment=experiment)
+        assert routine.status == "completed", routine.error
+        assert all(r["unit_id"] != "backfilled" for r in warehouse._rows["_ab_exposures"])
+
+        recovered = run(warehouse, tables, experiment=experiment, resync_cohort=True)
+        assert recovered.status == "completed", recovered.error
+        assert any(r["unit_id"] == "backfilled" for r in warehouse._rows["_ab_exposures"])
+
+    def test_resync_run_also_reports_trailing_coverage(self, warehouse, tables):
+        """Round 2: the coverage warning fires on the resync path too — the
+        rebuilt copy obeys the same closed/matured boundary."""
+        assignment = {
+            "query": (
+                "SELECT user_id, variant, exposure_ts FROM assignments "
+                "WHERE 1 = 1 {{ ab_added_filters }}"
+            ),
+            "variants": ["control", "treatment"],
+            "expected_split": {"control": 0.5, "treatment": 0.5},
+            "cohort_copy": {"enabled": True, "maturity_delay": "1d"},
+        }
+        experiment = make_experiment(assignment=assignment, end_date="2024-08-30")
+        outcome = run(
+            warehouse,
+            tables,
+            experiment=experiment,
+            resync_cohort=True,
+            now_utc=datetime(2024, 7, 20, 12),
+        )
+        assert outcome.status == "completed", outcome.error
+        assert any("cohort copy trails" in w for w in outcome.warnings)
 
     def test_resync_cohort_is_a_noop_in_direct_mode(self, warehouse, tables):
         lines: list[str] = []
@@ -844,8 +890,11 @@ class TestIncrementalCopySeam:
         assert first.status == "completed", first.error
         assert not any("cohort copy trails" in w for w in first.warnings)
 
+        # the 30min offset lands INSIDE the pre-fix failure branch (the old
+        # floating-watermark snap left a ~1h residual — verified to false-warn
+        # on the pre-fix engine), so this pin actually bites
         second = run(
-            warehouse, tables, experiment=experiment, now_utc=NOW + timedelta(hours=3)
+            warehouse, tables, experiment=experiment, now_utc=NOW + timedelta(minutes=30)
         )
         assert second.status == "completed", second.error
         assert not any("cohort copy trails" in w for w in second.warnings)
