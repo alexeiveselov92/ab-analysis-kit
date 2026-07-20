@@ -637,6 +637,8 @@ def _run_validate(srv: _ExploreServer) -> dict[str, Any]:
     metrics_by_name = cast("dict[str, MetricConfig]", srv.metrics_by_name)
     experiment = session.experiment
 
+    # family_sweep stays at its False default (m7 WP6): the D3 chip keys on per-cell
+    # rows only, so the composed D9 pass would double Auto's cost for nothing here.
     settings = ValidateSettings(iterations=AUTO_ITERATIONS, mode="fpr", grid_cap=AUTO_GRID_CAP)
     srv.echo(
         f"VALIDATE {experiment.name}: {settings.iterations} placebo splits/cell "

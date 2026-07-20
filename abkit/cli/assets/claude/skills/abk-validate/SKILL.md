@@ -43,7 +43,8 @@ schema, the sequential/composed columns, budget-band resolution).
 ## Step 1 — Run validate
 
 ```bash
-abk validate --select <exp>                          # every declared comparison, default 2000 splits
+abk validate --select <exp>                          # every declared comparison, auto N = max(2000, ceil(200/alpha)) per cell
+abk validate --select <exp> --family-sweep           # + the composed multi-metric FWER/FDR sweep (opt-in since 0.2.0)
 abk validate --select <exp> --metric <m>             # one metric only
 abk validate --select <exp> --method z-test          # score an EXTRA method beyond the declared one
 abk validate --select <exp> --iterations 500         # quick look (looser FPR estimate)
@@ -55,7 +56,8 @@ abk validate --select <exp> --inject-effect 0.05     # also measure power / achi
 | `--select`, `-s` | Experiment selector (name / glob / `tag:<tag>` / `*`; repeatable, default all). |
 | `--method`, `-m` | **Extra** registered method(s) to score **beyond** the declared comparison — the method-grid axis (repeatable). Not a selector. |
 | `--metric` | Validate only this metric (default: every declared comparison). |
-| `--iterations`, `-n` | Placebo A/A splits per cell (default 2000). More = tighter FPR, more cost. |
+| `--iterations`, `-n` | Placebo A/A splits per cell (default: auto, `max(2000, ⌈200/α⌉)` at each cell's effective alpha). An explicit N overrides every cell. |
+| `--family-sweep` | Also run the composed multi-metric FWER/FDR sweep — roughly doubles the cost. Opt-in since 0.2.0 (previously always ran when `--metric` was omitted). |
 | `--inject-effect` | Inject this **relative** effect (e.g. `0.05`) to measure power / achieved MDE / coverage. Without it, only FPR/peeking compute. |
 | `--scoring` | `fpr` (default) / `power` / `mde` — the objective for the **"Recommended" row only**. All columns compute regardless. |
 | `--report` | Emit a self-contained HTML matrix (best-effort). Bare → `reports/<exp>__validate.html`; a dir or `.html` path overrides. |

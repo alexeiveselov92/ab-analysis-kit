@@ -155,3 +155,46 @@ def test_manager_closed_even_when_acquire_lock_raises(scaffolded, monkeypatch):
     result = runner.invoke(cli, ["validate", "--select", EXP, "--iterations", "20"])
     assert result.exit_code != 0  # the raise propagated (a real harness failure)
     assert closed["n"] >= 1  # …but the manager was closed in the finally — no leak
+
+
+def test_validate_help_documents_the_wp6_policy():
+    """m7 WP6: the help text names the auto-N-per-alpha default and the --family-sweep
+    opt-in (with its behavior-change callout) — no silent policy flip."""
+    result = runner.invoke(cli, ["validate", "--help"])
+    assert result.exit_code == 0
+    flat = " ".join(result.output.split())  # click wraps help text mid-phrase
+    assert "ceil(200/alpha)" in flat
+    assert "--family-sweep" in flat
+    assert "before 0.2.0 it always ran" in flat
+
+
+def test_validate_migration_notice_prints_and_family_flag_silences_it(scaffolded):
+    """m7 WP6 review round 1: the one-release yellow migration notice is its own CLI
+    code path (distinct from the runner's DecisionEntry) — pin its text on a bare
+    multi-metric run, and its absence once --family-sweep is passed."""
+    bare = runner.invoke(cli, ["validate", "--select", EXP, "--iterations", "50"])
+    assert bare.exit_code == 0, bare.output
+    assert "no longer runs by default" in bare.output
+    assert "--family-sweep" in bare.output
+
+    opted = runner.invoke(
+        cli, ["validate", "--select", EXP, "--iterations", "50", "--family-sweep"]
+    )
+    assert opted.exit_code == 0, opted.output
+    assert "no longer runs by default" not in opted.output
+
+
+def test_auto_n_warning_reaches_the_terminal(scaffolded, monkeypatch):
+    """m7 WP6 review round 2: the §4.1 warn-uncapped entry must be ECHOED by the CLI —
+    decision_log's only other consumer is the Auto-mode JSON reply, so without the
+    echo the safeguard is invisible right when a tight alpha makes the run long.
+    The formula itself is unit-tested; this pins the wiring, so the resolver is
+    stubbed small to keep the run fast."""
+    import abkit.validate.runner as runner_mod
+
+    monkeypatch.setattr(runner_mod, "_default_iterations", lambda alpha, **kw: 60)
+    monkeypatch.setattr(runner_mod, "AUTO_ITERATIONS_WARN_ABOVE", 1)
+    result = runner.invoke(cli, ["validate", "--select", EXP])  # no -n → the auto path
+    assert result.exit_code == 0, result.output
+    assert "warning:" in result.output and "uncapped" in result.output
+    assert "-n/--iterations to override" in result.output

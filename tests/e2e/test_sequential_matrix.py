@@ -79,15 +79,19 @@ def test_toggle_self_invalidates_on_a_bare_rerun(project):
     assert runner.invoke(cli, ["run", "--select", EXP]).exit_code == 0
     informative = [r for r in _rows(project) if not r.get("insufficient_data")]
     assert informative
-    assert all(r["ci_kind"] == "always_valid" for r in informative), (
-        "the sequential toggle silently no-op'd — WP3b self-invalidation regressed"
-    )
+    assert all(
+        r["ci_kind"] == "always_valid" for r in informative
+    ), "the sequential toggle silently no-op'd — WP3b self-invalidation regressed"
 
 
 def test_validate_renders_the_sequential_column_and_family_sweep(project):
     _enable_sequential()
     assert runner.invoke(cli, ["run", "--select", EXP]).exit_code == 0
-    result = runner.invoke(cli, ["validate", "--select", EXP, "--iterations", "300"])
+    # --family-sweep is the m7 WP6 opt-in (the D9 sweep no longer auto-runs) — this
+    # invocation doubles as the CLI-level proof the flag reaches the runner
+    result = runner.invoke(
+        cli, ["validate", "--select", EXP, "--iterations", "300", "--family-sweep"]
+    )
     assert result.exit_code == 0, result.output
 
     rows = InternalTablesManager(project).get_aa_runs(EXP)

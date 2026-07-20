@@ -19,7 +19,9 @@ from abkit.pipeline.analyze import comparison_alpha, effective_alphas
 from abkit.validate.result import CellResult
 from abkit.validate.runner import (
     ValidateSettings,
+    _default_iterations,
     _mark_recommended,
+    _resolve_iterations,
     _select_recommended,
     enumerate_cells,
     run_validation,
@@ -209,7 +211,8 @@ def _seeded_warehouse():
 
 
 def test_run_validation_scores_the_composed_family(monkeypatch):
-    """D9/WP8: a multi-metric run also produces the composed FWER/FDR family sweep."""
+    """D9/WP8: a multi-metric run opted in with ``family_sweep=True`` (the m7 WP6
+    default flip) also produces the composed FWER/FDR family sweep."""
     warehouse = _seeded_warehouse()
     experiment = _two_tier_experiment()  # arpu + conversion + ctr
     backend = RecomputeBackend(warehouse, experiment)
@@ -220,7 +223,7 @@ def test_run_validation_scores_the_composed_family(monkeypatch):
         METRICS,
         {name: cfg.get_query_text(None) for name, cfg in METRICS.items()},
         _grid(experiment),
-        ValidateSettings(iterations=300),
+        ValidateSettings(iterations=300, family_sweep=True),
         now_iso=NOW_ISO,
     )
     assert result.family is not None
@@ -248,7 +251,7 @@ def test_family_budget_is_anchored_to_the_nominal_rate_not_a_single_cell():
         METRICS,
         {name: cfg.get_query_text(None) for name, cfg in METRICS.items()},
         _grid(experiment),
-        ValidateSettings(iterations=300),
+        ValidateSettings(iterations=300, family_sweep=True),
         now_iso=NOW_ISO,
     )
     single_cell = resolve_fpr_budget(PROJECT, 0.05, None)  # the old (wrong) family budget
@@ -289,7 +292,7 @@ def test_bh_family_budget_anchors_to_member_level_not_the_composition():
         METRICS,
         {name: cfg.get_query_text(None) for name, cfg in METRICS.items()},
         _grid(experiment),
-        ValidateSettings(iterations=300),
+        ValidateSettings(iterations=300, family_sweep=True),
         now_iso=NOW_ISO,
     )
     assert result.family is not None
@@ -308,7 +311,7 @@ def test_metric_filter_skips_the_family_sweep():
         METRICS,
         {name: cfg.get_query_text(None) for name, cfg in METRICS.items()},
         _grid(experiment),
-        ValidateSettings(iterations=300),
+        ValidateSettings(iterations=300, family_sweep=True),
         now_iso=NOW_ISO,
         metric_filter="arpu",  # a single-metric view has no family to compose
     )
@@ -419,3 +422,128 @@ def test_run_validation_is_reproducible():
     )
     assert a.cells[0].fpr == b.cells[0].fpr
     assert a.run_stamp == b.run_stamp  # deterministic, wall-clock-free
+
+
+# ── m7 WP6: the auto-N-per-alpha policy + the family-sweep opt-in ────────────────
+
+
+def test_default_iterations_follows_the_alpha_table():
+    """N = max(2000, ceil(200/α)) — REPORT item 8's table: ~4000 at the 5% main tier,
+    ~40000 at a 0.5% secondary tier; loose alphas keep the pre-WP6 2000 floor."""
+    assert _default_iterations(0.05) == 4000
+    assert _default_iterations(0.025) == 8000
+    assert _default_iterations(0.005) == 40000
+    assert _default_iterations(0.2) == 2000  # ceil(200/0.2)=1000 < the 2000 floor
+    assert _default_iterations(0.0) == 2000  # degenerate alpha: floor, never a crash
+
+
+def test_resolve_iterations_warns_above_threshold_but_never_caps():
+    """§4.1 maintainer call: log-and-continue above 100k, no hard cap — a configured
+    (if extreme) alpha tier must never be silently truncated."""
+    log = []
+    resolved = _resolve_iterations(ValidateSettings(), 0.001, "arpu/t-test", log)
+    assert resolved == 200_000  # uncapped
+    assert len(log) == 1 and "uncapped" in log[0].message and "arpu/t-test" in log[0].message
+    # explicit -n bypasses both the policy and the warning
+    log2 = []
+    assert _resolve_iterations(ValidateSettings(iterations=50), 0.001, "x", log2) == 50
+    assert log2 == []
+    # a modest alpha resolves silently
+    log3 = []
+    assert _resolve_iterations(ValidateSettings(), 0.05, "x", log3) == 4000
+    assert log3 == []
+
+
+def test_auto_iterations_resolve_per_cell_not_once_globally(monkeypatch):
+    """iterations=None resolves at EACH cell's effective alpha (main 0.05 → 4000,
+    secondary 0.025 → 8000 in the two-tier fixture) — never once for the whole run.
+    score_cell is stubbed to raise so the resolved N lands on the (failed) row cheaply."""
+    from abkit.validate import runner as runner_module
+    from abkit.validate._types import ValidateError
+
+    def _boom(*args, **kwargs):
+        raise ValidateError("stub — resolution already happened")
+
+    monkeypatch.setattr(runner_module, "score_cell", _boom)
+    warehouse = _seeded_warehouse()
+    experiment = _two_tier_experiment()
+    backend = RecomputeBackend(warehouse, experiment)
+    result = run_validation(
+        backend,
+        experiment,
+        PROJECT,
+        METRICS,
+        {name: cfg.get_query_text(None) for name, cfg in METRICS.items()},
+        _grid(experiment),
+        ValidateSettings(),  # iterations=None → the auto policy
+        now_iso=NOW_ISO,
+    )
+    assert len(result.cells) == 3
+    for cell in result.cells:
+        assert cell.iterations == _default_iterations(cell.alpha)
+    ns = {c.metric: c.iterations for c in result.cells}
+    assert ns["arpu"] == 4000 and ns["conversion"] == 8000  # tiers resolve differently
+
+
+def test_run_validation_auto_n_scores_for_real():
+    """The happy path under the auto policy: a single-comparison run at α=0.05 really
+    scores 4000 placebo splits (the vectorized engine keeps this cheap) and the
+    persisted-row N records what actually ran, never None."""
+    warehouse = _seeded_warehouse()
+    experiment = make_experiment("aa_auto", "arpu", {"name": "t-test"})
+    backend = RecomputeBackend(warehouse, experiment)
+    result = run_validation(
+        backend,
+        experiment,
+        PROJECT,
+        METRICS,
+        {name: cfg.get_query_text(None) for name, cfg in METRICS.items()},
+        _grid(experiment),
+        ValidateSettings(),
+        now_iso=NOW_ISO,
+    )
+    cell = result.cells[0]
+    assert cell.status == "success" and cell.fpr is not None
+    assert cell.iterations == 4000
+
+
+def test_family_sweep_is_opt_in_with_a_migration_notice():
+    """m7 WP6 default flip: without family_sweep=True a multi-metric run composes NO
+    family — and logs the one-release migration notice naming --family-sweep."""
+    warehouse = _seeded_warehouse()
+    experiment = _two_tier_experiment()
+    backend = RecomputeBackend(warehouse, experiment)
+    result = run_validation(
+        backend,
+        experiment,
+        PROJECT,
+        METRICS,
+        {name: cfg.get_query_text(None) for name, cfg in METRICS.items()},
+        _grid(experiment),
+        ValidateSettings(iterations=300),  # family_sweep defaults to False
+        now_iso=NOW_ISO,
+    )
+    assert result.family is None
+    notices = [d for d in result.decision_log if "--family-sweep" in d.message]
+    assert notices and "skipped" in notices[0].message
+
+
+def test_family_sweep_flag_with_metric_filter_is_logged_not_run():
+    """--family-sweep + --metric: one metric has no family — skip with an explicit log
+    entry (never a half-family compose over whatever panels happened to load)."""
+    warehouse = _seeded_warehouse()
+    experiment = _two_tier_experiment()
+    backend = RecomputeBackend(warehouse, experiment)
+    result = run_validation(
+        backend,
+        experiment,
+        PROJECT,
+        METRICS,
+        {name: cfg.get_query_text(None) for name, cfg in METRICS.items()},
+        _grid(experiment),
+        ValidateSettings(iterations=300, family_sweep=True),
+        now_iso=NOW_ISO,
+        metric_filter="arpu",
+    )
+    assert result.family is None
+    assert any("--family-sweep ignored" in d.message for d in result.decision_log)

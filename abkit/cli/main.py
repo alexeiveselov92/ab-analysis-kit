@@ -197,7 +197,22 @@ def explore(
 )
 @click.option("--metric", help="Validate only this metric (default: every declared comparison)")
 @click.option(
-    "--iterations", "-n", default=2000, show_default=True, help="Placebo A/A splits per cell"
+    "--iterations",
+    "-n",
+    type=int,
+    default=None,
+    help=(
+        "Placebo A/A splits per cell (default: tied to each cell's effective alpha, "
+        "max(2000, ceil(200/alpha)) — e.g. 4000 at the 5% main tier)"
+    ),
+)
+@click.option(
+    "--family-sweep/--no-family-sweep",
+    default=False,
+    help=(
+        "Also run the composed multi-metric FWER/FDR sweep (D9) — roughly doubles the "
+        "cost; before 0.2.0 it always ran when --metric was omitted"
+    ),
 )
 @click.option(
     "--inject-effect",
@@ -229,7 +244,8 @@ def validate(
     select: tuple[str, ...],
     method: tuple[str, ...],
     metric: str | None,
-    iterations: int,
+    iterations: int | None,
+    family_sweep: bool,
     inject_effect: float | None,
     scoring: str,
     report_path: str | None,
@@ -246,7 +262,16 @@ def validate(
     from abkit.cli.commands.validate import run_validate
 
     run_validate(
-        select, method, metric, iterations, inject_effect, scoring, report_path, force, profile
+        select,
+        method,
+        metric,
+        iterations,
+        inject_effect,
+        scoring,
+        report_path,
+        force,
+        profile,
+        family_sweep=family_sweep,
     )
 
 

@@ -55,7 +55,12 @@ The mechanism (aa-false-positive-matrix §1) is a standard permutation-A/A:
 2. **Pool the per-variant unit arrays and permute the unit→arm labels.** Permuting
    labels destroys any true treatment effect, so the split is an **exact null** by
    construction, while still exercising your real metric SQL and cadence.
-3. **A/A (false-positive):** repeat N times (default 2000). Each split runs the
+3. **A/A (false-positive):** repeat N times. Since 0.2.0 the default N is **tied to
+   each cell's effective alpha** — `max(2000, ⌈200/α⌉)`, so ≈4000 at the 5% main tier
+   and ≈40000 at a 0.5% secondary tier — keeping the FPR estimate's _relative_
+   precision roughly constant across tiers (a flat 2000 starves tight secondary
+   alphas). `-n`/`--iterations` remains a hard override for every cell; an auto-N
+   above 100 000 logs a warning but is never capped. Each split runs the
    candidate method(s) and records whether it _falsely_ rejects H₀ at the effective α.
    The **FPR** is the share of placebo runs that flagged significance. The
    significance rule is the readout's own **CI-excludes-zero** test — not the raw
@@ -146,10 +151,15 @@ being changed — and the composed **family** sweep below carries the same twin.
 
 An experiment runs a **family** of metrics under one shared assignment, corrected by
 two-tier Bonferroni (compute-time) then Benjamini-Hochberg (read-time). Per-cell FPR is
-necessary but not sufficient, so `abk validate` also sweeps the empirical **family-wise
-error rate** and **false-discovery rate** over one shared union-cohort placebo
-assignment per iteration, under the _same_ composed rule the readout applies
+necessary but not sufficient, so `abk validate` can also sweep the empirical
+**family-wise error rate** and **false-discovery rate** over one shared union-cohort
+placebo assignment per iteration, under the _same_ composed rule the readout applies
 (aa-false-positive-matrix §8.1).
+
+> **Behavior change in 0.2.0:** the family sweep is now **opt-in** via
+> `--family-sweep`. It used to run automatically on every multi-metric invocation,
+> silently roughly doubling the run's cost; a bare multi-metric `abk validate` now
+> prints a one-release notice pointing at the flag instead.
 
 On the complete null the two rates coincide (every rejection is false) and sit at the
 composed rule's **nominal rate** — ≈ α _per tier_, so ≈ 2α whole-family under the
@@ -173,8 +183,8 @@ item.
 
 ```bash
 abk validate --select <exp> [--method <m>]... [--metric <m>] [--iterations N] \
-             [--inject-effect <rel>] [--scoring fpr|power|mde] [--report] [--force] \
-             [--profile <name>]
+             [--family-sweep] [--inject-effect <rel>] [--scoring fpr|power|mde] \
+             [--report] [--force] [--profile <name>]
 ```
 
 | Flag | Meaning |
@@ -182,7 +192,8 @@ abk validate --select <exp> [--method <m>]... [--metric <m>] [--iterations N] \
 | `--select`, `-s` | Experiment selector — name, path glob, `tag:<tag>`, or `*` (repeatable; default all). |
 | `--method`, `-m` | **Extra** registered method(s) to score **beyond** the declared comparison — this is the method-grid axis (repeatable). |
 | `--metric` | Validate only this metric (default: every declared comparison). |
-| `--iterations`, `-n` | Placebo A/A splits per cell (default `2000`). More = a tighter FPR estimate, more cost. |
+| `--iterations`, `-n` | Placebo A/A splits per cell (default: auto, `max(2000, ⌈200/α⌉)` at each cell's effective alpha — ≈4000 at 5%, ≈40000 at 0.5%). An explicit N overrides every cell. |
+| `--family-sweep` | Also run the composed multi-metric FWER/FDR sweep — roughly doubles the cost. **Opt-in since 0.2.0** (it previously always ran when `--metric` was omitted). |
 | `--inject-effect` | Inject this **relative** effect (e.g. `0.05`) to measure power / achieved MDE / coverage. |
 | `--scoring` | `fpr` (default) / `power` / `mde` — the objective for the **Recommended row only**. All columns are always computed regardless. |
 | `--report` | Emit a self-contained HTML matrix report (best-effort). Bare flag → `reports/<exp>__validate.html`; pass a directory or an `.html` path to override. |

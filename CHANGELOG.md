@@ -13,6 +13,43 @@ number change).
 
 ## [Unreleased]
 
+### Changed
+- **M7 WP6 — the composed family sweep (D9) is opt-in: `--family-sweep`.
+  BEHAVIOR CHANGE.** `abk validate` no longer auto-runs the multi-metric
+  FWER/FDR sweep whenever `--metric` was omitted (it silently roughly doubled
+  every multi-metric run's cost — REPORT item 7); pass `--family-sweep`
+  (`ValidateSettings.family_sweep=True`) to include it. A bare multi-metric
+  run prints a one-release migration notice naming the flag; `--family-sweep`
+  combined with `--metric` is logged-and-skipped (one metric has no family to
+  compose). Scripts or dashboards that relied on the `__family__` sentinel
+  row appearing in `_ab_aa_runs` without any flag must now pass
+  `--family-sweep`. Explore's Auto mode (`POST /validate`) does not opt in —
+  the D3 calibration chip keys on per-cell rows only, so Auto runs get
+  proportionally faster.
+- **M7 WP6 — default placebo iterations are tied to each cell's effective
+  alpha: `max(2000, ⌈200/α⌉)`. BEHAVIOR CHANGE.** The flat
+  `DEFAULT_ITERATIONS = 2000` starved tight secondary-tier alphas (at
+  α = 0.5% a 2000-split FPR estimate carries ~±0.16pp SE against a 0.5%
+  target — REPORT item 8); the default now resolves **per cell** at the
+  cell's effective post-correction alpha (≈4000 at the 5% main tier, ≈40000
+  at a 0.5% secondary tier), so a default run costs more iterations than
+  before — cheap after the WP1–WP5/WP7 vectorization (~10× per whole cell by
+  the WP5 perf gate, ~18× for the family sweep; individual kernels up to ~90×).
+  `-n`/`--iterations` stays a hard override for every cell; the family sweep
+  sizes its shared draw count at the tightest member alpha; the persisted
+  row's `iterations` column records the resolved N that actually ran. Per the
+  m7 §4.1 maintainer call the auto-N is **never hard-capped** — above 100 000
+  the runner logs a warn-and-continue decision entry, echoed by the CLI as a
+  yellow terminal warning, instead of silently truncating a configured alpha
+  tier.
+  *Neither WP6 change moves a statistical number* — Monte-Carlo sample size
+  and which passes run are not method math (no `ALGORITHM_VERSION` bump, no
+  `statistics-changes.md` entry; the exact-null FPR/power columns stay
+  seed-deterministic at any given N, and the exit-gate e2e pins the same
+  numbers under its explicit `iterations=`). This is deliberately distinct
+  from the byte-identical WP1 hot-path fix below — do not conflate the two
+  categories.
+
 ### Added
 - **M7 WP2 — the array-wise significance kernel (`supports_vectorized` +
   `from_suffstats_array`). Purely additive; no statistical numbers changed —

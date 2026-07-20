@@ -139,7 +139,7 @@ def test_family_sentinel_row_is_persisted_and_shaped(warehouse):
     """D9/WP8: a multi-metric run appends one composed-family sentinel row whose details
     carry the FWER/FDR, satisfying save_aa_run and never colliding with a real cell."""
     experiment = _multi_metric_experiment("aa_family")
-    records = aa_run_records(_run(experiment, warehouse))
+    records = aa_run_records(_run(experiment, warehouse, family_sweep=True))
     sentinels = [r for r in records if r["metric"] == "__family__"]
     assert len(sentinels) == 1
     sentinel = sentinels[0]

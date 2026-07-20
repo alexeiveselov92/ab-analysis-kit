@@ -22,7 +22,9 @@ Out-of-band (not in the `run` hot path). Reuses the ported autotune scaffolding
    no exposure-free loader, no torn `_ab_exposures` write (shuffling is in-memory
    only). A dedicated pre-experiment historical window is a recorded follow-up, not a
    correctness gap (the permutation already removes the effect).
-2. **A/A (false-positive):** repeatedly (N iterations, e.g. 1000–10000) draw
+2. **A/A (false-positive):** repeatedly (N iterations; since M7 WP6 the default N
+   is resolved **per cell** as `max(2000, ⌈200/α⌉)` at the cell's effective alpha —
+   see §6) draw
    **placebo splits** where, by construction, there is **no** true effect; run the
    candidate method(s); record whether each falsely rejects H₀ at the configured α.
    **Empirical FPR** = share of placebo runs that flagged significance. A
@@ -127,6 +129,28 @@ bootstrap A/A is the expensive corner. Therefore:
 - parallelize placebo iterations across the now-reentrant `default_rng` generators;
 - document expected runtime/memory as a function of `N × grid × method_class`.
 
+**Iteration policy (M7 WP6, `0.2.0`).** The flat `DEFAULT_ITERATIONS = 2000` is
+replaced by a per-cell default tied to that cell's **effective** alpha:
+`N = max(2000, ⌈200/α⌉)` (`runner._default_iterations`) — ≈4000 at the 5% main tier,
+≈40000 at a 0.5% secondary tier — so the FPR estimate's relative SE stays roughly
+constant across tiers instead of starving tight secondary alphas. `-n`/`--iterations`
+remains a hard override applied to every cell; the persisted row's `iterations`
+column always records the **resolved** N that actually ran. Per the §4.1 maintainer
+call the auto-N is **never hard-capped**: above 100 000 the runner logs a
+warn-and-continue decision entry, and the CLI echoes it as a yellow terminal
+warning — decision-log entries alone never reach `abk validate` stdout (silently
+truncating a configured alpha tier would be worse than a long run now that the
+engine is vectorized). The family sweep sizes
+its one shared draw count at the **tightest** member alpha. In the same WP the
+composed family sweep (D9) stopped auto-running on every multi-metric invocation —
+it is **opt-in via `--family-sweep`** (`ValidateSettings.family_sweep`, default
+`False`); a bare multi-metric run logs a one-release migration notice, and
+`--family-sweep` combined with `--metric` is logged-and-skipped (one metric has no
+family). Auto mode (`POST /validate`) keeps its explicit reduced N and does not opt
+in — the D3 chip keys on per-cell rows only. Neither change moves a statistical
+number (Monte-Carlo sample size and which passes run are not method math): no
+`ALGORITHM_VERSION` bump, no `statistics-changes.md` entry.
+
 ## 7. `_ab_aa_runs` (audit)
 
 **As-built columns (D15 — this supersedes the earlier sketch).** The shipped model
@@ -157,7 +181,8 @@ vs blind-derived methods disagree, this table decides.
 A concrete worked matrix — the readability deliverable (the analyst-facing clarity
 *is* the feature). The numbers below are the deterministic output of `abk validate`
 over the synthetic A/A fixture in `tests/_helpers/synthetic_ab.py` (320 units, a
-14-day daily grid, 2000 placebo splits, nominal α = 5%, `aa_fpr_budget` = α × 1.5 =
+14-day daily grid, an **explicit** 2000 placebo splits — the e2e passes `iterations=`
+so the WP6 auto-N policy is bypassed — nominal α = 5%, `aa_fpr_budget` = α × 1.5 =
 7.5%), pinned by the exit-gate e2e `tests/e2e/test_validate_matrix.py`. The original
 sketch imagined a "well-calibrated z-test / inflated t-test on a ratio"; the real
 fixtures **invert which method breaks** — the mechanism (a variance-underestimating
