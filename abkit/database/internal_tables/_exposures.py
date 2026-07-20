@@ -8,11 +8,11 @@ only ``replace_exposures`` (the loader) and ``purge_experiment`` write here.
 
 from __future__ import annotations
 
-import bisect
 from datetime import datetime
 
 import numpy as np
 
+from abkit.core.exposure_counting import arrival_rate, bucket_timestamps, count_stream
 from abkit.database.internal_tables._base import _InternalTablesBase
 from abkit.database.tables import TABLE_EXPOSURES
 from abkit.utils.datetime_utils import to_naive_utc
@@ -112,7 +112,10 @@ class _ExposuresMixin(_InternalTablesBase):
 
         (v1 reconstructs the full stream each run from ``_ab_exposures``, in
         keeping with the recompute-not-incremental read path; a bucketed-SQL or
-        running-max-carry optimisation is a future v2.)
+        running-max-carry optimisation is a future v2.) The bucketing/bisect
+        math is the shared ``core.exposure_counting`` implementation — the
+        direct-mode driver buckets its in-memory snapshot through the SAME
+        functions (m8 WP4), so the two source modes can never drift.
         """
         if not boundaries:
             return []
@@ -122,23 +125,11 @@ class _ExposuresMixin(_InternalTablesBase):
             "WHERE experiment = %(e)s",
             {"e": experiment},
         )
-        # sorted exposure timestamps per declared variant; bisect_left(b) then
-        # yields exactly the count with exposure_ts < b (the exclusive edge).
-        per_variant: dict[str, list[datetime]] = {v: [] for v in variants}
-        for row in rows:
-            variant = row.get("variant")
-            timestamps = per_variant.get(variant)
-            if timestamps is None:
-                continue  # a variant not declared this run — never counted
-            ts = to_naive_utc(row.get("exposure_ts"))
-            if ts is not None:
-                timestamps.append(ts)
-        for timestamps in per_variant.values():
-            timestamps.sort()
-        return [
-            {v: bisect.bisect_left(per_variant[v], boundary) for v in variants}
-            for boundary in boundaries
-        ]
+        per_variant = bucket_timestamps(
+            ((row.get("variant"), to_naive_utc(row.get("exposure_ts"))) for row in rows),
+            variants,
+        )
+        return count_stream(per_variant, boundaries, variants)
 
     def get_arrival_rate(
         self, experiment: str, variants: list[str]
@@ -155,7 +146,9 @@ class _ExposuresMixin(_InternalTablesBase):
         Returns ``(rates, window_days)`` or ``None`` when the window is degenerate —
         an empty cohort, or all exposures at ~one instant (``max == min``, e.g. a
         backfilled cohort). The caller then SKIPS runtime rather than inventing a rate
-        (never extrapolates from a zero window). Never writes.
+        (never extrapolates from a zero window). Never writes. The rate arithmetic is
+        the shared ``core.exposure_counting.arrival_rate`` — direct mode derives the
+        same numbers from its in-memory snapshot (m8 WP4).
         """
         full_table_name = self._manager.get_full_table_name(TABLE_EXPOSURES, use_internal=True)
         rows = self._manager.execute_query(
@@ -163,28 +156,11 @@ class _ExposuresMixin(_InternalTablesBase):
             "WHERE experiment = %(e)s",
             {"e": experiment},
         )
-        counts: dict[str, int] = dict.fromkeys(variants, 0)
-        earliest: datetime | None = None
-        latest: datetime | None = None
-        for row in rows:
-            variant = row.get("variant")
-            if variant not in counts:
-                continue  # a variant not declared this run — never counted
-            ts = to_naive_utc(row.get("exposure_ts"))
-            if ts is None:
-                continue
-            counts[variant] += 1
-            if earliest is None or ts < earliest:
-                earliest = ts
-            if latest is None or ts > latest:
-                latest = ts
-        if earliest is None or latest is None:
-            return None
-        window_days = (latest - earliest).total_seconds() / 86400.0
-        if window_days <= 0.0:
-            return None
-        rates = {v: counts[v] / window_days for v in variants}
-        return rates, window_days
+        per_variant = bucket_timestamps(
+            ((row.get("variant"), to_naive_utc(row.get("exposure_ts"))) for row in rows),
+            variants,
+        )
+        return arrival_rate(per_variant, variants)
 
     def get_first_exposure_ts(self, experiment: str) -> datetime | None:
         """Earliest exposure timestamp (diagnostics/plan)."""

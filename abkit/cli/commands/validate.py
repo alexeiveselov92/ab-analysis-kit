@@ -132,8 +132,8 @@ def _validate_one(
     force,
     family_sweep,
 ) -> str:
-    from abkit.compute.recompute_backend import RecomputeBackend
     from abkit.database.internal_tables import InternalTablesManager
+    from abkit.loaders.exposure_source import build_cohort_backend
     from abkit.utils.datetime_utils import now_utc_naive
     from abkit.validate import ValidateSettings, aa_run_records, run_validation
 
@@ -167,13 +167,17 @@ def _validate_one(
         renderer = StageLogRenderer(titles=_VALIDATE_STAGE_TITLES)
         try:
             tables.ensure_tables()
-            backend = RecomputeBackend(manager, experiment)
             grid = generate_grid(
                 experiment.start_date,
                 experiment.end_date,
                 experiment.cadence_segments(),
                 tz=experiment.timezone,
             )
+            # the WP4 factory: copy mode joins the persisted cohort (query-free
+            # here), direct mode renders + validates the live source once —
+            # the snapshot is reused by --report so one invocation never
+            # executes the source twice
+            backend, cohort_snapshot = build_cohort_backend(manager, experiment, context.root, grid)
             renderer("load", f"cohort over {len(grid.cutoffs)} cutoffs")
             extra_methods = [MethodConfig(name=name) for name in method_names]
             metric_sqls = {cfg.name: cfg.get_query_text(context.root) for _, cfg in context.metrics}
@@ -241,7 +245,7 @@ def _validate_one(
 
         if report_path is not None:
             try:
-                _emit_report(experiment, context, tables, report_path)
+                _emit_report(experiment, context, tables, report_path, manager, cohort_snapshot)
             except Exception as report_error:  # never fail validate on a report
                 click.echo(click.style(f"  │ Report skipped: {report_error}", fg="yellow"))
         return "completed"
@@ -261,7 +265,9 @@ def _emit_matrix(experiment: str, result) -> None:
         echo_tree(f"{experiment} · {metric}", children)
 
 
-def _emit_report(experiment, context, tables, report_path: str) -> None:
+def _emit_report(
+    experiment, context, tables, report_path: str, manager=None, cohort_snapshot=None
+) -> None:
     """Bake the self-contained readout, now carrying the A/A calibration matrix (WP5).
 
     Reuses the report bundle (D10): ``build_report_payload`` fills the ``calibration``
@@ -277,6 +283,12 @@ def _emit_report(experiment, context, tables, report_path: str) -> None:
         project=context.project,
         metric_configs=context.metrics_by_name,
         generated_at=now_utc_naive().strftime("%Y-%m-%d %H:%M UTC"),
+        # the SRM chip's counts (m8 WP4): reuse the factory's validated
+        # snapshot (direct mode) instead of executing the source a second
+        # time; copy mode (snapshot None) reads the persisted table
+        manager=manager,
+        project_root=context.root,
+        cohort_counts=None if cohort_snapshot is None else cohort_snapshot.counts,
     )
     out = _resolve_report_path(report_path, context.root, experiment.name)
     out.parent.mkdir(parents=True, exist_ok=True)

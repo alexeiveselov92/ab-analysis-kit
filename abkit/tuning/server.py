@@ -558,7 +558,7 @@ def _run_reload(srv: _ExploreServer, metric: str, knobs: KnobState) -> Recompute
     here). Cache entries — and the lookback they were rendered with — are
     replaced in place; the engine then answers from the refreshed session.
     """
-    from abkit.compute.recompute_backend import RecomputeBackend
+    from abkit.loaders.exposure_source import build_cohort_backend
 
     session = cast(ExploreSession, srv.session)
     engine = cast(RecomputeEngine, srv.engine)
@@ -591,7 +591,11 @@ def _run_reload(srv: _ExploreServer, metric: str, knobs: KnobState) -> Recompute
     )
     manager = factory()
     try:
-        backend = RecomputeBackend(manager, session.experiment)
+        # the WP4 factory over the session's cached grid (no re-enumeration):
+        # copy mode joins the persisted cohort, direct mode the live source
+        backend, _ = build_cohort_backend(
+            manager, session.experiment, srv.project_root, session.grid
+        )
         for end_ts in cutoffs:
             loaded = backend.load_cutoff(
                 comparison, series.metric, sql_by_name[metric], session.grid, Cutoff(end_ts=end_ts)
@@ -625,8 +629,8 @@ def _run_validate(srv: _ExploreServer) -> dict[str, Any]:
     restart), and return the recommended knob state + refreshed calibration per
     metric. Runs inside the request lock with its OWN manager and its OWN
     out-of-band ``'validate'`` lock (never the run pipeline's lock, D5)."""
-    from abkit.compute.recompute_backend import RecomputeBackend
     from abkit.database.internal_tables import InternalTablesManager
+    from abkit.loaders.exposure_source import build_cohort_backend
     from abkit.utils.datetime_utils import now_utc_naive
     from abkit.utils.json_utils import json_loads
     from abkit.validate import ValidateSettings, aa_run_records, run_validation
@@ -664,7 +668,7 @@ def _run_validate(srv: _ExploreServer) -> dict[str, Any]:
             )
         try:
             tables.ensure_tables()
-            backend = RecomputeBackend(manager, experiment)
+            backend, _ = build_cohort_backend(manager, experiment, srv.project_root, session.grid)
             result = run_validation(
                 backend,
                 experiment,

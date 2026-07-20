@@ -35,16 +35,16 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from abkit.compute.recompute_backend import RecomputeBackend, dialect_of
 from abkit.config.experiment_config import ExperimentConfig
 from abkit.config.metric_config import MetricConfig
 from abkit.config.project_config import ProjectConfig
+from abkit.core.exposure_counting import bucket_timestamps, count_stream
 from abkit.core.period_planner import backlog_seconds, generate_grid, pending_cutoffs
 from abkit.database.internal_tables import InternalTablesManager
 from abkit.database.manager import BaseDatabaseManager
-from abkit.database.tables import TABLE_EXPOSURES
-from abkit.loaders.exposure_loader import load_exposures
-from abkit.loaders.query_template import RenderWindow, build_builtins
+from abkit.loaders.exposure_loader import persist_snapshot
+from abkit.loaders.exposure_source import build_cohort_backend
+from abkit.loaders.query_template import RenderWindow
 from abkit.pipeline._types import STATUS_COMPLETED, STATUS_FAILED, PipelineStep, RunOutcome
 from abkit.pipeline.analyze import analyze_cutoff, comparison_alpha, effective_alphas
 from abkit.pipeline.enrich import rows_for_cutoff
@@ -193,24 +193,23 @@ def run_experiment(
             limit=project.limits.max_looks,
         )
 
-        # ── LOAD: the cohort, once per run (§5.5) ────────────────────────────
+        # ── LOAD: the cohort source, once per run (§5.5; m8 WP4) ────────────
+        # ONE factory call decides copy-vs-direct for the whole run: the
+        # compute backend below and the SRM counts here read the same
+        # validated source. Direct mode (the default) never writes
+        # ``_ab_exposures``; copy mode persists the snapshot (full reload —
+        # the WP5 incremental engine replaces this write, not the read).
         log(f"LOAD  {experiment.name}: loading exposures")
-        assignment_sql = experiment.assignment.get_query_text(project_root)
-        assignment_builtins = build_builtins(
-            experiment_id=experiment.name,
-            unit_key=experiment.unit_key,
-            variants=experiment.assignment.variants,
-            added_filters=experiment.assignment.added_filters,
-            window=RenderWindow(start_ts=grid.start_ts, end_ts=grid.horizon_ts),
-            data_database=manager.data_location,
-            internal_database=manager.internal_location,
-            exposures_table=TABLE_EXPOSURES,
-            dialect=dialect_of(manager),
+        backend, snapshot = build_cohort_backend(
+            manager, experiment, project_root, grid, with_snapshot=True
         )
-        observed_counts = load_exposures(
-            manager, tables, experiment, assignment_sql, assignment_builtins
-        )
+        assert snapshot is not None  # with_snapshot=True always renders one
+        copy_enabled = experiment.assignment.cohort_copy.enabled
+        if copy_enabled:
+            persist_snapshot(tables, experiment.name, snapshot)
+        observed_counts = dict(snapshot.counts)
         outcome.exposures_loaded = sum(observed_counts.values())
+        outcome.exposure_counts = dict(observed_counts)
 
         # ── SRM gate: blocking-but-non-dropping (§5.4) ───────────────────────
         # The watermark is needed here too: the sub-day gate evaluates every
@@ -228,9 +227,17 @@ def run_experiment(
             # verdict. The gate is NOT gated by demotion — counts/SRM stay
             # visible even where inference is withheld (§6.1(4)).
             looks = [c.end_ts for c in grid.cutoffs if c.end_ts <= watermark_ts]
-            stream = tables.get_exposure_count_stream(
-                experiment.name, looks, list(experiment.assignment.variants)
-            )
+            variants = list(experiment.assignment.variants)
+            if copy_enabled:
+                stream = tables.get_exposure_count_stream(experiment.name, looks, variants)
+            else:
+                # direct mode: the persisted copy does not exist — bucket the
+                # in-memory snapshot through the SAME core.exposure_counting
+                # math the mixin uses (one bisect implementation, WP4 step 4)
+                per_variant = bucket_timestamps(
+                    ((variant, ts) for variant, ts, _ in snapshot.by_unit.values()), variants
+                )
+                stream = count_stream(per_variant, looks, variants)
             look_results = sequential_multinomial_srm(stream, experiment.assignment.expected_split)
             srm_by_cutoff = dict(zip(looks, look_results, strict=True))
             srm = (
@@ -264,9 +271,7 @@ def run_experiment(
             tables.release_lock(experiment.name, LOCK_SCOPE, LOCK_PROCESS, STATUS_COMPLETED)
             return outcome
 
-        # ── PLAN + COMPUTE per comparison ────────────────────────────────────
-        backend = RecomputeBackend(manager, experiment, exposures_table=TABLE_EXPOSURES)
-
+        # ── PLAN + COMPUTE per comparison (backend built by the WP4 factory) ─
         for comparison in experiment.comparisons:
             metric = metrics_by_name[comparison.metric]
             method_config_id = comparison.method.method_config_id

@@ -74,6 +74,17 @@ def make_experiment(**overrides) -> ExperimentConfig:
     return ExperimentConfig.model_validate(config)
 
 
+#: the persisted-table (copy-mode) assignment block — since m8 WP4 the SRM
+#: chip reads _ab_exposures only under cohort_copy.enabled (direct mode
+#: snapshots the live source, or shows zeros without a manager)
+COPY_ASSIGNMENT = {
+    "query": "SELECT 1",
+    "variants": ["control", "treatment"],
+    "expected_split": {"control": 0.5, "treatment": 0.5},
+    "cohort_copy": {"enabled": True},
+}
+
+
 def make_row(experiment: ExperimentConfig, metric: str = "revenue", **overrides) -> dict:
     """One full-contract ``_ab_results`` row (the WP1 fixture shape)."""
     try:
@@ -681,16 +692,26 @@ class TestVerdictsAndSrm:
         )
 
     def test_srm_observed_from_exposures(self, tables):
-        experiment = make_experiment()
+        # copy mode: the chip reads the persisted table (m8 WP4 dual-path)
+        experiment = make_experiment(assignment=COPY_ASSIGNMENT)
         seed_series(tables, experiment)
         self.seed_exposures(tables, experiment)
         payload = build_report_payload(experiment, tables)
         assert payload["srm"]["observed"] == {"control": 2, "treatment": 2}
 
+    def test_srm_observed_zeros_in_direct_mode_without_a_manager(self, tables):
+        # direct mode without a manager must NEVER read the (unmaintained,
+        # possibly stale copy-era) persisted table — zeros are the honest face
+        experiment = make_experiment()
+        seed_series(tables, experiment)
+        self.seed_exposures(tables, experiment)  # stale rows from a copy-era run
+        payload = build_report_payload(experiment, tables)
+        assert payload["srm"]["observed"] == {"control": 0, "treatment": 0}
+
     def test_srm_observed_whole_cohort_under_replay(self, tables):
         """A pinned end does NOT subset observed: it must stay coherent with
         the whole-run srm flag/pvalue the driver broadcast onto every row."""
-        experiment = make_experiment()
+        experiment = make_experiment(assignment=COPY_ASSIGNMENT)
         seed_series(tables, experiment)
         self.seed_exposures(tables, experiment)
         payload = build_report_payload(experiment, tables, end=START + timedelta(days=7))
@@ -717,7 +738,7 @@ class TestVerdictsAndSrm:
         """An empty pin (no charted rows) must not silence a failing SRM gate:
         observed stays whole-cohort and flag/pvalue come from the latest row
         overall (the critic's silent-SRM hole — §6 must-fix)."""
-        experiment = make_experiment()
+        experiment = make_experiment(assignment=COPY_ASSIGNMENT)
         rows = [make_row(experiment, day=d, srm_flag=True, srm_pvalue=1e-9) for d in range(10, 15)]
         save_rows(tables, rows)
         self.seed_exposures(tables, experiment)  # 2:2 here, but flag is set
@@ -995,3 +1016,91 @@ class TestJsonSafety:
         # strict: rejects NaN/inf; TypeError on datetime/numpy leftovers
         round_tripped = json.loads(json.dumps(payload, allow_nan=False))
         assert round_tripped == payload
+
+
+# ── m8 WP4: the SRM chip's observed counts follow the cohort-source switch ────
+
+
+class _ScriptedAssignmentSource(FakeDatabaseManager):
+    """Serves the assignment probe/pushdown from scripted rows (direct mode)."""
+
+    def __init__(self, raw: list[dict]):
+        super().__init__()
+        self._raw = raw
+
+    def execute_query(self, query, params=None):
+        flat = " ".join(query.split())
+        if "_abk_probe" in flat or "_abk_raw" in flat:
+            from tests._helpers.fake_db import serve_assignment_pushdown
+
+            return serve_assignment_pushdown(self._project, flat, self._raw)
+        return super().execute_query(query, params)
+
+
+class _UntouchableManager(FakeDatabaseManager):
+    """Proves a payload build never reaches the assignment source."""
+
+    def execute_query(self, query, params=None):
+        raise AssertionError(f"this build must not query the warehouse: {query!r}")
+
+
+class TestSrmObservedSourceModes:
+    def test_direct_mode_snapshots_the_live_source(self, tables):
+        # default (no-copy): _ab_exposures is never written — given a manager,
+        # the chip's counts come from a fresh snapshot of the live source
+        experiment = make_experiment()
+        seed_series(tables, experiment)
+        raw = [
+            {"user_id": "u1", "variant": "control", "exposure_ts": START},
+            {"user_id": "u2", "variant": "control", "exposure_ts": START},
+            {"user_id": "u3", "variant": "treatment", "exposure_ts": START},
+        ]
+        payload = build_report_payload(
+            experiment, tables, manager=_ScriptedAssignmentSource(raw), project_root=None
+        )
+        assert payload["srm"]["observed"] == {"control": 2, "treatment": 1}
+
+    def test_direct_mode_empty_source_reads_as_zeros(self, tables):
+        # a not-yet-launched source shows the same face a missing table did
+        experiment = make_experiment()
+        seed_series(tables, experiment)
+        payload = build_report_payload(
+            experiment, tables, manager=_ScriptedAssignmentSource([]), project_root=None
+        )
+        assert payload["srm"]["observed"] == {"control": 0, "treatment": 0}
+
+    def test_cohort_counts_override_wins_without_a_source_query(self, tables):
+        # explore passes its startup snapshot — no second source execution
+        experiment = make_experiment()
+        seed_series(tables, experiment)
+        payload = build_report_payload(
+            experiment,
+            tables,
+            manager=_UntouchableManager(),
+            project_root=None,
+            cohort_counts={"control": 7, "treatment": 5},
+        )
+        assert payload["srm"]["observed"] == {"control": 7, "treatment": 5}
+
+    def test_copy_mode_reads_the_persisted_table_never_the_source(self, tables):
+        experiment = make_experiment(
+            assignment={
+                "query": "SELECT 1",
+                "variants": ["control", "treatment"],
+                "expected_split": {"control": 0.5, "treatment": 0.5},
+                "cohort_copy": {"enabled": True},
+            }
+        )
+        seed_series(tables, experiment)
+        tables.replace_exposures(
+            experiment.name,
+            {
+                "unit_id": np.array(["u1", "u2", "u3", "u4"], dtype=object),
+                "variant": np.array(["control", "control", "treatment", "treatment"], dtype=object),
+                "exposure_ts": np.array([START] * 4, dtype=object),
+            },
+        )
+        payload = build_report_payload(
+            experiment, tables, manager=_UntouchableManager(), project_root=None
+        )
+        assert payload["srm"]["observed"] == {"control": 2, "treatment": 2}

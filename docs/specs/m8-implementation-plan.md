@@ -841,12 +841,19 @@ explicit sign-off before or during the WP that depends on it.
    previously-copied cohort, and does its name collide with the EXISTING
    per-comparison `--full-refresh` flag in `driver.py`? (WP5) — the flag name
    must be confirmed before WP5 ships; do not invent one unilaterally.
+   **SETTLED by the maintainer at WP4 (2026-07-20): `abk run
+   --resync-cohort`** — a dedicated flag; `--full-refresh` keeps its existing
+   results-window semantics untouched, the two never overload each other.
 3. **Is the late-arriving/out-of-order-row limitation of the incremental
    copy acceptable as a documented limitation** matching detectkit's own
    donor behavior, or does it need a configurable overlap/grace-window on top
    of the watermark before this ships? (WP5) — the track plan's recommendation
    is **doc-only** (yes, ship the documented limitation as-is); needs
    maintainer sign-off, not a default assumption.
+   **SETTLED by the maintainer at WP4 (2026-07-20): doc-only.** WP5 ships the
+   donor watermark behavior as-is with the prominent WP7 documentation
+   callout ("a mutating/backfilling source should use the no-copy default or
+   a `--resync-cohort` recovery"); no overlap/grace-window knob is added.
 4. **For `abk plan`/`abk explore`/BI re-executing the assignment SQL fresh on
    every invocation in no-copy default (WP4)** — is this an acceptable cost
    tradeoff for all users, or should these commands warn/refuse when the
@@ -858,6 +865,9 @@ explicit sign-off before or during the WP that depends on it.
    is a docs-only callout ("enable copy for a mutating source") sufficient?
    The current design recommends **docs-only** to avoid adding a round-trip
    that partially defeats the no-copy performance goal — needs sign-off.
+   **SETTLED by the maintainer at WP4 (2026-07-20): docs-only**, as
+   implemented — no runtime drift warning; the WP7 guides carry the "enable
+   `cohort_copy` for a heavy or mutating source" caveat.
 
 ---
 

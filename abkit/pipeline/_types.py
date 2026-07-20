@@ -46,6 +46,10 @@ class RunOutcome:
     status: str = "completed"  # completed | failed | locked | skipped
     error: str | None = None
     exposures_loaded: int = 0
+    #: per-variant deduped unit counts from this run's validated snapshot
+    #: (m8 WP4) — lets `--report` reuse them instead of re-executing the
+    #: assignment source; empty when the LOAD stage did not run
+    exposure_counts: dict[str, int] = field(default_factory=dict)
     srm_flagged: bool = False
     cutoffs_planned: int = 0
     results_written: int = 0

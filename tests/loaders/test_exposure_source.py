@@ -23,7 +23,9 @@ from abkit.loaders.exposure_source import (
     ExposureLoadError,
     ExposureSnapshot,
     _pushdown_sql,
+    build_cohort_backend,
     probe_has_stratum,
+    render_assignment_sql,
     validate_and_snapshot,
 )
 from abkit.utils.datetime_utils import to_naive_utc
@@ -334,3 +336,149 @@ class TestNoWarningPath:
             snap = validate_and_snapshot(manager, experiment, RENDERED)
         legacy_counts, _ = _legacy_seen(manager.scripted_rows, "user_id", set())
         assert snap.counts == legacy_counts
+
+
+# ── m8 WP4: render_assignment_sql + build_cohort_backend ────────────────────────
+
+METRIC_TEMPLATE = (
+    "{% import 'abkit_assignment.jinja' as ab %}"
+    "SELECT {{ ab.variant_col() }} AS variant, user_id, sum(v) AS v "
+    "FROM {{ data_database }}.facts {{ ab.exposed_units() }} GROUP BY variant, user_id"
+)
+
+
+class _UntouchableManager(FakeDatabaseManager):
+    """Proves a code path never reaches the warehouse."""
+
+    def execute_query(self, query, params=None):
+        raise AssertionError(f"this path must be warehouse-free, executed: {query!r}")
+
+
+def _grid(experiment):
+    from abkit.core.period_planner import generate_grid
+
+    return generate_grid(
+        experiment.start_date,
+        experiment.end_date,
+        experiment.cadence_segments(),
+        tz=experiment.timezone,
+    )
+
+
+def _copy_experiment():
+    return make_experiment(
+        assignment={
+            "query": "SELECT user_id, variant, exposure_ts FROM assignments",
+            "variants": ["control", "treatment"],
+            "expected_split": {"control": 0.5, "treatment": 0.5},
+            "cohort_copy": {"enabled": True},
+        }
+    )
+
+
+class TestRenderAssignmentSql:
+    def test_renders_the_driver_identical_full_window(self, manager):
+        # the window built-ins must span [grid.start_ts, grid.horizon_ts) — the
+        # same tz-snapped edges the driver's historical LOAD render used
+        experiment = make_experiment(
+            assignment={
+                "query": (
+                    "SELECT user_id, variant, exposure_ts FROM assignments "
+                    "WHERE exposure_ts >= '{{ ab_start_ts }}' "
+                    "AND exposure_ts < '{{ ab_end_ts }}' {{ ab_added_filters }}"
+                ),
+                "variants": ["control", "treatment"],
+                "expected_split": {"control": 0.5, "treatment": 0.5},
+            }
+        )
+        grid = _grid(experiment)
+        rendered = render_assignment_sql(manager, experiment, None, grid)
+        assert grid.start_ts.strftime("%Y-%m-%d %H:%M:%S") in rendered
+        assert grid.horizon_ts.strftime("%Y-%m-%d %H:%M:%S") in rendered
+        assert "{{" not in rendered  # fully rendered, ab_added_filters included
+
+
+class TestBuildCohortBackend:
+    def test_direct_default_threads_source_and_probed_stratum(self, manager, experiment):
+        from abkit.loaders.query_template import RenderWindow
+
+        manager.scripted_rows = [row("u1", "control"), row("u2", "treatment")]
+        grid = _grid(experiment)
+        backend, snapshot = build_cohort_backend(manager, experiment, None, grid)
+
+        # the snapshot comes back validated even without with_snapshot (direct
+        # mode renders anyway); has_stratum probed off the source's own columns
+        assert snapshot is not None
+        assert snapshot.counts == {"control": 1, "treatment": 1}
+        assert snapshot.has_stratum is False
+
+        rendered = backend.render(
+            METRIC_TEMPLATE, RenderWindow(grid.start_ts, grid.cutoffs[0].end_ts)
+        )
+        # the metric render joins the deduping direct fragment, not the copy
+        assert "_abk_raw" in rendered
+        assert "NULL AS stratum" in rendered
+        assert "_ab_exposures" not in rendered
+        # ... and embeds the driver-identical rendered assignment SQL verbatim
+        assert render_assignment_sql(manager, experiment, None, grid) in rendered
+
+    def test_direct_mode_stratum_source_projects_min_stratum(self, manager):
+        from abkit.loaders.query_template import RenderWindow
+
+        experiment = make_experiment()
+        manager.scripted_rows = [
+            row("u1", "control", stratum="ru"),
+            row("u2", "treatment", stratum="de"),
+        ]
+        grid = _grid(experiment)
+        backend, snapshot = build_cohort_backend(manager, experiment, None, grid)
+        assert snapshot is not None and snapshot.has_stratum is True
+        rendered = backend.render(
+            METRIC_TEMPLATE, RenderWindow(grid.start_ts, grid.cutoffs[0].end_ts)
+        )
+        assert "MIN(stratum) AS stratum" in rendered
+
+    def test_copy_mode_is_warehouse_free_without_snapshot(self):
+        from abkit.loaders.query_template import RenderWindow
+
+        experiment = _copy_experiment()
+        manager = _UntouchableManager()  # raises on ANY query
+        grid = _grid(experiment)
+        backend, snapshot = build_cohort_backend(manager, experiment, None, grid)
+        assert snapshot is None  # read-only callers stay cheap in copy mode
+        rendered = backend.render(
+            METRIC_TEMPLATE, RenderWindow(grid.start_ts, grid.cutoffs[0].end_ts)
+        )
+        assert "._ab_exposures" in rendered  # the persisted join, unchanged
+        assert "_abk_raw" not in rendered
+
+    def test_copy_mode_with_snapshot_validates_but_keeps_the_persisted_join(self, manager):
+        from abkit.loaders.query_template import RenderWindow
+
+        experiment = _copy_experiment()
+        manager.scripted_rows = [row("u1", "control"), row("u2", "treatment")]
+        grid = _grid(experiment)
+        backend, snapshot = build_cohort_backend(
+            manager, experiment, None, grid, with_snapshot=True
+        )
+        assert snapshot is not None
+        assert snapshot.counts == {"control": 1, "treatment": 1}
+        rendered = backend.render(
+            METRIC_TEMPLATE, RenderWindow(grid.start_ts, grid.cutoffs[0].end_ts)
+        )
+        assert "._ab_exposures" in rendered
+        assert "_abk_raw" not in rendered
+
+    def test_factory_never_writes(self, manager, experiment):
+        # persistence belongs to the caller that owns writes (the driver's
+        # copy-mode persist_snapshot) — the factory itself is read-only
+        manager.scripted_rows = [row("u1", "control"), row("u2", "treatment")]
+        build_cohort_backend(manager, experiment, None, _grid(experiment), with_snapshot=True)
+        assert manager._rows.get("_ab_exposures", []) == []
+
+    def test_direct_mode_surfaces_the_cross_variant_hard_error(self, manager, experiment):
+        # a corrupted LIVE source must fail the factory before any metric
+        # joins it — the same wording the historical loader used
+        manager.scripted_rows = [row("u1", "control"), row("u1", "treatment")]
+        with pytest.raises(ExposureLoadError, match="assigned to BOTH"):
+            build_cohort_backend(manager, experiment, None, _grid(experiment))

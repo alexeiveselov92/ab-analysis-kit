@@ -182,3 +182,25 @@ class TestServePath:
         assert "abk clean" in result.output
         assert f"abk run --select {EXP}" in result.output
         assert "Applied to" in result.output
+
+
+def test_direct_mode_source_failure_exits_clean(computed, monkeypatch):
+    """m8 WP4: a live source that emptied since the last run must fail the
+    house way (ClickException → clean non-zero exit + actionable message),
+    never a raw traceback — the factory validates at explore startup."""
+    original = SeedMirrorWarehouse.execute_query
+
+    def emptied(self, query, params=None):
+        flat = " ".join(query.split())
+        if "example_ab_assignments" in flat and "example_signup_events" not in flat:
+            from fake_db import serve_assignment_pushdown
+
+            return serve_assignment_pushdown(self._project, flat, [])
+        return original(self, query, params)
+
+    monkeypatch.setattr(SeedMirrorWarehouse, "execute_query", emptied)
+    result = runner.invoke(cli, ["explore", "--select", EXP, "--no-serve"])
+    assert result.exit_code != 0
+    assert "cohort source failed validation" in result.output
+    assert "returned no rows" in result.output
+    assert "Traceback" not in result.output

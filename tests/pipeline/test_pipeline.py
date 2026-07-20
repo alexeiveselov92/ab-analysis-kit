@@ -656,3 +656,86 @@ class TestCuped:
         assert rows[-1]["effect"] is not None
         assert rows[-1]["method_name"] == "cuped-t-test"
         assert '"covariate_lookback":"14d"' in rows[-1]["method_params"]
+
+
+class TestCohortModeParity:
+    """m8 WP4: ONE source switch — identical numbers, opposite write paths."""
+
+    @staticmethod
+    def _copy_experiment(**overrides) -> ExperimentConfig:
+        assignment = {
+            "query": "SELECT user_id, variant, exposure_ts FROM assignments",
+            "variants": ["control", "treatment"],
+            "expected_split": {"control": 0.5, "treatment": 0.5},
+            "cohort_copy": {"enabled": True},
+        }
+        return make_experiment(assignment=assignment, **overrides)
+
+    @staticmethod
+    def _comparable(rows: list[dict]) -> list[dict]:
+        """Results rows minus the two legitimately mode-variant columns:
+        ``created_at`` (a wall-clock version stamp) and
+        ``metric_rendered_query`` (direct mode embeds the assignment subquery
+        BY DESIGN — provenance, not a number)."""
+        volatile = {"created_at", "metric_rendered_query"}
+        stripped = [{k: v for k, v in r.items() if k not in volatile} for r in rows]
+        return sorted(
+            stripped,
+            key=lambda r: (str(r["end_ts"]), str(r["name_1"]), str(r["name_2"])),
+        )
+
+    def test_direct_default_never_writes_exposures(self, warehouse, tables):
+        outcome = run(warehouse, tables)
+        assert outcome.status == "completed", outcome.error
+        assert outcome.exposures_loaded == 300  # the snapshot still feeds SRM
+        # the no-copy default: zero _ab_exposures rows on the hot path
+        assert warehouse._rows.get("_ab_exposures", []) == []
+
+    def test_copy_mode_persists_and_numbers_match_direct(self, warehouse, tables):
+        direct_outcome = run(warehouse, tables)
+        assert direct_outcome.status == "completed", direct_outcome.error
+        direct_rows = tables.load_results("signup_test")
+
+        wh2 = SyntheticWarehouse()
+        seed_cohort(wh2)
+        seed_events(wh2)
+        tables2 = InternalTablesManager(wh2)
+        copy_outcome = run(wh2, tables2, experiment=self._copy_experiment())
+        assert copy_outcome.status == "completed", copy_outcome.error
+        # the opt-in copy persists the full deduped cohort
+        assert len(wh2._rows.get("_ab_exposures", [])) == 300
+        assert copy_outcome.exposures_loaded == direct_outcome.exposures_loaded
+
+        # the milestone's core numeric-parity gate: every persisted number is
+        # identical across modes on a well-formed cohort
+        copy_rows = tables2.load_results("signup_test")
+        assert self._comparable(direct_rows) == self._comparable(copy_rows)
+
+    def test_subday_srm_stream_is_mode_invariant(self):
+        """The sub-day anytime-valid SRM sees the SAME cumulative count stream
+        whether it is bucketed from the persisted copy (mixin) or the
+        in-memory snapshot (driver direct mode) — one bisect implementation."""
+        verdicts: dict[str, list[tuple]] = {}
+        for mode in ("direct", "copy"):
+            wh = SyntheticWarehouse()
+            seed_subday_cohort(wh)
+            tbl = InternalTablesManager(wh)
+            experiment = (
+                make_experiment(
+                    start_date="2024-07-01", end_date="2024-07-01", cadence="6h", data_lag="1h"
+                )
+                if mode == "direct"
+                else self._copy_experiment(
+                    start_date="2024-07-01", end_date="2024-07-01", cadence="6h", data_lag="1h"
+                )
+            )
+            outcome = run(wh, tbl, experiment=experiment)
+            assert outcome.status == "completed", outcome.error
+            rows = sorted(tbl.load_results("signup_test"), key=lambda r: r["end_ts"])
+            verdicts[mode] = [
+                (str(r["end_ts"]), r["srm_flag"], r["srm_pvalue"], r["decision_blocked"])
+                for r in rows
+            ]
+        assert verdicts["direct"] == verdicts["copy"]
+        # the fixture is built to trip at look 2 — prove the gate actually bit
+        assert [flag for _, flag, _, _ in verdicts["direct"]] == [False, True, True, True]
