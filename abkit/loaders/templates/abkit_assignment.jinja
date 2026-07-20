@@ -7,10 +7,15 @@ The PACKAGED assignment macro (declarative-config.md §4 — the quorum
 and describes ONLY the metric aggregation; the correctness-critical
 cohort join, window filter and dedup live here, once:
 
-- ab.exposed_units() — JOINs the persisted _ab_exposures cohort (loaded
-  once per run), deduped per dialect (FINAL on ClickHouse — a mid-merge
+- ab.exposed_units() — JOINs the deduped cohort through the ONE
+  ab_cohort_source builtin (built in Python, query_template.build_builtins;
+  m8-implementation-plan.md WP3), which is either the persisted
+  _ab_exposures copy (cohort-copy mode; FINAL on ClickHouse — a mid-merge
   ReplacingMergeTree must never yield a unit twice; PG/MySQL enforce the
-  PK), and applies BOTH the coarse event_date predicate (Date partition
+  PK) or a deduping GROUP BY subquery wrapping the rendered assignment SQL
+  itself (direct mode — MIN(exposure_ts) per (unit, variant), the same
+  aggregation the exposure validation pushdown runs). Either way this
+  macro applies BOTH the coarse event_date predicate (Date partition
   pruning) and the precise half-open event_time window
   (cumulative-intervals.md §6.4). The exposure_ts filter is dropped when
   the loader renders the pre-period covariate window
@@ -28,8 +33,8 @@ assignment.added_filters is deliberately NOT injected here: it filters the
 ASSIGNMENT (cohort) query only — silently narrowing every metric's fact
 scan would change numbers invisibly.
 
-Validation asserts the rendered SQL joins _ab_exposures; a metric authored
-without this macro fails config-lint.
+Validation asserts the rendered SQL joins the cohort through this macro
+(the _abk_exposures alias); a metric authored without it fails config-lint.
 -#}
 
 {%- macro _unit_key_str() -%}
@@ -45,7 +50,7 @@ INNER JOIN (
         variant     AS _abk_variant,
         exposure_ts AS _abk_exposure_ts,
         stratum     AS _abk_stratum
-    FROM {{ ab_exposures_table }}{% if ab_dialect == 'clickhouse' %} FINAL{% endif %}
+    FROM {{ ab_cohort_source }}{# the comment tag makes trim_blocks eat this newline, exactly like the pre-WP3 '{% endif %}' did — copy-mode renders stay byte-identical #}
     WHERE experiment = '{{ ab_experiment_id }}'
 ) AS _abk_exposures ON _abk_exposures._abk_unit_id = {{ _unit_key_str() }}
 WHERE {{ event_date_col }} >= '{{ ab_start_date }}'
