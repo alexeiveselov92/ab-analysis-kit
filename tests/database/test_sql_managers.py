@@ -259,6 +259,12 @@ class TestInsertConflict:
 
 class TestDeleteAndUpsert:
     def test_delete_rows_uses_plain_delete(self, mgr_conn):
+        """Pins the DELETE statement shape the maintenance paths issue on
+        ``_ab_exposures`` — ``delete_exposures`` (``abk run --resync-cohort``
+        and the external ``replace_exposures`` orchestration) and
+        ``purge_experiment``'s per-table loop. Since m8 WP5 the ROUTINE
+        copy-mode write is the append-only incremental engine and never
+        deletes."""
         mgr, conn, _ = mgr_conn
         conn.next_rowcount = 3
         n = mgr.delete_rows("abk._ab_exposures", "experiment = %(e)s", {"e": "signup"}, sync=True)
