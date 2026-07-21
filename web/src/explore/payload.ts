@@ -91,6 +91,10 @@ export interface MetricSurface {
     cutoffs: number[];
     /** cached cutoffs where every variant carries a covariate */
     covariate_cutoffs: number[];
+    /** the CONFIGURED series' persisted rows carry full covariate moments —
+     * Tier-E reconstructable with no cache (M9 WP2); exempts a switch back
+     * to the configured covariate method from the reload demand */
+    covariate_moment_rows: boolean;
     disabled_reason: string | null;
   };
   calibration: CalibrationStatus;

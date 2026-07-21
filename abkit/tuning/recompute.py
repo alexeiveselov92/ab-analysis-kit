@@ -417,8 +417,6 @@ def _exact_suffstats(
     method_cls: type[BaseMethod],
     row: dict,
     resolved_params: Mapping[str, Any] | None = None,
-    *,
-    covariate_declared: bool = False,
 ) -> tuple[Any, Any] | None:
     """Tier E: both arms' suffstats containers from one persisted row, or
     ``None`` when this family/row is not exactly reconstructable.
@@ -426,9 +424,13 @@ def _exact_suffstats(
     The covariate family (``requires_covariate``) is additionally gated on the
     live ``covariate_lookback`` matching the value the row was computed with
     (its persisted ``method_params``) — a changed lookback is a NEW pre-period
-    render (Tier R), never a silent reconstruction against a stale covariate.
-    ``covariate_declared`` metrics carry the covariate in their own SQL, so
-    the lookback never shapes their moments (the ``_cache_serves`` mirror).
+    render (Tier R, matching ``classify_knob``'s unconditional ``R`` for this
+    knob), never a silent reconstruction against a stale covariate. The
+    comparison is UNCONDITIONAL — unlike ``_cache_serves``, which skips it for
+    declared-covariate metrics because the cache is a fresh live load, a
+    persisted row is frozen: its moments were computed under whatever
+    covariate source the config had at write time, so equal lookbacks are the
+    strongest reconstruction claim this function can honestly make.
     """
     if _needs_seed(method_cls):
         return None
@@ -452,11 +454,10 @@ def _exact_suffstats(
         if method_cls.requires_covariate:
             if size_1 < 2 or size_2 < 2:
                 return None  # θ's ddof=1 terms need n ≥ 2 per arm
-            if not covariate_declared:
-                requested = _lookback_seconds((resolved_params or {}).get("covariate_lookback"))
-                row_lookback = _parse_params(row.get("method_params")).get("covariate_lookback")
-                if requested != _lookback_seconds(row_lookback):
-                    return None  # a different pre-period — Tier R, not a reconstruction
+            requested = _lookback_seconds((resolved_params or {}).get("covariate_lookback"))
+            row_lookback = _parse_params(row.get("method_params")).get("covariate_lookback")
+            if requested != _lookback_seconds(row_lookback):
+                return None  # a different pre-period — Tier R, not a reconstruction
             fields_1 = _covariate_suffstats_fields(row, size_1, m2_1, "1")
             fields_2 = _covariate_suffstats_fields(row, size_2, m2_2, "2")
             if fields_1 is None or fields_2 is None:
@@ -606,6 +607,18 @@ class RecomputeEngine:
             if loaded is not None and loaded.roles_by_variant:
                 if all("covariate" in roles for roles in loaded.roles_by_variant.values()):
                     covariate_cutoffs.append(ts)
+        # M9 WP2: whether the CONFIGURED series' persisted rows carry the full
+        # covariate moments (Tier-E reconstructable without any cache) — the
+        # client's reload heuristic exempts a switch BACK to the configured
+        # covariate method when this is true (no warehouse trip needed).
+        covariate_moment_rows = any(
+            all(
+                _row_float(row, f"{column}_{suffix}") is not None
+                for column in ("cov_value", "cov_std", "corr_coef")
+                for suffix in ("1", "2")
+            )
+            for row in series.rows
+        )
         return {
             "metric": metric,
             "metric_type": series.metric.type,
@@ -619,6 +632,7 @@ class RecomputeEngine:
             "cache": {
                 "cutoffs": cached,
                 "covariate_cutoffs": covariate_cutoffs,
+                "covariate_moment_rows": covariate_moment_rows,
                 "disabled_reason": self._session.cache_disabled_reason,
             },
         }
@@ -757,12 +771,7 @@ class RecomputeEngine:
             return self._baseline_point(row)
 
         # Tier E — exact reconstruction, whole grid.
-        containers = _exact_suffstats(
-            method_cls,
-            row,
-            resolved_params,
-            covariate_declared=series.metric.columns.covariate is not None,
-        )
+        containers = _exact_suffstats(method_cls, row, resolved_params)
         if containers is not None and reusable is not None:
             result, caught = _compare(reusable, *containers)
             return self._point_from_result(row, result, caught, tier="exact")
@@ -842,10 +851,11 @@ class RecomputeEngine:
         CI — mirroring ``driver._sequential_tau2``'s D-Seq-anchor via the SAME
         ``se_from_ci_length``/``mixture_tau2`` helpers — then widen every reconstructed
         (Tier E/S) point with ``to_always_valid``. For fully Tier-E-reconstructable
-        families (t/z/ratio) the recovered fixed CI equals the pipeline's pre-widening
-        CI, so the configured knob state reproduces the baked always-valid bounds. (A
-        partially-cached CUPED default may anchor τ² a look later than the pipeline —
-        its uncached first look has no ``result`` to invert — still a valid confidence
+        families (t/z/ratio, and CUPED since M9 WP2) the recovered fixed CI equals the
+        pipeline's pre-widening CI, so the configured knob state reproduces the baked
+        always-valid bounds. (A partially-cached PRE-MIGRATION CUPED series — NULL
+        covariate-moment columns — may anchor τ² a look later than the pipeline: its
+        uncached first look has no ``result`` to invert — still a valid confidence
         sequence, never a vocabulary mix.)
 
         - **Tier E/S** points carry the raw fixed ``result`` → widened.
@@ -1067,11 +1077,18 @@ class RecomputeEngine:
                     ratio=nobs_2 / nobs_1,
                 )
             elif _needs_covariate(method_cls):
-                corr = self._control_corr(series, latest.end_ts, name_1)
+                # M9 WP2: a Tier-E/S point's raw result carries the control
+                # arm's correlation (the same persisted/reconstructed moments
+                # the point itself was computed from) — read it first so the
+                # chip agrees with the exact point beside it; fall back to the
+                # session cache for pre-migration (moment-less) rows.
+                corr = _clean(latest.result.corr_coef_1) if latest.result is not None else None
+                if corr is None:
+                    corr = self._control_corr(series, latest.end_ts, name_1)
                 if corr is None:
                     return None, (
-                        "CUPED power needs the covariate correlation — "
-                        "cutoff not in the session cache"
+                        "CUPED power needs the covariate correlation — not "
+                        "reconstructable from this row and not in the session cache"
                     )
                 power = get_cuped_ttest_power(
                     latest.value_1,

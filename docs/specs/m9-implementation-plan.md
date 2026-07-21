@@ -338,6 +338,40 @@ not just extended; `TestKnobSurface::test_tier_classification_table`, ~497).
 
 **Session estimate:** 1 session.
 
+> **As-built note (2026-07-21, the WP2 session).** Shipped as specified with
+> four disclosed deviations: (1) `abkit/stats/samples.py` was listed in
+> "Files touched" but needed **no change** — the `SufficientStats`
+> constructor and `cov_std`/`corr_coef` properties already support the
+> reconstruction; the stats core is untouched by this WP. (2) The helper's
+> shipped signature is `_covariate_suffstats_fields(row, size, m2, suffix)`
+> — the plan's `mean` parameter is unused by the inversion and was dropped.
+> (3) The step-3 lookback guard is **stricter than the `_cache_serves`
+> mirror the plan pointed at**: the comparison is unconditional (no
+> declared-covariate skip). A persisted row is frozen — its moments were
+> computed under whatever covariate source the config had at write time —
+> so the live-config-driven skip would happily serve stale moments as
+> "exact" after a metric-covariate-source edit (an R1 review MAJOR; the
+> skip was shipped first, then removed). This also keeps `_exact_suffstats`
+> consistent with `classify_knob`'s unconditional `R` for the lookback
+> knob. (4) Beyond the plan's file list, the WP also rewrote the two other
+> tests encoding the pre-WP2 tiering (`test_sequential_recompute.py`'s
+> drop-hint leg, `test_explore_session.py`'s e2e alpha leg — both split
+> into a new-behavior test + a pre-migration-rows test that pins the old
+> fallback), updated the tier tables in `docs/guides/explore.md` and the
+> packaged `rules/explore.md`, and narrowed the retired `'alpha'` literal
+> out of `web/src/explore/payload.ts`.
+> **Adversarial review R1** (4 sonnet lenses → 2 skeptics per finding with
+> mandatory repro): 12 raised → 8 confirmed (2 = one duplicate defect), all
+> fixed: the declared-covariate guard bypass (MAJOR, above); the CUPED
+> power chip still cache-gated beside a cache-free exact point (MAJOR —
+> the chip now reads `result.corr_coef_1` first, session-cache fallback);
+> the client's reload demand on switching back to the configured CUPED
+> method (the surface now bakes `cache.covariate_moment_rows`, the client
+> exempts that switch; `explore.js` rebuilt); the `_sequentialize_points`
+> docstring, a missing `identity_changed` assert, and the two plan-text
+> disclosures above. 4 rejected as pre-existing/non-defects by the skeptic
+> majority.
+
 ---
 
 ## WP3 — Wire the STATE stage: per-(unit, day) moment materialization into `_ab_unit_state`

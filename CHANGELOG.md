@@ -31,6 +31,13 @@ number change).
   tolerance). No `ALGORITHM_VERSION` bump: the numbers are computed by the
   same `from_suffstats` math from losslessly-persisted moments; only *where*
   the cockpit computes them changed.
+  Riding along (the adversarial-review round-1 fixes): the CUPED
+  achieved-power chip now reads the control-arm correlation off the
+  reconstructed result first (cache-free, agreeing with the exact point
+  beside it) and falls back to the session cache for pre-migration rows;
+  the knob surface exposes `cache.covariate_moment_rows` and the explore
+  client no longer demands a warehouse reload when switching back to the
+  configured CUPED method whose rows reconstruct (rebuilt `explore.js`).
 
 ### Added
 - **M9 WP1 — persisted CUPED covariate moments + the schema-migration

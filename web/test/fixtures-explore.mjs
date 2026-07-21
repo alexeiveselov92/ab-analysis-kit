@@ -118,6 +118,7 @@ export function makeSurface(overrides = {}) {
     cache: {
       cutoffs: Array.from({ length: 14 }, (_, i) => Date.UTC(2026, 0, 2 + i)),
       covariate_cutoffs: [],
+      covariate_moment_rows: false,
       disabled_reason: null,
     },
     calibration: makeCalibration(),

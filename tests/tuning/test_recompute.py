@@ -348,6 +348,9 @@ class TestCupedRouting:
         cuped_entry = next(m for m in surface["methods"] if m["name"] == "cuped-t-test")
         assert cuped_entry["needs_covariate"] is True  # WP7's ↻ badge substrate
         assert surface["cache"]["covariate_cutoffs"] == []
+        # plain t-test rows carry no covariate moments — the client's reload
+        # exemption (M9 WP2) must not fire for this series
+        assert surface["cache"]["covariate_moment_rows"] is False
 
     def test_post_normed_bootstrap_without_covariate_is_a_gap_not_a_crash(self, warehouse, tables):
         """post-normed-bootstrap requires cov_array yet has no lookback param —
@@ -468,7 +471,9 @@ class TestCupedRouting:
 
     def test_equal_lookback_spellings_reconstruct(self, warehouse, tables):
         """The guard compares SECONDS (the ``_cache_serves`` discipline):
-        "1w" and "7d" are the same pre-period, so reconstruction serves."""
+        "1w" and "7d" are the same pre-period, so reconstruction serves —
+        even though the STRING param makes it a different method_config_id
+        (identity hashes the spelling, not the resolved duration)."""
         method = {
             "name": "cuped-t-test",
             "params": {"test_type": "relative", "covariate_lookback": "7d"},
@@ -479,9 +484,32 @@ class TestCupedRouting:
 
         knobs = KnobState("cuped-t-test", {"test_type": "relative", "covariate_lookback": "1w"})
         result = engine.recompute("arpu", knobs)
+        assert result.identity_changed  # "1w" hashes differently from "7d"
         points = result.pairs[0].points
         assert len(points) == 4
         assert all(p.tier == "exact" for p in points)
+
+    def test_lookback_guard_is_unconditional_at_the_function_level(self, warehouse, tables):
+        """The R1 review fix: the lookback comparison in ``_exact_suffstats``
+        has NO declared-covariate bypass — a persisted row is frozen, so a
+        mismatched live lookback refuses reconstruction regardless of what
+        covariate source the LIVE metric config declares."""
+        from abkit.tuning.recompute import _exact_suffstats
+
+        method = {
+            "name": "cuped-t-test",
+            "params": {"test_type": "relative", "covariate_lookback": "7d"},
+        }
+        experiment = make_experiment("exp_cuped_fn_guard", "arpu", method)
+        run_pipeline(warehouse, tables, experiment)
+        row = next(iter(persisted(tables, experiment, "arpu").values()))
+        cuped_cls = get_method_class("cuped-t-test")
+
+        served = _exact_suffstats(cuped_cls, row, {"covariate_lookback": "7d"})
+        assert served is not None  # matching lookback reconstructs
+        assert _exact_suffstats(cuped_cls, row, {"covariate_lookback": "14d"}) is None
+        assert _exact_suffstats(cuped_cls, row, {"covariate_lookback": None}) is None
+        assert _exact_suffstats(cuped_cls, row, None) is None  # no params — no claim
 
 
 # ── Bootstrap: byte-stability through the cache + derived seeds ─────────────
@@ -895,6 +923,63 @@ class TestChips:
         chips = engine.recompute("ctr", engine.default_knobs("ctr")).pairs[0].chips
         assert chips["power"] is None
         assert "no power/MDE capability" in chips["power_note"]
+
+    def test_cuped_power_chip_serves_cache_free_from_the_reconstruction(self, warehouse, tables):
+        """The R1 review fix: a Tier-E CUPED point's power chip reads the
+        control-arm correlation off the reconstructed result — no session
+        cache required — so the chip agrees with the exact point beside it.
+        The value matches the cached path's ``_control_corr`` answer."""
+        method = {
+            "name": "cuped-t-test",
+            "params": {"test_type": "relative", "covariate_lookback": "7d"},
+        }
+        experiment = make_experiment("exp_cuped_power", "arpu", method, min_effect=0.05)
+        run_pipeline(warehouse, tables, experiment)
+
+        bare = build_engine(warehouse, tables, experiment, with_cache=False)
+        chips = bare.recompute("arpu", bare.default_knobs("arpu")).pairs[0].chips
+        assert chips["tier"] == "exact"
+        assert chips["power_note"] is None
+        assert 0.0 < chips["power"] <= 1.0
+
+        cached = build_engine(warehouse, tables, experiment)
+        cached_chips = cached.recompute("arpu", cached.default_knobs("arpu")).pairs[0].chips
+        assert chips["power"] == pytest.approx(cached_chips["power"], rel=1e-9)
+
+    def test_cuped_power_chip_still_honest_on_pre_migration_rows(self, warehouse, tables):
+        """Pre-migration rows (no moments) with no cache keep the honest None
+        chip — with the note naming both missing sources."""
+        method = {
+            "name": "cuped-t-test",
+            "params": {"test_type": "relative", "covariate_lookback": "7d"},
+        }
+        experiment = make_experiment("exp_cuped_power_legacy", "arpu", method, min_effect=0.05)
+        run_pipeline(warehouse, tables, experiment)
+        for row in warehouse._rows["_ab_results"]:
+            for column in ("cov_std_1", "cov_std_2", "corr_coef_1", "corr_coef_2"):
+                row[column] = None
+        engine = build_engine(warehouse, tables, experiment, with_cache=False)
+        chips = engine.recompute("arpu", engine.default_knobs("arpu")).pairs[0].chips
+        assert chips["power"] is None
+        assert "covariate correlation" in chips["power_note"]
+
+    def test_cuped_surface_reports_covariate_moment_rows(self, warehouse, tables):
+        """The knob-surface flag behind the client's reload exemption: True
+        for a post-migration CUPED series, False once the moments are gone."""
+        method = {
+            "name": "cuped-t-test",
+            "params": {"test_type": "relative", "covariate_lookback": "7d"},
+        }
+        experiment = make_experiment("exp_cuped_surface", "arpu", method)
+        run_pipeline(warehouse, tables, experiment)
+        engine = build_engine(warehouse, tables, experiment, with_cache=False)
+        assert engine.knob_surface("arpu")["cache"]["covariate_moment_rows"] is True
+
+        for row in warehouse._rows["_ab_results"]:
+            for column in ("cov_std_1", "cov_std_2", "corr_coef_1", "corr_coef_2"):
+                row[column] = None
+        legacy = build_engine(warehouse, tables, experiment, with_cache=False)
+        assert legacy.knob_surface("arpu")["cache"]["covariate_moment_rows"] is False
 
 
 # ── Validation & quarantine surfacing ────────────────────────────────────────
