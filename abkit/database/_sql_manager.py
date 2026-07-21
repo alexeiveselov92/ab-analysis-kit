@@ -164,10 +164,6 @@ class SQLDatabaseManager(BaseDatabaseManager):
         return self._TYPE_MAP[kind]
 
     @staticmethod
-    def _is_nullable(col: ColumnDefinition) -> bool:
-        return col.nullable or (col.type.startswith("Nullable(") and col.type.endswith(")"))
-
-    @staticmethod
     def _render_default(col: ColumnDefinition) -> str:
         if col.default is None:
             return ""
@@ -181,7 +177,7 @@ class SQLDatabaseManager(BaseDatabaseManager):
     def _render_column(self, col: ColumnDefinition, in_primary_key: bool) -> str:
         native = self._map_type(col.type, in_primary_key, col.max_length)
         # Primary-key columns are always NOT NULL; otherwise honor the model.
-        nullable = self._is_nullable(col) and not in_primary_key
+        nullable = col.is_nullable and not in_primary_key
         null_sql = "" if nullable else " NOT NULL"
         return f"{self._q(col.name)} {native}{null_sql}{self._render_default(col)}"
 
@@ -227,6 +223,37 @@ class SQLDatabaseManager(BaseDatabaseManager):
         except Exception:
             self._conn.rollback()
             raise
+
+    #: Whether the dialect supports ``ADD COLUMN IF NOT EXISTS`` (PostgreSQL
+    #: does; MySQL does not — it falls back to swallowing the duplicate error).
+    _ADD_COLUMN_IF_NOT_EXISTS = True
+
+    def list_columns(self, table_name: str, schema: str | None = None) -> list[str]:
+        """Live column names from ``information_schema.columns``, by position."""
+        rows = self.execute_query(
+            "SELECT column_name AS column_name FROM information_schema.columns "
+            "WHERE table_schema = %(schema)s AND table_name = %(table)s "
+            "ORDER BY ordinal_position",
+            {"schema": schema or self._internal_location, "table": table_name},
+        )
+        return [row["column_name"] for row in rows]
+
+    def _is_duplicate_column_error(self, exc: Exception) -> bool:
+        """Dialect hook: True when ``exc`` is the duplicate-column DDL error."""
+        return False
+
+    def _add_column(self, table_name: str, column: ColumnDefinition) -> None:
+        if_not_exists = "IF NOT EXISTS " if self._ADD_COLUMN_IF_NOT_EXISTS else ""
+        rendered = self._render_column(column, in_primary_key=False)
+        ddl = f"ALTER TABLE {table_name} ADD COLUMN {if_not_exists}{rendered}"
+        try:
+            self.execute_query(ddl)
+        except Exception as exc:
+            # Belt-and-braces for dialects without IF NOT EXISTS (MySQL): the
+            # ensure_columns diff already pre-checked, so a duplicate here can
+            # only be a concurrent identical migration — same end state.
+            if not self._is_duplicate_column_error(exc):
+                raise
 
     def table_exists(self, table_name: str, schema: str | None = None) -> bool:
         """Check ``information_schema.tables`` for the table in one/both locations."""

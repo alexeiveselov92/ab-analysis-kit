@@ -50,6 +50,14 @@ class TestResult:
     ci_kind: str = "fixed"
     cov_value_1: float | None = None
     cov_value_2: float | None = None
+    # CUPED covariate moments (M9 WP1): populated by cuped-t-test only, so a
+    # persisted row carries the full per-arm covariate SufficientStats
+    # (cov_m2 = cov_std²·n, cross_c = corr_coef·√(m2·cov_m2)). corr_coef may be
+    # NaN (zero pooled covariate variance) — serialisation NaN→None-cleans it.
+    cov_std_1: float | None = None
+    cov_std_2: float | None = None
+    corr_coef_1: float | None = None
+    corr_coef_2: float | None = None
     mde_1: float | None = None
     mde_2: float | None = None
     effect_distribution: Any | None = field(default=None, repr=False, compare=False)

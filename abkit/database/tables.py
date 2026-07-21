@@ -190,6 +190,14 @@ def get_results_table_model() -> TableModel:
             ColumnDefinition("std_2", "Nullable(Float64)", nullable=True),
             ColumnDefinition("cov_value_1", "Nullable(Float64)", nullable=True),
             ColumnDefinition("cov_value_2", "Nullable(Float64)", nullable=True),
+            # CUPED covariate moments (M9 WP1): with cov_value_i these complete
+            # the per-arm covariate SufficientStats, making cuped-t-test
+            # reconstructible from a persisted row (Tier-E in explore, M9 WP2).
+            # NULL for every non-CUPED method and for pre-migration rows.
+            ColumnDefinition("cov_std_1", "Nullable(Float64)", nullable=True),
+            ColumnDefinition("cov_std_2", "Nullable(Float64)", nullable=True),
+            ColumnDefinition("corr_coef_1", "Nullable(Float64)", nullable=True),
+            ColumnDefinition("corr_coef_2", "Nullable(Float64)", nullable=True),
             ColumnDefinition("size_1", "UInt64"),
             ColumnDefinition("size_2", "UInt64"),
             # test (Nullable: withheld under insufficient_data demotion)

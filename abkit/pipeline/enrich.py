@@ -92,6 +92,10 @@ def rows_for_cutoff(
             "std_2": _clean(result.std_2) if result else None,
             "cov_value_1": _clean(result.cov_value_1) if result else None,
             "cov_value_2": _clean(result.cov_value_2) if result else None,
+            "cov_std_1": _clean(result.cov_std_1) if result else None,
+            "cov_std_2": _clean(result.cov_std_2) if result else None,
+            "corr_coef_1": _clean(result.corr_coef_1) if result else None,
+            "corr_coef_2": _clean(result.corr_coef_2) if result else None,
             "size_1": outcome.size_1,
             "size_2": outcome.size_2,
             # test (withheld under demotion)

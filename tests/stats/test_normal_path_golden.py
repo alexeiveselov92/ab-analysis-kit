@@ -365,11 +365,33 @@ def _assert_matches(expected: Any, got: Any, path: str) -> None:
     ), f"{path}: expected {expected!r}, got {got!r}"
 
 
+#: ``TestResult`` fields added AFTER the fixture was frozen (additive schema
+#: work, never a formula change): the pre-WP1 reference cannot contain them, so
+#: the gate drops exactly these from the CURRENT records before the strict
+#: field-set comparison. Their correctness is pinned independently at the
+#: golden tolerance in tests/golden/test_golden_parametric.py. Extend this
+#: allowlist ONLY for additive TestResult fields; never for a renamed or
+#: removed field — those must keep failing the field-set assertion.
+FIELDS_ADDED_SINCE_FREEZE = frozenset(
+    {
+        # M9 WP1: per-arm CUPED covariate moments (cov_m2/cross_c completion)
+        "cov_std_1",
+        "cov_std_2",
+        "corr_coef_1",
+        "corr_coef_2",
+    }
+)
+
+
 @pytest.mark.golden
 def test_scalar_normal_path_matches_frozen_pre_wp1_reference() -> None:
     frozen = _decode(json.loads(FIXTURE_PATH.read_text()))
     frozen.pop("_provenance", None)
     current = capture()
+    for cases in current.values():
+        for record in cases.values():
+            for added_field in FIELDS_ADDED_SINCE_FREEZE:
+                record.pop(added_field, None)
 
     for section, cases in frozen.items():
         for case_id, expected in cases.items():

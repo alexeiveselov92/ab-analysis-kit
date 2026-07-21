@@ -17,6 +17,7 @@ pair with test_registry_completeness.py (A6) for the "forgotten import" half.
 from __future__ import annotations
 
 import math
+import warnings
 
 import numpy as np
 import pytest
@@ -34,7 +35,13 @@ from abkit.stats.parametric import (
     ZTest,
 )
 from abkit.stats.registry import available_methods, get_method_class
-from abkit.stats.samples import Fraction, PairedSufficientStats, RatioSample, Sample
+from abkit.stats.samples import (
+    Fraction,
+    PairedSufficientStats,
+    RatioSample,
+    Sample,
+    SufficientStats,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -166,6 +173,47 @@ def test_cuped_low_correlation_warning_recorded() -> None:
     assert len(low_corr_warnings) == 2  # one per arm
     assert any("'control'" in message for message in low_corr_warnings)
     assert any("'variant'" in message for message in low_corr_warnings)
+
+
+def test_cuped_populates_covariate_moment_fields() -> None:
+    """M9 WP1: cuped-t-test carries per-arm cov_std/corr_coef on the result."""
+    rng = np.random.default_rng(31)
+    y1, x1 = _correlated_arms(rng, 500, 0.0)
+    y2, x2 = _correlated_arms(rng, 500, 0.1)
+    stats_1 = SufficientStats.from_sample(Sample(y1, cov_array=x1))
+    stats_2 = SufficientStats.from_sample(Sample(y2, cov_array=x2))
+
+    result = CupedTTest(alpha=0.05).from_suffstats(stats_1, stats_2)
+
+    assert result.cov_std_1 == stats_1.cov_std
+    assert result.cov_std_2 == stats_2.cov_std
+    assert result.corr_coef_1 == stats_1.corr_coef
+    assert result.corr_coef_2 == stats_2.corr_coef
+
+    plain = TTest(alpha=0.05).from_samples(Sample(y1), Sample(y2))
+    assert plain.cov_std_1 is None and plain.corr_coef_1 is None  # non-CUPED: untouched
+
+
+def test_cuped_degenerate_covariate_nan_corr_coef_serialises_to_none() -> None:
+    """Zero pooled covariate variance: corr_coef is NaN on the result (the
+    non-finite-theta warning path), and NaN→None-cleans in to_dict — never a
+    raise on the write path."""
+    rng = np.random.default_rng(32)
+    y1, y2 = rng.normal(10, 2, 200), rng.normal(10, 2, 200)
+    constant = np.full(200, 5.0)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", AbkitStatsWarning)
+        result = CupedTTest(alpha=0.05).from_samples(
+            Sample(y1, cov_array=constant), Sample(y2, cov_array=constant)
+        )
+
+    assert any("theta is non-finite" in message for message in result.warnings)
+    assert result.cov_std_1 == 0.0 and result.cov_std_2 == 0.0
+    assert result.corr_coef_1 is not None and math.isnan(result.corr_coef_1)
+    payload = result.to_dict()
+    assert payload["corr_coef_1"] is None and payload["corr_coef_2"] is None
+    assert payload["cov_std_1"] == 0.0
 
 
 @pytest.mark.parametrize("test_type", TEST_TYPES)

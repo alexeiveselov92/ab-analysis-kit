@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 
 import abkit.database.clickhouse_manager as ch_mod
+from abkit.core.models import ColumnDefinition, TableModel
 from abkit.database.clickhouse_manager import ClickHouseDatabaseManager
 from abkit.utils.datetime_utils import now_utc_naive
 
@@ -284,3 +285,71 @@ class TestUpsertRecordSync:
         manager.upsert_record("abk_int._ab_experiments", {"experiment": "signup"}, data)
         delete_sql = next(q for q in fake.sqls if q.startswith("ALTER TABLE"))
         assert "mutations_sync" not in delete_sql
+
+
+class TestEnsureColumns:
+    """M9 WP1: the additive migration primitive on the ClickHouse dialect."""
+
+    @staticmethod
+    def _model_with_extra() -> TableModel:
+        return TableModel(
+            columns=[
+                ColumnDefinition("experiment", "String"),
+                ColumnDefinition("end_ts", "DateTime64(3, 'UTC')"),
+                ColumnDefinition("effect", "Nullable(Float64)", nullable=True),
+                ColumnDefinition("cov_std_1", "Nullable(Float64)", nullable=True),
+            ],
+            primary_key=["experiment", "end_ts"],
+            engine="ReplacingMergeTree(end_ts)",
+            order_by=["experiment", "end_ts"],
+            version_column="end_ts",
+        )
+
+    def _script_live(self, fake: FakeClient, names: list[str]) -> None:
+        fake.select_responses.append(([(n,) for n in names], [("name", "String")]))
+
+    def test_list_columns_reads_system_columns_in_position_order(self, mgr):
+        manager, fake = mgr
+        self._script_live(fake, ["experiment", "end_ts"])
+        assert manager.list_columns("_ab_results") == ["experiment", "end_ts"]
+        sql, params = fake.executed[-1]
+        assert "system.columns" in sql
+        assert "ORDER BY position" in sql
+        assert params == {"database": "abk_int", "table": "_ab_results"}
+
+    def test_missing_columns_added_via_alter_if_not_exists(self, mgr):
+        manager, fake = mgr
+        self._script_live(fake, ["experiment", "end_ts"])
+        added = manager.ensure_columns("abk_int._ab_results", self._model_with_extra())
+        assert added == ["effect", "cov_std_1"]
+        alters = [sql for sql in fake.sqls if sql.startswith("ALTER TABLE")]
+        assert alters == [
+            "ALTER TABLE abk_int._ab_results ADD COLUMN IF NOT EXISTS effect Nullable(Float64)",
+            "ALTER TABLE abk_int._ab_results ADD COLUMN IF NOT EXISTS cov_std_1 Nullable(Float64)",
+        ]
+
+    def test_in_sync_table_emits_no_alter(self, mgr):
+        manager, fake = mgr
+        self._script_live(fake, ["experiment", "end_ts", "effect", "cov_std_1"])
+        assert manager.ensure_columns("abk_int._ab_results", self._model_with_extra()) == []
+        assert not [sql for sql in fake.sqls if sql.startswith("ALTER TABLE")]
+
+    def test_default_is_rendered_on_the_added_column(self, mgr):
+        manager, fake = mgr
+        model = TableModel(
+            columns=[
+                ColumnDefinition("experiment", "String"),
+                ColumnDefinition("sum_value", "Float64", default="0"),
+            ],
+            primary_key=["experiment"],
+            engine="MergeTree",
+        )
+        self._script_live(fake, ["experiment"])
+        assert manager.ensure_columns("abk_int._ab_unit_state", model) == ["sum_value"]
+        alter = [sql for sql in fake.sqls if sql.startswith("ALTER TABLE")][0]
+        # the same _format_default rendering create_table uses ('0' for the
+        # string-typed model default) — dialect coercion handles the cast
+        assert alter == (
+            "ALTER TABLE abk_int._ab_unit_state ADD COLUMN IF NOT EXISTS sum_value "
+            "Float64 DEFAULT '0'"
+        )

@@ -31,6 +31,17 @@ class ColumnDefinition:
     default: Any | None = None
     max_length: int | None = None
 
+    @property
+    def is_nullable(self) -> bool:
+        """True when the column may hold NULL — via the ``nullable`` flag or a
+        ClickHouse-flavored ``Nullable(...)`` type wrapper.
+
+        THE single nullability predicate: the SQL DDL renderer and the
+        additive-migration guard (``ensure_columns``) both read it, so what
+        the guard refuses and what the renderer would emit can never diverge.
+        """
+        return self.nullable or (self.type.startswith("Nullable(") and self.type.endswith(")"))
+
     def __post_init__(self):
         """Validate column definition."""
         if not self.name:

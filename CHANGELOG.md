@@ -13,6 +13,38 @@ number change).
 
 ## [Unreleased]
 
+### Added
+- **M9 WP1 — persisted CUPED covariate moments + the schema-migration
+  primitive.** `_ab_results` gains four `Nullable(Float64)` columns —
+  `cov_std_1/2`, `corr_coef_1/2` — populated by `cuped-t-test` only (NULL for
+  every other method and for pre-migration rows). Together with the existing
+  `cov_value_1/2` they complete each arm's covariate sufficient statistics
+  (`cov_m2 = cov_std²·n`, `cross_c = corr_coef·√(m2·cov_m2)`), the
+  prerequisite for CUPED Tier-E reconstruction in `abk explore` (M9 WP2).
+  A degenerate covariate (zero pooled variance) persists `corr_coef` as NULL
+  via the existing NaN→NULL cleaning — never an error.
+- **`ensure_columns()` — the project's first post-release schema-migration
+  primitive.** `ensure_tables()` now additively syncs every existing `_ab_*`
+  table to the current model: it diffs the live columns
+  (`system.columns` on ClickHouse, `information_schema.columns` on
+  PostgreSQL/MySQL) against the declared schema and emits
+  `ALTER TABLE … ADD COLUMN` for anything missing — additive-only (never
+  drops/renames/retypes), idempotent, safe on every CLI invocation. MySQL has
+  no `ADD COLUMN IF NOT EXISTS`, so its path pre-checks via the diff and
+  swallows the duplicate-column race (errno 1060). New columns must be
+  nullable or carry a default; the primitive refuses otherwise, loudly.
+  Upgrading an installed project is therefore automatic: the next `abk run`
+  migrates `_ab_results` in place, old rows read the new columns as NULL.
+
+No `ALGORITHM_VERSION` bump: this is a schema/plumbing change, not a
+statistics change — nothing here deviates from the captured statistical
+baseline that [statistics-changes.md](docs/specs/statistics-changes.md)'s
+change-control governs, and no persisted statistical number moves (the
+schema-not-statistics framing itself lands in `statistics-changes.md` at the
+M9 exit-gate docs sync, per the plan's WP6). The new moments are pinned
+against independent `np.std`/`np.corrcoef` computations at the golden
+rel-1e-9 tolerance (`tests/golden/test_golden_parametric.py`).
+
 ## [0.3.0] - 2026-07-21
 
 **M8 — assignments: no-copy default + incremental copy** (the implementation

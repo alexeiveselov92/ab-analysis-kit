@@ -183,6 +183,14 @@ class CupedTTest(BaseMethod):
             size_2=n_2,
             cov_value_1=stats_1.cov_mean,
             cov_value_2=stats_2.cov_mean,
+            # M9 WP1: the two moments that complete each arm's covariate
+            # SufficientStats in the persisted row (Tier-E reconstruction).
+            # corr_coef may be NaN (zero pooled covariate variance) — kept
+            # as-is; the row-serialisation NaN→None path handles it.
+            cov_std_1=stats_1.cov_std,
+            cov_std_2=stats_2.cov_std,
+            corr_coef_1=stats_1.corr_coef,
+            corr_coef_2=stats_2.corr_coef,
             mde_1=mde_1,
             mde_2=mde_2,
             method_warnings=method_warnings,

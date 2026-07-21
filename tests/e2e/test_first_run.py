@@ -213,6 +213,10 @@ class TestFirstRun:
         arpu = sorted(by_metric["example_arpu"], key=lambda r: r["end_ts"])
         assert arpu[-1]["method_name"] == "cuped-t-test"
         assert arpu[-1]["cov_value_1"] is not None  # the pre-period covariate
+        # M9 WP1: the covariate moments completing the per-arm suffstats
+        assert arpu[-1]["cov_std_1"] is not None
+        assert arpu[-1]["corr_coef_1"] is not None
+        assert signup[-1]["cov_std_1"] is None  # non-CUPED methods stay NULL
         assert 0.10 < arpu[-1]["effect"] < 0.20  # the seeded ~15% lift
         assert arpu[-1]["pvalue"] < 0.05
 

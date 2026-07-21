@@ -60,6 +60,10 @@ class MySQLDatabaseManager(SQLDatabaseManager):
     # MySQL quotes identifiers with backticks (``interval`` etc. are reserved).
     _IDENT_QUOTE = "`"
 
+    # MySQL has no ``ADD COLUMN IF NOT EXISTS``: ensure_columns' diff is the
+    # pre-check, and _is_duplicate_column_error below swallows the race.
+    _ADD_COLUMN_IF_NOT_EXISTS = False
+
     def __init__(
         self,
         host: str = "localhost",
@@ -100,6 +104,12 @@ class MySQLDatabaseManager(SQLDatabaseManager):
     def _ensure_locations(self) -> None:
         for db in (self._internal_location, self._data_location):
             self.execute_query(f"CREATE DATABASE IF NOT EXISTS {db}")
+
+    def _is_duplicate_column_error(self, exc: Exception) -> bool:
+        # pymysql raises OperationalError(1060, "Duplicate column name '...'");
+        # match on the errno so driver-version message wording can't break it.
+        args = exc.args
+        return bool(args) and args[0] == 1060
 
     def _string_type(self, in_primary_key: bool, max_length: int | None = None) -> str:
         # TEXT cannot be part of a PRIMARY KEY without a prefix length; sized

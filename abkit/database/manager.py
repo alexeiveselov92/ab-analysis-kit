@@ -23,7 +23,7 @@ from typing import Any
 
 import numpy as np
 
-from abkit.core.models import TableModel
+from abkit.core.models import ColumnDefinition, TableModel
 
 
 class BaseDatabaseManager(ABC):
@@ -118,6 +118,95 @@ class BaseDatabaseManager(ABC):
             ...     manager.create_table("_ab_results", results_model)
         """
         pass
+
+    @abstractmethod
+    def list_columns(self, table_name: str, schema: str | None = None) -> list[str]:
+        """
+        List the live column names of an existing table, in storage order.
+
+        Backends introspect their catalog (``system.columns`` on ClickHouse,
+        ``information_schema.columns`` on PostgreSQL/MySQL). Returns an empty
+        list when the table does not exist.
+
+        Args:
+            table_name: Bare table name (no schema/database prefix)
+            schema: Schema/database holding the table (if None, use the
+                internal location)
+
+        Returns:
+            Column names as stored, ordered by position
+        """
+        pass
+
+    @abstractmethod
+    def _add_column(self, table_name: str, column: ColumnDefinition) -> None:
+        """
+        Emit the backend's ``ALTER TABLE ... ADD COLUMN`` for one column.
+
+        Must be safe against a concurrent identical ALTER: backends either use
+        ``ADD COLUMN IF NOT EXISTS`` (ClickHouse, PostgreSQL) or swallow the
+        duplicate-column error (MySQL, which has no ``IF NOT EXISTS``).
+        Only :meth:`ensure_columns` calls this, after diffing the live schema.
+
+        Args:
+            table_name: Fully qualified table name
+            column: The abstract column definition to add
+        """
+        pass
+
+    def ensure_columns(self, table_name: str, table_model: TableModel) -> list[str]:
+        """
+        Additive-only schema sync: ADD every model column missing from the
+        live table (the project's post-release migration primitive, M9 WP1).
+
+        Diffs ``table_model``'s declared columns against the live table's
+        columns and emits ``ALTER TABLE ... ADD COLUMN`` for anything missing.
+        Never drops, renames, or retypes a column — a column present in the
+        live table but absent from the model is left untouched (loud failures
+        stay with the insert path's column-mismatch checks). Idempotent: on a
+        second call the diff is empty and no DDL is emitted.
+
+        Additive columns must be nullable or carry a default: adding a
+        NOT-NULL, no-default column to a table with existing rows fails on the
+        SQL backends, so the contract is enforced here — deterministically,
+        for every backend — before any DDL runs.
+
+        Physical placement caveat: an added column lands at the END of the
+        live table (PostgreSQL has no positional ADD COLUMN at all), so a
+        migrated table's storage order differs from a freshly created one's
+        model order. Harmless by design — every read/write in the codebase is
+        column-NAME-keyed, never positional.
+
+        Args:
+            table_name: Fully qualified table name (``location.table``)
+            table_model: The current (target) table schema
+
+        Returns:
+            Names of the columns actually added, in model order (empty when
+            the live table already matches)
+        """
+        location, _, bare = table_name.rpartition(".")
+        live = set(self.list_columns(bare, schema=location or None))
+        if not live:
+            # Empty listing = table missing OR an unreadable catalog. Both
+            # no-op DELIBERATELY: creation is create_table's job, and a
+            # misread catalog must trigger no DDL at all — the insert path's
+            # column-mismatch check stays the loud failure, an ALTER storm
+            # against a table we cannot see would be the dangerous reaction.
+            return []
+        missing = [col for col in table_model.columns if col.name not in live]
+        for col in missing:
+            if not col.is_nullable and col.default is None:
+                raise ValueError(
+                    f"ensure_columns: cannot add NOT-NULL column {col.name!r} with no "
+                    f"default to existing table {table_name} — additive migrations "
+                    "require nullable-or-defaulted columns"
+                )
+        added: list[str] = []
+        for col in missing:
+            self._add_column(table_name, col)
+            added.append(col.name)
+        return added
 
     @abstractmethod
     def insert_batch(
