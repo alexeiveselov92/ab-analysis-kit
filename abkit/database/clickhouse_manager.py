@@ -19,7 +19,7 @@ try:
 except ImportError:
     CLICKHOUSE_AVAILABLE = False
 
-from abkit.core.models import TableModel
+from abkit.core.models import ColumnDefinition, TableModel
 from abkit.database.manager import BaseDatabaseManager
 
 _EPOCH_NAIVE = datetime(1970, 1, 1, 0, 0, 0)
@@ -192,6 +192,27 @@ class ClickHouseDatabaseManager(BaseDatabaseManager):
                 return True
 
         return False
+
+    def list_columns(self, table_name: str, schema: str | None = None) -> list[str]:
+        """Live column names from ``system.columns``, ordered by position."""
+        query = """
+        SELECT name
+        FROM system.columns
+        WHERE database = %(database)s
+          AND table = %(table)s
+        ORDER BY position
+        """
+        rows = self.execute_query(
+            query, {"database": schema or self._internal_database, "table": table_name}
+        )
+        return [row["name"] for row in rows]
+
+    def _add_column(self, table_name: str, column: ColumnDefinition) -> None:
+        # Model types are ClickHouse-flavored, so they render verbatim.
+        col_def = f"{column.name} {column.type}"
+        if column.default is not None:
+            col_def += f" DEFAULT {self._format_default(column.default)}"
+        self._client.execute(f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS {col_def}")
 
     def insert_batch(
         self, table_name: str, data: dict[str, np.ndarray], conflict_strategy: str = "ignore"

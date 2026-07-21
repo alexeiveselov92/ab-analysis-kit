@@ -653,6 +653,11 @@ class TestCuped:
         assert outcome.status == "completed", outcome.error
         rows = tables.load_results("signup_test")
         assert rows[-1]["cov_value_1"] is not None  # covariate means recorded
+        # M9 WP1: the two moments completing the per-arm covariate suffstats
+        # persist alongside (cov_m2 = cov_std²·n, cross_c = corr·√(m2·cov_m2))
+        assert rows[-1]["cov_std_1"] is not None and rows[-1]["cov_std_2"] is not None
+        assert rows[-1]["corr_coef_1"] is not None and rows[-1]["corr_coef_2"] is not None
+        assert -1.0 <= rows[-1]["corr_coef_1"] <= 1.0
         assert rows[-1]["effect"] is not None
         assert rows[-1]["method_name"] == "cuped-t-test"
         assert '"covariate_lookback":"14d"' in rows[-1]["method_params"]

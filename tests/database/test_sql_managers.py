@@ -422,3 +422,107 @@ class TestCoerce:
         assert mgr._coerce(np.float64("nan")) is None
         assert mgr._coerce(None) is None
         assert mgr._coerce("text") == "text"
+
+
+def _script_live_columns(conn: FakeConn, model: TableModel, drop: set[str]) -> None:
+    """Serve the information_schema listing: the model's columns minus ``drop``."""
+    conn.next_description = [("column_name",)]
+    conn.next_result = [(col.name,) for col in model.columns if col.name not in drop]
+
+
+class TestEnsureColumns:
+    """M9 WP1: the additive ALTER-ADD-COLUMN migration primitive, per dialect."""
+
+    def test_in_sync_table_emits_no_ddl(self, mgr_conn):
+        mgr, conn, _ = mgr_conn
+        model = results_like_model()
+        _script_live_columns(conn, model, drop=set())
+        assert mgr.ensure_columns("abk._ab_results", model) == []
+        sql, params = conn.executed[0]
+        assert "information_schema.columns" in sql
+        assert "ORDER BY ordinal_position" in sql
+        assert params == {"schema": "abk", "table": "_ab_results"}
+        assert len(conn.executed) == 1  # introspection only, no ALTER
+
+    def test_missing_column_added_with_dialect_syntax(self, mgr_conn):
+        mgr, conn, backend = mgr_conn
+        model = results_like_model()
+        _script_live_columns(conn, model, drop={"effect"})
+        assert mgr.ensure_columns("abk._ab_results", model) == ["effect"]
+        alter = conn.executed[-1][0]
+        if backend == "postgres":
+            assert alter == (
+                'ALTER TABLE abk._ab_results ADD COLUMN IF NOT EXISTS "effect" DOUBLE PRECISION'
+            )
+        else:
+            # MySQL has no ADD COLUMN IF NOT EXISTS — the diff is the pre-check
+            assert alter == "ALTER TABLE abk._ab_results ADD COLUMN `effect` DOUBLE"
+
+    def test_multiple_columns_added_in_model_order(self, mgr_conn):
+        mgr, conn, _ = mgr_conn
+        base = results_like_model()
+        model = TableModel(
+            columns=[*base.columns, ColumnDefinition("extra_note", "Nullable(String)")],
+            primary_key=base.primary_key,
+            engine=base.engine,
+            order_by=base.order_by,
+            version_column=base.version_column,
+        )
+        _script_live_columns(conn, model, drop={"effect", "extra_note"})
+        assert mgr.ensure_columns("abk._ab_results", model) == ["effect", "extra_note"]
+        alters = [sql for sql, _ in conn.executed if sql.startswith("ALTER TABLE")]
+        assert len(alters) == 2
+        assert "effect" in alters[0] and "extra_note" in alters[1]
+
+    def test_not_null_no_default_is_refused_before_any_ddl(self, mgr_conn):
+        mgr, conn, _ = mgr_conn
+        model = results_like_model()
+        _script_live_columns(conn, model, drop={"reject"})  # Bool, NOT NULL, no default
+        with pytest.raises(ValueError, match="nullable-or-defaulted"):
+            mgr.ensure_columns("abk._ab_results", model)
+        assert len(conn.executed) == 1  # introspection only — nothing was altered
+
+    def test_empty_live_listing_is_a_noop(self, mgr_conn):
+        """A missing table (no catalog rows) must not trigger a storm of ALTERs."""
+        mgr, conn, _ = mgr_conn
+        model = results_like_model()
+        conn.next_description = [("column_name",)]
+        conn.next_result = []
+        assert mgr.ensure_columns("abk._ab_results", model) == []
+        assert len(conn.executed) == 1
+
+    @staticmethod
+    def _raising_alter_conn(conn: FakeConn, exc: Exception) -> None:
+        class RaisingCursor(FakeCursor):
+            def execute(self, sql: str, params=None) -> None:
+                super().execute(sql, params)
+                if sql.startswith("ALTER TABLE"):
+                    raise exc
+
+        conn.cursor = lambda: RaisingCursor(conn)  # type: ignore[method-assign]
+
+    def test_mysql_duplicate_column_race_is_swallowed(self, monkeypatch):
+        """errno 1060 (concurrent identical migration) is not an error."""
+        mgr, conn = _make_manager("mysql", monkeypatch)
+        model = results_like_model()
+        _script_live_columns(conn, model, drop={"effect"})
+        self._raising_alter_conn(conn, Exception(1060, "Duplicate column name 'effect'"))
+        assert mgr.ensure_columns("abk._ab_results", model) == ["effect"]
+        assert conn.rollbacks == 1  # the failed DDL statement was rolled back
+
+    def test_mysql_other_ddl_error_propagates(self, monkeypatch):
+        mgr, conn = _make_manager("mysql", monkeypatch)
+        model = results_like_model()
+        _script_live_columns(conn, model, drop={"effect"})
+        self._raising_alter_conn(conn, Exception(1054, "Unknown column"))
+        with pytest.raises(Exception, match="Unknown column"):
+            mgr.ensure_columns("abk._ab_results", model)
+
+    def test_postgres_ddl_error_propagates(self, monkeypatch):
+        """PostgreSQL relies on IF NOT EXISTS — no duplicate-swallowing there."""
+        mgr, conn = _make_manager("postgres", monkeypatch)
+        model = results_like_model()
+        _script_live_columns(conn, model, drop={"effect"})
+        self._raising_alter_conn(conn, Exception('relation "abk._ab_results" does not exist'))
+        with pytest.raises(Exception, match="does not exist"):
+            mgr.ensure_columns("abk._ab_results", model)

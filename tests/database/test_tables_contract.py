@@ -48,6 +48,12 @@ RESULTS_CONTRACT_COLUMNS = [
     "std_2",
     "cov_value_1",
     "cov_value_2",
+    # CUPED covariate moments (M9 WP1) — complete the per-arm covariate
+    # SufficientStats; NULL for non-CUPED methods and pre-migration rows
+    "cov_std_1",
+    "cov_std_2",
+    "corr_coef_1",
+    "corr_coef_2",
     "size_1",
     "size_2",
     # test

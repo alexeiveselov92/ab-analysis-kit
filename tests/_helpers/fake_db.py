@@ -20,7 +20,7 @@ from typing import Any
 
 import numpy as np
 
-from abkit.core.models import TableModel
+from abkit.core.models import ColumnDefinition, TableModel
 from abkit.database.manager import BaseDatabaseManager
 from abkit.utils.datetime_utils import now_utc_naive
 
@@ -120,6 +120,11 @@ class FakeDatabaseManager(BaseDatabaseManager):
         self._clickhouse_like = clickhouse_like
         self._rows: dict[str, list[dict[str, Any]]] = {}
         self._models: dict[str, TableModel] = {}  # bare name -> model
+        # live schema, distinct from _models: register_table overwrites the
+        # model with the CURRENT code's shape on every ensure_tables, while
+        # the live column list only grows through create_table/_add_column —
+        # exactly the split the ensure_columns migration diffs against.
+        self._columns: dict[str, list[str]] = {}  # bare name -> live columns
         self.queries: list[tuple[str, dict | None]] = []  # every execute_query call
         self.closed = False
 
@@ -318,6 +323,7 @@ class FakeDatabaseManager(BaseDatabaseManager):
         if bare in self._models and not if_not_exists:
             raise ValueError(f"table exists: {table_name}")
         self._models[bare] = table_model
+        self._columns[bare] = [col.name for col in table_model.columns]
         self._rows.setdefault(bare, [])
 
     def register_table(self, table_name: str, table_model: TableModel) -> None:
@@ -325,6 +331,22 @@ class FakeDatabaseManager(BaseDatabaseManager):
 
     def table_exists(self, table_name: str, schema: str | None = None) -> bool:
         return self._bare(table_name) in self._rows
+
+    def list_columns(self, table_name: str, schema: str | None = None) -> list[str]:
+        bare = self._bare(table_name)
+        if bare in self._columns:
+            return list(self._columns[bare])
+        # Tables seeded without create_table (scripted helpers): fall back to
+        # the registered model, i.e. live == model, so ensure_columns no-ops.
+        model = self._models.get(bare)
+        return [col.name for col in model.columns] if model else []
+
+    def _add_column(self, table_name: str, column: ColumnDefinition) -> None:
+        bare = self._bare(table_name)
+        self._columns.setdefault(bare, []).append(column.name)
+        # SQL semantics: existing rows read the new column back as NULL.
+        for row in self._rows.get(bare, []):
+            row.setdefault(column.name, None)
 
     def insert_batch(
         self, table_name: str, data: dict[str, np.ndarray], conflict_strategy: str = "ignore"

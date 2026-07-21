@@ -46,7 +46,9 @@ Fully qualified, that is `<internal_location>.<table>` — e.g.
 
 The tables are created on demand and idempotently: every CLI invocation that
 needs them calls `ensure_tables()`, which creates any `_ab_*` table that does not
-yet exist and is safe to call repeatedly. Read-only surfaces (a report on a
+yet exist, additively adds any column a newer abkit version has introduced to an
+existing table (`ALTER TABLE … ADD COLUMN`; never drops or renames), and is safe
+to call repeatedly. Read-only surfaces (a report on a
 never-run project, the explore cockpit, the calibration chip) deliberately do
 **not** create schema — they guard with existence checks (`results_table_exists`,
 `exposures_table_exists`, `aa_runs_table_exists`) so reading never mutates your
@@ -137,6 +139,8 @@ stay visible — but inference (`pvalue`, `effect`, bounds, `reject`) is withhel
 | `value_1`, `value_2` | `Nullable(Float64)` | Per-arm metric value (arm 1 / arm 2). |
 | `std_1`, `std_2` | `Nullable(Float64)` | Per-arm standard deviation. |
 | `cov_value_1`, `cov_value_2` | `Nullable(Float64)` | Per-arm covariate value (CUPED / ratio context). |
+| `cov_std_1`, `cov_std_2` | `Nullable(Float64)` | Per-arm covariate standard deviation (`cuped-t-test` only; NULL otherwise and on pre-0.4.0 rows). |
+| `corr_coef_1`, `corr_coef_2` | `Nullable(Float64)` | Per-arm value↔covariate correlation (`cuped-t-test` only; NULL otherwise, on pre-0.4.0 rows, and when degenerate). |
 | `size_1`, `size_2` | `UInt64` | Per-arm unit counts (always populated). |
 
 ### Test

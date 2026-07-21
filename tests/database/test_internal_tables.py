@@ -16,9 +16,10 @@ import pytest
 from fake_db import FakeDatabaseManager
 
 import abkit.database.internal_tables._base as base_mod
+from abkit.core.models import ColumnDefinition, TableModel
 from abkit.database.internal_tables import InternalTablesManager, compute_column_set_id
 from abkit.database.internal_tables._results import RESULT_COLUMNS
-from abkit.database.tables import TABLE_RESULTS, TABLE_TASKS
+from abkit.database.tables import TABLE_RESULTS, TABLE_TASKS, get_results_table_model
 from abkit.utils.datetime_utils import now_utc_naive
 
 
@@ -52,6 +53,97 @@ class TestEnsureTables:
     def test_idempotent(self, tables):
         tables.ensure_tables()  # second call must not raise or duplicate
         assert len(tables._manager._rows) == 6
+
+
+#: the M9 WP1 additive columns — the project's first post-release schema change
+NEW_CUPED_COLUMNS = ("cov_std_1", "cov_std_2", "corr_coef_1", "corr_coef_2")
+
+
+def _pre_wp1_results_model() -> TableModel:
+    """``_ab_results`` as shipped before M9 WP1 (0.3.0 and earlier)."""
+    model = get_results_table_model()
+    return TableModel(
+        columns=[col for col in model.columns if col.name not in NEW_CUPED_COLUMNS],
+        primary_key=model.primary_key,
+        engine=model.engine,
+        order_by=model.order_by,
+        version_column=model.version_column,
+    )
+
+
+class TestSchemaMigration:
+    """M9 WP1: ``ensure_tables`` additively migrates a pre-WP1 ``_ab_results``.
+
+    Without this primitive every installed 0.3.0 project would break on
+    upgrade: ``save_results`` checks the batch against the CURRENT
+    ``RESULT_COLUMNS`` while the live table still has the old shape.
+    """
+
+    def _seed_old_project(self, backend) -> None:
+        """A project whose ``_ab_results`` predates WP1, with one stored row."""
+        full = backend.get_full_table_name(TABLE_RESULTS, use_internal=True)
+        old_model = _pre_wp1_results_model()
+        backend.create_table(full, old_model)
+        batch = make_result_batch()
+        old_batch = {c: v for c, v in batch.items() if c not in NEW_CUPED_COLUMNS}
+        old_batch["created_at"] = np.array([datetime(2024, 1, 2, 12)], dtype=object)
+        backend.insert_batch(full, old_batch)
+
+    def test_ensure_tables_adds_columns_and_old_rows_read_null(self, backend):
+        self._seed_old_project(backend)
+        manager = InternalTablesManager(backend)
+        manager.ensure_tables()
+
+        live = backend.list_columns(TABLE_RESULTS)
+        for col in NEW_CUPED_COLUMNS:
+            assert col in live, col
+        rows = manager.load_results("exp1")
+        assert len(rows) == 1
+        for col in NEW_CUPED_COLUMNS:
+            assert rows[0][col] is None, col
+
+    def test_migration_is_idempotent(self, backend):
+        self._seed_old_project(backend)
+        manager = InternalTablesManager(backend)
+        manager.ensure_tables()
+        full = backend.get_full_table_name(TABLE_RESULTS, use_internal=True)
+        assert backend.ensure_columns(full, get_results_table_model()) == []
+        manager.ensure_tables()  # the full pass stays safe end-to-end
+        assert len(manager.load_results("exp1")) == 1
+
+    def test_current_write_path_works_after_migration(self, backend):
+        """The strict save_results contract check passes on a migrated table."""
+        self._seed_old_project(backend)
+        manager = InternalTablesManager(backend)
+        manager.ensure_tables()
+
+        manager.save_results(
+            make_result_batch(end_ts=datetime(2024, 1, 3), cov_std_1=1.5, corr_coef_1=0.7)
+        )
+        by_ts = {row["end_ts"]: row for row in manager.load_results("exp1")}
+        assert by_ts[datetime(2024, 1, 3)]["cov_std_1"] == 1.5
+        assert by_ts[datetime(2024, 1, 3)]["corr_coef_1"] == 0.7
+        assert by_ts[datetime(2024, 1, 2)]["cov_std_1"] is None  # legacy row
+
+    def test_not_null_no_default_addition_is_refused(self, backend):
+        """The additive contract: new columns must be nullable or defaulted."""
+        self._seed_old_project(backend)
+        full = backend.get_full_table_name(TABLE_RESULTS, use_internal=True)
+        old = _pre_wp1_results_model()
+        bad = TableModel(
+            columns=[*old.columns, ColumnDefinition("strict_new", "Float64")],
+            primary_key=old.primary_key,
+            engine=old.engine,
+            order_by=old.order_by,
+            version_column=old.version_column,
+        )
+        with pytest.raises(ValueError, match="nullable-or-defaulted"):
+            backend.ensure_columns(full, bad)
+
+    def test_ensure_columns_never_creates_a_missing_table(self, backend):
+        full = backend.get_full_table_name(TABLE_RESULTS, use_internal=True)
+        assert backend.ensure_columns(full, get_results_table_model()) == []
+        assert not backend.table_exists(TABLE_RESULTS)
 
 
 class TestNextVersionTs:
@@ -405,6 +497,10 @@ def make_result_batch(**overrides) -> dict[str, np.ndarray]:
         "std_2": 0.6,
         "cov_value_1": None,
         "cov_value_2": None,
+        "cov_std_1": None,
+        "cov_std_2": None,
+        "corr_coef_1": None,
+        "corr_coef_2": None,
         "size_1": 100,
         "size_2": 101,
         "alpha": 0.05,

@@ -112,6 +112,28 @@ def test_cuped_ttest_matches_legacy(
     assert_result_matches(result, expected)
 
 
+def test_cuped_covariate_moments_match_independent_numpy(
+    continuous_arms: Arms,
+    assert_rel: AssertRel,
+) -> None:
+    """M9 WP1: the persisted covariate moments reproduce independent numpy.
+
+    ``cov_std_i``/``corr_coef_i`` are new PERSISTED fields (schema addition,
+    not a formula change — no ``ALGORITHM_VERSION`` bump): each must match
+    ``np.std`` (ddof=0, the baseline parity) and ``np.corrcoef`` computed
+    directly from the raw arrays, at the golden rel-1e-9 tolerance.
+    """
+    y1, x1, y2, x2 = continuous_arms
+    result = CupedTTest(alpha=0.05).from_samples(
+        Sample(y1, cov_array=x1, name="control"), Sample(y2, cov_array=x2, name="variant")
+    )
+    assert result.cov_std_1 is not None and result.corr_coef_1 is not None
+    assert_rel(result.cov_std_1, float(np.std(x1)), what="cov_std_1")
+    assert_rel(result.cov_std_2, float(np.std(x2)), what="cov_std_2")
+    assert_rel(result.corr_coef_1, float(np.corrcoef(y1, x1)[0, 1]), what="corr_coef_1")
+    assert_rel(result.corr_coef_2, float(np.corrcoef(y2, x2)[0, 1]), what="corr_coef_2")
+
+
 @parametrize_alpha
 @parametrize_test_type
 def test_paired_cuped_ttest_matches_legacy(

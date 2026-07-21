@@ -72,7 +72,7 @@ names/types are ours to choose; this is the proposed v1 contract):
 |---|---|
 | identity | `experiment`, `metric`, `is_main_metric`, `is_guardrail`, `method_name`, `method_params` (canonical JSON), `method_config_id`, `name_1`, `name_2` |
 | window | `start_ts`/`end_ts` (UTC DateTimes; `end_ts` **exclusive** — the canonical cutoff key), `start_date`/`end_date` (derived Dates — legacy-identical at `cadence: 1d`), `window_seconds`, `elapsed_days` (fractional; the chart x-axis) — see cumulative-intervals.md §6.3 |
-| per-arm | `value_1/2`, `std_1/2`, `cov_value_1/2`, `size_1/2` |
+| per-arm | `value_1/2`, `std_1/2`, `cov_value_1/2`, `cov_std_1/2`, `corr_coef_1/2`, `size_1/2` — `cov_std`/`corr_coef` *(added in M9 WP1)* complete the per-arm covariate sufficient statistics (`cov_m2 = cov_std²·n`, `cross_c = corr_coef·√(m2·cov_m2)`), populated by `cuped-t-test` only; NULL for every other method and for pre-migration rows |
 | test | `alpha` (effective, post-correction), `pvalue`, `effect`, `left_bound`, `right_bound`, `ci_length`, `reject`, `mde_1/2` |
 | integrity | `srm_flag`, `srm_pvalue`, `decision_blocked`, `insufficient_data` (small-n demotion: row written, inference withheld) |
 | sequence | `ci_kind` (`fixed` \| `always_valid`), `is_horizon` (this cutoff == planned horizon) |

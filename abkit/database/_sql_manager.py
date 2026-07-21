@@ -228,6 +228,37 @@ class SQLDatabaseManager(BaseDatabaseManager):
             self._conn.rollback()
             raise
 
+    #: Whether the dialect supports ``ADD COLUMN IF NOT EXISTS`` (PostgreSQL
+    #: does; MySQL does not — it falls back to swallowing the duplicate error).
+    _ADD_COLUMN_IF_NOT_EXISTS = True
+
+    def list_columns(self, table_name: str, schema: str | None = None) -> list[str]:
+        """Live column names from ``information_schema.columns``, by position."""
+        rows = self.execute_query(
+            "SELECT column_name AS column_name FROM information_schema.columns "
+            "WHERE table_schema = %(schema)s AND table_name = %(table)s "
+            "ORDER BY ordinal_position",
+            {"schema": schema or self._internal_location, "table": table_name},
+        )
+        return [row["column_name"] for row in rows]
+
+    def _is_duplicate_column_error(self, exc: Exception) -> bool:
+        """Dialect hook: True when ``exc`` is the duplicate-column DDL error."""
+        return False
+
+    def _add_column(self, table_name: str, column: ColumnDefinition) -> None:
+        if_not_exists = "IF NOT EXISTS " if self._ADD_COLUMN_IF_NOT_EXISTS else ""
+        rendered = self._render_column(column, in_primary_key=False)
+        ddl = f"ALTER TABLE {table_name} ADD COLUMN {if_not_exists}{rendered}"
+        try:
+            self.execute_query(ddl)
+        except Exception as exc:
+            # Belt-and-braces for dialects without IF NOT EXISTS (MySQL): the
+            # ensure_columns diff already pre-checked, so a duplicate here can
+            # only be a concurrent identical migration — same end state.
+            if not self._is_duplicate_column_error(exc):
+                raise
+
     def table_exists(self, table_name: str, schema: str | None = None) -> bool:
         """Check ``information_schema.tables`` for the table in one/both locations."""
         locations = [schema] if schema else [self._internal_location, self._data_location]
