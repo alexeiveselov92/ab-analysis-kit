@@ -37,10 +37,13 @@ number change).
   migrates `_ab_results` in place, old rows read the new columns as NULL.
 
 No `ALGORITHM_VERSION` bump: this is a schema/plumbing change, not a
-statistics change ([statistics-changes.md](docs/specs/statistics-changes.md)'s
-schema-vs-statistics framing) — no persisted statistical number moves. The new
-moments are pinned against independent `np.std`/`np.corrcoef` computations at
-the golden rel-1e-9 tolerance (`tests/golden/test_golden_parametric.py`).
+statistics change — nothing here deviates from the captured statistical
+baseline that [statistics-changes.md](docs/specs/statistics-changes.md)'s
+change-control governs, and no persisted statistical number moves (the
+schema-not-statistics framing itself lands in `statistics-changes.md` at the
+M9 exit-gate docs sync, per the plan's WP6). The new moments are pinned
+against independent `np.std`/`np.corrcoef` computations at the golden
+rel-1e-9 tolerance (`tests/golden/test_golden_parametric.py`).
 
 ## [0.3.0] - 2026-07-21
 

@@ -48,7 +48,9 @@ The tables are created on demand and idempotently: every CLI invocation that
 needs them calls `ensure_tables()`, which creates any `_ab_*` table that does not
 yet exist, additively adds any column a newer abkit version has introduced to an
 existing table (`ALTER TABLE … ADD COLUMN`; never drops or renames), and is safe
-to call repeatedly. Read-only surfaces (a report on a
+to call repeatedly. On a migrated table the added columns sit at the physical
+end (PostgreSQL has no positional `ADD COLUMN`), so storage order may differ
+from a fresh install's — harmless: every abkit read is column-name-keyed. Read-only surfaces (a report on a
 never-run project, the explore cockpit, the calibration chip) deliberately do
 **not** create schema — they guard with existence checks (`results_table_exists`,
 `exposures_table_exists`, `aa_runs_table_exists`) so reading never mutates your

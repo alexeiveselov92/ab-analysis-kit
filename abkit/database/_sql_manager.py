@@ -164,10 +164,6 @@ class SQLDatabaseManager(BaseDatabaseManager):
         return self._TYPE_MAP[kind]
 
     @staticmethod
-    def _is_nullable(col: ColumnDefinition) -> bool:
-        return col.nullable or (col.type.startswith("Nullable(") and col.type.endswith(")"))
-
-    @staticmethod
     def _render_default(col: ColumnDefinition) -> str:
         if col.default is None:
             return ""
@@ -181,7 +177,7 @@ class SQLDatabaseManager(BaseDatabaseManager):
     def _render_column(self, col: ColumnDefinition, in_primary_key: bool) -> str:
         native = self._map_type(col.type, in_primary_key, col.max_length)
         # Primary-key columns are always NOT NULL; otherwise honor the model.
-        nullable = self._is_nullable(col) and not in_primary_key
+        nullable = col.is_nullable and not in_primary_key
         null_sql = "" if nullable else " NOT NULL"
         return f"{self._q(col.name)} {native}{null_sql}{self._render_default(col)}"
 

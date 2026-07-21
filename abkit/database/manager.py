@@ -171,6 +171,12 @@ class BaseDatabaseManager(ABC):
         SQL backends, so the contract is enforced here — deterministically,
         for every backend — before any DDL runs.
 
+        Physical placement caveat: an added column lands at the END of the
+        live table (PostgreSQL has no positional ADD COLUMN at all), so a
+        migrated table's storage order differs from a freshly created one's
+        model order. Harmless by design — every read/write in the codebase is
+        column-NAME-keyed, never positional.
+
         Args:
             table_name: Fully qualified table name (``location.table``)
             table_model: The current (target) table schema
@@ -182,13 +188,15 @@ class BaseDatabaseManager(ABC):
         location, _, bare = table_name.rpartition(".")
         live = set(self.list_columns(bare, schema=location or None))
         if not live:
-            # Table missing (or unreadable catalog) — nothing to migrate here;
-            # creation is create_table's job, not the column-sync's.
+            # Empty listing = table missing OR an unreadable catalog. Both
+            # no-op DELIBERATELY: creation is create_table's job, and a
+            # misread catalog must trigger no DDL at all — the insert path's
+            # column-mismatch check stays the loud failure, an ALTER storm
+            # against a table we cannot see would be the dangerous reaction.
             return []
         missing = [col for col in table_model.columns if col.name not in live]
         for col in missing:
-            nullable = col.nullable or (col.type.startswith("Nullable(") and col.type.endswith(")"))
-            if not nullable and col.default is None:
+            if not col.is_nullable and col.default is None:
                 raise ValueError(
                     f"ensure_columns: cannot add NOT-NULL column {col.name!r} with no "
                     f"default to existing table {table_name} — additive migrations "
