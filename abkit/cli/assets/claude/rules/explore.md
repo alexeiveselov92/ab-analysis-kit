@@ -23,6 +23,11 @@ name a configured **comparison** of that experiment (default: the main metric).
   — it never runs the pipeline, takes **no pipeline lock**, and never writes to
   the warehouse. Run `abk run --select <exp>` **first**: no computed rows ⇒ a
   friendly noop telling you to run first.
+- **A broken live assignment source blocks the cockpit too** (M8): at
+  session-load explore resolves the cohort through the same
+  `build_cohort_backend` factory as `abk run` (the SRM chip's count source) —
+  in the default no-copy mode a source that empties or corrupts fails with a
+  clean, actionable error naming the fix, never a raw traceback.
 - Freshness is whatever the last `abk run` produced; the header shows the latest
   `end_ts` / watermark so staleness is visible. It is a **retuning** surface, not
   a live monitor.

@@ -25,9 +25,13 @@ pointing a **metric** (a separate reusable YAML + SQL) at a statistical
 
 Every `abk run` executes three stages per experiment:
 
-1. **load** — persists the assignment cohort ONCE into `_ab_exposures`, then runs
-   each metric's SQL against the source DB over the cumulative window (the macro
-   joins the cohort). One row per unit in, additive aggregates out.
+1. **load** — resolves the assignment cohort once per run: by default
+   (`assignment.cohort_copy.enabled: false`) the assignment SQL is re-rendered
+   and validated live and nothing is persisted; with `cohort_copy.enabled:
+   true` an append-only, watermark-resumed incremental copy lands in
+   `_ab_exposures`. Then each metric's SQL runs against the source DB over the
+   cumulative window (the macro joins the cohort either way). One row per unit
+   in, additive aggregates out.
 2. **compute** — runs the configured statistical method (t/z-test, CUPED,
    ratio-delta, bootstrap) at each planned cutoff, gates SRM, and writes rows to
    `_ab_results` (the BI contract). Idempotent: already-computed cutoffs are
@@ -64,7 +68,7 @@ profile's `internal_database` / `internal_schema`, separate from the
 | Table | Holds |
 |---|---|
 | `_ab_results` | **The BI contract.** One row per `(experiment, metric, variant-pair, method_config_id, end_ts)` cumulative cutoff: effect, CI, p-value, per-arm stats, SRM flag, `insufficient_data`, `ci_kind`, `is_horizon`. Point BI here. |
-| `_ab_exposures` | The persisted assignment cohort (unit → variant → exposure_ts), loaded once per run; joined by every metric query and the SRM count source. |
+| `_ab_exposures` | **Optional** — the persisted assignment cohort copy (unit → variant → exposure_ts), created/written only when `assignment.cohort_copy.enabled: true` (an append-only incremental copy; a routine run never deletes — `--resync-cohort` is the one exception). On the default no-copy path the table does not exist: metric queries and the SRM counts read the live assignment source instead. |
 | `_ab_experiments` | Informational experiment catalog (descriptions, variants, split, alpha, cadence, tags) for BI joins; the pipeline never reads it back for decisions. |
 | `_ab_aa_runs` | The `abk validate` A/A audit trail (per-cell FPR/power at the effective alpha); lights the explore calibration chip. Never pruned by `abk clean`. |
 | `_ab_tasks` | Pipeline run/lock bookkeeping — the atomic per-experiment lock (`abk unlock` clears a stale one). |

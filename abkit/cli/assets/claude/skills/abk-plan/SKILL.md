@@ -59,7 +59,7 @@ Flags (confirm the live set with `abk plan --help`):
 | `--power` | Target power (default: `statistics.power`, typically 0.8) |
 | `--alpha` | Experiment-level significance **before** correction (default: experiment/project alpha) |
 | `--baseline` | Baseline moments for a metric with no data (repeatable — Step 2) |
-| `--arrival-rate` | Total units/day across arms, for the runtime (days-to-N) + always-valid ASN estimates (default: derived read-only from `_ab_exposures`; must be `> 0`) |
+| `--arrival-rate` | Total units/day across arms, for the runtime (days-to-N) + always-valid ASN estimates (default: derived read-only from the cohort source — the persisted `_ab_exposures` copy in copy mode, otherwise a fresh re-execution of the live assignment SQL at invocation time; must be `> 0`) |
 | `--profile` | Profile name (default: `profiles.yml` `default_profile`) |
 
 `--mde` and `--alpha` are in the comparison's own units: a `relative` test type reads
@@ -144,8 +144,11 @@ this; tell the user the true requirement is lower.
 
 `abk plan` is planning-only. Sizing (required-N / MDE / power) is the core; **runtime /
 ASN** ship alongside it. If the user asks "how long", `abk plan` reports **runtime**
-(days-to-required-N) from a unit-arrival rate — derived read-only from `_ab_exposures`
-or supplied with `--arrival-rate <units/day>` — and, for a `sequential.enabled`,
+(days-to-required-N) from a unit-arrival rate — derived read-only by re-executing
+the cohort source at invocation time (the live assignment SQL in the default
+no-copy mode — the documented cost/freshness tradeoff — or the persisted
+`_ab_exposures` copy in copy mode) or supplied with `--arrival-rate <units/day>` —
+and, for a `sequential.enabled`,
 sequential-eligible comparison, the **ASN** (the always-valid design's average sample
 number: expected stopping N under H1/H0, horizon-capped). Without an arrival rate both
 are SKIPPED with a reason (never invented); a fixed-horizon/resampling design shows

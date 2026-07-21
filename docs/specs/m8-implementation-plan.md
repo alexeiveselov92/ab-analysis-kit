@@ -1,16 +1,17 @@
 # M8 Implementation Plan — assignments: no-copy default + incremental copy
 
-> **As-designed contract for M8** (polish track M7–M17, approved by the maintainer
-> 2026-07-18 — see [ROADMAP.md](../../ROADMAP.md) "The polish track"). Targets release
-> **`0.3.0`**. **Not yet implemented** — this document is the contract the
-> implementation sessions execute, in the shape of
+> **Implementation record — M8 shipped in full (WP1–WP7), 2026-07-20/21;
+> version bumped to `0.3.0`, release-ready pending the maintainer's `v0.3.0`
+> tag/publish step.** Written 2026-07-18 as the as-designed contract for M8
+> (polish track M7–M17, approved by the maintainer 2026-07-18 — see
+> [ROADMAP.md](../../ROADMAP.md) "The polish track"), in the shape of
 > [m6-implementation-plan.md](m6-implementation-plan.md) /
-> [m4-implementation-plan.md](m4-implementation-plan.md). It becomes the
-> implementation record at the WP7 exit gate (the m4–m6 pattern): as-built notes,
-> the adversarial-review log, and any settled open questions are appended in place,
-> never rewritten. Nothing below should be read as claiming shipped code — every
-> section is written "WP2 adds…", "the gate asserts…", contract/future tense
-> throughout.
+> [m4-implementation-plan.md](m4-implementation-plan.md); amended in place at
+> the WP7 exit gate into this record (the m4–m6 pattern). The WP bodies below
+> keep the original future-tense contract wording ("WP2 adds…") as the
+> designed baseline; the **"done" table** below, the **per-WP as-built notes**
+> (blockquotes at each WP), the **settled §4 questions**, and the
+> **exit-gate record** appended to §3 are the authoritative as-built account.
 >
 > Governing specs: [declarative-config.md §4](declarative-config.md) (the packaged
 > assignment macro) + [§5](declarative-config.md) (the `ab_*` builtins table),
@@ -26,6 +27,28 @@
 > Donor for WP5: `/home/aleksei/wsl_analytics/detektkit`
 > (`detectkit/loaders/metric_loader.py`,
 > `detectkit/orchestration/task_manager/_load_step.py`).
+
+## Status — all work packages shipped (the "done" table)
+
+| WP | Landed as | Squash-merge | Load-bearing as-built delta (details in the per-WP notes) |
+|---|---|---|---|
+| WP1 — opt-in copy config block | PR #46 | `abe8503`, 2026-07-20 | field named `assignment.cohort_copy`, NOT `assignment.copy` (§4 Q1 — a pydantic field `copy` shadows `BaseModel.copy` and warns at import); parse-only, nothing reads it yet |
+| WP2 — `exposure_source` pushdown validation | PR #47 | `47e2a50`, 2026-07-20 | render once + ONE validation query + in-memory `ExposureSnapshot`; the cross-variant hard error fires here, before any metric join |
+| WP3 — `ab_cohort_source` builtin | PR #48 | `def64a2`, 2026-07-20 | one cohort fragment, two source modes; the packaged macro joins ONLY this builtin — `ab_exposures_table` stays for external templates |
+| WP4 — `build_cohort_backend` call-site switch | PR #49 | `d6d8b0d`, 2026-07-21 | the no-copy DEFAULT flips here; every reader (run/plan/validate/explore/reporting/tuning) on the one factory; shared `core/exposure_counting.py` kills the SRM/arrival-rate drift; §4 Q2–Q4 settled by the maintainer 2026-07-20 |
+| WP5 — incremental copy engine + `--resync-cohort` | PR #50 | `8cb6549`, 2026-07-21 | grid-anchored closed intervals (never data-anchored); watermark snapped to bucket floor; bounds injected via the EXISTING `{{ ab_added_filters }}` hook proven LIVE by a rendered sentinel; append-only writes; resync rebuilds THROUGH the engine |
+| WP6 — copy-enabled e2e legs | PR #51 | `c46be4d`, 2026-07-21 | the growing-source increment the single-instant scaffold seed cannot express; persisted rows asserted field-exact (a set-level check misses corruption); `watermark_ts` is the one legitimately differing `_ab_results` column |
+| WP7 — docs three-way sync + init scaffold + CHANGELOG | this PR | — | the audit swept wider than the §WP7 file list: code docstrings/`--help` text (`plan.py`, `main.py`, `tables.py`, `recompute_backend.py`, `planning/`) carried the same stale `_ab_exposures` claims; status lines flipped to "0.2.0 published on PyPI" |
+
+**Zero statistical numbers moved anywhere in the milestone** — no
+`ALGORITHM_VERSION` bump in any PR, no `statistics-changes.md` entry,
+`abkit.stats` purity intact; the cross-mode parity gates
+(`tests/e2e/test_cohort_mode_parity.py`, the driver-level
+`TestCohortModeParity`, `tests/e2e/test_first_run_copy_enabled.py`) pin
+`_ab_results`/`_ab_aa_runs`/the baked explore payload identical across
+modes. Every WP PR carried its own adversarial review (1–2 rounds each,
+findings fixed in-PR before merge); the milestone-level exit gate is recorded
+in §3.
 
 ## 0. Scope, posture & decisions
 
@@ -179,6 +202,14 @@ carried into the WPs below rather than left as ambient context:
 
 ### WP1 — Config surface: opt-in incremental-copy block on `AssignmentConfig`
 
+> **As built (PR #46, `abe8503`).** Shipped as `CohortCopyConfig` on
+> `assignment.cohort_copy` (§4 Q1 — `copy` shadows `BaseModel.copy`), fields
+> `enabled=False` / `update_column="exposure_ts"` / `batch_interval="1d"` /
+> `batch_intervals_per_round_trip=30` (interval-COUNTS, not rows) /
+> `maturity_delay=0`; a parse-time validator requires
+> `update_column.isidentifier()` when enabled (existence stays a run-time
+> column probe). Parse-only in this WP — nothing read the flag yet.
+
 **Goal:** add `assignment.copy` (default disabled) carrying the incremental-load
 knobs the donor pattern needs (update column, batch interval, batch count,
 maturity delay) — additive-only, per §0.4.1 no new source-reference field is
@@ -235,6 +266,11 @@ introduced.
 ---
 
 ### WP2 — New `exposure_source` module: render once, ONE validation query, in-memory snapshot
+
+> **As built (PR #47, `47e2a50`).** `loaders/exposure_source.py`:
+> `render_assignment_sql` + `validate_and_snapshot` (ONE aggregation query →
+> the in-memory `ExposureSnapshot`; the cross-variant conflict is a hard error
+> HERE, before any metric joins a corrupted source) + `probe_has_stratum`.
 
 **Goal:** replace today's full-materialize-in-Python loop
 (`exposure_loader.py:74-107`, fed by `manager.execute_query(rendered)` at line
@@ -317,6 +353,14 @@ duplicate-row warning path (subject to the §0.5(b) parity fixture).
 
 ### WP3 — Jinja macro + `query_template`: direct-join cohort source builtin
 
+> **As built (PR #48, `def64a2`).** The `ab_cohort_source` builtin: one
+> cohort fragment, two source modes (the persisted table + `FINAL` on
+> ClickHouse, or a live `MIN(exposure_ts)`-deduped `GROUP BY` subquery over
+> the rendered assignment SQL). The packaged macro's `exposed_units()` joins
+> ONLY this builtin; `ab_exposures_table` is kept for external templates.
+> Jinja gotcha pinned in-PR: `trim_blocks` eats the newline after
+> block/comment tags, NOT after `{{ }}` — byte-parity tests must account.
+
 **Goal:** introduce one unified builtin `ab_cohort_source`, built in Python
 (`query_template.py`), whose value is **either** the persisted-table+`FINAL`
 fragment (today's `ab_exposures_table`, unchanged when `copy.enabled`) **or** a
@@ -391,6 +435,18 @@ promises (jinja file header, lines 1-9).
 ---
 
 ### WP4 — Wire every `RecomputeBackend`/exposures-reader call site onto the source-mode switch
+
+> **As built (PR #49, `d6d8b0d`).** The default FLIPS here:
+> `build_cohort_backend(...)` (copy mode query-free for read-only callers via
+> `with_snapshot=False`; direct mode renders + validates once) carries every
+> reader — driver, `abk plan` arrival rate, `abk validate` load, explore
+> session-load, tuning RELOAD/Auto-validate, `--report` SRM chip. The sub-day
+> SRM bisect + arrival-rate arithmetic moved to the shared pure
+> `core/exposure_counting.py` (one implementation for both modes). Review
+> hardening: explore fails the house way on a broken live source; `--report`
+> reuses the invocation's own snapshot (never a second source execution);
+> manager-less direct-mode report payloads show honest zero counts. §4 Q2–Q4
+> settled by the maintainer 2026-07-20.
 
 **Goal:** centralize the copy-vs-direct branch in ONE factory so the 5+ call
 sites that build a `RecomputeBackend` or read exposures counts do not each
@@ -491,6 +547,20 @@ build on** — nothing downstream may hand-roll cohort SQL again.
 ---
 
 ### WP5 — Incremental copy engine (opt-in), ported from detectkit's watermark/closed-interval/batch pattern
+
+> **As built (PR #50, `8cb6549`; review round 1 fixed grid-anchored copy
+> windows / live-render bounds guard / FINAL watermark reads / gated
+> `--resync-cohort`, round 2 routed the resync rebuild through the engine).**
+> `loaders/exposure_copy.copy_exposures_incremental`: grid-anchored closed
+> buckets (`grid.start_ts + k·batch_interval`; the open bucket +
+> `maturity_delay`-young rows withheld; the covered boundary is a function of
+> the clock, never the data), watermark resume from the FINAL-deduped
+> `MAX(exposure_ts)` snapped to its bucket floor (custom `update_column`: no
+> persisted cursor — full re-scan every run), bounds injected through the
+> EXISTING `{{ ab_added_filters }}` hook proven LIVE by a rendered sentinel
+> (a token in a comment cannot pass), append-only
+> `insert_exposures_incremental`. `abk run --resync-cohort` deletes + rebuilds
+> THROUGH the same engine; known limitations disclosed, not masked (§4 Q3).
 
 **Goal:** when `assignment.copy.enabled`, replace the current
 delete-then-reinsert-everything (`replace_exposures`,
@@ -604,6 +674,20 @@ only appended to.
 
 ### WP6 — Tests: full unit-test migration + e2e no-copy/copy-enabled parity legs
 
+> **As built (PR #51, `c46be4d`; review round 1 made the closed-only
+> assertion falsifiable and the persistence check field-exact).**
+> `tests/e2e/test_first_run_copy_enabled.py`: the scaffolded example with
+> `cohort_copy.enabled` proves the CLI write path is the incremental engine
+> end to end (rerun = append-only watermark resume, zero deletes, byte-stable
+> results), plus the staggered growing-source increment the single-instant
+> seed cannot express — run 1 persists only closed buckets, run 2 appends
+> exactly the delta (field-exact rows), and the two-run history lands
+> `_ab_results` identical to a fresh direct-mode project (`watermark_ts` the
+> one legitimately differing column). The `DELETE FROM _ab_exposures` pin
+> re-scoped to the resync/purge path. (The unit-test migration itself landed
+> incrementally inside WP2–WP5's PRs — this WP's session delivered the two
+> e2e legs the plan reserved for it.)
+
 **Goal:** update every test that pins today's full-reload/persisted-copy
 behavior, and add the two e2e legs the exit gate needs: the existing first-run
 test stays green under the NEW default (no-copy), and a new copy-enabled leg
@@ -661,6 +745,19 @@ interaction bugs between WP2–WP5 that unit tests in isolation missed.
 ---
 
 ### WP7 — Docs three-way sync + init scaffold + CHANGELOG
+
+> **As built (this PR).** A 7-agent audit (as-built fact sheet from code →
+> 5 cluster auditors + a repo-wide sweep) found 75 stale/missing spots across
+> 36 files — wider than the file list below: code docstrings and `--help`
+> text (`cli/main.py`, `cli/commands/plan.py`, `database/tables.py`,
+> `compute/recompute_backend.py`, `planning/`) carried the same stale
+> "persisted once per run" claims. All three bodies synced (docs/ →
+> `.claude/rules/` → packaged `init-claude` assets), the init scaffold got the
+> commented `cohort_copy:` example + rewritten comments, `internal-tables.md`
+> marks `_ab_exposures` OPTIONAL with the append-only write pattern, the
+> guides carry the KNOWN-LIMITATION callout and the `abk plan` cost caveat,
+> and the status lines flipped to "0.2.0 published on PyPI". Version bumped
+> to `0.3.0`, CHANGELOG cut.
 
 **Goal:** update `docs/`, `.claude/rules/` (mirrored under
 `abkit/cli/assets/claude/`), and the init scaffold so the new default and the
@@ -816,6 +913,52 @@ Then the e2e battery:
 Per the track-wide discipline (§0.2): `grep ALGORITHM_VERSION` across the diff
 stays empty; parity gates are exact on integer counts (SRM observed counts,
 row counts, arrival-rate numerators) and rel-1e-9 on continuous values.
+
+> **Exit-gate record (as executed at WP7, 2026-07-21).** All bullets above
+> held. (Throughout this contract-tense section `assignment.copy` reads as
+> `assignment.cohort_copy` — the §4 Q1 rename.)
+>
+> - **Semantic parity (focus 1):** proven continuously by the merged gates,
+>   not re-litigated at the exit — `tests/e2e/test_cohort_mode_parity.py`
+>   (run/validate/explore × direct/copy: `_ab_results`, `_ab_aa_runs`, the
+>   baked explore payload identical modulo the volatile provenance columns),
+>   the driver-level `TestCohortModeParity` (result rows + the sub-day SRM
+>   verdict stream), and the WP4 review-hardening items (the CUPED pre-period
+>   render and the sub-day bisect path both route through the same
+>   `ab_cohort_source`/`exposure_counting` seams).
+> - **The watermark limitation (focus 2):** documented, not masked — the WP5
+>   CHANGELOG disclosure, `docs/guides/experiments.md` ("Known limitation
+>   (copy mode)" callout), `docs/reference/internal-tables.md`, the CLI
+>   reference `--resync-cohort` rows, and the packaged
+>   rules/skills mirrors (this WP).
+> - **The e2e battery:** `tests/e2e/test_first_run.py` (no-copy default),
+>   `tests/e2e/test_first_run_copy_enabled.py` (engine-only CLI writes; the
+>   append-only rerun asserts zero deletes + zero planned cutoffs; the
+>   growing-source leg lands `_ab_results` identical to a one-shot
+>   direct-mode project), `test_cohort_mode_parity.py` (plan/validate/
+>   explore/report SRM chip identical across modes). Full suite at the gate:
+>   **1987 passed, 3 skipped** (2026-07-21, this WP's tree).
+> - **Docs three-way sync:** executed as a code-grounded audit (an as-built
+>   fact sheet from the merged code → 5 cluster auditors + a repo-wide grep
+>   sweep) — 75 stale/missing spots across 36 files, all fixed in this WP;
+>   the drift gate `tests/docs/test_docs_single_source.py` green.
+> - **CHANGELOG:** the `[0.3.0]` section opens with the explicit "no
+>   `ALGORITHM_VERSION` bump — zero statistical numbers changed" disclaimer;
+>   `grep ALGORITHM_VERSION` over the WP7 diff is empty.
+> - **Adversarial review:** two rounds on this WP's diff (three lenses each —
+>   code-accuracy, three-way consistency, release mechanics). Round 1: 2
+>   MAJOR (this §3 record initially missing; the CLAUDE.md/rules "Next"
+>   paragraphs still listing M8 in the forward backlog) + 2 MINOR (the M4
+>   facts bullet mis-attributing the `build_cohort_backend` call to
+>   `validate/load.py` — it lives in `cli/commands/validate.py`; the README
+>   pre-tag install caveat dropped) — all fixed. Round 2: 1 MAJOR (the rules
+>   M8-shipped paragraph said "released as 0.3.0", contradicting its own
+>   header's release-ready-tag-pending status) + 3 MINOR (the M6-recap's
+>   unconditional "`_ab_exposures` arrival"; a WP4 CHANGELOG
+>   above/below cross-reference; docs/README's unqualified "creates its
+>   internal tables automatically on first run") — all fixed; round 3 not
+>   run (round 2 surfaced no behavioral-claim errors in the WP7 additions
+>   themselves, only status-line/cross-reference drift).
 
 ---
 

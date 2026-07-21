@@ -130,8 +130,13 @@ abk validate --select <exp> [--method <m>]... [--metric <m>] [--iterations N] \
   serialize behind nightly runs.
 - **Exits non-zero** on any cell/harness failure; `--report` is the one best-effort
   exception (a bake failure yellow-skips, never fails validation).
-- Reads the experiment's persisted cohort — run `abk run --select <exp>` at least
-  once first so there is data to resample.
+- Resolves the cohort itself via `build_cohort_backend` each invocation — in the
+  default no-copy mode it renders and validates the LIVE assignment source
+  directly (no prior `abk run` needed for the cohort); with
+  `assignment.cohort_copy.enabled: true` it reads the persisted,
+  incrementally-copied `_ab_exposures` table, so a prior copy-mode run must have
+  populated it. Either way the metric event data must already exist in the
+  source DB.
 
 ## Reading the matrix — the three classic failures
 
@@ -217,8 +222,11 @@ A/A is the expensive corner**. So:
 - **Not a config lint.** `abk validate` = the A/A statistical matrix; `abk run
   --steps validate` = the config/schema/SQL gate. Different purpose, different lock,
   different stage names — never conflate.
-- **Run the pipeline first.** validate resamples the experiment's persisted cohort —
-  `abk run --select <exp>` must have persisted data or there is nothing to split.
+- **The cohort is resolved live, not read from a prior run.** In the no-copy
+  default validate re-renders/validates the live assignment source itself, so
+  `abk run` is not a prerequisite for the cohort (the metric event data must
+  still exist). Only in copy mode (`assignment.cohort_copy.enabled: true`) does
+  it read what previous runs copied into `_ab_exposures`.
 - **Peeking FPR is the hazard, not the verdict.** It deliberately measures the
   optional-stopping trap the readout's stabilization rule defends against; a high
   peeking FPR on a low single-look FPR means "enable `sequential`", not "the method

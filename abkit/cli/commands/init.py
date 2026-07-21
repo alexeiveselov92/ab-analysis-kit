@@ -163,6 +163,11 @@ assignment:                 # READ-ONLY exposure source — abkit never randomiz
   query_file: sql/example_assignment.sql
   variants: [control, treatment]        # FIRST is control (name_1)
   expected_split: {control: 0.5, treatment: 0.5}   # drives the SRM gate
+  # cohort_copy:            # opt-in: persist an incremental, append-only
+  #   enabled: true         # _ab_exposures copy instead of re-reading the
+  #   update_column: exposure_ts   # live source every run — worth it for a
+  #   batch_interval: 1d    # heavy multi-join or a mutating source; see
+  #   maturity_delay: 0     # docs/guides/experiments.md ("Persisting the cohort")
 
 alpha: 0.05
 correction: bonferroni      # two-tier: main metric vs the rest (inspectable at run)
@@ -193,7 +198,8 @@ sql: |
   -- The window is PINNED-START / MOVING-END: ab_start_date never moves,
   -- ab_end_ts advances per cutoff — so every run aggregates from experiment
   -- start through the cutoff (the stabilization chart's points).
-  -- ab.exposed_units() joins the persisted cohort (_ab_exposures), applies
+  -- ab.exposed_units() joins the assignment cohort (the LIVE source by
+  -- default, the persisted _ab_exposures copy under cohort_copy), applies
   -- the window + exposure filters and dedup — never re-implement those.
   SELECT
       {{ ab.variant_col() }}  AS variant,
@@ -230,8 +236,11 @@ sql: |
 
 ASSIGNMENT_SQL = """\
 -- The assignment (exposure) source: one row per unit with its variant and
--- first-exposure timestamp. abkit persists this ONCE per run into
--- _ab_exposures; every metric query joins that cohort via the packaged macro.
+-- first-exposure timestamp. By default abkit never persists this — every
+-- metric query joins the LIVE assignment cohort via the packaged macro.
+-- Set assignment.cohort_copy.enabled: true in the experiment YAML to persist
+-- an incremental, append-only copy into _ab_exposures instead (worth it for
+-- a heavy multi-join or a mutating source).
 SELECT
     user_id,
     variant,

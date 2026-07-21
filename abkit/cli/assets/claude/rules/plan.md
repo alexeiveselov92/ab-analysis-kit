@@ -46,7 +46,7 @@ Without either, that comparison is reported **un-sizable — not guessed**. The
 | `--power 0.8` | Target power. Default: the project statistics default. |
 | `--alpha 0.05` | Experiment-level alpha *before* correction; the two-tier scheme still divides it. Default: experiment/project alpha. |
 | `--baseline <spec>` | Greenfield baseline moments (repeatable; see above). |
-| `--arrival-rate <units/day>` | Total units/day across arms, for the **runtime** (days-to-required-N) + always-valid **ASN** estimates. Default: derived read-only from `_ab_exposures`; without arrival data both are skipped. Must be `> 0`. |
+| `--arrival-rate <units/day>` | Total units/day across arms, for the **runtime** (days-to-required-N) + always-valid **ASN** estimates. Default: derived read-only from the cohort source — the persisted `_ab_exposures` copy under `assignment.cohort_copy.enabled`, otherwise (the default) a fresh snapshot of the live assignment source re-executed at invocation time (the documented no-copy cost/freshness tradeoff); without arrival data both are skipped. Must be `> 0`. |
 | `--profile` | Profile name (default: `profiles.yml` `default_profile`). |
 
 ## What it refuses (honest, never invented math)
@@ -91,7 +91,10 @@ the false-positive rate (enable sequential or coarsen the cadence).
 
 The footer look-count + cost-shape line is the pre-launch timing/cost companion.
 **Runtime and ASN** ship too: given a **unit-arrival rate** — derived read-only from
-`_ab_exposures` (distinct units per observed day, whole-cohort window, split to the
+the cohort source (the persisted `_ab_exposures` copy under
+`assignment.cohort_copy.enabled: true`, otherwise a live re-render + re-validation
+of the assignment SQL at invocation time — the default no-copy cost/freshness
+tradeoff; distinct units per observed day, whole-cohort window, split to the
 control arm) or supplied with `--arrival-rate <units/day>` — each sizable comparison
 also reports **runtime** (`days-to-required-N = required_n / rate` plus the horizon
 length) and, for a `sequential.enabled`, sequential-eligible comparison, the **ASN**

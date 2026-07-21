@@ -26,7 +26,7 @@ There are six internal tables:
 | Table | Engine | Primary key | What it is |
 |---|---|---|---|
 | [`_ab_results`](#_ab_results--the-bi-contract) | `ReplacingMergeTree(created_at)` | `(experiment, metric, name_1, name_2, method_config_id, end_ts)` | The BI contract — one row per comparison per cutoff. |
-| [`_ab_exposures`](#_ab_exposures--the-assignment-cohort) | `ReplacingMergeTree(loaded_at)` | `(experiment, unit_id)` | The persisted assignment cohort. |
+| [`_ab_exposures`](#_ab_exposures--the-assignment-cohort-copy-optional) | `ReplacingMergeTree(loaded_at)` | `(experiment, unit_id)` | The persisted assignment cohort — **optional, copy-mode only** (`assignment.cohort_copy.enabled: true`); absent by default. |
 | [`_ab_tasks`](#_ab_tasks--run-locks) | `MergeTree` | `(experiment, scope, process_type)` | Run locks + idempotency. |
 | [`_ab_aa_runs`](#_ab_aa_runs--the-aa-validation-audit-trail) | `ReplacingMergeTree(created_at)` | `(experiment, run_id)` | `abk validate` A/A audit trail. |
 | [`_ab_experiments`](#_ab_experiments--the-catalog) | `MergeTree` | `(experiment)` | Informational experiment catalog. |
@@ -195,17 +195,28 @@ different `alpha` values.
 
 ---
 
-## `_ab_exposures` — the assignment cohort
+## `_ab_exposures` — the assignment cohort copy (optional)
 
-The persisted per-unit assignment cohort. Loaded **once per run** from your
-assignment SQL and then JOINed by every metric query through the packaged
-`ab.exposed_units(...)` macro — the cohort is never re-derived per interval. It is
-**read-only for compute**: the pipeline never writes back into it and never
-randomizes. It is also the source of counts for the SRM gate.
+The persisted per-unit assignment cohort — **optional, copy-mode only**: it
+exists only when the experiment sets `assignment.cohort_copy.enabled: true`.
+By default (no-copy, the M8 default) abkit never creates or writes this table:
+every metric query joins a deduping subquery over your **live** assignment SQL
+instead (the `ab_cohort_source` builtin behind the packaged
+`ab.exposed_units(...)` macro), re-rendered and re-validated on every
+invocation. Either way the cohort is resolved once per run, never re-derived
+per interval, and stays **read-only for compute**: the pipeline never writes
+back into it and never randomizes. The SRM gate always measures the live
+validated assignment source, not this table.
 
-A re-run is idempotent per experiment: the loader deletes the experiment's rows
-and re-inserts, so the cohort is refreshed from the assignment SQL and the SRM
-gate re-checks it.
+With copy mode on, the table is written **incrementally and append-only**
+(`insert_exposures_incremental`): each run appends only the newly-matured,
+grid-anchored closed-interval batches since the last watermark
+(`MAX(exposure_ts)`, `FINAL`-deduped, snapped down to its bucket floor) — a
+routine run never deletes rows. The one exception is `abk run
+--resync-cohort`, which deletes the experiment's copy and rebuilds it from the
+experiment start through the same engine — the recovery for rows backfilled
+into an already-scanned closed bucket, which the watermark alone silently
+misses (the documented copy-mode limitation).
 
 **Engine** `ReplacingMergeTree(loaded_at)` · **PK** `(experiment, unit_id)`
 
@@ -383,7 +394,7 @@ Moment columns unused by a given column set stay `0`.
 
 | Command | Effect on `_ab_*` |
 |---|---|
-| `abk run` | Claims/releases the `_ab_tasks` lock; upserts `_ab_experiments`; replaces `_ab_exposures`; writes `_ab_results`. Reads `_ab_results` for the planner anti-join. |
+| `abk run` | Claims/releases the `_ab_tasks` lock; upserts `_ab_experiments`; writes `_ab_results`. Reads `_ab_results` for the planner anti-join. With `assignment.cohort_copy.enabled: true` only, appends incrementally to `_ab_exposures` (or rebuilds it with `--resync-cohort`); the no-copy default never touches that table. |
 | `abk validate` | Claims its own `_ab_tasks` lock (`process_type=validate`); writes `_ab_aa_runs`. Never writes `_ab_exposures` — a placebo split is in-memory only. |
 | `abk explore` | Read-only over `_ab_results`; reads `_ab_aa_runs` for the calibration chip (Auto mode can write `_ab_aa_runs`). |
 | `abk plan` | Read-only pre-launch sizing — no internal-table writes. |

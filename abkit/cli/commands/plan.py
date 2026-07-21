@@ -15,7 +15,9 @@ conservative upper bound. A genuine harness failure (bad selection / ``--baselin
 warehouse error) exits non-zero; a by-design refusal does not.
 
 Runtime / ASN (WP-A, m6-implementation-plan.md): each sizable comparison also reports
-days-to-required-N from a unit-arrival rate (derived read-only from ``_ab_exposures`` or
+days-to-required-N from a unit-arrival rate (derived read-only from the cohort source —
+the persisted ``_ab_exposures`` copy under ``assignment.cohort_copy.enabled``, otherwise
+a fresh snapshot of the live assignment source re-executed at invocation time — or
 supplied via ``--arrival-rate``) and, for a ``sequential.enabled`` design, the
 always-valid average sample number. No arrival data ⇒ runtime SKIPPED, never invented.
 """

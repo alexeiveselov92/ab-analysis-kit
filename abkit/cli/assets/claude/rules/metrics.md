@@ -82,15 +82,20 @@ live there once, so metric SQL describes only its own aggregation:
 {% import 'abkit_assignment.jinja' as ab %}
 ```
 
-- `{{ ab.exposed_units() }}` — `INNER JOIN`s the persisted `_ab_exposures`
-  cohort (loaded once per run, deduped per dialect), and applies both the coarse
-  `event_date` predicate and the precise half-open `event_time` window. Optional
-  args override the fact-side column names: `ab.exposed_units('dt', 'ts')`.
+- `{{ ab.exposed_units() }}` — `INNER JOIN`s the ONE `ab_cohort_source`
+  builtin: by default (`assignment.cohort_copy` unset) a live deduping subquery
+  over the rendered assignment SQL (re-validated every invocation); with
+  `cohort_copy.enabled: true` the persisted, append-only-copied `_ab_exposures`
+  table (`FINAL` on ClickHouse). Metric authors never choose between the two.
+  Either mode applies both the coarse `event_date` predicate and the precise
+  half-open `event_time` window. Optional args override the fact-side column
+  names: `ab.exposed_units('dt', 'ts')`.
 - `{{ ab.variant_col() }}` — the arm label from the cohort (project it `AS
   variant` and reference it in `columns.variant`).
 - `{{ ab.stratum_col() }}` — the stratum label, when stratifying.
 
-Config-lint asserts the rendered SQL joins `_ab_exposures`; a metric authored
+Config-lint asserts the rendered SQL joins the cohort through the macro
+(present identically in both cohort modes); a metric authored
 without the macro fails. Never hand-roll the assignment join or the window
 filter. `{{ data_database }}` is the data-location built-in on **every** dialect
 (on Postgres it resolves to the profile's `data_schema` value); there is no

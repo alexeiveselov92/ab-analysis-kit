@@ -17,7 +17,7 @@ Ported from detectkit's lazy-import Click group (shared flag vocabulary:
 |---|---|
 | `abk init <name> [--db-type clickhouse\|postgres\|mysql]` | Scaffold `abkit_project.yml`, `profiles.yml` (env-var secrets), `experiments/`, `metrics/`, `sql/`, a **runnable example** + a **Prefect flow/deployment** example, README |
 | `abk init-claude [--target-dir DIR]` | Install AI-assistant context: managed `CLAUDE.md` block + `.claude/rules/ab-analysis-kit/` + `.claude/skills/`; idempotent, version-stamped, re-runnable after upgrade |
-| `abk run --select <exp> [--steps validate,plan,load,compute] [--from/--to] [--full-refresh] [--profile] [--report]` | The pipeline: validate → plan → maintain unit-state → load → SRM → compute → persist → optional HTML readout. Streams `VALIDATE → PLAN → STATE → LOAD → SRM → COMPUTE → RESULT`. *(The readout surface is `--report` — tri-state: bare → `reports/<exp>.html`, a directory → `<dir>/<exp>.html`, a `.html` path → that file; emitted best-effort per experiment after its pipeline, even with zero pending cutoffs. A former `readout` `--steps` token was never wired and is superseded by `--report` — m3-implementation-plan.md D8.)* |
+| `abk run --select <exp> [--steps validate,plan,load,compute] [--from/--to] [--full-refresh] [--resync-cohort] [--profile] [--report]` | The pipeline: validate → plan → maintain unit-state → load → SRM → compute → persist → optional HTML readout. *(`--resync-cohort`, M8: copy mode only — delete + rebuild the persisted `_ab_exposures` copy through the incremental engine, recovering rows the watermark cannot heal; a documented no-op in the direct/no-copy default. Distinct from `--full-refresh`, which keeps its results-window semantics.)* Streams `VALIDATE → PLAN → STATE → LOAD → SRM → COMPUTE → RESULT`. *(The readout surface is `--report` — tri-state: bare → `reports/<exp>.html`, a directory → `<dir>/<exp>.html`, a `.html` path → that file; emitted best-effort per experiment after its pipeline, even with zero pending cutoffs. A former `readout` `--steps` token was never wired and is superseded by `--report` — m3-implementation-plan.md D8.)* |
 | `abk explore --select <exp> [--metric <m>] [--no-serve] [--no-open]` | **PRIORITY:** the localhost cockpit — live `method_params` tuning + the stabilization chart + always-visible A/A calibration + write-back |
 | `abk validate --select <exp> [--method <m>] [--metric <m>] [--iterations N] [--family-sweep] [--inject-effect <pct>] [--scoring fpr\|power\|mde] [--report] [--force]` | The A/A false-positive + power matrix (incl. honest peeking FPR) → `_ab_aa_runs` + recommendation. Streams `LOAD → RESAMPLE → SCORE → PERSIST` — a **distinct** stage vocabulary from `abk run`'s config-lint `VALIDATE` step (`--steps validate`): the two never share copy (the word "validate" is deliberately not reused between the config gate and the A/A matrix). Its own out-of-band lock (`process_type='validate'`, D5), cleared by `abk unlock`; exits non-zero on any cell/harness failure; `--report` is best-effort. `--method` (not `--select`) is the method-grid axis (§below). |
 | `abk plan --select <exp> [--metric <m>] [--mde <pct>] [--power 0.8] [--alpha 0.05] [--baseline <metric>:mean=..,std=..,n=..]` | Pre-launch power / sample-size planner (no detectkit analog). **Read-only** (no lock, no `_ab_*` writes). Reports required-N / achievable-MDE / achieved-power at the effective two-tier alpha + the projected look count & cost shape + **runtime** (days-to-N from an arrival rate) and **ASN** (average sample number for a sequential design); refuses ratio/bootstrap methods it cannot size honestly. (Runtime/ASN shipped in M6 WP-A — see amendment below.) |
@@ -73,9 +73,14 @@ current size, and achieved power; a ratio/bootstrap comparison reads `SKIPPED: �
 
 #### Runtime + ASN (M6 WP-A)
 
-Given a **unit-arrival rate** — derived read-only from `_ab_exposures` (distinct units
-per observed day, whole-cohort window, split to the control arm) or supplied with
-`--arrival-rate <units/day>` (total across arms) — each sizable comparison also reports:
+Given a **unit-arrival rate** — derived read-only from the cohort source via
+`build_cohort_backend` (distinct units per observed day, whole-cohort window, split to
+the control arm): the persisted `_ab_exposures` copy under
+`assignment.cohort_copy.enabled`, otherwise (the M8 default) a fresh snapshot of the
+live assignment SQL re-executed at invocation time — the documented no-copy
+cost/freshness tradeoff; a not-yet-launched experiment is politely skipped — or
+supplied with `--arrival-rate <units/day>` (total across arms) — each sizable
+comparison also reports:
 
 - **runtime** — `days-to-required-N = required_n / rate` plus the planned horizon length,
   a plain division; and
@@ -114,7 +119,7 @@ resampling design reports `sequential ASN: n/a` with the reason.
 ```
   │   example_signup_cr [main · z-test · relative] — baseline prop=0.2 · n=10000/10000 trials
   │     target MDE 5.00% → required 1,568/arm ✓ powered · power@MDE 1.00 · achievable MDE 1.98%
-  │     runtime ≈ 0.8d to required-N @ 2,000 units/day/arm (_ab_exposures over 30.0 observed days) · horizon 14.0d
+  │     runtime ≈ 0.8d to required-N @ 2,000 units/day/arm (assignment source over 30.0 observed days) · horizon 14.0d
   │     sequential ASN ≈ 2,400/arm (≈ 1.2d) at target effect · P(win by horizon) 100% · null ASN ≈ 27,800/arm
 ```
 

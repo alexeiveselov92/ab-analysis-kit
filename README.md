@@ -11,8 +11,9 @@ stabilization chart), writes them to a clean warehouse table any BI can read, an
 gives you a local cockpit to tune the analysis and a harness to prove your method is
 actually calibrated.
 
-> **Status: `0.2.0` (Alpha) — release-ready** (milestones **M1–M7**; `0.1.2` is the
-> latest published on PyPI, the `v0.2.0` tag/publish is the maintainer's pending step). The
+> **Status: `0.3.0` (Alpha) — release-ready; `0.2.0` is the latest on PyPI**
+> (milestones **M1–M8** shipped — M8 adds the no-copy assignment default + the
+> opt-in incremental `_ab_exposures` copy). The
 > statistical core, the declarative config / DB / pipeline layer, the explore cockpit +
 > self-contained reports, `abk validate` (now numpy-vectorized — minutes → sub-seconds),
 > opt-in sequential analysis + `abk plan`, and the DX layer (`abk init-claude`, docs site,
@@ -25,7 +26,9 @@ pip install ab-analysis-kit          # Python 3.10+; add a DB extra for real dat
 pip install "ab-analysis-kit[clickhouse]"   # or [postgres] / [mysql] / [all-db]
 ```
 
-(For `0.2.0` before its tag lands, install from source — `pip install -e ".[dev]"`.)
+(`0.3.0`'s M8 no-copy default lands with its tag; until then `pip install
+ab-analysis-kit` gets `0.2.0` — for the M8 behavior install from source:
+`pip install -e ".[dev]"`.)
 
 `abk --version` and `abk --help` work with no database driver; you can even lint a
 config (`abk run --steps validate`) with no database at all. See the

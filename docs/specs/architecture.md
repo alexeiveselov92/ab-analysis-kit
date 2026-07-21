@@ -94,8 +94,13 @@ abkit/
       manager.py _base.py _schema.py _maintenance.py
       _experiments.py _exposures.py _unit_state.py _results.py _aa_runs.py _tasks.py
   loaders/
-    query_template.py          # ⟲ Jinja2 StrictUndefined (built-ins swapped to ab_*)
-    exposure_loader.py         # assignment SQL → per-unit (unit_id, variant, exposure_ts, stratum)
+    query_template.py          # ⟲ Jinja2 StrictUndefined (built-ins swapped to ab_*; incl. ab_cohort_source, M8 WP3)
+    exposure_loader.py         # assignment SQL → per-unit (unit_id, variant, exposure_ts, stratum);
+                               #   the full-reload path is dead from the driver since M8 WP5 (external callers only)
+    exposure_source.py         # M8: build_cohort_backend — the ONE copy-vs-direct mode switch every
+                               #   cohort reader goes through (validate_and_snapshot, probe_has_stratum)
+    exposure_copy.py           # M8: the opt-in incremental append-only cohort copy engine
+                               #   (grid-anchored closed-interval batches, watermark resume)
     metric_loader.py           # metric SQL → SuffStats or per-variant numpy arrays (one row per unit; no time-grid)
   stats/                       # THE pure numpy core (no IO/DB/config) — importable standalone
     base.py                    # BaseMethod ABC: validate_samples / compare / from_suffstats / from_samples / hash; ALGORITHM_VERSION
@@ -142,12 +147,20 @@ resumed cursor — an experiment is a finite, re-runnable recomputation).
    per **(source-table, column-set, unit)** so co-located metrics share moments;
    writes are **idempotent per (exp, day)** (replace-not-sum). PG/MySQL: upserted
    state table. In v1 this is a thin materialization (read path is recompute).
-3. **load** — `exposure_loader` runs the assignment SQL once → `_ab_exposures`
-   (SRM source + per-variant sizes). `metric_loader` renders each metric's Jinja
-   SQL for the period and returns `SufficientStats` per `(variant[,stratum])`
-   (closed-form) or cached per-unit numpy arrays (bootstrap/quantile). Metric SQL
-   **joins the persisted `_ab_exposures`** (via a packaged macro) instead of
-   re-deriving the cohort every interval.
+3. **load** — `build_cohort_backend` (M8, `loaders/exposure_source.py`) is the
+   ONE mode switch every cohort reader goes through. Default
+   (`assignment.cohort_copy.enabled: false`, since M8 WP4): the assignment SQL
+   is rendered + validated once per run and `_ab_exposures` is never written —
+   metric SQL joins a live `MIN(exposure_ts)`-deduped subquery over that source
+   via the `ab_cohort_source` builtin (the documented cost/freshness tradeoff:
+   re-read on every invocation, so a late-arriving row is never missed, at a
+   render + validation query each time). Opt-in copy mode
+   (`cohort_copy.enabled: true`) persists into `_ab_exposures` through the
+   incremental append-only engine (`exposure_copy.py`, M8 WP5) and joins the
+   persisted table. `metric_loader` renders each metric's Jinja SQL for the
+   period and returns `SufficientStats` per `(variant[,stratum])` (closed-form)
+   or cached per-unit numpy arrays (bootstrap/quantile). Either mode resolves
+   the cohort once per run instead of re-deriving it every interval.
 4. **SRM gate** *(data integrity, blocking-but-non-dropping)* — `stats/srm.py`
    chi-square of observed vs `expected_split` **before** any effect. Failure ⇒
    the row is still written with `srm_flag=1`, surfaced as a red gate, and
@@ -182,7 +195,7 @@ backend-specific incremental-aggregate DDL.
 | Table | Role |
 |---|---|
 | `_ab_experiments` | experiment catalog (name, dates, status, usage) |
-| `_ab_exposures` | per-unit assignment (exp, unit, variant, exposure_ts, stratum); SRM source — **read-only** loaded from the assignment SQL |
+| `_ab_exposures` | OPTIONAL, copy-mode only (M8): the persisted per-unit assignment copy (exp, unit, variant, exposure_ts, stratum), created and appended-to ONLY under `assignment.cohort_copy.enabled` via the incremental watermark engine (a full rebuild is `--resync-cohort`, never a routine run). By default the table is never created — the cohort is read live from the assignment SQL on every invocation; the SRM gate always measures the live validated source |
 | `_ab_unit_state` | cumulative per-unit moments; ClickHouse agg-state seam (keyed per source-table+column-set+unit; idempotent per day). The scalability substrate |
 | `_ab_results` | **our clean BI contract** — one cumulative row per (exp, metric, pair, method, end_date). Designed from the decision logic, not the legacy schema |
 | `_ab_aa_runs` | A/A validation audit (FPR, power, peeking-FPR, verdict) |

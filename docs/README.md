@@ -60,8 +60,10 @@ my_project/
 
 Every `abk run` executes three stages per experiment (architecture.md):
 
-1. **load** — persists the assignment cohort once into the `_ab_exposures` table,
-   then runs each metric's SQL against your source database over the cumulative
+1. **load** — reads your assignment SQL and joins metric SQL against it live
+   (the default — nothing is persisted; set `assignment.cohort_copy.enabled:
+   true` to keep an incrementally-updated `_ab_exposures` copy instead), then
+   runs each metric's SQL against your source database over the cumulative
    window. Each metric query joins the cohort through the packaged assignment
    macro, so you never hand-roll the join: import it and select the exposed units,
    for example `{% import 'abkit_assignment.jinja' as ab %}` then join
@@ -148,8 +150,10 @@ while `abk validate` is the **A/A false-positive matrix**.
 
 ## Where results land: the `_ab_*` tables
 
-abkit creates its internal state tables automatically on first run (no manual
-migration). They live in the profile's `internal_database` / `internal_schema`,
+abkit creates its internal state tables automatically as needed (no manual
+migration; `_ab_exposures` only under `assignment.cohort_copy.enabled` — the
+default no-copy mode never creates it). They live in the profile's
+`internal_database` / `internal_schema`,
 separate from the `data_database` your queries read. The one to know is
 **`_ab_results`** — the stable, documented **BI contract**: one row per
 cumulative cutoff carrying the effect, CI, p-value, per-arm stats, SRM flag, and

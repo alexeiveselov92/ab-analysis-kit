@@ -1,10 +1,10 @@
 # abkit architecture — as built
 
 > The contributor/assistant condensation of the system **as it exists in code**.
-> Reflects: **M1 + M2 + M3 + M4 + M5 + M6 + M7 shipped** (`__version__ = 0.2.0`,
-> release-ready — M1–M6 published on PyPI @ `0.1.2`, the `v0.2.0` tag/publish
-> is the maintainer's pending G1 step; M3's WP9 testcontainers hardening
-> deferred to a Docker-equipped environment).
+> Reflects: **M1–M8 shipped** (`__version__ = 0.3.0`, release-ready — the
+> `v0.3.0` tag/publish is the maintainer's step; latest on PyPI is `0.2.0`;
+> M3's WP9 testcontainers hardening deferred to a Docker-equipped
+> environment).
 > Design contracts for what is being *built next* (1.x hardening) live in
 > [docs/specs/](../../docs/specs/) + [ROADMAP.md](../../ROADMAP.md); this file must
 > never claim unbuilt code exists.
@@ -42,9 +42,14 @@ abkit/
                          #   validator L1+L2 (§8 matrix), discovery/selector
   database/              # ✅ M2: generic CH/PG/MySQL managers + try_acquire_lock
     internal_tables/     #   + the greenfield _ab_* schema & mixins (see below)
-  loaders/               # ✅ M2: query_template (ab_* built-ins, StrictUndefined),
-    templates/           #   the packaged abkit_assignment.jinja macro,
-                         #   exposure_loader, metric_loader
+  loaders/               # ✅ M2: query_template (ab_* built-ins, StrictUndefined,
+    templates/           #   incl. ab_cohort_source — M8 WP3), the packaged
+                         #   abkit_assignment.jinja macro, metric_loader;
+                         #   ✅ M8: exposure_source (build_cohort_backend — the ONE
+                         #   copy-vs-direct switch every cohort reader uses, WP2/WP4)
+                         #   + exposure_copy (the append-only incremental engine,
+                         #   WP5); exposure_loader's full-reload path is dead from
+                         #   the driver since WP5 (external callers only)
   compute/               # ✅ M2: recompute_backend (v1 full-window strategy)
   pipeline/              # ✅ M2: driver (lock→load→SRM→plan→compute→persist),
                          #   analyze, enrich, _types; worker pool
@@ -152,10 +157,14 @@ Docker-equipped environment.
 ### M4 validate facts an assistant must know
 
 - **`abkit/validate/` is I/O-pure like the runner:** the engine (`panel/resample/
-  inject/scoring`) touches only `abkit.stats`; `load.py` reads the warehouse through
-  the backend loaders and **never writes** (a placebo split is in-memory only — a
-  persisted shuffle would clobber the real `_ab_exposures`); the CLI takes the lock
-  and persists.
+  inject/scoring`) touches only `abkit.stats`; the CLI
+  (`cli/commands/validate.py`) resolves the cohort through
+  `build_cohort_backend` (M8 — the persisted `_ab_exposures` in copy mode, the
+  live assignment source in the no-copy default) and hands `load.py` the
+  resulting backend; `load.py` **never writes** (a placebo split is in-memory
+  only — in copy mode a persisted shuffle would clobber the real cohort; in
+  the default there is no persisted cohort at all); the CLI takes the lock and
+  persists.
 - **Placebo source = the experiment's own pooled cohort, label-permuted (D1)** over
   the real one-enumeration grid (`generate_grid` — same as driver/explore). Permuting
   unit→arm labels destroys any true effect ⇒ an exact null. Seeds are
@@ -226,6 +235,47 @@ Docker-equipped environment.
   consumer is the Auto-mode JSON reply; any user-facing warning must be
   explicitly echoed as a CLI line (the WP6 round-2 lesson, pinned by
   `test_auto_n_warning_reaches_the_terminal`).
+
+### M8 cohort facts an assistant must know
+
+- **`_ab_exposures` is OPTIONAL — the no-copy default writes nothing.** With
+  `assignment.cohort_copy.enabled: false` (the default) no run ever creates
+  the table: metric SQL joins a live `MIN(exposure_ts)`-deduped subquery over
+  the rendered assignment SQL via the `ab_cohort_source` builtin, re-rendered
+  + re-validated on every invocation (the documented cost/freshness tradeoff —
+  a late-arriving row is never missed; a render + validation query is paid
+  each time).
+- **`build_cohort_backend(manager, experiment, project_root, grid,
+  with_snapshot=...)`** (`loaders/exposure_source.py`) is **the ONE
+  copy-vs-direct switch** every cohort reader goes through — driver, `abk
+  plan` arrival rate, `abk validate` load, explore session-load, reporting SRM
+  counts. The binding M8→M9 contract (§0.5(e)): no caller, present or future,
+  hand-rolls cohort SQL. Read-only callers in copy mode stay query-free
+  (`with_snapshot=False` ⇒ snapshot `None`); direct mode renders + validates
+  once (cross-variant corruption fails loudly at every surface).
+- **The incremental copy engine (`loaders/exposure_copy.py`, copy mode) is
+  append-only**: grid-anchored closed-interval buckets
+  (`grid.start_ts + k·batch_interval`; the open bucket + rows younger than
+  `maturity_delay` are withheld), watermark resume from the FINAL-deduped
+  `MAX(exposure_ts)` snapped to its bucket floor, round trips of
+  `batch_intervals_per_round_trip` intervals with bounds injected through the
+  EXISTING `{{ ab_added_filters }}` hook (required in copy mode — config-lint
+  and the engine prove the reference is LIVE via a rendered sentinel; a token
+  in a comment cannot pass). A custom `update_column` has no persisted cursor
+  and re-scans from the experiment start every run. A routine run never
+  deletes; `abk run --resync-cohort` (copy mode only, no-op in direct) deletes
+  + rebuilds through the SAME engine — the recovery for the documented
+  limitation: a row backfilled into an already-scanned closed bucket is
+  silently missed by the watermark.
+- **SRM always measures the LIVE validated source** (both modes); in copy mode
+  the persisted metrics join trails it by the open bucket + `maturity_delay`,
+  and `abk run` warns when a computable cutoff exceeds the copy's coverage
+  (align `data_lag >= maturity_delay + batch_interval`).
+- **The cross-mode parity gates** (`tests/e2e/test_cohort_mode_parity.py`,
+  `tests/pipeline/test_pipeline.py::TestCohortModeParity`,
+  `tests/e2e/test_first_run_copy_enabled.py`) pin `_ab_results`/`_ab_aa_runs`/
+  the baked explore payload identical across modes (`watermark_ts` is the one
+  legitimately differing column) — zero statistical numbers moved in M8.
 
 ## The stats core (`abkit.stats`) — the implemented system
 
@@ -313,7 +363,8 @@ orchestration / release layer — `abk init-claude` + the packaged `.claude` ass
 single-source docs site (`website/` Astro, live at abkit.pipelab.dev), Prefect scaffolding in
 `abk init` (`runners/`), BI reference (tool-agnostic SQL + one Grafana dashboard), `abk
 test-report` + the `abkit/notify/` channel layer, `abk plan` **runtime/ASN** (WP-A, from
-`_ab_exposures` arrival + always-valid ASN), the A/A **sequential × composed** family sweep
+the cohort's arrival rate + always-valid ASN; M8 later made the cohort source
+conditional — see "M8 cohort facts"), the A/A **sequential × composed** family sweep
 (WP-B, `validate/family.py`), and the release engineering (`__version__ = 0.1.0`, classifier
 `3 - Alpha`, the wheel-namelist + `pip install` DoD gates, `tests/docs/test_docs_single_source.py`)
 behind the WP10 exit gate (`tests/e2e/test_release_readiness.py` + ≥2 adversarial rounds).
@@ -324,7 +375,8 @@ tagged PyPI publish is the maintainer's G1 step.
 
 **M7 shipped** (the record is
 [m7-implementation-plan.md](../../docs/specs/m7-implementation-plan.md) — done
-table, per-WP as-built notes, exit-gate log; release-ready as `0.2.0`): the validate
+table, per-WP as-built notes, exit-gate log; released as `0.2.0` — tagged and
+published to PyPI): the validate
 vectorization + iteration-policy milestone — the WP0 live multi-arm
 Review-mode fix, the WP1 scalar hot path + hardening bucket A1–A8 (~149× on
 `normal_test`), the WP2 batch significance kernels
@@ -336,12 +388,23 @@ WP7 vectorized family sweep (~18×), and the WP6 policy (opt-in
 numbers moved** — no `ALGORITHM_VERSION` bump, both e2e matrix gates
 byte-identical; see "M7 vectorization facts" above for the working contracts.
 
-**Next — the polish track continues: M8–M17 → `0.3.0`…`0.12.0`** (track
+**M8 shipped** (the record is
+[m8-implementation-plan.md](../../docs/specs/m8-implementation-plan.md); PRs
+#46–#51 + the WP7 docs-sync/release PR; release-ready as `0.3.0` — the
+`v0.3.0` tag/publish is the maintainer's step): the no-copy
+assignment default + the opt-in incremental `assignment.cohort_copy` engine +
+`abk run --resync-cohort` + the both-mode e2e legs + the three-way docs sync —
+see "M8 cohort facts" above for the working contracts. **Zero statistical
+numbers moved** (cross-mode parity gates; no `ALGORITHM_VERSION` bump).
+
+**Next — the polish track continues: M9–M17 → `0.4.0`…`0.12.0`** (track
 approved 2026-07-18; it absorbs the whole "Post-baseline hardening" backlog —
 see the track section in [ROADMAP.md](../../ROADMAP.md) and the as-designed
 contracts
-[m8](../../docs/specs/m8-implementation-plan.md)…[m12](../../docs/specs/m12-implementation-plan.md);
-M13–M17 are contours, each opens with a design session). One WP = one session =
+[m9](../../docs/specs/m9-implementation-plan.md)…[m12](../../docs/specs/m12-implementation-plan.md)
+([m7](../../docs/specs/m7-implementation-plan.md) and
+[m8](../../docs/specs/m8-implementation-plan.md) are now implementation
+records); M13–M17 are contours, each opens with a design session). One WP = one session =
 one PR; **M7–M12 move no statistical number** (parity gates + empty
 `ALGORITHM_VERSION` grep); M13/M15 use full change control. The M8→M9 contract:
 STATE/tail-scan SQL builds ONLY through M8's `build_cohort_backend` factory.
