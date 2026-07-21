@@ -100,6 +100,16 @@ def init_claude(target_dir: str) -> None:
     is_flag=True,
     help="Re-open already-computed cutoffs in [--from, --to) and recompute them",
 )
+@click.option(
+    "--resync-cohort",
+    is_flag=True,
+    help=(
+        "Copy mode only: full cohort resync (delete + reinsert) instead of the "
+        "incremental append — recovers a persisted copy the watermark cannot "
+        "heal (late-arriving/corrected assignment rows). No effect in the "
+        "direct (no-copy) default."
+    ),
+)
 @click.option("--force", is_flag=True, help="Take over a held lock (use with care)")
 @click.option(
     "--workers",
@@ -127,6 +137,7 @@ def run(
     from_ts: str | None,
     to_ts: str | None,
     full_refresh: bool,
+    resync_cohort: bool,
     force: bool,
     workers: int,
     report_path: str | None,
@@ -145,6 +156,7 @@ def run(
         force,
         workers,
         report_path,
+        resync_cohort=resync_cohort,
     )
 
 

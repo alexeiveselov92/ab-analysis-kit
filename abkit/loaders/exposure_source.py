@@ -201,6 +201,8 @@ def render_assignment_sql(
     project_root: Path | None,
     grid: Grid,
     template: QueryTemplate | None = None,
+    *,
+    added_filters_override: str | None = None,
 ) -> str:
     """Render the experiment's assignment SQL over the grid's FULL window.
 
@@ -208,14 +210,24 @@ def render_assignment_sql(
     ``[grid.start_ts, grid.horizon_ts)`` — the same tz-snapped edges the
     analysis windows use — so the direct-join source, the validation
     pushdown, and the persisted copy all see the one cohort definition.
+
+    ``added_filters_override`` replaces the experiment's own
+    ``assignment.added_filters`` for this render — the m8 WP5 incremental
+    copy's ONE injection point: each batch appends its watermark bounds to
+    the experiment's filters and re-renders (never a second jinja surface).
     """
     from abkit.compute.recompute_backend import dialect_of
 
+    added_filters = (
+        experiment.assignment.added_filters
+        if added_filters_override is None
+        else added_filters_override
+    )
     builtins = build_builtins(
         experiment_id=experiment.name,
         unit_key=experiment.unit_key,
         variants=experiment.assignment.variants,
-        added_filters=experiment.assignment.added_filters,
+        added_filters=added_filters,
         window=RenderWindow(start_ts=grid.start_ts, end_ts=grid.horizon_ts),
         data_database=manager.data_location,
         internal_database=manager.internal_location,

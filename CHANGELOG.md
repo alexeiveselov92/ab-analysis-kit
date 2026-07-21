@@ -25,7 +25,8 @@ number change).
   `--report`) see the LIVE source at invocation time instead of the last
   run's frozen copy — the audit's accepted cost/freshness tradeoff. Setting
   `cohort_copy.enabled: true` keeps today's persisted-copy behavior end to
-  end (full-reload write; the incremental engine lands in WP5). Every
+  end (full-reload write at WP4; superseded by WP5's incremental engine —
+  see the WP5 entry above). Every
   cohort reader goes through the new
   `exposure_source.build_cohort_backend(...)` factory — the binding
   inter-milestone contract (m8 plan §0.5(e)): copy mode stays query-free for
@@ -50,6 +51,49 @@ number change).
   instead of silently reading a stale copy-era `_ab_exposures`.
 
 ### Added
+- **M8 WP5 — the incremental cohort copy engine + `abk run --resync-cohort`.**
+  With `assignment.cohort_copy.enabled`, `abk run` no longer full-reloads
+  `_ab_exposures` (delete + reinsert of the whole cohort every run): the new
+  `loaders/exposure_copy.copy_exposures_incremental(...)` appends only the
+  newly matured rows — GRID-ANCHORED closed-interval buckets
+  (`grid.start_ts + k·batch_interval`; the still-open bucket and rows
+  younger than `maturity_delay` are withheld until they mature, and the
+  covered boundary is a deterministic function of the clock, never of the
+  data), watermark resume from the FINAL-deduped `MAX(exposure_ts)` snapped
+  to its bucket floor (first run backfills from the experiment's tz-snapped
+  start; a custom `update_column` has no persisted cursor and re-scans from
+  the start every run — bounding another column by the exposure watermark
+  would silently drop rows), and `batch_intervals_per_round_trip`-sized
+  round trips that re-render the assignment SQL with the batch's bounds
+  injected through the EXISTING `{{ ab_added_filters }}` hook (no new jinja
+  surface; the hook is now REQUIRED in copy mode — config-lint and the
+  engine both prove the reference is LIVE by rendering a sentinel filter
+  through it, so a token parked in a comment cannot pass). The run-level
+  whole-cohort validation (WP2) still runs every run, so cross-variant
+  corruption fails loudly before any copy write; the persisted write path is
+  append-only (`insert_exposures_incremental`, never `delete_rows`).
+  `abk run --resync-cohort` (m8 plan §4 Q2 — a dedicated flag;
+  `--full-refresh` keeps its results-window semantics) recovers a poisoned
+  copy by deleting it and rebuilding from the experiment start THROUGH the
+  same engine — one write path, so the rebuild honors the identical
+  closed/matured discipline (never persists unmatured rows, never advances
+  the watermark past routine operation) and the from-scratch re-scan is what
+  picks up backfilled rows; a no-op in the direct (no-copy) default. KNOWN
+  LIMITATIONS, disclosed not masked (§4 Q3, doc-only): routine runs miss a
+  row backfilled into an already-scanned closed bucket (recover via
+  `--resync-cohort` or stay on the no-copy default); on malformed
+  multi-row-per-unit input — already loudly warned about every run — a
+  duplicate whose rows straddle two scan windows (round trips of one run, or
+  a prior run's window vs a resume re-scan) resolves to the later window's
+  minimum instead of the full reload's global earliest (both test-pinned).
+  In copy mode the SRM gate/report counts deliberately measure the LIVE
+  validated source; the persisted copy metrics join trails it by the open
+  bucket + `maturity_delay`, and `abk run` warns when a computable cutoff
+  exceeds the copy's deterministic coverage (align `data_lag >=
+  maturity_delay + batch_interval`). No `ALGORITHM_VERSION` bump — zero
+  statistical numbers changed: the cross-mode e2e parity gate and the
+  pipeline parity tests now exercise the incremental engine on the copy leg
+  and stay byte-identical.
 - **M8 WP3 — the `ab_cohort_source` builtin: one cohort fragment, two source
   modes.** The packaged assignment macro's `exposed_units()` now reads its
   cohort through the new `ab_cohort_source` builtin, built in Python

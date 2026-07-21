@@ -44,13 +44,25 @@ assignment:                      # READ-ONLY exposure source (abkit does not ran
   cohort_copy:                   # opt-in persisted cohort copy (M8; named at WP1 — a field named
                                  # `copy` shadows pydantic's BaseModel.copy). Default off: metric
                                  # SQL joins the deduped assignment source directly and nothing is
-                                 # persisted. Enable for a heavy multi-join or mutating source.
-                                 # NOTE: the knobs parse from M8 WP1; the direct-join default and
-                                 # the incremental engine are wired across M8 WP2–WP5.
+                                 # persisted. Enable for a heavy multi-join source that is
+                                 # APPEND-ONLY and monotone on update_column. KNOWN LIMITATION
+                                 # (donor watermark model, m8 §4 Q3): a row backfilled/corrected
+                                 # BELOW the watermark is silently and permanently missed by the
+                                 # copy — a mutating source should stay on the no-copy default, or
+                                 # recover with `abk run --resync-cohort` (full delete + reinsert).
+                                 # When enabled, the assignment SQL MUST reference
+                                 # {{ ab_added_filters }} — the incremental engine injects its
+                                 # watermark batch bounds there (config-lint enforces it). Keep
+                                 # data_lag >= maturity_delay + batch_interval, or the newest
+                                 # cutoffs compute over a copy that does not yet cover them
+                                 # (`abk run` warns when that happens).
     enabled: false               # true → persist into _ab_exposures incrementally (watermark +
-                                 # closed-interval batches, the detectkit donor discipline)
+                                 # closed-interval batches, the detectkit donor discipline; M8 WP5)
     update_column: exposure_ts   # watermark column the incremental copy filters on (must be a
-                                 # plain identifier; existence is probed at run time)
+                                 # plain identifier; existence is probed at run time). Only the
+                                 # default exposure_ts carries a persisted resume cursor; a custom
+                                 # column re-scans from the experiment start every run (still
+                                 # batched, closed-intervals-only on that column)
     batch_interval: 1d           # closed-interval batch step of the copy loop
     batch_intervals_per_round_trip: 30   # intervals per load round trip (interval count, not rows)
     maturity_delay: 0            # ignore source rows younger than now() - maturity_delay (0 = none)

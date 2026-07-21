@@ -184,6 +184,41 @@ class TestRun:
         assert result.exit_code != 0
         assert "--from" in result.output
 
+    def test_resync_cohort_flag_reaches_the_pipeline(self, project, warehouse):
+        """m8 WP5 (§4 Q2): --resync-cohort full-reloads the persisted copy;
+        never overloads --full-refresh."""
+        yml = project / "experiments" / "signup_test.yml"
+        yml.write_text(
+            yml.read_text().replace(
+                'query: "SELECT user_id, variant, exposure_ts FROM assignments"',
+                'query: "SELECT user_id, variant, exposure_ts FROM assignments '
+                'WHERE 1 = 1 {{ ab_added_filters }}"\n'
+                "  cohort_copy: {enabled: true}",
+            )
+        )
+        assert runner.invoke(cli, ["run", "--select", "signup_test"]).exit_code == 0
+        assert len(warehouse._rows["_ab_exposures"]) == 300
+
+        deletes: list[tuple] = []
+        original = warehouse.delete_rows
+
+        def spy(*args, **kwargs):
+            deletes.append(args)
+            return original(*args, **kwargs)
+
+        warehouse.delete_rows = spy
+        result = runner.invoke(cli, ["run", "--select", "signup_test", "--resync-cohort"])
+        assert result.exit_code == 0, result.output
+        assert any("_ab_exposures" in str(args[0]) for args in deletes)
+        assert len(warehouse._rows["_ab_exposures"]) == 300
+
+    def test_resync_cohort_in_direct_mode_is_accepted_and_noop(self, project, warehouse):
+        result = runner.invoke(cli, ["run", "--select", "signup_test", "--resync-cohort"])
+        assert result.exit_code == 0, result.output
+        assert warehouse._rows.get("_ab_exposures", []) == []
+        # the no-effect notice must reach the terminal, not just the log sink
+        assert "no effect in direct mode" in result.output
+
 
 class TestUnlock:
     def test_noop_and_clear(self, project, warehouse):

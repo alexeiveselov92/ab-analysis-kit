@@ -10,11 +10,12 @@ fresh counts (plan R9).
 M8 WP2 moved the validation/dedup mechanism into ``exposure_source``: the
 row-by-row Python loop is now a single pushdown ``GROUP BY`` query (see that
 module's docstring). Since WP4 the driver goes through
-``exposure_source.build_cohort_backend`` and persists — in copy mode only —
-via :func:`persist_snapshot`; the no-copy default never writes
-``_ab_exposures``. :func:`load_exposures` remains the one-call
-render+validate+persist orchestrator (the copy-mode full-reload path) that
-the WP5 incremental engine extends (m8-implementation-plan.md).
+``exposure_source.build_cohort_backend``; the no-copy default never writes
+``_ab_exposures``. Since WP5 ALL copy-mode driver writes go through the
+incremental engine (``exposure_copy`` — ``--resync-cohort`` is a delete plus
+a from-scratch reload through the same engine); :func:`persist_snapshot` and
+:func:`load_exposures` remain the one-call render+validate+persist
+orchestration for external callers (m8-implementation-plan.md).
 """
 
 from __future__ import annotations
@@ -41,9 +42,12 @@ def persist_snapshot(
 ) -> int:
     """Persist a validated snapshot as the full ``_ab_exposures`` cohort.
 
-    The copy-mode write path (full reload: delete + chunked reinsert —
-    ``replace_exposures``; the WP5 incremental engine replaces this call in
-    the driver). Returns the number of exposure rows written.
+    The full-reload write path (delete + chunked reinsert —
+    ``replace_exposures``): since m8 WP5 the driver never calls this — every
+    driver copy-mode write (``--resync-cohort`` included) goes through the
+    incremental engine's closed/matured discipline — so this remains the
+    external one-call orchestrator's persist only. Returns the number of
+    rows written.
     """
     units = list(snapshot.by_unit)
     data = {

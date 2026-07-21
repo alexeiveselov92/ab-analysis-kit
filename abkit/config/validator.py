@@ -354,6 +354,30 @@ def _render_smoke(
                     f"'{token}' (unit_key, variant, exposure_ts are the exposure "
                     "contract)"
                 )
+        # m8 WP5: the incremental copy injects its watermark batch bounds
+        # through {{ ab_added_filters }} — without a LIVE reference the bounds
+        # silently vanish, so the copy engine refuses at run time; catch it
+        # here first, before any DB work. Proven by rendering with a sentinel
+        # filter (a substring test would be fooled by the token inside a
+        # SQL/jinja comment — review finding); the engine runs the SAME check.
+        if experiment.assignment.cohort_copy.enabled:
+            from abkit.loaders.exposure_copy import BOUNDS_PROBE_SENTINEL
+
+            probe_builtins = dict(builtins)
+            probe_builtins["ab_added_filters"] = BOUNDS_PROBE_SENTINEL
+            try:
+                probe_render = template.render(assignment_sql, probe_builtins)
+            except Exception:
+                # the base render above succeeded, so a value-dependent
+                # failure means the reference is not a plain live expression
+                probe_render = ""
+            if BOUNDS_PROBE_SENTINEL not in probe_render:
+                report.errors.append(
+                    f"experiment '{experiment.name}': assignment SQL must render "
+                    "{{ ab_added_filters }} when cohort_copy.enabled — the "
+                    "incremental copy injects its watermark batch bounds there "
+                    "(add e.g. 'WHERE 1 = 1 {{ ab_added_filters }}')"
+                )
 
     for comparison in experiment.comparisons:
         metric = metrics_by_name.get(comparison.metric)
