@@ -59,13 +59,16 @@ number change).
   — zero cutoffs planned, zero `_ab_exposures` deletes, byte-stable
   results), and a staggered growing-source scenario proves the true
   increment the single-instant scaffold seed cannot express: run 1
-  mid-flight persists only the closed buckets, run 2 appends exactly the
-  delta (earlier buckets never re-read), and the two-run incremental history
-  lands `_ab_results` identical to a fresh direct-mode project computed in
-  one shot (`watermark_ts` — the as-of-run provenance stamp — is the one
+  mid-flight persists only the closed buckets (already-visible open-bucket
+  enrollment is withheld until it matures), run 2 appends exactly the delta
+  (earlier buckets never re-read; the persisted rows asserted field-exact,
+  not just as a unit set), and the two-run incremental history lands
+  `_ab_results` identical to a fresh direct-mode project computed in one
+  shot (`watermark_ts` — the as-of-run provenance stamp — is the one
   legitimately differing column). The `DELETE FROM _ab_exposures` statement
   pin in `tests/database/test_sql_managers.py` is re-scoped to name the
   resync/purge path it now serves.
+- **M8 WP5 — the incremental cohort copy engine + `abk run --resync-cohort`.**
   With `assignment.cohort_copy.enabled`, `abk run` no longer full-reloads
   `_ab_exposures` (delete + reinsert of the whole cohort every run): the new
   `loaders/exposure_copy.copy_exposures_incremental(...)` appends only the

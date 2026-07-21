@@ -14,16 +14,22 @@ write discipline over the full CLI path, and that is this file:
 2. ``TestGrowingSourceIncrement`` — the true increment the single-instant
    scaffold seed cannot express (every scaffold unit is exposed at one
    ``EXPOSURE_TS``, so a rerun's watermark-bucket re-scan legitimately
-   re-reads everything): staggered enrollment across three daily buckets,
-   run 1 mid-flight persists only the CLOSED buckets, the source then grows,
+   re-reads everything): staggered enrollment across four daily buckets,
+   run 1 mid-flight persists only the CLOSED buckets — the already-VISIBLE
+   open-bucket enrollment is withheld until it matures (which is what makes
+   the closed-only discipline falsifiable here) — the source then grows,
    run 2 appends exactly the delta — the watermark bucket re-sent as
    idempotent LWW upserts, earlier buckets never re-read — and the
    incrementally-built, two-run history lands ``_ab_results`` identical to a
    fresh direct-mode project computed in one shot at the final ``now``.
-   Enrollment is arm-balanced per bucket so the per-run whole-cohort SRM
-   stamp is χ²=0 → p=1.0 in BOTH modes regardless of when it ran (the
-   documented "SRM counts read the LIVE source" divergence never shows a
-   different number here by construction).
+   Because the SyntheticWarehouse metric join reads the SCRIPTED cohort, the
+   persisted rows are additionally asserted FIELD-EXACT (unit → variant,
+   exposure_ts) — the parity gate alone could not see a corrupted persisted
+   value; real-SQL join semantics over ``_ab_exposures`` stay the Docker
+   e2e's territory. Enrollment is arm-balanced per bucket so the per-run
+   whole-cohort SRM stamp is χ²=0 → p=1.0 in BOTH modes regardless of when
+   it ran (the documented "SRM counts read the LIVE source" divergence never
+   shows a different number here by construction).
 """
 
 from __future__ import annotations
@@ -199,6 +205,11 @@ class TestGrowingSourceIncrement:
         copy_wh = SyntheticWarehouse()
         day0 = _enroll(copy_wh, 0)
         day1 = _enroll(copy_wh, 1)
+        # day 2 is VISIBLE in the live source at run 1 but its bucket
+        # [07-03, 07-04) has not closed at MID_FLIGHT — the engine must
+        # withhold it (this is what makes "closed buckets only" falsifiable:
+        # an engine that scanned the open bucket would wrongly persist day 2)
+        day2 = _enroll(copy_wh, 2)
         monkeypatch.setattr(profile_mod.ProfileConfig, "create_manager", lambda self: copy_wh)
         monkeypatch.chdir(_cli_project(tmp_path, "demo_copy", copy_enabled=True))
         deletes, inserts = _spy_writes(copy_wh)
@@ -213,24 +224,32 @@ class TestGrowingSourceIncrement:
         assert len(copy_wh._rows["_ab_results"]) == 2
 
         # ── the source grows AFTER run 1, then run 2 appends the delta ─────
-        day2 = _enroll(copy_wh, 2)
+        day3 = _enroll(copy_wh, 3)
         inserts.clear()
         monkeypatch.setattr(driver_mod, "now_utc_naive", lambda: FINAL_NOW)
         second = runner.invoke(cli, ["run", "--select", "signup_test"])
         assert second.exit_code == 0, second.output
         assert "cohort copy trails" not in second.output
         # exactly the delta: the watermark bucket (day 1) re-sent as
-        # idempotent LWW upserts + the new day-2 bucket; day 0 NEVER re-read
-        assert _units_sent(inserts) == day1 | day2
+        # idempotent LWW upserts + the matured day 2 + the new day 3;
+        # day 0 NEVER re-read
+        assert _units_sent(inserts) == day1 | day2 | day3
         assert _exposure_deletes(deletes) == []
-        # LWW: still exactly one persisted row per unit
-        assert len(copy_wh._rows["_ab_exposures"]) == len(day0 | day1 | day2)
+        # field-exact persistence, not just the unit set: the SyntheticWarehouse
+        # metric join reads the SCRIPTED cohort (not the persisted table), so
+        # the results-parity gate below cannot catch a corrupted persisted
+        # variant/exposure_ts — this equality can (real-SQL join semantics
+        # over _ab_exposures stay the Docker e2e's territory)
+        persisted = {
+            r["unit_id"]: (r["variant"], r["exposure_ts"]) for r in copy_wh._rows["_ab_exposures"]
+        }
+        assert persisted == {u: (arm, ts) for u, arm, ts in copy_wh.cohort}
         # the remaining cutoffs (07-04, 07-05, 07-06) filled in
         assert len(copy_wh._rows["_ab_results"]) == 5
 
         # ── the gate: a fresh direct-mode project, one shot at FINAL_NOW ────
         direct_wh = SyntheticWarehouse()
-        for day in (0, 1, 2):
+        for day in (0, 1, 2, 3):
             _enroll(direct_wh, day)
         monkeypatch.setattr(profile_mod.ProfileConfig, "create_manager", lambda self: direct_wh)
         monkeypatch.chdir(_cli_project(tmp_path, "demo_direct", copy_enabled=False))
@@ -247,9 +266,9 @@ class TestGrowingSourceIncrement:
         whole-cohort SRM is χ²=0 at every stage — the one construction that
         makes the run-1-stamped SRM p-value mode-invariant (module docstring)."""
         wh = SyntheticWarehouse()
-        for day in (0, 1, 2):
+        for day in (0, 1, 2, 3):
             _enroll(wh, day)
         by_arm: dict[str, int] = {}
         for _, arm, _ in wh.cohort:
             by_arm[arm] = by_arm.get(arm, 0) + 1
-        assert by_arm == {"control": 3 * PER_ARM, "treatment": 3 * PER_ARM}
+        assert by_arm == {"control": 4 * PER_ARM, "treatment": 4 * PER_ARM}
