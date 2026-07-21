@@ -31,6 +31,11 @@ assignment:                      # READ-ONLY exposure source — abkit never ran
   added_filters: ""              # optional extra SQL fragment (must start with AND)
   variants: [control, treatment] # FIRST is control (name_1); >= 2, unique
   expected_split: {control: 0.5, treatment: 0.5}   # must cover every variant, sum to 1.0; drives SRM
+  # cohort_copy:                 # opt-in (default OFF): persist an incremental,
+  #   enabled: true              # append-only _ab_exposures copy instead of
+  #   update_column: exposure_ts # re-reading the live source every invocation
+  #   batch_interval: 1d         # (grid-anchored closed-interval batches;
+  #   maturity_delay: 0          # batch_intervals_per_round_trip: 30 — intervals, not rows)
 
 alpha: 0.05                      # experiment-level significance (unset -> project default)
 correction: bonferroni           # none | bonferroni | benjamini_hochberg (unset -> project default)
@@ -68,9 +73,18 @@ comparisons:                     # required — each binds one library metric to
   line and no verdict is trusted. Check SRM before believing any effect; fix the
   assignment query or randomization first.
 - The assignment SQL is a **read-only** source: it SELECTs `unit_key`, `variant`,
-  and an exposure timestamp — abkit persists it once per run into `_ab_exposures`
-  and never randomizes. Use `added_filters` (must start with `AND`) as the only
-  escape hatch for extra WHERE conditions.
+  and an exposure timestamp — abkit never randomizes. By default
+  (`assignment.cohort_copy` unset) nothing is persisted: every
+  `abk run`/`plan`/`validate`/`explore` invocation re-renders and validates the
+  assignment SQL live and metric queries join a deduping subquery over it (the
+  no-copy cost/freshness tradeoff — never a stale row, at a render+validate
+  query each time). Set `assignment.cohort_copy.enabled: true` to persist an
+  append-only incremental copy into `_ab_exposures` instead (worth it for a
+  heavy multi-join or a mutating source; in copy mode the assignment SQL must
+  reference `{{ ab_added_filters }}` — the copy engine injects batch bounds
+  through it, and `abk run --resync-cohort` rebuilds a poisoned copy). Use
+  `added_filters` (must start with `AND`) as the only escape hatch for extra
+  WHERE conditions.
 
 ## Cumulative window, cadence & data_lag
 

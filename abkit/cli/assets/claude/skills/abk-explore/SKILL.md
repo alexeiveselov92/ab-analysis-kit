@@ -40,6 +40,12 @@ need an experiment that has run at least once:
 - **A project root** contains `abkit_project.yml` and `profiles.yml`. If
   `profiles.yml` is still the `abk init` placeholder, set up the DB first with
   **`abk-setup-project`**.
+- **A broken assignment source blocks the cockpit too** (M8): at session-load
+  explore re-validates the live assignment SQL (the SRM chip's count source,
+  same `build_cohort_backend` factory as `abk run`); a validation failure
+  raises a clean error naming the fix — repair the assignment SQL, or set
+  `assignment.cohort_copy.enabled: true` to explore the last persisted cohort
+  instead of the live source.
 - **No experiment or metric yet?** Hand off to **`abk-new-experiment`** (and
   **`abk-new-metric`**) to design the config first — never fabricate YAML/SQL here.
 - **Compute a series** (more cutoffs ⇒ a richer stabilization curve):

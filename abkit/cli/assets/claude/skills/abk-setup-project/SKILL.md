@@ -83,9 +83,11 @@ profile already models this pattern.
 Point **both** at the user's real databases (the placeholder ships examples):
 
 - `internal_database` — a dedicated database for abkit's own `_ab_*` tables
-  (`_ab_results`, `_ab_exposures`, `_ab_tasks`, `_ab_aa_runs`), created
-  automatically on first run. Keep it **separate** from analytics data, e.g.
-  `abkit_internal`.
+  (`_ab_results`, `_ab_tasks`, `_ab_aa_runs`), created automatically on first
+  run. `_ab_exposures` is created there too, but only when the experiment sets
+  `assignment.cohort_copy.enabled: true` — the (default) no-copy mode never
+  writes it; metric SQL joins the live assignment source instead. Keep it
+  **separate** from analytics data, e.g. `abkit_internal`.
 - `data_database` — where the source/fact tables your metric queries read from
   live (and where the seed dataset loads).
 

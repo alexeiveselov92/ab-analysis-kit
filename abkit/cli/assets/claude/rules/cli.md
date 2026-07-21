@@ -70,7 +70,7 @@ to refresh this context.
 
 ```bash
 abk run [--select <exp>] [--exclude <sel>] [--steps validate,plan,load,compute] \
-        [--from TS] [--to TS] [--full-refresh] [--workers N] \
+        [--from TS] [--to TS] [--full-refresh] [--resync-cohort] [--workers N] \
         [--report [PATH]] [--force] [--profile NAME]
 ```
 
@@ -88,6 +88,12 @@ are (re)computed, so re-running is idempotent.
   use with `--full-refresh`.
 - `--full-refresh` — re-open already-computed cutoffs in `[--from, --to)` and
   recompute them. Use after changing a metric query or a method param.
+- `--resync-cohort` — copy mode only (`assignment.cohort_copy.enabled: true`):
+  delete the persisted `_ab_exposures` copy and rebuild it from the experiment
+  start through the same incremental engine — the recovery for late-arriving/
+  corrected assignment rows the watermark cannot heal. A documented no-op in
+  the direct (no-copy) default. Distinct from `--full-refresh` (results-window
+  recompute) — the two never overload each other.
 - `--workers N` (default 1) — worker threads across experiments (each gets its own
   DB connection).
 - `--report [PATH]` — after the run, emit a self-contained HTML readout per

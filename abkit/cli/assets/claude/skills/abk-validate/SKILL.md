@@ -36,9 +36,14 @@ schema, the sequential/composed columns, budget-band resolution).
 - A project root has `abkit_project.yml`; `profiles.yml` must point at the real
   warehouse (if it's still the `abk init` placeholder, use **`abk-setup-project`**
   first).
-- **The pipeline must have run at least once.** validate resamples the
-  experiment's **persisted** cohort — if nothing is loaded there is nothing to
-  split. Run `abk run --select <exp>` first if needed.
+- **In the (default) no-copy mode no prior `abk run` is required** — validate
+  re-renders and validates the live assignment source itself (the same
+  `build_cohort_backend` factory every command uses) and splits it in memory;
+  an empty/not-yet-launched cohort fails loudly with a reason. Only in copy
+  mode (`assignment.cohort_copy.enabled: true`) does validate read the
+  persisted `_ab_exposures` copy, so `abk run --select <exp>` must have
+  populated it first. The metric event data must exist in the source DB either
+  way.
 
 ## Step 1 — Run validate
 

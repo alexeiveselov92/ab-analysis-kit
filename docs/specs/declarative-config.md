@@ -122,7 +122,7 @@ sql: |
       sum(gross_usd)              AS gross_usd,     -- ADDITIVE: one row per unit
       any(country)                AS country
   FROM {{ data_database }}.user_revenue
-  {{ ab.exposed_units() }}        -- JOIN persisted _ab_exposures + window filter + dedup
+  {{ ab.exposed_units() }}        -- JOIN the cohort (ab_cohort_source, M8) + window filter + dedup
   GROUP BY group, user_id         -- one row per unit; loader builds per-variant arrays / suffstats
 ```
 
@@ -151,19 +151,30 @@ The legacy system factored cohort/window/dedup into `exp_users_macros.jinja`. ab
 **ships** an equivalent so a metric SQL describes *only* the metric aggregation:
 
 - `ab.exposed_units(event_date_col='event_date', event_time_col='event_time')` —
-  `JOIN`s the persisted `_ab_exposures` cohort (loaded once per run), **deduped
-  per dialect** (`FINAL` on ClickHouse — a mid-merge ReplacingMergeTree must
-  never yield a unit twice; PG/MySQL enforce the PK), and applies BOTH the
-  coarse `event_date` predicate (Date partition pruning) and the precise
-  half-open `event_time >= ab_start_ts AND event_time < ab_end_ts` filter plus
+  `JOIN`s `{{ ab_cohort_source }}` (the M8 mode switch — see the callout below),
+  **deduped per dialect** (`FINAL` on ClickHouse in copy mode — a mid-merge
+  ReplacingMergeTree must never yield a unit twice; a
+  `MIN(exposure_ts)`-deduped `GROUP BY` in the live-subquery default; PG/MySQL
+  enforce the PK in copy mode), and applies BOTH the coarse `event_date`
+  predicate (Date partition pruning) and the precise half-open
+  `event_time >= ab_start_ts AND event_time < ab_end_ts` filter plus
   `event_time >= exposure_ts` (dropped on the covariate pre-period render).
 - `ab.variant_col()` / `ab.stratum_col()` — arm/stratum labels from the cohort.
 - *(The `ab.covariate_window()` sketch is superseded by the two-render
   covariate mechanics in §3 — M2 WP5.)*
 
-Validation asserts the rendered SQL is joined to `_ab_exposures`; a metric authored
-without the macro fails config-lint, so correctness-critical join/dedup logic is
-never silently re-implemented by hand.
+> **M8: `ab_cohort_source` is the one cohort-mode switch.** Default
+> (`assignment.cohort_copy.enabled: false`): a live deduping subquery over the
+> rendered assignment SQL, validated once per run, nothing persisted. With
+> `cohort_copy.enabled: true`: the persisted `_ab_exposures` table (+ `FINAL`
+> on ClickHouse). The packaged macro joins ONLY this builtin — metric authors
+> never choose between the modes; `build_cohort_backend`
+> (`abkit/loaders/exposure_source.py`) is the single place the branch lives.
+
+Validation asserts the rendered SQL joins the cohort through the macro (present
+identically in both modes); a metric authored without the macro fails
+config-lint, so correctness-critical join/dedup logic is never silently
+re-implemented by hand.
 
 ## 5. Jinja built-ins (authoritative, StrictUndefined)
 
@@ -181,7 +192,8 @@ against the scaffolded example so docs & examples cannot drift.
 | `ab_unit_key` | the unit/randomization key |
 | `ab_added_filters` | the experiment's optional SQL fragment |
 | `data_database` / `internal_database` | profile-resolved schemas |
-| `ab_exposures_table` | the fully-qualified persisted cohort table (used by the macro) |
+| `ab_cohort_source` | M8: the one cohort-mode switch — `ab_exposures_table` (+ `FINAL` on ClickHouse) under `assignment.cohort_copy.enabled`, else a live `MIN(exposure_ts)`-deduped subquery over the assignment SQL; the packaged macro's `exposed_units()` joins ONLY this |
+| `ab_exposures_table` | the fully-qualified persisted cohort table name; kept for external/back-compat templates — the packaged macro reads the cohort through `ab_cohort_source` (M8) |
 | `ab_dialect` | `clickhouse` \| `postgres` \| `mysql` (dialect-aware dedup in the macro) |
 | `ab_apply_exposure_filter` | internal: `false` only on the covariate pre-period render |
 | `ab.*` (macro) | `exposed_units()`, `variant_col()`, `stratum_col()` |
@@ -252,7 +264,14 @@ Tested, fail-fast, two-level:
   the measured A/A FPR for this grid; `cadence < 1d` requires `data_lag`;
   `cadence < 1d` with `scheme: alpha_spending` → error (mSPRT/always_valid is
   the sub-day path); `24h % cadence != 0` → drift warning; `cadence > horizon`
-  → error; `covariate_lookback < 1d` → error, `< 7d` → warning.
+  → error; `covariate_lookback < 1d` → error, `< 7d` → warning;
+- **`assignment.cohort_copy`** (optional; M8): when `enabled`, `update_column`
+  must be a valid identifier (parse-time sanity check — real existence is a
+  run-time column probe), and the assignment SQL must reference
+  `{{ ab_added_filters }}` **live** — the incremental copy engine injects its
+  batch bounds through that hook, and config-lint proves the reference by
+  rendering a sentinel filter through it (a token parked in a comment cannot
+  pass); missing → error with a fix hint.
 
 A `abk run --steps validate` (config-lint) runs the full parse + reference
 resolution + SQL render-smoke-test under StrictUndefined **without touching the DB**

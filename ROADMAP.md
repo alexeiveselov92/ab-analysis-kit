@@ -268,15 +268,19 @@ closed in a single session). The coarse M8+ figures stand (if anything
 conservative); the detailed multi-session WP estimates are the ones to trim —
 revisit after M8.
 
-### M8 — assignments: no-copy default + incremental copy → `0.3.0` 📋
-Design contract: [m8-implementation-plan.md](docs/specs/m8-implementation-plan.md).
+### M8 — assignments: no-copy default + incremental copy → `0.3.0` ✅
+Implementation record:
+[m8-implementation-plan.md](docs/specs/m8-implementation-plan.md).
 Metrics join *your* assignment source directly; `_ab_exposures` becomes an
 **opt-in incremental copy** (detectkit-style watermark batching), never a
-2M-row rewrite: the `assignment.copy` config block (WP1), the pushdown
+2M-row rewrite: the `assignment.cohort_copy` config block (WP1 — renamed from
+the working `assignment.copy`: a pydantic field named `copy` shadows
+`BaseModel.copy` and warns at import), the pushdown
 `ExposureSnapshot` (WP2), the single `ab_cohort_source` builtin (WP3), **all
 call-sites through the `build_cohort_backend` factory** (WP4 — the contract M9
-depends on), the incremental copier (WP5), both-mode e2e (WP6), and the 3-way
-docs sync (WP7).
+depends on), the incremental copier + `abk run --resync-cohort` (WP5),
+both-mode e2e incl. the growing-source increment (WP6) — PRs #46–#51 — and
+the 3-way docs sync + `0.3.0` cut (WP7). Zero statistical numbers moved.
 
 ### M9 — additive compute engine + CUPED Tier-E → `0.4.0` 📋
 Design contract: [m9-implementation-plan.md](docs/specs/m9-implementation-plan.md).

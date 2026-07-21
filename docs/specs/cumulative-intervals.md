@@ -119,9 +119,17 @@ not guessed.
 4. **Correctness under async merge.** All correctness-sensitive reads (cumulative
    read, planner anti-join, BI datasource) must use `-Merge`/`FINAL`/`argMax` dedup
    so partial pre-merge state is never read.
-5. **Persist the cohort once.** The metric loader must JOIN the persisted
-   `_ab_exposures` (loaded once per experiment) instead of re-rendering the visitor
-   sub-query every interval, so the session-table cohort scan is paid O(1), not O(D).
+5. **Resolve the cohort once per run** *(as amended by M8)*. The metric loader
+   must resolve the cohort once per run — never re-derive it per interval — so
+   the session-table cohort scan is paid O(1) in intervals, not O(D). The
+   original must-fix ("persist `_ab_exposures` once per experiment") was
+   deliberately relaxed by M8: the DEFAULT is now no-copy
+   (`assignment.cohort_copy.enabled: false`) — metric SQL joins a live deduped
+   subquery over the assignment SQL via `ab_cohort_source`, rendered +
+   validated once per run, so a mutating or backfilled source is never
+   silently missed. `cohort_copy.enabled: true` opts back into the persisted
+   `_ab_exposures` copy (an append-only incremental watermark engine) for
+   heavy multi-join sources.
 6. **Deterministic completeness boundary.** Pin an explicit, single-source
    completeness boundary instead of `today()`, and normalise date/timezone
    comparison across backends, so "which cutoffs are pending" is deterministic
@@ -243,8 +251,11 @@ Interval-keyed state is rejected (×24 rows/inserts, wrong the moment cadence
 changes, ClickHouse part churn). The packaged macro emits BOTH the coarse
 `event_date` predicate (Date partition pruning) and the precise
 `event_time >= ab_start_ts AND event_time < ab_end_ts` filter — metric SQL
-authors change nothing. The §5.5 cohort-persist must-fix becomes ~24× more
-valuable at hourly grain. `abk plan`/config-lint echo the projected look count
+authors change nothing. The §5.5 cohort-persist optimization (M8: the opt-in
+`assignment.cohort_copy`) becomes ~24× more valuable at hourly grain — a
+strong reason to enable it for a heavy assignment source at sub-day cadence,
+while the no-copy default stays correct-by-construction at a higher live
+re-validation cost. `abk plan`/config-lint echo the projected look count
 and cost before accepting a sub-day grid; `run` warns when
 `watermark_ts − max(computed end_ts)` exceeds a few cadence steps (backlog).
 

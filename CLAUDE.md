@@ -22,7 +22,7 @@ The as-built condensation for contributors/assistants (detectkit-style):
 Design contracts for what is being *built next* stay in [docs/specs/](docs/specs/)
 (canonical for M2+ work — table below). Keep rules ↔ docs in sync per milestone.
 
-## Status: M1–M7 shipped — `0.2.0` release-ready (M1–M6 on PyPI @ `0.1.2`); polish track M7–M17 in flight
+## Status: M1–M8 shipped — `0.3.0` release-ready (latest on PyPI: `0.2.0`); polish track M9–M17 in flight
 
 **Done — M1, the pure statistical core** (`abkit.stats`, importable standalone;
 see [ROADMAP.md](ROADMAP.md) for the deferred-cleanup list): data model with the
@@ -129,22 +129,39 @@ vectorized family sweep (~18×; stretch WP7), and the WP6 policy —
 warn-never-cap above 100k. **Zero statistical numbers moved** (no
 `ALGORITHM_VERSION` bump; both e2e matrix gates byte-identical; the two
 documented engine-parity boundaries — fixed-BLAS byte-repro, the
-exactly-solved-boundary flip — are test-pinned properties). Release-ready as
-`0.2.0` — version bumped, CHANGELOG cut; the `v0.2.0` tag/publish is the
-maintainer's pending G1 step (latest on PyPI is still `0.1.2`).
+exactly-solved-boundary flip — are test-pinned properties). **Released as
+`0.2.0`** — tagged `v0.2.0` and published to PyPI (the latest release).
 
-**Next — the polish track continues: M8–M17 → `0.3.0`…`0.12.0` (track
-approved 2026-07-18).** The code-verified pain audit
+**Done — M8, assignments: no-copy default + incremental copy → `0.3.0`** (the
+implementation record is
+[m8-implementation-plan.md](docs/specs/m8-implementation-plan.md) — done
+table, per-WP as-built notes, exit-gate log; PRs #46–#51 + the WP7
+docs-sync/release PR): by default (`assignment.cohort_copy.enabled: false`)
+every cohort reader (`abk run`/`plan`/`validate`/`explore`, reporting) goes
+through the one `build_cohort_backend` switch and reads the **live**
+assignment SQL — `_ab_exposures` is never written; opt-in
+`cohort_copy.enabled: true` persists it via the append-only incremental
+engine (grid-anchored closed-interval batches, watermark resume, `abk run
+--resync-cohort` for a full rebuild; late-backfilled rows are a documented
+copy-mode limitation). The cross-command parity e2e pins `_ab_results`
+identical across modes — **zero statistical numbers moved** (no
+`ALGORITHM_VERSION` bump). WP7 synced all three docs bodies (a code-grounded
+audit fixed 75 stale spots across 36 files) and cut `0.3.0`; the `v0.3.0`
+tag/publish is the maintainer's step.
+
+**Next — the polish track continues: M9–M17 → `0.4.0`…`0.12.0`
+(track approved 2026-07-18).** The code-verified pain audit
 ([docs/research/2026-07-data-flow-audit/REPORT.md](docs/research/2026-07-data-flow-audit/REPORT.md))
-plus the entire hardening backlog, one minor release per milestone: M8
-assignment no-copy default → M9 additive engine + CUPED Tier-E → M10
+plus the entire hardening backlog, one minor release per milestone: M9
+additive engine + CUPED Tier-E → M10
 timestamps + both schema breaks → M11 `abk dashboard` → M12 notifications →
 M13–M17 (versioned stats, multi-arm decisions, new methods, owned
 randomization, app integration — contours, design-session-first). The
 track section in [ROADMAP.md](ROADMAP.md) is the map; the as-designed contracts
-are [m8](docs/specs/m8-implementation-plan.md)–[m12](docs/specs/m12-implementation-plan.md)
-implementation plans ([m7](docs/specs/m7-implementation-plan.md) is now the
-implementation record). Discipline: one WP = one session = one PR; **M7–M12
+are [m9](docs/specs/m9-implementation-plan.md)–[m12](docs/specs/m12-implementation-plan.md)
+implementation plans ([m7](docs/specs/m7-implementation-plan.md) and
+[m8](docs/specs/m8-implementation-plan.md) are now implementation records).
+Discipline: one WP = one session = one PR; **M7–M12
 move no statistical number** (parity gates); M13/M15 go through full change
 control.
 

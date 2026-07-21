@@ -86,8 +86,12 @@ hand-roll the assignment join.
 {% import 'abkit_assignment.jinja' as ab %}
 ```
 
-- `{{ ab.exposed_units() }}` — `INNER JOIN`s the persisted `_ab_exposures`
-  cohort and applies the window + exposure filters and dedup. Override fact-side
+- `{{ ab.exposed_units() }}` — `INNER JOIN`s the assignment cohort through the
+  `ab_cohort_source` builtin and applies the window + exposure filters and
+  dedup. By default (no `cohort_copy`) that is a live deduping subquery over
+  the assignment SQL — no `_ab_exposures` table involved; with
+  `assignment.cohort_copy.enabled: true` it joins the persisted copy instead.
+  Metric authors never choose between the two. Override fact-side
   column names with args if needed: `ab.exposed_units('dt', 'ts')`.
 - `{{ ab.variant_col() }}` — the arm label (project it `AS variant`).
 - `{{ ab.stratum_col() }}` — the stratum label, only when stratifying.

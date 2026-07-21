@@ -69,6 +69,7 @@ assignment:                      # READ-ONLY exposure source — abkit never ran
   added_filters: ""              # optional extra SQL fragment (must start with AND)
   variants: [control, treatment] # FIRST is control (name_1); >= 2, unique
   expected_split: {control: 0.5, treatment: 0.5}   # per variant, sum to 1.0; drives SRM
+  # cohort_copy: {enabled: true} # opt-in persisted _ab_exposures copy (default OFF — see below)
 
 alpha: 0.05                      # experiment-level significance (unset -> project default)
 correction: bonferroni           # none | bonferroni | benjamini_hochberg (unset -> project default)
@@ -157,8 +158,11 @@ the legacy whole-day-excluding-today behavior. Accepts a duration string or `0`.
 ## Assignment: variants, split, and SRM
 
 `assignment` names the **read-only** exposure source. abkit does not randomize —
-it reads your existing assignment, persists it once per run into `_ab_exposures`,
-and joins metric SQL against it.
+it reads your existing assignment and joins metric SQL against it directly,
+live, on every invocation (the default, no-copy mode — nothing is persisted).
+If your assignment source is expensive to join repeatedly or can mutate under
+you between reads, opt into `assignment.cohort_copy` (below) to persist an
+incrementally-updated copy into `_ab_exposures` instead.
 
 - **`query_file`** or **`query`** — the assignment SQL. Provide exactly one
   (both, or neither, is an error). The query must SELECT `unit_key`, `variant`,
@@ -180,6 +184,46 @@ non-dropping**: on failure the rows are still written with `srm_flag` set and
 `decision_blocked`, the CLI prints a red `SRM FAILED` line, and no verdict is
 trusted. A failing SRM means the assignment or randomization is broken — fix
 that before believing any effect.
+
+### Persisting the cohort: `assignment.cohort_copy` (opt-in)
+
+By default abkit re-reads and re-validates your live assignment source on every
+invocation (`abk run`/`plan`/`validate`/`explore`) — always fresh, never a stale
+row, at the cost of one render + validation query each time. If your assignment
+SQL is expensive (a heavy multi-join) or its source keeps growing during the
+run window, opt into a persisted, incrementally-updated copy:
+
+```yaml
+assignment:
+  query_file: sql/assignment.sql
+  variants: [control, treatment]
+  expected_split: {control: 0.5, treatment: 0.5}
+  cohort_copy:
+    enabled: true                       # default false — nothing persisted
+    update_column: exposure_ts          # watermark column (the default)
+    batch_interval: 1d                  # grid-anchored closed-interval step
+    batch_intervals_per_round_trip: 30  # intervals (NOT rows) per DB round trip
+    maturity_delay: 0                   # withhold rows younger than now() - delay
+```
+
+With copy mode on, `abk run` appends only the newly-matured closed batches
+since the last watermark — append-only, never a delete + reinsert on a routine
+run. A custom `update_column` has no persisted watermark to resume from and
+re-scans from the experiment start every run (still batched). The copy engine
+injects its batch bounds through the `{{ ab_added_filters }}` hook, so in copy
+mode your assignment SQL **must** reference it (config-lint enforces this).
+
+> **Known limitation (copy mode).** The watermark only moves forward: a row
+> backfilled or corrected into an **already-scanned closed bucket** is silently
+> missed by the incremental copy. For a source that backfills or mutates
+> historical rows, either stay on the no-copy default (which re-reads
+> everything, so it never misses a late row) or recover the copy with
+> `abk run --resync-cohort` — it deletes the persisted copy and rebuilds it
+> from the experiment start through the same engine. In copy mode the SRM gate
+> still measures the **live** source, and the persisted copy metrics join
+> trails it by the open bucket + `maturity_delay`; `abk run` warns when a
+> computable cutoff exceeds the copy's coverage (align
+> `data_lag >= maturity_delay + batch_interval`).
 
 ## Comparisons: metric × method
 

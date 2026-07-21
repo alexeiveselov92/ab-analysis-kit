@@ -18,7 +18,7 @@ caller flags.
 
 **Runtime / ASN (WP-A, m6-implementation-plan.md).** Two forward-looking timing
 answers layered on the sizing solves, both keyed on a unit-arrival rate the caller
-derives read-only from ``_ab_exposures`` (or a ``--arrival-rate`` override):
+derives read-only from the cohort source (or a ``--arrival-rate`` override):
 
 - **runtime** — days-to-required-N = ``required_n / arrival_rate`` (a deterministic
   division); and

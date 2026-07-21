@@ -53,8 +53,10 @@
   → [cumulative-intervals.md §5.8](cumulative-intervals.md), [statistics-changes.md H10](statistics-changes.md)
 - [ ] **`_ab_unit_state` cardinality** — key per (source-table, column-set, unit), not
   per metric. → [cumulative-intervals.md §5.3](cumulative-intervals.md)
-- [ ] **Persist cohort once** — metric loader JOINs `_ab_exposures`, no per-interval
-  visitor re-scan. → [cumulative-intervals.md §5.5](cumulative-intervals.md), [declarative-config.md §4](declarative-config.md)
+- [ ] **Resolve the cohort once per run** — the metric loader joins the cohort
+  source once per run (the persisted `_ab_exposures` copy, or a live-rendered
+  subquery in the M8 no-copy default), never a per-interval visitor re-scan.
+  → [cumulative-intervals.md §5.5](cumulative-intervals.md), [declarative-config.md §4](declarative-config.md)
 - [ ] **Concurrency model** — lock at (exp)/(exp,metric); worker-pool driver. → [cumulative-intervals.md §5.7](cumulative-intervals.md)
 - [ ] **Bound `validate` cost** — closed-form default; bootstrap A/A opt-in with
   reduced N + subsampled population. → [aa-false-positive-matrix.md §6](aa-false-positive-matrix.md)

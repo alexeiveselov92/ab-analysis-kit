@@ -6,7 +6,8 @@ The legacy ``marts.*`` layout is reference only; these schemas are designed
 from the decision logic and the specs:
 
 - ``_ab_experiments`` — experiment catalog (informational)
-- ``_ab_exposures``   — per-unit assignment cohort, loaded once, read-only
+- ``_ab_exposures``   — OPTIONAL per-unit assignment cohort copy, populated
+  only under ``assignment.cohort_copy.enabled`` (M8); read-only for compute
 - ``_ab_unit_state``  — cumulative per-unit day-bucketed moments (the
   scalability seam; cumulative-intervals.md §5.2/§5.3/§6.4)
 - ``_ab_results``     — the BI contract (data-contract-and-reporting.md §2)
@@ -67,12 +68,16 @@ def get_experiments_table_model() -> TableModel:
 
 
 def get_exposures_table_model() -> TableModel:
-    """``_ab_exposures`` — the persisted per-unit assignment cohort.
+    """``_ab_exposures`` — the OPTIONAL persisted per-unit assignment cohort copy.
 
-    Loaded ONCE per run from the assignment SQL (quorum must-fix "persist the
-    cohort once"); metric SQL JOINs this table via the packaged macro instead
-    of re-deriving the cohort every interval. READ-ONLY for compute: abkit
-    never writes back into it from the pipeline and never randomizes.
+    Populated only under ``assignment.cohort_copy.enabled`` (M8), and then
+    incrementally — watermark resume + grid-anchored closed-interval batches,
+    append-only (``insert_exposures_incremental``), never a whole-table reload
+    on a routine run (``--resync-cohort`` is the one exception). By default
+    (no-copy) this table is never created: metric SQL joins a live dedup
+    subquery over the assignment SQL instead (the ``ab_cohort_source``
+    builtin). READ-ONLY for compute: abkit never writes back into it from the
+    pipeline and never randomizes.
 
     Primary Key: (experiment, unit_id); Engine: ReplacingMergeTree(loaded_at)
     so a re-load self-heals duplicates on ClickHouse; SQL backends get the

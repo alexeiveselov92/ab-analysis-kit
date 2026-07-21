@@ -120,9 +120,12 @@ describes only its own aggregation (declarative-config §4):
 The macro exposes three helpers (from
 `abkit/loaders/templates/abkit_assignment.jinja`):
 
-- **`{{ ab.exposed_units() }}`** — emits the `INNER JOIN` against the persisted
-  `_ab_exposures` cohort (loaded once per run, deduped per dialect — `FINAL` on
-  ClickHouse, PK on PostgreSQL/MySQL). It applies both the coarse `event_date`
+- **`{{ ab.exposed_units() }}`** — emits the `INNER JOIN` against the cohort
+  source (the `ab_cohort_source` builtin): by default a live deduping subquery
+  over your assignment SQL; the persisted `_ab_exposures` copy when
+  `assignment.cohort_copy.enabled` — deduped per dialect (`FINAL` on
+  ClickHouse in copy mode, `MIN(exposure_ts)`/PK elsewhere). Metric authors
+  never choose between the two. It applies both the coarse `event_date`
   partition-pruning predicate **and** the precise half-open `event_time` window
   (`>= ab_start_ts AND < ab_end_ts`), plus the exposure filter
   (`event_time >= exposure_ts`). By default it reads fact-side columns named

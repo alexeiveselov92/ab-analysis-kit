@@ -3,7 +3,7 @@
 A pure sizing engine (``sizing.py``) over :mod:`abkit.stats.power`, plus the CLI
 command (``abkit.cli.commands.plan``) that reads baseline moments from the persisted
 ``_ab_results`` and translates config → primitives. Strictly read-only (D11): no lock,
-no ``_ab_*`` writes. Runtime (days-to-N from a ``_ab_exposures`` arrival rate) and ASN
+no ``_ab_*`` writes. Runtime (days-to-N from a cohort-source arrival rate) and ASN
 (the always-valid sequential design's average sample number) shipped in M6 WP-A
 (``runtime_for`` / ``asn_for``).
 """

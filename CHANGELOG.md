@@ -13,6 +13,41 @@ number change).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-21
+
+**M8 — assignments: no-copy default + incremental copy** (the implementation
+record is
+[docs/specs/m8-implementation-plan.md](docs/specs/m8-implementation-plan.md)).
+No `ALGORITHM_VERSION` bump — zero statistical numbers changed anywhere in
+the milestone: this is a data-provenance/performance release (where cohort
+reads come from, never the math over them); the cross-mode parity gates pin
+`_ab_results`/`_ab_aa_runs`/the baked explore payload identical across modes.
+
+### Documentation
+- **M8 WP7 — the three-way docs sync (docs only, no behavior change).** All
+  three single-source bodies (`docs/`, `.claude/rules/`, the packaged
+  `init-claude` assets) now describe the M8 as-built cohort semantics — a
+  code-grounded audit found 75 stale/missing spots across 36 files:
+  `docs/reference/internal-tables.md` marks `_ab_exposures` **optional,
+  copy-mode only** and documents the append-only incremental write pattern
+  (watermark resume, grid-anchored closed-interval batches) in place of the
+  old delete+reinsert description; `docs/guides/experiments.md` gains the
+  "Persisting the cohort: `assignment.cohort_copy`" section with the
+  prominent KNOWN-LIMITATION callout (late-backfilled rows are silently
+  missed by the watermark — stay on the no-copy default or recover with `abk
+  run --resync-cohort`); the plan guide/reference carry the no-copy cost
+  caveat (arrival-rate derivation re-executes the assignment SQL at
+  invocation time); `declarative-config.md` §4/§5/§8 document
+  `ab_cohort_source` as the one mode switch + the copy-mode
+  `{{ ab_added_filters }}` lint; the `abk init` scaffold comments describe
+  the live-join default and ship a commented-out `cohort_copy:` example; and
+  the same stale "persisted once per run" claims are fixed where they lived
+  in code — module docstrings and `abk plan --help` text (`cli/main.py`,
+  `cli/commands/plan.py`, `database/tables.py`, `compute/recompute_backend.py`,
+  `planning/`). Status lines across `README`/`CLAUDE.md`/rules flipped to
+  "0.2.0 published on PyPI"; the m8 plan became the implementation record
+  (done table, per-WP as-built notes, exit-gate log).
+
 ### Changed
 - **M8 WP4 — the no-copy default: assignments are read DIRECTLY; the
   `build_cohort_backend` factory is the one source-mode switch. BEHAVIOR
@@ -26,7 +61,7 @@ number change).
   run's frozen copy — the audit's accepted cost/freshness tradeoff. Setting
   `cohort_copy.enabled: true` keeps today's persisted-copy behavior end to
   end (full-reload write at WP4; superseded by WP5's incremental engine —
-  see the WP5 entry above). Every
+  see the WP5 entry below). Every
   cohort reader goes through the new
   `exposure_source.build_cohort_backend(...)` factory — the binding
   inter-milestone contract (m8 plan §0.5(e)): copy mode stays query-free for

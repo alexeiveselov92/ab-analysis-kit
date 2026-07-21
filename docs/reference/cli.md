@@ -255,7 +255,7 @@ abk plan [--select <exp>]... [--metric <m>] [--mde PCT] [--power P] [--alpha A] 
 | `--power` | project default | Target power (must be in `(0, 1)`) |
 | `--alpha` | experiment / project alpha | Experiment-level significance before correction (must be in `(0, 1)`) |
 | `--baseline` | — | Baseline moments override for a greenfield metric (repeatable, see below) |
-| `--arrival-rate` | derived from `_ab_exposures` | Total units/day across arms, for the runtime (days-to-N) + always-valid ASN estimates (must be > 0) |
+| `--arrival-rate` | derived from the cohort source (persisted copy or a live re-render) | Total units/day across arms, for the runtime (days-to-N) + always-valid ASN estimates (must be > 0) |
 | `--profile` | `default_profile` | Connection profile to use |
 
 Reports required sample size, achievable MDE, and achieved power **at the effective
@@ -270,8 +270,11 @@ resampling methods are refused** (reported as `SKIPPED` — they have no version
 formula, and abkit never invents math; measure their power empirically with
 `abk validate --inject-effect`). CUPED is sized on the raw persisted variance (the
 covariate correlation is not persisted per row) and flagged as a conservative upper
-bound. When an arrival rate is available — derived read-only from `_ab_exposures` or
-supplied via `--arrival-rate` — `plan` also reports the **runtime** (days to reach the
+bound. When an arrival rate is available — derived read-only from the cohort source
+(the persisted `_ab_exposures` copy under `assignment.cohort_copy.enabled`, otherwise a
+live re-render of the assignment SQL at invocation time — the documented no-copy
+cost/freshness tradeoff) or supplied via `--arrival-rate` — `plan` also reports the
+**runtime** (days to reach the
 required N) and, for a `sequential.enabled` design, the always-valid **ASN** (expected /
 average sample number, horizon-capped); without arrival data both are skipped.
 

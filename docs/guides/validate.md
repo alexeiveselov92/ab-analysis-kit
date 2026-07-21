@@ -32,18 +32,25 @@ parse and do my metric references resolve?", that is `abk run --steps validate`.
 you want to know "does my `z-test` actually hold its 5% error rate on this clustered
 metric?", that is `abk validate`.
 
-## Prerequisite: run the pipeline first
+## Prerequisite: a queryable assignment source (and, in copy mode, a prior run)
 
-`abk validate` resamples the experiment's **persisted cohort** — it re-reads the same
-data `abk run` wrote and permutes labels in memory. So you must have run the pipeline
-at least once:
+In the default (no-copy) mode, `abk validate` resolves the cohort itself: it
+renders and validates your **live** assignment source — the same
+`build_cohort_backend` factory `abk run` uses — and permutes labels in memory. No
+prior `abk run` is required for the cohort; your assignment SQL and metric fact
+tables just need data to read.
+
+With `assignment.cohort_copy.enabled: true`, validate instead reads the last
+**persisted** `_ab_exposures` copy, so at least one prior copy-mode run must have
+populated it:
 
 ```bash
 abk run --select checkout_flow_v3
 abk validate --select checkout_flow_v3
 ```
 
-If there is no persisted data to split, validate has nothing to resample.
+Either way, an empty or not-yet-launched cohort fails loudly with a reason —
+validate never resamples invented data.
 
 ## How the placebo split works
 

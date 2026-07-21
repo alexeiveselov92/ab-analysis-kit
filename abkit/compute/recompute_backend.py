@@ -3,7 +3,10 @@
 Each cutoff re-renders the metric SQL over the FULL cumulative window
 ``[start_ts, end_ts)`` and re-executes it — cumulative-intervals.md §4:
 correctness-first, made cheap-to-skip by the planner anti-join, with the
-warehouse cohort persisted once (the macro joins ``_ab_exposures``). The v2
+cohort read through the ``ab_cohort_source`` builtin (the persisted
+``_ab_exposures`` copy in cohort-copy mode, or — the M8 default — a
+live-rendered dedup subquery over the assignment SQL; see the class
+docstring below). The v2
 incremental backend (reading ``_ab_unit_state`` moments) is deferred behind
 ``abk verify-incremental``.
 

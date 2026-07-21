@@ -177,17 +177,26 @@ companion; **runtime** and **ASN** complete it. Given a **unit-arrival rate**, e
 sizable comparison also reports how long the experiment will take:
 
 - **runtime** — `days-to-required-N = required_n / arrival_rate`, plus the planned
-  horizon length. The arrival rate is derived **read-only** from `_ab_exposures`
+  horizon length. The arrival rate is derived **read-only** from the cohort source
   (distinct units per observed day over the whole-cohort window, split to the control
-  arm), or supplied directly with `--arrival-rate <units/day>` (total across arms) for
-  a greenfield experiment with no exposures yet.
+  arm): the persisted `_ab_exposures` copy when `assignment.cohort_copy.enabled:
+  true`, otherwise — the default — a fresh snapshot of the live assignment source,
+  re-executed at invocation time. Or supply it directly with
+  `--arrival-rate <units/day>` (total across arms) for a greenfield experiment with
+  no exposures yet.
 - **ASN** — for a `sequential.enabled`, sequential-eligible comparison, the always-valid
   design's **average sample number**: the expected control-arm N at which the confidence
   sequence first excludes zero, under the true target effect (H1) and the null (H0). It
   is a deterministic (fixed-seed) Monte-Carlo estimate crossing the *exact* shipped CS
   boundary, capped at the planned horizon.
 
-Without an arrival rate — neither derivable from `_ab_exposures` nor passed via
+> **Cost note.** In the default no-copy mode, deriving the arrival rate re-executes
+> and re-validates your assignment SQL live, once per `abk plan` invocation — the
+> same documented cost/freshness tradeoff every read-only command pays. If your
+> assignment source is expensive to join, either pass `--arrival-rate` explicitly or
+> opt into `assignment.cohort_copy` so the rate reads the persisted table instead.
+
+Without an arrival rate — neither derivable from the cohort source nor passed via
 `--arrival-rate` — both runtime and ASN are **SKIPPED with a reason** (a backfilled
 cohort spanning ~one instant is underivable), never invented. A fixed-horizon or
 resampling design reports `sequential ASN: n/a`.
