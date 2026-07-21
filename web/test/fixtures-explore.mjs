@@ -56,13 +56,13 @@ export function makeMethods() {
       name: 'cuped-t-test',
       seeded: false,
       needs_covariate: true,
-      alpha_tier: 'alpha',
-      correction_tier: 'alpha',
+      alpha_tier: 'E',
+      correction_tier: 'E',
       params: [
         makeSpec('test_type', { default: 'relative', choices: ['relative', 'absolute'] }),
         makeSpec('covariate_lookback', { type: 'str|int', default: null }),
       ],
-      tiers: { test_type: 'S', covariate_lookback: 'R' },
+      tiers: { test_type: 'E', covariate_lookback: 'R' },
     },
     {
       name: 'bootstrap',

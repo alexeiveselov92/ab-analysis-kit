@@ -22,8 +22,9 @@ import type { ReportPayload } from '../shared/payload';
 
 /** D1 knob-classification letters (NOT the reply point tiers). */
 export type KnobTier = 'E' | 'S' | 'R';
-/** Tier the experiment-level alpha/correction knob recomputes through. */
-export type AlphaKnobTier = 'E' | 'S' | 'alpha';
+/** Tier the experiment-level alpha/correction knob recomputes through
+ * (the 'alpha' α-inversion value retired in M9 WP2 — CUPED is Tier E now). */
+export type AlphaKnobTier = 'E' | 'S';
 
 /** One ParamSpec as baked by recompute._spec_payload (D12: the rail is
  * auto-derived from these — a knob without a spec cannot appear). */

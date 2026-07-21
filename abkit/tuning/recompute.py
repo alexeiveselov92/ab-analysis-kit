@@ -10,7 +10,11 @@ round-trip" means no *warehouse* round-trip per knob change):
   NEVER taken from ``size_i`` (the one-row-per-unit count — the critique
   blocker); ratio-delta — the exact surrogate ``RatioSufficientStats(n,
   value_i, std_i²·n, mean_den=1, m2_den=0, c_nd=0)`` (``_arm_linearisation``
-  then reproduces ``R = value_i`` and ``var0_L = std_i²`` exactly).
+  then reproduces ``R = value_i`` and ``var0_L = std_i²`` exactly);
+  cuped-t-test (M9 WP2) — the full covariate ``SufficientStats`` from the
+  M9 WP1 persisted moments (``cov_m2 = cov_std_i²·size_i``, ``cross_c =
+  corr_coef_i·√(m2·cov_m2)``), gated on the live ``covariate_lookback``
+  matching the one the row was computed with (else Tier R — see below).
 - **Tier α (approx, whole grid):** alpha-inversion for closed-form rows —
   every parametric CI here is ``effect ± z·se`` (``effects.normal_test``, the
   z-test's explicit quantiles), so ``se = (right − left) / (2·z_{1−α/2})``
@@ -18,8 +22,9 @@ round-trip" means no *warehouse* round-trip per knob change):
   bootstrap CIs are NOT normal-invertible — resampling methods (declaratively:
   a ``seed`` param spec) never take this path.
 - **Tier S (exact, cached cutoffs):** ``from_samples`` over the session
-  cache — bootstrap knobs, the stratify toggle, CUPED with per-unit
-  covariates. Bootstrap seeds are re-derived per the persisted-row convention
+  cache — bootstrap knobs, the stratify toggle, and pre-M9 CUPED rows (the
+  covariate-moment columns are NULL, so Tier E cannot reconstruct them).
+  Bootstrap seeds are re-derived per the persisted-row convention
   (``derive_seed(exp, metric, name_1, name_2, end_ts, n_samples)``,
   analyze-parity) so unchanged knobs reproduce stored rows byte-exactly under
   the D11 canonical unit order.
@@ -98,8 +103,9 @@ def _needs_seed(method_cls: type[BaseMethod]) -> bool:
 
 
 def _needs_covariate(method_cls: type[BaseMethod]) -> bool:
-    """CUPED family: per-unit covariate dependence — cross-moments are not
-    persisted, so exact reconstruction from rows is impossible."""
+    """CUPED family probe: declares ``covariate_lookback`` (the pre-period
+    render knob). Since M9 WP2 this no longer demotes the family's tier —
+    the persisted covariate moments make it Tier-E reconstructable."""
     return any(spec.name == "covariate_lookback" for spec in method_cls.param_specs)
 
 
@@ -107,17 +113,15 @@ def classify_knob(method_cls: type[BaseMethod], knob: str) -> KnobTier:
     """The D1 tier a change of ``knob`` recomputes through, per family."""
     if knob == "covariate_lookback":
         return "R"  # a different lookback is a new pre-period render
-    if _needs_seed(method_cls) or _needs_covariate(method_cls):
+    if _needs_seed(method_cls):
         return "S"
     return "E"
 
 
-def alpha_knob_tier(method_cls: type[BaseMethod]) -> str:
+def alpha_knob_tier(method_cls: type[BaseMethod]) -> KnobTier:
     """Tier for the experiment-level alpha knob under this family."""
     if _needs_seed(method_cls):
         return "S"  # percentile CI: re-resample from the cache
-    if _needs_covariate(method_cls):
-        return "alpha"  # α-inversion, whole grid (approx segments)
     return "E"
 
 
@@ -388,28 +392,100 @@ def _row_serves_suffstats(row: dict) -> bool:
     return True
 
 
-def _exact_suffstats(method_cls: type[BaseMethod], row: dict) -> tuple[Any, Any] | None:
-    """Tier E: both arms' suffstats containers from one persisted row, or
-    ``None`` when this family/row is not exactly reconstructable."""
-    if _needs_seed(method_cls) or method_cls.requires_covariate or _needs_covariate(method_cls):
+def _covariate_suffstats_fields(
+    row: dict, size: int, m2: float, suffix: str
+) -> tuple[float, float, float] | None:
+    """One arm's ``(cov_mean, cov_m2, cross_c)`` from the persisted covariate
+    moments (M9 WP1), or ``None`` when the row cannot serve them.
+
+    Inverts the ``SufficientStats`` properties: ``cov_m2 = cov_std²·n`` and
+    ``cross_c = corr_coef·√(m2·cov_m2)``. Pre-migration rows persist NULL in
+    the three columns, and a degenerate covariate persists a NULL
+    ``corr_coef`` (NaN→None on write) — both degrade to the Tier S/baseline
+    fallback, never a NaN riding into a "successful" result.
+    """
+    cov_mean = _row_float(row, f"cov_value_{suffix}")
+    cov_std = _row_float(row, f"cov_std_{suffix}")
+    corr_coef = _row_float(row, f"corr_coef_{suffix}")
+    if cov_mean is None or cov_std is None or corr_coef is None:
         return None
+    cov_m2 = cov_std * cov_std * size
+    return cov_mean, cov_m2, corr_coef * math.sqrt(m2 * cov_m2)
+
+
+def _exact_suffstats(
+    method_cls: type[BaseMethod],
+    row: dict,
+    resolved_params: Mapping[str, Any] | None = None,
+    *,
+    covariate_declared: bool = False,
+) -> tuple[Any, Any] | None:
+    """Tier E: both arms' suffstats containers from one persisted row, or
+    ``None`` when this family/row is not exactly reconstructable.
+
+    The covariate family (``requires_covariate``) is additionally gated on the
+    live ``covariate_lookback`` matching the value the row was computed with
+    (its persisted ``method_params``) — a changed lookback is a NEW pre-period
+    render (Tier R), never a silent reconstruction against a stale covariate.
+    ``covariate_declared`` metrics carry the covariate in their own SQL, so
+    the lookback never shapes their moments (the ``_cache_serves`` mirror).
+    """
+    if _needs_seed(method_cls):
+        return None
+    if method_cls.requires_covariate and method_cls.input_kind != "sample":
+        return None  # no persisted covariate-moment shape for these kinds
     if not _row_serves_suffstats(row):
         return None
     value_1, value_2 = _row_float(row, "value_1"), _row_float(row, "value_2")
     std_1, std_2 = _row_float(row, "std_1"), _row_float(row, "std_2")
     size_1, size_2 = _row_int(row, "size_1"), _row_int(row, "size_2")
-    if None in (value_1, value_2, std_1, std_2, size_1, size_2):
+    if value_1 is None or value_2 is None or std_1 is None or std_2 is None:
         return None
-    if size_1 <= 0 or size_2 <= 0:
+    if size_1 is None or size_2 is None or size_1 <= 0 or size_2 <= 0:
         return None
     name_1, name_2 = row.get("name_1"), row.get("name_2")
 
     kind = method_cls.input_kind
     if kind == "sample":
         # std_i is the persisted np.std (ddof=0) ⇒ m2 = std² · n exactly.
+        m2_1, m2_2 = std_1 * std_1 * size_1, std_2 * std_2 * size_2
+        if method_cls.requires_covariate:
+            if size_1 < 2 or size_2 < 2:
+                return None  # θ's ddof=1 terms need n ≥ 2 per arm
+            if not covariate_declared:
+                requested = _lookback_seconds((resolved_params or {}).get("covariate_lookback"))
+                row_lookback = _parse_params(row.get("method_params")).get("covariate_lookback")
+                if requested != _lookback_seconds(row_lookback):
+                    return None  # a different pre-period — Tier R, not a reconstruction
+            fields_1 = _covariate_suffstats_fields(row, size_1, m2_1, "1")
+            fields_2 = _covariate_suffstats_fields(row, size_2, m2_2, "2")
+            if fields_1 is None or fields_2 is None:
+                return None  # pre-migration row (or degenerate covariate)
+            cov_mean_1, cov_m2_1, cross_c_1 = fields_1
+            cov_mean_2, cov_m2_2, cross_c_2 = fields_2
+            return (
+                SufficientStats(
+                    n=size_1,
+                    mean=value_1,
+                    m2=m2_1,
+                    cov_mean=cov_mean_1,
+                    cov_m2=cov_m2_1,
+                    cross_c=cross_c_1,
+                    name=name_1,
+                ),
+                SufficientStats(
+                    n=size_2,
+                    mean=value_2,
+                    m2=m2_2,
+                    cov_mean=cov_mean_2,
+                    cov_m2=cov_m2_2,
+                    cross_c=cross_c_2,
+                    name=name_2,
+                ),
+            )
         return (
-            SufficientStats(n=size_1, mean=value_1, m2=std_1 * std_1 * size_1, name=name_1),
-            SufficientStats(n=size_2, mean=value_2, m2=std_2 * std_2 * size_2, name=name_2),
+            SufficientStats(n=size_1, mean=value_1, m2=m2_1, name=name_1),
+            SufficientStats(n=size_2, mean=value_2, m2=m2_2, name=name_2),
         )
     if kind == "fraction":
         fraction_1 = _invert_fraction(value_1, std_1, name_1)
@@ -681,7 +757,12 @@ class RecomputeEngine:
             return self._baseline_point(row)
 
         # Tier E — exact reconstruction, whole grid.
-        containers = _exact_suffstats(method_cls, row)
+        containers = _exact_suffstats(
+            method_cls,
+            row,
+            resolved_params,
+            covariate_declared=series.metric.columns.covariate is not None,
+        )
         if containers is not None and reusable is not None:
             result, caught = _compare(reusable, *containers)
             return self._point_from_result(row, result, caught, tier="exact")
