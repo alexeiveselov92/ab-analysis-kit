@@ -371,6 +371,20 @@ not just extended; `TestKnobSurface::test_tier_classification_table`, ~497).
 > docstring, a missing `identity_changed` assert, and the two plan-text
 > disclosures above. 4 rejected as pre-existing/non-defects by the skeptic
 > majority.
+> **Adversarial review R2** (fresh: 3 lenses — R1-fix correctness, cold
+> full-diff sweep, no-numbers-move proof — → skeptics with mandatory
+> repro): 2 raised → 2 confirmed (one root defect): the R1 reload
+> exemption silenced only `needsReload`'s FIRST gate — the unconditional
+> R-tier knob scan still re-demanded the reload on the switch-away-then-
+> back flow (`prevParams = {}` after a method change ⇒ the configured
+> `covariate_lookback` diffed against `undefined`; reproduced by both
+> skeptics in jsdom against the committed bundle). Fixed: on a switch back
+> to the CONFIGURED method the R-scan baselines against the CONFIGURED
+> params (the persisted series' own state); pinned by two new jsdom tests
+> (exempt flow recomputes with the reload bar hidden / pre-migration rows
+> still demand the reload). The numbers-immovability lens confirmed the
+> write path untouched, both e2e matrix gates + cross-mode parity green,
+> and the `ALGORITHM_VERSION` grep clean — zero findings.
 
 ---
 

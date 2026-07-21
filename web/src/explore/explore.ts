@@ -1255,7 +1255,18 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
       return true;
     }
     const prev = lastComputed.get(activeMetric as string) || configuredKnobs(activeMetric as string);
-    const prevParams = prev.method === knobs.method ? prev.params : {};
+    // After a method switch there is no same-method computed state to diff
+    // R-knobs against. Switching back to the CONFIGURED method compares them
+    // against the CONFIGURED params — the persisted series was computed with
+    // exactly those, so an unchanged R-knob needs no warehouse trip (M9 WP2:
+    // without this, the R-scan re-demanded the reload the first gate just
+    // exempted). Any other method keeps the conservative empty baseline.
+    const prevParams =
+      prev.method === knobs.method
+        ? prev.params
+        : knobs.method === surface.configured.method
+          ? surface.configured.params
+          : {};
     for (const [name, tier] of Object.entries(m.tiers)) {
       if (tier !== 'R') continue;
       if (knobs.params[name] !== prevParams[name]) return true;

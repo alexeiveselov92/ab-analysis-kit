@@ -382,6 +382,71 @@ test('switching to a covariate-needing method shows the reload bar instead of re
 });
 
 // ---------------------------------------------------------------------------
+// M9 WP2: switching BACK to the configured CUPED method with reconstructable
+// rows recomputes (Tier E) — no reload demand from either needsReload gate
+// ---------------------------------------------------------------------------
+
+function cupedConfiguredPayload(momentRows) {
+  const payload = makeExplorePayload(liveUrls());
+  const surface = payload.explore.metrics.revenue;
+  surface.configured = {
+    method: 'cuped-t-test',
+    params: { test_type: 'relative', covariate_lookback: '14d' },
+    method_config_id: 'b'.repeat(16),
+    alpha: 0.05,
+  };
+  surface.cache.covariate_cutoffs = [];
+  surface.cache.covariate_moment_rows = momentRows;
+  return payload;
+}
+
+test('switch-away-then-back to the configured CUPED method recomputes without a reload demand', async () => {
+  const { impl, calls } = fakeFetch((url, body) => ({
+    status: 200,
+    json: makeReply(body.request_id, { method: String(body.method.name) }),
+  }));
+  const { mount } = renderInJsdom(cupedConfiguredPayload(true), { fetchImpl: impl });
+  await sleep(30);
+  assert.equal(calls.length, 1, 'initial recompute on the configured cuped method');
+  const buttons = () => [...mount.querySelectorAll('.abk-seg-btn')];
+  buttons()
+    .find((b) => b.textContent.startsWith('t-test'))
+    .click();
+  await sleep(200);
+  assert.equal(calls.length, 2, 'plain method recomputes');
+  const cupedBtn = buttons().find((b) => b.textContent.startsWith('cuped-t-test'));
+  assert.equal(cupedBtn.textContent, 'cuped-t-test', 'no ↻ badge — rows reconstruct');
+  cupedBtn.click();
+  await sleep(200);
+  // pre-fix the R-tier scan re-demanded the reload the first gate exempted
+  assert.equal(calls.length, 3, 'switch-back recomputes via Tier E, no reload gate');
+  const bar = mount.querySelector('.abk-reloadbar');
+  assert.equal(bar.style.display, 'none', 'reload bar stays hidden');
+});
+
+test('switch-back still demands the reload when the rows carry no covariate moments', async () => {
+  const { impl, calls } = fakeFetch((url, body) => ({
+    status: 200,
+    json: makeReply(body.request_id, { method: String(body.method.name) }),
+  }));
+  const { mount } = renderInJsdom(cupedConfiguredPayload(false), { fetchImpl: impl });
+  await sleep(30);
+  const buttons = () => [...mount.querySelectorAll('.abk-seg-btn')];
+  buttons()
+    .find((b) => b.textContent.startsWith('t-test'))
+    .click();
+  await sleep(200);
+  assert.equal(calls.length, 2);
+  buttons()
+    .find((b) => b.textContent.startsWith('cuped-t-test'))
+    .click();
+  await sleep(200);
+  assert.equal(calls.length, 2, 'no recompute — pre-migration rows cannot reconstruct');
+  const bar = mount.querySelector('.abk-reloadbar');
+  assert.notEqual(bar.style.display, 'none', 'reload bar shown');
+});
+
+// ---------------------------------------------------------------------------
 // Auto mode (WP6): server-side /validate, in-session chip flip, knob re-seed
 // ---------------------------------------------------------------------------
 
