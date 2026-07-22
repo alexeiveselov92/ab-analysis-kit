@@ -62,10 +62,10 @@ DB round-trip** for a normal tune. Cost depends on which knob you turned:
 
 | Tier | Knob → | How it recomputes |
 |---|---|---|
-| **E** exact | `test_type`, most closed-form params | suffstats reconstructed from persisted rows, whole grid |
-| **α** | experiment-level `alpha` | alpha-inversion on closed-form rows (approx), whole grid |
+| **E** exact | `test_type`, `alpha`, most closed-form params — incl. every CUPED knob except `covariate_lookback` (0.4.0) | suffstats reconstructed from persisted rows, whole grid |
+| **α** | `alpha` on rows that cannot reconstruct (e.g. CUPED rows written before 0.4.0) | alpha-inversion on closed-form rows (approx), whole grid |
 | **S** session cache | needs raw samples (e.g. bootstrap) | `from_samples` over the bounded session cache (cached cutoffs) |
-| **R** reload | CUPED off→on with no cached covariate | flagged `R`; a serialized `/reload` re-reads the warehouse on demand |
+| **R** reload | `covariate_lookback`, or CUPED off→on with no cached covariate | flagged `R`; a serialized `/reload` re-reads the warehouse on demand |
 
 The one session-load pass at startup (lock-free, read-only) fills a **bounded**
 Tier-S cache. Over budget ⇒ honest suffstats-only degradation (a smaller live

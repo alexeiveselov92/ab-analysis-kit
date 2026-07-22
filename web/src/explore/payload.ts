@@ -22,8 +22,9 @@ import type { ReportPayload } from '../shared/payload';
 
 /** D1 knob-classification letters (NOT the reply point tiers). */
 export type KnobTier = 'E' | 'S' | 'R';
-/** Tier the experiment-level alpha/correction knob recomputes through. */
-export type AlphaKnobTier = 'E' | 'S' | 'alpha';
+/** Tier the experiment-level alpha/correction knob recomputes through
+ * (the 'alpha' α-inversion value retired in M9 WP2 — CUPED is Tier E now). */
+export type AlphaKnobTier = 'E' | 'S';
 
 /** One ParamSpec as baked by recompute._spec_payload (D12: the rail is
  * auto-derived from these — a knob without a spec cannot appear). */
@@ -90,6 +91,10 @@ export interface MetricSurface {
     cutoffs: number[];
     /** cached cutoffs where every variant carries a covariate */
     covariate_cutoffs: number[];
+    /** the CONFIGURED series' persisted rows carry full covariate moments —
+     * Tier-E reconstructable with no cache (M9 WP2); exempts a switch back
+     * to the configured covariate method from the reload demand */
+    covariate_moment_rows: boolean;
     disabled_reason: string | null;
   };
   calibration: CalibrationStatus;

@@ -13,6 +13,32 @@ number change).
 
 ## [Unreleased]
 
+### Changed
+- **M9 WP2 — CUPED is Tier E in `abk explore`.** The three recompute gates in
+  `tuning/recompute.py` that demoted the covariate family are relaxed:
+  `cuped-t-test` now reconstructs each arm's full covariate
+  `SufficientStats` from the M9 WP1 persisted moments and reruns
+  `compare_pair` exactly over the whole grid — for every knob (`test_type`,
+  `calculate_mde`, `power`, alpha, correction) except `covariate_lookback`
+  itself, which correctly stays Tier R (a different lookback is a new
+  pre-period render; the reconstruction is refused whenever the live
+  lookback differs from the one the row was computed with). Pre-migration
+  rows (NULL covariate-moment columns) and degenerate covariates (NULL
+  `corr_coef`) gracefully keep the old Tier S / α-inversion / baseline
+  fallbacks — never an error. The golden round-trip gate pins the
+  reconstruction against a from-scratch pipeline run — incl. θ — at
+  rel-1e-9 (round-off-exact, not bit-identical: the documented Tier-E
+  tolerance). No `ALGORITHM_VERSION` bump: the numbers are computed by the
+  same `from_suffstats` math from losslessly-persisted moments; only *where*
+  the cockpit computes them changed.
+  Riding along (the adversarial-review round-1 fixes): the CUPED
+  achieved-power chip now reads the control-arm correlation off the
+  reconstructed result first (cache-free, agreeing with the exact point
+  beside it) and falls back to the session cache for pre-migration rows;
+  the knob surface exposes `cache.covariate_moment_rows` and the explore
+  client no longer demands a warehouse reload when switching back to the
+  configured CUPED method whose rows reconstruct (rebuilt `explore.js`).
+
 ### Added
 - **M9 WP1 — persisted CUPED covariate moments + the schema-migration
   primitive.** `_ab_results` gains four `Nullable(Float64)` columns —

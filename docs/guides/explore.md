@@ -115,10 +115,10 @@ which knob you turned (`recompute.py` tiers E/α/S/R):
 
 | Tier | Turning this knob… | Recomputes by… |
 |---|---|---|
-| **E** exact | `test_type`, most closed-form params | Reconstructing suffstats from the persisted rows — the whole grid, instantly. |
-| **α** | experiment-level `alpha` | Alpha-inversion on closed-form rows (approximate) — the whole grid. |
+| **E** exact | `test_type`, `alpha`, most closed-form params — incl. every CUPED knob except `covariate_lookback` (0.4.0) | Reconstructing suffstats from the persisted rows — the whole grid, instantly. |
+| **α** | `alpha` on rows that cannot reconstruct (e.g. CUPED rows written before 0.4.0) | Alpha-inversion on closed-form rows (approximate) — the whole grid. |
 | **S** session cache | anything needing raw samples (e.g. bootstrap) | `from_samples` over a bounded in-memory cache of cutoffs. |
-| **R** reload | e.g. turning CUPED on with no cached covariate | Flagged `R`; a confirmed, serialized warehouse re-read on demand. |
+| **R** reload | `covariate_lookback`, or turning CUPED on with no cached covariate | Flagged `R`; a confirmed, serialized warehouse re-read on demand. |
 
 At startup, explore does **exactly one read-only, lock-free load pass** to fill
 the bounded Tier-S cache. If the experiment is larger than the cache budget, the

@@ -5,8 +5,9 @@ The in-memory seed-mirror variant (no Docker): ``abk init`` → ``abk run`` →
 build the real explore server from the scaffolded configs (the same plumbing
 ``abk explore`` runs) and prove over live HTTP that: GET serves the baked
 page; unchanged knobs reproduce the persisted latest-cutoff numbers at
-rel-1e-9; an alpha edit recomputes exactly on Tier E and α-inverts (tier
-"approx") on a suffstats-only CUPED series; a stale request id is 409-dropped;
+rel-1e-9; an alpha edit recomputes exactly on Tier E — incl. a suffstats-only
+CUPED series (M9 WP2), with the α-inversion fallback (tier "approx") pinned
+on pre-migration rows; a stale request id is 409-dropped;
 Apply is refused without ``confirm_uncalibrated`` against the empty
 ``_ab_aa_runs`` (the M3 DoD sentence, mechanically tested) and, confirmed,
 rewrites the YAML + archives to ``.history`` + reports the orphaned series —
@@ -49,9 +50,7 @@ def scaffolded(tmp_path, monkeypatch):
 
 
 def http(url: str, payload: dict):
-    request = urllib.request.Request(
-        url, data=json.dumps(payload).encode(), method="POST"
-    )
+    request = urllib.request.Request(url, data=json.dumps(payload).encode(), method="POST")
     try:
         with urllib.request.urlopen(request, timeout=10) as resp:
             body = resp.read().decode()
@@ -89,8 +88,7 @@ class Served:
         tables = InternalTablesManager(warehouse)
         configured = [c.metric for c in self.experiment.comparisons]
         metric_sql = {
-            name: context.metrics_by_name[name].get_query_text(context.root)
-            for name in configured
+            name: context.metrics_by_name[name].get_query_text(context.root) for name in configured
         }
         backend = RecomputeBackend(warehouse, self.experiment)
         self.session = load_session(
@@ -200,9 +198,36 @@ class TestExploreSession:
         finally:
             served.stop()
 
-    def test_alpha_inversion_on_a_suffstats_only_cuped_series(self, scaffolded):
-        # loader=None: the cache cannot serve the CUPED family, so a changed
-        # alpha rides the α-inversion path — tier "approx", MDE withheld
+    def test_cuped_alpha_on_a_suffstats_only_series_is_exact(self, scaffolded):
+        # M9 WP2: loader=None, yet the persisted covariate moments reconstruct
+        # the full suffstats — a changed alpha recomputes Tier E ("exact"),
+        # not via α-inversion
+        served = Served(scaffolded, with_cache=False)
+        try:
+            status, reply = http(
+                served.endpoint("recompute"),
+                _knob_request(served.payload, "example_arpu", alpha=0.01, request_id=1),
+            )
+            assert status == 200, reply
+            latest = max(reply["pairs"][0]["points"], key=lambda p: p["end_ts"])
+            assert latest["tier"] == "exact"
+            persisted = _latest_row(scaffolded, "example_arpu")
+            stored_width = float(persisted["right_bound"]) - float(persisted["left_bound"])
+            exact_width = latest["right_bound"] - latest["left_bound"]
+            assert exact_width > stored_width  # α=0.01 CI is wider than α=0.05
+            # the normal-test p-value is α-independent — the exact rerun
+            # reproduces the persisted one up to reconstruction round-off
+            assert math.isclose(latest["pvalue"], float(persisted["pvalue"]), rel_tol=1e-9)
+        finally:
+            served.stop()
+
+    def test_alpha_inversion_on_a_pre_migration_cuped_series(self, scaffolded):
+        # rows written before the M9 WP1 columns exist (NULLed here) keep the
+        # honest α-inversion path — tier "approx", MDE withheld
+        for row in scaffolded._rows["_ab_results"]:
+            if row["metric"] == "example_arpu":
+                for column in ("cov_std_1", "cov_std_2", "corr_coef_1", "corr_coef_2"):
+                    row[column] = None
         served = Served(scaffolded, with_cache=False)
         try:
             status, reply = http(
@@ -250,9 +275,7 @@ class TestExploreSession:
         assert "example_arpu" in applied["preserved"]
 
         rewritten = yaml.safe_load(served.experiment_path.read_text(encoding="utf-8"))
-        signup = next(
-            c for c in rewritten["comparisons"] if c["metric"] == "example_signup_cr"
-        )
+        signup = next(c for c in rewritten["comparisons"] if c["metric"] == "example_signup_cr")
         assert signup["method"]["params"]["test_type"] == "absolute"
 
         archived = Path(applied["archived"])

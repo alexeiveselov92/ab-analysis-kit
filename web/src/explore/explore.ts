@@ -1076,12 +1076,15 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
     const m = methodSurface(methodName);
 
     // method picker — Basic; the ↻ badge on covariate-needing methods with
-    // no cached covariate (the reload substrate)
+    // no cached covariate (the reload substrate). The CONFIGURED method is
+    // exempt when its persisted rows carry the covariate moments — Tier-E
+    // reconstruction answers it with no warehouse trip (M9 WP2).
     const options = surface.methods.map((ms) => ({
       label:
         ms.needs_covariate &&
         surface.cache.covariate_cutoffs.length === 0 &&
-        !covariateReloaded.has(activeMetric as string)
+        !covariateReloaded.has(activeMetric as string) &&
+        !(ms.name === surface.configured.method && surface.cache.covariate_moment_rows)
           ? `${ms.name} ↻`
           : ms.name,
       value: ms.name,
@@ -1230,11 +1233,14 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
   /** The knob state needs a warehouse reload when any Tier-R knob
    * (covariate_lookback) diverges from the last-computed state, or a METHOD
    * SWITCH lands on a covariate-needing method the cache cannot serve (the ↻
-   * badge substrate: needs_covariate + empty covariate_cutoffs). EVERY R-tier
-   * knob is scanned — not just the one that changed — so a pending R-edit
-   * keeps demanding its reload while other knobs turn, and an edit back to
-   * the computed value self-clears. Alpha/correction edits alone never
-   * trigger it — α-inversion answers without the cache. */
+   * badge substrate: needs_covariate + empty covariate_cutoffs). Switching
+   * BACK to the CONFIGURED covariate method is exempt when its persisted rows
+   * carry the covariate moments — Tier-E reconstruction serves it with no
+   * warehouse trip (M9 WP2). EVERY R-tier knob is scanned — not just the one
+   * that changed — so a pending R-edit keeps demanding its reload while other
+   * knobs turn, and an edit back to the computed value self-clears.
+   * Alpha/correction edits alone never trigger it — the exact/α-inversion
+   * paths answer without the cache. */
   function needsReload(knobs: KnobValues, methodSwitched = false): boolean {
     const m = methodSurface(knobs.method);
     if (!m) return false;
@@ -1243,12 +1249,24 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
       methodSwitched &&
       m.needs_covariate &&
       surface.cache.covariate_cutoffs.length === 0 &&
-      !covariateReloaded.has(activeMetric as string)
+      !covariateReloaded.has(activeMetric as string) &&
+      !(knobs.method === surface.configured.method && surface.cache.covariate_moment_rows)
     ) {
       return true;
     }
     const prev = lastComputed.get(activeMetric as string) || configuredKnobs(activeMetric as string);
-    const prevParams = prev.method === knobs.method ? prev.params : {};
+    // After a method switch there is no same-method computed state to diff
+    // R-knobs against. Switching back to the CONFIGURED method compares them
+    // against the CONFIGURED params — the persisted series was computed with
+    // exactly those, so an unchanged R-knob needs no warehouse trip (M9 WP2:
+    // without this, the R-scan re-demanded the reload the first gate just
+    // exempted). Any other method keeps the conservative empty baseline.
+    const prevParams =
+      prev.method === knobs.method
+        ? prev.params
+        : knobs.method === surface.configured.method
+          ? surface.configured.params
+          : {};
     for (const [name, tier] of Object.entries(m.tiers)) {
       if (tier !== 'R') continue;
       if (knobs.params[name] !== prevParams[name]) return true;

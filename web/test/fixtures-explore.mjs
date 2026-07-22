@@ -56,13 +56,13 @@ export function makeMethods() {
       name: 'cuped-t-test',
       seeded: false,
       needs_covariate: true,
-      alpha_tier: 'alpha',
-      correction_tier: 'alpha',
+      alpha_tier: 'E',
+      correction_tier: 'E',
       params: [
         makeSpec('test_type', { default: 'relative', choices: ['relative', 'absolute'] }),
         makeSpec('covariate_lookback', { type: 'str|int', default: null }),
       ],
-      tiers: { test_type: 'S', covariate_lookback: 'R' },
+      tiers: { test_type: 'E', covariate_lookback: 'R' },
     },
     {
       name: 'bootstrap',
@@ -118,6 +118,7 @@ export function makeSurface(overrides = {}) {
     cache: {
       cutoffs: Array.from({ length: 14 }, (_, i) => Date.UTC(2026, 0, 2 + i)),
       covariate_cutoffs: [],
+      covariate_moment_rows: false,
       disabled_reason: null,
     },
     calibration: makeCalibration(),

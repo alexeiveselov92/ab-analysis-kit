@@ -103,10 +103,35 @@ class TestSequentialRecompute:
         assert seq_pt.effect == pytest.approx(fx_pt.effect, rel=1e-9)
         assert (seq_pt.right_bound - seq_pt.left_bound) > (fx_pt.right_bound - fx_pt.left_bound)
 
-    def test_alpha_change_drops_alpha_inverted_cutoffs_with_reload_hint(self, warehouse, tables):
-        """α-inversion can't widen a persisted always-valid CI → drop + Reload hint."""
+    def test_cuped_alpha_change_widens_the_whole_grid_without_drops(self, warehouse, tables):
+        """M9 WP2: the persisted covariate moments reconstruct every cutoff
+        (Tier E), so a CUPED alpha edit under sequential widens the WHOLE
+        grid — no α-inverted points to drop, no Reload hint (pre-WP2 the
+        uncached cutoffs were dropped)."""
         exp = make_experiment("seq_cuped", "arpu", CUPED, alpha=0.05, sequential=SEQ)
         run_pipeline(warehouse, tables, exp)
+
+        # the budget clamp caches only the LATEST cutoff — irrelevant now:
+        # reconstruction never consults the cache
+        engine = build_engine(warehouse, tables, exp, budget=500)
+        result = engine.recompute("arpu", KnobState("cuped-t-test", CUPED["params"], alpha=0.01))
+        points = result.pairs[0].points
+
+        assert len(points) == 4
+        assert all(
+            point.result is not None and point.result.ci_kind == "always_valid" for point in points
+        )
+        assert not any("Reload" in warning for warning in result.warnings)
+
+    def test_alpha_change_drops_alpha_inverted_cutoffs_with_reload_hint(self, warehouse, tables):
+        """α-inversion can't widen a persisted always-valid CI → drop + Reload
+        hint. Since M9 WP2 the α-inversion path needs pre-migration CUPED rows
+        (NULL covariate moments) — with them present the grid reconstructs."""
+        exp = make_experiment("seq_cuped_premig", "arpu", CUPED, alpha=0.05, sequential=SEQ)
+        run_pipeline(warehouse, tables, exp)
+        for row in warehouse._rows["_ab_results"]:
+            for column in ("cov_std_1", "cov_std_2", "corr_coef_1", "corr_coef_2"):
+                row[column] = None
 
         # cache only the LATEST cutoff (budget clamp) so older cutoffs α-invert
         engine = build_engine(warehouse, tables, exp, budget=500)
