@@ -141,6 +141,34 @@ class RecomputeBackend:
             template=self._template,
         )
 
+    def preperiod_covariate(
+        self,
+        metric: MetricConfig,
+        metric_sql: str,
+        lookback: str | int,
+        grid: Grid,
+    ) -> dict[str, float]:
+        """The cached CUPED pre-period covariate load (once per metric per run).
+
+        Shared with the m9 WP4 ``IncrementalBackend``: the incremental read
+        replaces only the METRIC's cumulative-value load — the covariate stays
+        this exact fixed-window render either way, so both backends draw from
+        the ONE cache and a mid-run fallback can never re-load it.
+        """
+        covariate = self._covariate_cache.get(metric.name)
+        if covariate is None:
+            pre_window = self._preperiod_window(lookback, grid)
+            covariate = load_covariate_from_preperiod(
+                self._manager,
+                metric,
+                metric_sql,
+                self._builtins(pre_window, apply_exposure_filter=False, cov_window=pre_window),
+                declared_variants=self._experiment.assignment.variants,
+                template=self._template,
+            )
+            self._covariate_cache[metric.name] = covariate
+        return covariate
+
     def load_cutoff(
         self,
         comparison: ComparisonConfig,
@@ -167,16 +195,6 @@ class RecomputeBackend:
         )
 
         if pre_window is not None:
-            covariate = self._covariate_cache.get(metric.name)
-            if covariate is None:
-                covariate = load_covariate_from_preperiod(
-                    self._manager,
-                    metric,
-                    metric_sql,
-                    self._builtins(pre_window, apply_exposure_filter=False, cov_window=pre_window),
-                    declared_variants=self._experiment.assignment.variants,
-                    template=self._template,
-                )
-                self._covariate_cache[metric.name] = covariate
-            loaded.attach_covariate(covariate)
+            assert lookback is not None  # pre_window derives from it above
+            loaded.attach_covariate(self.preperiod_covariate(metric, metric_sql, lookback, grid))
         return loaded

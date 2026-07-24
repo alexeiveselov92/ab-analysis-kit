@@ -41,6 +41,11 @@ timeouts:                        # per-step, seconds
 
 compute:
   mode: recompute                # v1: full-window recompute (the golden reference). Only value today.
+  incremental_reads: false       # opt-in (M9): eligible closed-form comparisons read the `state`
+                                 # stage's `_ab_unit_state` day moments instead of re-scanning the
+                                 # fact window; any gap falls back to recompute. An experiment can
+                                 # override it with its own `incremental_reads:`. Changes HOW a
+                                 # number is computed, never the number.
 ```
 
 Everything except `name` and `default_profile` has a default — a minimal project

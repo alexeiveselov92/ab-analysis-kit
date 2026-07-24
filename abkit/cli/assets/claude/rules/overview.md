@@ -72,7 +72,7 @@ profile's `internal_database` / `internal_schema`, separate from the
 | `_ab_experiments` | Informational experiment catalog (descriptions, variants, split, alpha, cadence, tags) for BI joins; the pipeline never reads it back for decisions. |
 | `_ab_aa_runs` | The `abk validate` A/A audit trail (per-cell FPR/power at the effective alpha); lights the explore calibration chip. Never pruned by `abk clean`. |
 | `_ab_tasks` | Pipeline run/lock bookkeeping — the atomic per-experiment lock (`abk unlock` clears a stale one). |
-| `_ab_unit_state` | A scalability seam (thin per-unit-moment materialization); v1 does NOT read it on the compute path. |
+| `_ab_unit_state` | Per-(unit, day) cumulative moments, written by the `state` pipeline stage for eligible closed-form metrics. Read on the compute path only with `compute.incremental_reads: true` (opt-in, default off); any gap falls back to full recompute. Not a BI table. |
 
 ## Glossary
 

@@ -695,6 +695,101 @@ construction from reconstructed per-unit arrays), new `tests/compute/`.
 
 **Session estimate:** 2 sessions.
 
+> **As-built note (2026-07-24, the WP4 session).** Shipped as specified —
+> `abkit/compute/incremental_backend.py` (closed-day state SUM + the §6.4
+> sub-day tail render THROUGH the m8 factory backend's `load_window`; the
+> reshaped per-unit totals feed the UNCHANGED
+> `MetricLoadResult → build_container → SufficientStats` path), the
+> `per_unit_cumulative` reader (step 1, minus the sketched `unit_ids`
+> parameter — cohort filtering happens at reshape via the variant map, never
+> as an unbounded SQL `IN` list), per-comparison driver routing through the
+> SHARED `comparison_state_eligible` predicate (extracted from the WP3
+> writer so reader and writer can never disagree), the
+> `project.compute.incremental_reads: false` flag + experiment-level
+> override (§8 Q5 as recommended), and the covariate staying the one cached
+> recompute-side load (`preperiod_covariate`, a behavior-identical
+> extraction). Disclosed deviations/decisions:
+> (1) **Cross-path float parity is rel-1e-9, not byte** — the two read
+> paths sum in different orders (per-day partials vs full-window scan), so
+> the №1 flag-on/off assertion holds identity/integer columns exact and
+> continuous values at the §0.1 tolerance (the M7 GEMM lesson restated;
+> `tests/compute/test_incremental_backend.py::test_flag_on_off_persist_matching_rows`).
+> (2) **`--full-refresh`/`--resync-cohort` without the `state` step disable
+> incremental reads for that run** (a self-review finding): those flags
+> re-plan results while leaving day state IN-PLACE STALE, which the gap
+> check cannot see — absent is detectable, stale is not.
+> (3) **The out-of-SLA backfill limitation is disclosed, not code-fixed**
+> (R1's one accepted-not-fixed finding, adjudicated on the m8 copy-mode
+> precedent): an event backfilled into an already-materialized day LATER
+> than `data_lag` freezes in day state; `data_lag` is the declared
+> ingestion SLA (§6.2), WP5's `verify-incremental` is the drift detector,
+> `--full-refresh --from/--to` is the recovery. Disclosure lives in the
+> flag description + the module docstring + CHANGELOG.
+> (4) **The arm split is snapshot-first with refresh-on-miss** (R1 finding
+> re-shaped by R2): tail units carry the live tail render's own arm;
+> state-only units join the free LOAD snapshot (direct) / `_ab_exposures`
+> (copy); a state unit missing from both triggers ONE quiet re-read of the
+> live source (`loaders/exposure_source.load_variant_map` — the same
+> pushdown shape as `validate_and_snapshot`, no probe, no second
+> duplicate-row warning; a cross-variant conflict raises loudly WITH
+> mid-run context). Units still unmapped after refresh drop, mirroring the
+> recompute INNER JOIN.
+> (5) **Sub-day cutoffs of one day share one state read** (an R2-fix): the
+> per-unit cumulative read caches per `(series, required_last)` within the
+> run — same values by construction (nothing writes the series under the
+> run lock), one aggregation per closed-day boundary instead of per look.
+> (6) Fallback warnings dedupe per `(metric, reason-kind)` so a benign gap
+> disclosure cannot swallow a later non-finite-tail signal.
+> (7) **Eligibility additionally requires recognisably ADDITIVE role
+> projections** — found while building WP5's `verify-incremental`, which
+> immediately reported a real divergence on the project's own scaffolded
+> example: `example_signup_cr` projects `max(signed_up)` and a literal
+> `1 AS visits`, so summing eleven daily state rows gave `size_1 = 3300`
+> where the window has 300 (and a value 11× too small). The one-row-per-unit
+> metric contract does not imply day-additivity, and WP3's covariate-only
+> exclusion was too narrow: the same hazard applies to `value`, `count`,
+> `nobs`, `numerator`, `denominator`. `comparison_state_eligible` now asks
+> the conservative question — can an additive aggregate (`sum`/`count`,
+> optionally `…If`, one nesting level) be POSITIVELY recognised for every
+> summed role column? — and refuses everything else, so an unparseable
+> projection costs an optimisation, never correctness. Pinned by
+> `TestEligibility::test_non_additive_role_projections_are_excluded` and an
+> 8-case allowlist matrix. This is the milestone's strongest evidence that
+> the WP5 gate earns its keep: it caught a P0 in shipped WP3/WP4 behaviour
+> on its first real run.
+> **Adversarial review R1** (5 sonnet lenses → 2 skeptics per finding with
+> mandatory repro): 4 raised → 4 confirmed (all skeptic-reproduced) → 3
+> fixed in-session (the stale LOAD-snapshot arm map; the per-look state
+> re-read; the per-metric warning dedup) + 1 disclosed (the backfill
+> limitation above). **R2** (fix-verification + undercount/cohort re-runs):
+> the undercount lens returned ZERO findings; 3 raised on the R1 fix itself
+> → the double validation query + doubled duplicate-row warning (CONFIRMED)
+> fixed by the refresh-on-miss redesign in (4); the missing mid-run error
+> context (SPLIT) folded into `load_variant_map`'s message; the
+> crash-vs-silent-drift asymmetry (SPLIT) adjudicated: a detected
+> cross-variant conflict failing loudly IS the m8 doctrine — the recompute
+> path's silent dual-arm acceptance is pre-existing M2 behavior, out of WP4
+> scope. **R3 (mini)** re-reviewed the refresh-on-miss redesign itself: 3
+> raised → 1 confirmed doc-drift (the CHANGELOG bullet still described R1's
+> unconditional re-validate — rewritten) and 2 REFUTED by re-run skeptics
+> (the first-round pair was lost to a session limit, the M6 lesson):
+> (a) *"one refresh per instance is too few"* — refuted by stage order:
+> STATE completes before COMPUTE under the one run lock, so a refresh taken
+> during COMPUTE reads a source at least as fresh as the render that WROTE
+> every state row; a unit enrolling later has no state rows at all and
+> reaches the reader only through the tail render, which carries its own
+> arm. Empirically confirmed cross-metric (a state-only unit invisible to
+> comparison 1 is correctly counted by comparison 2 off the single
+> refresh). The argument is now an in-code invariant comment.
+> (b) *"`load_variant_map` skips the undeclared-variant check"* — the gap
+> was real when raised and was closed in-session (the check now mirrors
+> `validate_and_snapshot`'s, with mid-run context), so the skeptics found
+> it already fixed and tested. Regression pins: `TestR1ReviewFixes`
+> (mid-run enrollment kept, one pushdown per static run, one duplicate-row
+> warning, per-day state reads, per-kind warnings) and
+> `TestLoadVariantMap` (mapping, no second duplicate warning, both hard
+> errors with mid-run context).
+
 ---
 
 ## WP5 — `abk verify-incremental` reconciliation gate + cost observability + the staged default-flip

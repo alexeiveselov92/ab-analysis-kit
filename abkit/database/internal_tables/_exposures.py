@@ -130,6 +130,36 @@ class _ExposuresMixin(_InternalTablesBase):
         rows = self._manager.execute_query(query, {"e": experiment})
         return {row["variant"]: int(row["cnt"]) for row in rows if row.get("variant")}
 
+    def get_exposure_variant_map(self, experiment: str) -> dict[str, str]:
+        """``{unit_id: variant}`` from the persisted cohort (copy mode).
+
+        The m9 WP4 incremental read's arm split: state rows are arm-agnostic
+        by construction, so the reader joins them to the SAME cohort source
+        the metric renders join — in copy mode that is ``_ab_exposures``,
+        deduped (FINAL on ClickHouse) like every other correctness-sensitive
+        read. A unit appearing under two variants is the cross-variant
+        corruption every other surface fails loudly on — same here.
+        """
+        full_table_name = self._manager.get_full_table_name(TABLE_EXPOSURES, use_internal=True)
+        rows = self._manager.execute_query(
+            f"SELECT unit_id, variant FROM {full_table_name}{self._manager.final_modifier} "
+            "WHERE experiment = %(e)s",
+            {"e": experiment},
+        )
+        variant_map: dict[str, str] = {}
+        for row in rows:
+            unit = str(row["unit_id"])
+            variant = row["variant"]
+            previous = variant_map.get(unit)
+            if previous is not None and previous != variant:
+                raise ValueError(
+                    f"unit '{unit}' is persisted in BOTH '{previous}' and "
+                    f"'{variant}' in _ab_exposures — the cohort copy is "
+                    "corrupted; run `abk run --resync-cohort`"
+                )
+            variant_map[unit] = variant
+        return variant_map
+
     def get_exposure_count_stream(
         self, experiment: str, boundaries: list[datetime], variants: list[str]
     ) -> list[dict[str, int]]:

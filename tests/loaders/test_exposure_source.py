@@ -24,6 +24,7 @@ from abkit.loaders.exposure_source import (
     ExposureSnapshot,
     _pushdown_sql,
     build_cohort_backend,
+    load_variant_map,
     probe_has_stratum,
     render_assignment_sql,
     validate_and_snapshot,
@@ -396,6 +397,50 @@ class TestRenderAssignmentSql:
         assert grid.start_ts.strftime("%Y-%m-%d %H:%M:%S") in rendered
         assert grid.horizon_ts.strftime("%Y-%m-%d %H:%M:%S") in rendered
         assert "{{" not in rendered  # fully rendered, ab_added_filters included
+
+
+class TestLoadVariantMap:
+    """The m9 WP4 mid-run refresh reader (an R3 review gap: it had no direct test)."""
+
+    def test_maps_units_to_variants(self, manager, experiment):
+        manager.scripted_rows = [
+            row("u1", "control"),
+            row("u2", "treatment"),
+            row("u3", "control"),
+        ]
+        assert load_variant_map(manager, experiment, None, _grid(experiment)) == {
+            "u1": "control",
+            "u2": "treatment",
+            "u3": "control",
+        }
+
+    def test_duplicate_rows_do_not_warn_again(self, manager, experiment):
+        """LOAD already warned on this source once this run — warning twice for
+        one source was the R2 finding this reader exists to avoid."""
+        import warnings as warnings_module
+
+        manager.scripted_rows = [
+            row("u1", "control", datetime(2024, 7, 2, 9)),
+            row("u1", "control", datetime(2024, 7, 1, 9)),
+        ]
+        with warnings_module.catch_warnings(record=True) as caught:
+            warnings_module.simplefilter("always")
+            mapped = load_variant_map(manager, experiment, None, _grid(experiment))
+        assert mapped == {"u1": "control"}
+        assert [w for w in caught if "duplicate unit rows" in str(w.message)] == []
+
+    def test_cross_variant_still_fails_loudly_with_mid_run_context(self, manager, experiment):
+        manager.scripted_rows = [row("u1", "control"), row("u1", "treatment")]
+        with pytest.raises(ExposureLoadError, match="BOTH 'control' and 'treatment'") as excinfo:
+            load_variant_map(manager, experiment, None, _grid(experiment))
+        assert "mid-run" in str(excinfo.value)
+
+    def test_undeclared_variant_still_fails_loudly(self, manager, experiment):
+        """The m8 doctrine holds on this surface too (an R3 review fix)."""
+        manager.scripted_rows = [row("u1", "control"), row("u2", "ghost")]
+        with pytest.raises(ExposureLoadError, match="variant 'ghost' not declared") as excinfo:
+            load_variant_map(manager, experiment, None, _grid(experiment))
+        assert "mid-run" in str(excinfo.value)
 
 
 class TestBuildCohortBackend:
