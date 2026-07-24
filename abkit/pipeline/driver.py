@@ -45,7 +45,11 @@ from abkit.core.period_planner import backlog_seconds, generate_grid, pending_cu
 from abkit.database.internal_tables import InternalTablesManager
 from abkit.database.manager import BaseDatabaseManager
 from abkit.loaders.exposure_copy import copy_exposures_incremental
-from abkit.loaders.exposure_source import build_cohort_backend
+from abkit.loaders.exposure_source import (
+    build_cohort_backend,
+    render_assignment_sql,
+    validate_and_snapshot,
+)
 from abkit.loaders.query_template import RenderWindow
 from abkit.pipeline._types import STATUS_COMPLETED, STATUS_FAILED, PipelineStep, RunOutcome
 from abkit.pipeline.analyze import analyze_cutoff, comparison_alpha, effective_alphas
@@ -393,14 +397,23 @@ def run_experiment(
             incremental_reads = False
         incremental_backend: IncrementalBackend | None = None
         if incremental_reads:
-            snap = snapshot
 
             def _cohort_variant_map() -> dict[str, str]:
-                # Copy mode joins the persisted cohort (what the renders see);
-                # direct mode reuses this run's validated LOAD snapshot.
+                # Copy mode joins the persisted cohort (what the renders see).
+                # Direct mode re-validates the LIVE source at first use — NOT
+                # the LOAD snapshot (an R1 review fix): the STATE stage above
+                # rendered the live source, so a unit enrolled between LOAD
+                # and COMPUTE already has day-state rows this map must be able
+                # to place; a stale snapshot would silently drop it where the
+                # recompute join would not.
                 if copy_enabled:
                     return tables.get_exposure_variant_map(experiment.name)
-                return {str(unit): variant for unit, (variant, _, _) in snap.by_unit.items()}
+                fresh = validate_and_snapshot(
+                    manager,
+                    experiment,
+                    render_assignment_sql(manager, experiment, project_root, grid),
+                )
+                return {str(unit): variant for unit, (variant, _, _) in fresh.by_unit.items()}
 
             incremental_backend = IncrementalBackend(
                 tables,

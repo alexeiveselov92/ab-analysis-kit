@@ -151,9 +151,14 @@ class ProjectComputeConfig(BaseModel):
         description="m9 WP4 opt-in: closed-form, non-stratified comparisons "
         "read per-unit cumulative moments from _ab_unit_state instead of "
         "re-scanning the fact table (any state gap falls back to recompute). "
-        "Distinct from `mode` (the reserved v2 backend selector): this flag "
-        "changes HOW a number is computed, never the number. Experiments "
-        "override via their own `incremental_reads`. Default false until "
+        "Documented limitation: an event backfilled into an already-"
+        "materialized day LATER than data_lag is frozen in day state (the "
+        "recompute default would still pick it up at future cutoffs) — set "
+        "data_lag to your real ingestion SLA; `abk run --full-refresh` "
+        "re-materializes and recomputes a backfilled window. Distinct from "
+        "`mode` (the reserved v2 backend selector): this flag changes HOW a "
+        "number is computed, never the number. Experiments override via "
+        "their own `incremental_reads`. Default false until "
         "verify-incremental (m9 WP5) bakes.",
     )
 

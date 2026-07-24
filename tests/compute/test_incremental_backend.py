@@ -480,6 +480,74 @@ class TestDriverRouting:
         )
 
 
+class TestR1ReviewFixes:
+    """Regressions for the round-1 adversarial findings."""
+
+    def test_mid_run_enrollment_is_not_dropped(self, monkeypatch):
+        """R1 cohort finding: the direct-mode variant map must be loaded from
+        the LIVE source at COMPUTE time, not the LOAD snapshot — a unit
+        enrolling between LOAD and STATE already has day-state rows and the
+        recompute join would include it."""
+        import abkit.pipeline.driver as driver_module
+        from abkit.pipeline.state import materialize_state as real_materialize
+
+        warehouse, tables = _seeded_recording()
+
+        def enroll_then_materialize(*args, **kwargs):
+            # a unit enrolls mid-run, backdated exposure + events (in-SLA
+            # for every still-open day render: data_lag=0, all days closed
+            # AFTER this hook runs)
+            warehouse.cohort.append(("late99", "control", START + timedelta(hours=2)))
+            for day in range(4):
+                warehouse.events["user_revenue"].append(
+                    ("late99", "control", START + timedelta(days=day, hours=13), {"gross_usd": 5.0})
+                )
+            return real_materialize(*args, **kwargs)
+
+        monkeypatch.setattr(driver_module, "materialize_state", enroll_then_materialize)
+        outcome = run_experiment(
+            experiment := make_experiment("exp_midrun", "arpu", T_TEST),
+            METRICS,
+            PROJECT_INCREMENTAL,
+            warehouse,
+            tables,
+            now_utc=NOW,
+        )
+        assert outcome.status == "completed", outcome.error
+        rows = tables.load_results("exp_midrun")
+        assert rows
+        # the late unit is IN the persisted control counts for the last look
+        last = max(rows, key=lambda r: r["end_ts"])
+        assert last["size_1"] == 121  # 120 seeded + the mid-run enrollee
+
+    def test_subday_grid_reads_state_once_per_day(self):
+        """R1 wiring finding: same-day cutoffs must share one state read."""
+        warehouse, tables = _seeded_recording()
+        payload = experiment_payload("exp_cache", "arpu", T_TEST)
+        payload["cadence"] = "6h"
+        payload["data_lag"] = "1h"
+        payload["incremental_reads"] = True
+        experiment = ExperimentConfig.model_validate(payload)
+        outcome = run_experiment(experiment, METRICS, PROJECT, warehouse, tables, now_utc=NOW)
+        assert outcome.status == "completed", outcome.error
+        state_reads = [
+            q for q in warehouse.executed if "_ab_unit_state" in q and "GROUP BY unit_id" in q
+        ]
+        distinct_days = len(DAYS)  # one read per distinct required_last at most
+        assert 0 < len(state_reads) <= distinct_days
+
+    def test_distinct_fallback_kinds_both_warn(self, warehouse, tables):
+        """R1 wiring finding: a benign gap warning must not swallow a later,
+        operationally distinct disclosure for the same metric."""
+        experiment = make_experiment("exp_warn", "arpu", T_TEST)
+        warnings: list[str] = []
+        backend = _incremental(warehouse, tables, experiment, warnings)
+        backend._warn_once("arpu", "gap", "gap warning")
+        backend._warn_once("arpu", "gap", "gap duplicate — suppressed")
+        backend._warn_once("arpu", "tail", "tail warning")
+        assert warnings == ["gap warning", "tail warning"]
+
+
 class TestCohortModes:
     """The §0.2 blocker regression: the tail scan under both m8 modes."""
 

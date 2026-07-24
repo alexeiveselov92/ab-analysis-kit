@@ -23,6 +23,16 @@ Correctness posture (m9 §0.2 — the load-bearing safety net):
   finite by construction, but the live tail render can carry warehouse NULLs
   (NaN after the loader) whose full-window SQL aggregation would have
   skipped them — recompute is the only faithful answer there.
+- **Documented limitation (the R1 review's backfill finding, adjudicated as
+  the m8 copy-mode precedent):** an event backfilled into an already-
+  materialized day LATER than ``data_lag`` is frozen in day state — the gap
+  check sees a contiguous series and cannot see content staleness. This is
+  the §6.2 contract ("``data_lag`` bounds how wrong FROZEN points can be")
+  applied to day state: the recompute default self-heals such events
+  prospectively, the incremental path does not. Detection is WP5's
+  ``verify-incremental`` whole-series reconciliation; recovery is ``abk run
+  --full-refresh --from/--to`` (truncate-then-advance re-materializes, then
+  recomputes). Out-of-SLA exposure backdating freezes the same way.
 - **The reshaped result reuses the recompute containers unchanged**: the
   per-unit cumulative totals feed the SAME ``MetricLoadResult`` shape
   ``load_metric`` produces, so ``analyze_cutoff``/``build_container`` and
@@ -106,8 +116,15 @@ class IncrementalBackend:
         self._zone = ZoneInfo(experiment.timezone)
         self._series_keys: dict[str, tuple[str, str]] = {}
         self._last_state_day: dict[tuple[str, str], date | None] = {}
+        # One entry per series: (required_last, the RAW per-unit moments) —
+        # every same-day cutoff of a sub-day grid reuses one state read
+        # instead of re-aggregating the full history per look (an R1 review
+        # fix). Safe under the run lock: nothing writes the series during
+        # COMPUTE, and the cached dict is never mutated (totals are rebuilt
+        # per cutoff).
+        self._cumulative_cache: dict[tuple[str, str], tuple[date, dict[str, dict[str, float]]]] = {}
         self._variant_map: dict[str, str] | None = None
-        self._warned: set[str] = set()
+        self._warned: set[tuple[str, str]] = set()
 
     # -- delegation: provenance render + covariate stay the recompute path --
 
@@ -140,9 +157,12 @@ class IncrementalBackend:
             self._variant_map = self._variant_map_loader()
         return self._variant_map
 
-    def _warn_once(self, metric_name: str, message: str) -> None:
-        if metric_name not in self._warned:
-            self._warned.add(metric_name)
+    def _warn_once(self, metric_name: str, kind: str, message: str) -> None:
+        # Deduped per (metric, reason-kind) — a benign early gap warning must
+        # not swallow a later, operationally distinct disclosure (e.g. a
+        # non-finite tail — a real data-quality signal; an R1 review fix).
+        if (metric_name, kind) not in self._warned:
+            self._warned.add((metric_name, kind))
             self._on_warning(message)
 
     def _fallback(
@@ -152,10 +172,12 @@ class IncrementalBackend:
         metric_sql: str,
         grid: Grid,
         cutoff: Cutoff,
+        kind: str,
         reason: str,
     ) -> MetricLoadResult:
         self._warn_once(
             metric.name,
+            kind,
             f"{self._experiment.name}/{metric.name}: incremental read fell back "
             f"to full recompute — {reason}",
         )
@@ -188,12 +210,18 @@ class IncrementalBackend:
                     metric_sql,
                     grid,
                     cutoff,
+                    "gap",
                     f"{have}, cutoffs need closed days through {required_last} "
                     "(run the STATE step to advance the series)",
                 )
-            moments = self._tables.per_unit_cumulative(
-                key[0], key[1], self._experiment.start_date, required_last
-            )
+            cached = self._cumulative_cache.get(key)
+            if cached is not None and cached[0] == required_last:
+                moments = cached[1]
+            else:
+                moments = self._tables.per_unit_cumulative(
+                    key[0], key[1], self._experiment.start_date, required_last
+                )
+                self._cumulative_cache[key] = (required_last, moments)
             for unit, unit_moments in moments.items():
                 totals[unit] = {role: unit_moments[m] for role, m in role_moments.items()}
 
@@ -217,6 +245,7 @@ class IncrementalBackend:
                             metric_sql,
                             grid,
                             cutoff,
+                            "tail",
                             f"the current-day tail render carries "
                             f"{'a missing' if values is None else 'non-finite'} "
                             f"'{role}' role",
