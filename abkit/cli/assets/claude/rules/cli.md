@@ -69,17 +69,20 @@ to refresh this context.
 ## `abk run`
 
 ```bash
-abk run [--select <exp>] [--exclude <sel>] [--steps validate,plan,load,compute] \
+abk run [--select <exp>] [--exclude <sel>] [--steps validate,plan,load,state,compute] \
         [--from TS] [--to TS] [--full-refresh] [--resync-cohort] [--workers N] \
         [--report [PATH]] [--force] [--profile NAME]
 ```
 
-The pipeline: **validate → plan → load → SRM → compute → persist**, streaming
-`VALIDATE → PLAN → LOAD → SRM → COMPUTE → RESULT`. It is incremental by
+The pipeline: **validate → plan → load → SRM → state → compute → persist**,
+streaming `VALIDATE → PLAN → LOAD → SRM → STATE → COMPUTE → RESULT` (`state`,
+M9: materializes per-unit day moments into `_ab_unit_state` for closed-form
+metrics — the incremental engine's write half; results math is unchanged).
+It is incremental by
 an anti-join — only cutoffs past the `data_lag` watermark and not already computed
 are (re)computed, so re-running is idempotent.
 
-- `--steps` (default `validate,plan,load,compute`) — comma-separated steps.
+- `--steps` (default `validate,plan,load,state,compute`) — comma-separated steps.
   **`--steps validate` alone is the config lint** (no DB, no lock): it parses the
   YAML, lints every metric SQL for the one-row-per-unit contract and the cohort
   macro, and instantiates each method. This is the ONLY meaning of "validate" on

@@ -15,11 +15,12 @@ Reliability contract (kept from the reviewed donor):
 - a lock this run did not acquire is never released;
 - the watermark is computed ONCE per run in Python (never now() in SQL).
 
-The STATE stage (``_ab_unit_state`` materialization) is deliberately NOT
-wired in v1: the read path is recompute (architecture §5.2 "thin
-materialization"), so writing day-state would double the warehouse scan for
-data nothing reads. The schema, mixins and the §5.2 idempotency invariant are
-locked and tested (WP3); the stage activates when v2 flips the read path.
+The STATE stage (``_ab_unit_state`` materialization, m9 WP3) is the
+write-only half of cumulative-intervals.md §4's v1 strategy: after LOAD,
+every STATE-eligible metric's not-yet-materialized closed days are rendered
+through the SAME m8 cohort backend and replaced into ``_ab_unit_state``
+(``pipeline/state.py``). The read path stays recompute until WP4's
+``IncrementalBackend`` flips it.
 
 Concurrency (§5.7): experiments are independent series — ``run_experiments``
 fans them out on a thread pool, ONE manager per worker (DB-API connections
@@ -48,6 +49,7 @@ from abkit.loaders.query_template import RenderWindow
 from abkit.pipeline._types import STATUS_COMPLETED, STATUS_FAILED, PipelineStep, RunOutcome
 from abkit.pipeline.analyze import analyze_cutoff, comparison_alpha, effective_alphas
 from abkit.pipeline.enrich import rows_for_cutoff
+from abkit.pipeline.state import materialize_state
 from abkit.stats import (
     DEFAULT_SRM_ALPHA,
     SrmResult,
@@ -162,7 +164,11 @@ def run_experiment(
     steps = list(steps)
     now = now_utc or now_utc_naive()
 
-    if PipelineStep.LOAD not in steps and PipelineStep.COMPUTE not in steps:
+    if (
+        PipelineStep.LOAD not in steps
+        and PipelineStep.STATE not in steps
+        and PipelineStep.COMPUTE not in steps
+    ):
         outcome.status = "skipped"
         return outcome
 
@@ -324,6 +330,32 @@ def run_experiment(
         if srm.srm_flag:
             log(f"SRM   {experiment.name}: {srm.describe()}")
             outcome.warnings.append(srm.describe())
+
+        # ── STATE: per-(unit, day) moment materialization (m9 WP3) ───────────
+        # Write-only in this milestone (the read path stays recompute until
+        # WP4 flips it); runs through the SAME m8 factory backend as the
+        # compute loads below — never a hand-rolled cohort join (m9 §0.2).
+        # Copy mode clamps day-close to the copy's coverage: the day render
+        # joins the persisted copy, and a day materialized from a partial
+        # cohort would freeze that way (unlike results, state days are never
+        # re-planned); --resync-cohort rebuilds day state with the copy it
+        # just rebuilt.
+        if PipelineStep.STATE in steps:
+            state_watermark = min(watermark_ts, coverage) if copy_enabled else watermark_ts
+            state_outcome = materialize_state(
+                tables,
+                experiment,
+                metrics_by_name,
+                backend,
+                grid,
+                state_watermark,
+                project_root=project_root,
+                full_refresh_window=full_refresh_window,
+                force_rebuild=copy_enabled and resync_cohort,
+                log=log,
+            )
+            outcome.state_days_materialized = state_outcome.days_materialized
+            outcome.warnings.extend(state_outcome.warnings)
 
         if PipelineStep.COMPUTE not in steps:
             tables.release_lock(experiment.name, LOCK_SCOPE, LOCK_PROCESS, STATUS_COMPLETED)

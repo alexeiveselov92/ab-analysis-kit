@@ -237,6 +237,8 @@ def run_run(
                     f"cutoffs planned: {outcome.cutoffs_planned}",
                     f"results written: {outcome.results_written}",
                 ]
+                if PipelineStep.STATE in parsed_steps:
+                    children.insert(1, f"state days: {outcome.state_days_materialized}")
                 srm_warnings = [w for w in outcome.warnings if "SRM" in w]
                 other_warnings = [w for w in outcome.warnings if "SRM" not in w]
                 echo_tree(outcome.experiment, children, warnings=other_warnings)

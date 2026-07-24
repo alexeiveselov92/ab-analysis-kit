@@ -13,6 +13,41 @@ number change).
 
 ## [Unreleased]
 
+### Added
+- **M9 WP3 — the STATE stage: per-(unit, day) moment materialization.** A new
+  `state` pipeline step (between `load` and `compute`; the `abk run --steps`
+  default is now `validate,plan,load,state,compute`) renders every
+  STATE-eligible metric over each not-yet-materialized **closed local day**
+  and replaces the per-unit additive moments into `_ab_unit_state` via the
+  long-tested replace-not-sum primitive — the write-only half of
+  cumulative-intervals.md §4's v1 strategy (the WP4 `IncrementalBackend`
+  reader flips the read path in a later WP; nothing reads the rows yet).
+  Eligible: closed-form (unseeded) comparisons over non-stratified
+  sample/fraction/ratio metrics whose SQL does not reference `ab_cov_*`;
+  bootstrap-only metrics never pay the write. The per-day render goes
+  through the SAME M8 `build_cohort_backend` factory as every other cohort
+  reader (never a hand-rolled `_ab_exposures` join — both cohort modes are
+  parity-tested). The state series identity is
+  `source_table = "{experiment}/{metric}"` +
+  `column_set_id = hash(column roles + whitespace-normalized SQL body +
+  the cohort-shaping config: assignment SQL, added_filters, unit_key,
+  variants, timezone, start_date)`: editing any of them orphans the stale
+  series (swept on the next run), mirroring how `method_config_id` orphans
+  results; reformatting alone never does. The series is strictly contiguous
+  — every day `<= get_last_state_day()` is materialized — and every failure
+  path preserves that by TRUNCATING the tail: `--full-refresh --from/--to`
+  deletes from the first day its window touches before re-rendering through
+  the end of the series (a crash mid-refresh leaves a self-healing prefix,
+  never silently stale days), so a backfill can't leave stale state; in
+  copy mode day-close is clamped to the copy's coverage and
+  `--resync-cohort` rebuilds day state together with the copy.
+  Non-finite moments (NULL warehouse values) truncate the series from the
+  failing day with a loud warning — earlier days are retained, the retry
+  costs one render per run, and reads past the last valid day stay on
+  full-window recompute; never a silent undercount. No statistical numbers
+  changed: the stage only writes `_ab_unit_state`; `_ab_results` math is
+  untouched (no `ALGORITHM_VERSION` bump).
+
 ### Changed
 - **M9 WP2 — CUPED is Tier E in `abk explore`.** The three recompute gates in
   `tuning/recompute.py` that demoted the covariate family are relaxed:

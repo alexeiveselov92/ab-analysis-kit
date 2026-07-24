@@ -12,6 +12,7 @@ class PipelineStep(str, Enum):
     VALIDATE = "validate"
     PLAN = "plan"
     LOAD = "load"
+    STATE = "state"
     COMPUTE = "compute"
 
     @classmethod
@@ -53,4 +54,7 @@ class RunOutcome:
     srm_flagged: bool = False
     cutoffs_planned: int = 0
     results_written: int = 0
+    #: closed (metric, day) renders replaced into ``_ab_unit_state`` this run
+    #: (m9 WP3 — the write-only STATE stage; 0 when the stage did not run)
+    state_days_materialized: int = 0
     warnings: list[str] = field(default_factory=list)

@@ -133,7 +133,7 @@ Common flags:
 |---|---|
 | `--select`, `-s` | Experiment selector: a name, path glob, `tag:<tag>`, or `*` (repeatable; default all). |
 | `--exclude` | Selectors to exclude (same forms). |
-| `--steps` | Comma-separated pipeline steps (default `validate,plan,load,compute`); `validate` alone = no-DB config lint. |
+| `--steps` | Comma-separated pipeline steps (default `validate,plan,load,state,compute`); `validate` alone = no-DB config lint. |
 | `--profile` | Connection profile (default: `profiles.yml`'s `default_profile`), e.g. `--profile prod`. |
 | `--report` | Emit a self-contained HTML readout after the run (see below). |
 | `--full-refresh` `--from` `--to` | Re-open and recompute already-computed cutoffs inside `[--from, --to)`. |

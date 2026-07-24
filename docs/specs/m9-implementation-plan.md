@@ -499,6 +499,55 @@ state-materialization tests.
 
 **Session estimate:** 2 sessions.
 
+> **As-built note (2026-07-24, the WP3 session).** Shipped as specified with
+> the §8 Q4 decision (`--steps state` supported; the `abk run` default is
+> now `validate,plan,load,state,compute`; the stage slots after LOAD+SRM,
+> before COMPUTE — a standalone `--steps state` still runs the LOAD section
+> as its render source) and these disclosed deviations/corrections:
+> (1) **The identity is experiment-scoped** — the plan's step-1 tuple
+> `(metric.name, role_map, sql-hash)` lacked it, but the per-day render
+> joins THIS experiment's cohort with the exposure filter applied, so two
+> experiments sharing a metric would clobber each other through
+> replace-not-sum: `source_table = compute_state_source_id() =
+> "{experiment}/{metric}"` (hash-tail-compacted inside the 128-char column
+> budget). (2) **The identity also folds in the cohort-shaping config**
+> (assignment-SQL hash, `added_filters`, `unit_key`, `variants`,
+> `timezone`, `start_date` — `state_series_key()` in `pipeline/state.py` is
+> THE composition every consumer must use): an R1 finding — a mid-flight
+> `added_filters` edit reshapes cohort membership, and a merged series
+> would mix two cohort definitions across days, an inconsistency the
+> full-window recompute path can never have. (3) **Every failure path
+> truncates the tail instead of leaving stale rows or dropping history**,
+> preserving the contiguity invariant (every day `<= get_last_state_day()`
+> is materialized; days past it are absent, not stale — the WP4
+> gap-detection contract): `--full-refresh` deletes from the first touched
+> day BEFORE re-rendering (a crash mid-refresh leaves a self-healing
+> prefix; the tail past the window re-renders — the accepted price of
+> contiguity without a per-day ledger), and a non-finite moment truncates
+> from the failing day (earlier days retained, one-render retry per run).
+> (4) **Metrics whose SQL references `ab_cov_*` are STATE-ineligible** —
+> their render depends on the comparison's covariate window, so their day
+> moments are not comparison-independent. (5) **Copy mode clamps day-close
+> to the copy's coverage** (a day materialized from a partial cohort would
+> freeze that way) **and `--resync-cohort` force-rebuilds day state** with
+> the copy it rebuilds. (6) The orphan sweep is ACTIVE: stale
+> `column_set_id` series under the source key are deleted on the next run
+> (`list_state_column_sets`/`delete_state_series`;
+> `delete_state_days_from` is the truncation primitive). Step 3's covariate
+> co-moments ship for the explicit `columns.covariate` role only, per plan.
+> **Adversarial review R1** (4 sonnet lenses → 2 skeptics per finding with
+> mandatory repro; 2 lenses — driver/CLI and moment-math — were re-run in
+> R2 after an infra failure): 3 raised → 3 confirmed, all fixed in-session:
+> the mid-refresh crash leaving silently stale day rows (P1 → the
+> truncate-then-advance fix above, pinned by
+> `test_crash_mid_refresh_leaves_no_stale_day_and_self_heals`); the
+> non-finite whole-series drop re-rendering full history every run with
+> zero retained state (P1 → truncate-from-day, pinned by
+> `test_nan_moment_truncates_from_the_failing_day`); the cohort-config
+> identity gap (P1, split skeptic verdict adjudicated as
+> fix-now-cheaply → deviation (2), pinned by
+> `test_cohort_config_edit_orphans_the_old_series`).
+
 ---
 
 ## WP4 — `IncrementalBackend`: the opt-in read path
@@ -838,6 +887,12 @@ a performance claim with no test does not hold.
    the `PipelineStep` enum's public CLI surface. The plan leans toward
    supporting `--steps state` for symmetry with the existing `--steps`
    surface, but this is a maintainer call.
+   **DECIDED (2026-07-22, before WP3 started — the maintainer delegated the
+   call and the plan's lean was adopted): `--steps state` IS supported.**
+   `PipelineStep.STATE` sits between `load` and `compute`; the `abk run`
+   default becomes `validate,plan,load,state,compute`. A standalone
+   `--steps state` still runs the LOAD section internally (the cohort
+   backend is the render source) but writes no results.
 5. **Granularity of the `incremental_reads` opt-in flag: per-project,
    per-experiment, or per-metric?**
    [cumulative-intervals.md §4](cumulative-intervals.md) says "enabled per
@@ -851,6 +906,7 @@ a performance claim with no test does not hold.
 
 Per the source plan's "Перед стартом" line: settle (3) and (5) before WP5
 starts and **(4) before WP3 starts** (WP3 step 7 is written conditional on
-it); (1) and (2) can be recorded as open decisions folded into the WP6
-docs sync rather than blocking earlier WPs, since they narrow rather than
-change WP3/WP4's shipped behavior.
+it — settled above, `--steps state` shipped); (1) and (2) can be recorded
+as open decisions folded into the WP6 docs sync rather than blocking
+earlier WPs, since they narrow rather than change WP3/WP4's shipped
+behavior.
