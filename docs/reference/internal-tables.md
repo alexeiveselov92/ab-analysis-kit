@@ -30,7 +30,7 @@ There are six internal tables:
 | [`_ab_tasks`](#_ab_tasks--run-locks) | `MergeTree` | `(experiment, scope, process_type)` | Run locks + idempotency. |
 | [`_ab_aa_runs`](#_ab_aa_runs--the-aa-validation-audit-trail) | `ReplacingMergeTree(created_at)` | `(experiment, run_id)` | `abk validate` A/A audit trail. |
 | [`_ab_experiments`](#_ab_experiments--the-catalog) | `MergeTree` | `(experiment)` | Informational experiment catalog. |
-| [`_ab_unit_state`](#_ab_unit_state--the-scalability-seam) | `ReplacingMergeTree(version)` | `(source_table, column_set_id, unit_id, day)` | Internal scalability seam (v1: reserved schema; writer stage not yet wired). |
+| [`_ab_unit_state`](#_ab_unit_state--the-scalability-seam) | `ReplacingMergeTree(version)` | `(source_table, column_set_id, unit_id, day)` | Per-(unit, day) cumulative moments — written by the `state` stage, read only under `compute.incremental_reads`. |
 
 ### Where they live
 
@@ -365,17 +365,32 @@ path) to `_ab_results` from one source of truth. It is upserted once per run
 
 ## `_ab_unit_state` — the scalability seam
 
-An internal seam for a future incremental compute path, **not** part of the BI
-contract. In v1 the writer (the pipeline "STATE" stage) is deliberately **not
-wired**: the read path stays full-window recompute, so `abk run` never populates
-this table — materializing day-state would double the warehouse scan for data
-nothing reads. Only the schema, cardinality key, and idempotency invariant are
-locked now (cumulative-intervals §5.2); the stage activates when v2 flips the read
-path. It is *designed* to hold cumulative per-unit statistical moments,
-day-bucketed, keyed by the **fact source** — `(source_table, column_set_id,
-unit_id, day)` — not by experiment, so co-located metrics sharing a fact source
-would share one set of per-unit moments. Because no experiment owns these rows,
-`abk clean` deliberately leaves them alone (as it does `_ab_aa_runs`).
+The incremental compute path's storage, **not** part of the BI contract. It
+holds cumulative per-unit statistical moments, day-bucketed, keyed by
+`(source_table, column_set_id, unit_id, day)`.
+
+- **Written** by the pipeline's `state` stage (between `load` and `compute`;
+  in the `abk run` default steps): every closed local day of every
+  STATE-eligible metric — closed-form (unseeded) comparison, non-stratified,
+  no explicit `columns.covariate` role, SQL free of `ab_cov_*` — is rendered
+  once and replaced in (replace-not-sum, so re-running a day leaves
+  aggregates unchanged; cumulative-intervals §5.2). The series is strictly
+  contiguous: every day up to the last materialized one exists, and any
+  failure truncates the tail rather than leaving stale rows.
+- **Read** only with `compute.incremental_reads: true` (opt-in, default
+  off): eligible comparisons then load each cutoff as one additive per-unit
+  `SUM` over closed days plus, for sub-day cadence, a fact scan of just the
+  current-day tail — instead of re-scanning the whole cumulative window. Any
+  gap in the materialized series falls back to full recompute for that
+  cutoff (with a warning), so a missing day can never become a silent
+  undercount.
+
+In v1 the `source_table` key is scoped per `(experiment, metric)` — the
+per-day render is cohort-filtered, so the "co-located metrics share one set
+of moments" ideal is deliberately deferred. Because no experiment owns these
+rows in the `_ab_*` housekeeping sense, `abk clean` deliberately leaves them
+alone (as it does `_ab_aa_runs`); a metric-SQL or cohort-config edit orphans
+its series, which the next run sweeps.
 
 **Engine** `ReplacingMergeTree(version)` ·
 **PK** `(source_table, column_set_id, unit_id, day)`

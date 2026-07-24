@@ -36,6 +36,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from abkit.compute.incremental_backend import IncrementalBackend
+from abkit.compute.recompute_backend import RecomputeBackend
 from abkit.config.experiment_config import ExperimentConfig
 from abkit.config.metric_config import MetricConfig
 from abkit.config.project_config import ProjectConfig
@@ -44,12 +46,12 @@ from abkit.core.period_planner import backlog_seconds, generate_grid, pending_cu
 from abkit.database.internal_tables import InternalTablesManager
 from abkit.database.manager import BaseDatabaseManager
 from abkit.loaders.exposure_copy import copy_exposures_incremental
-from abkit.loaders.exposure_source import build_cohort_backend
+from abkit.loaders.exposure_source import build_cohort_backend, load_variant_map
 from abkit.loaders.query_template import RenderWindow
 from abkit.pipeline._types import STATUS_COMPLETED, STATUS_FAILED, PipelineStep, RunOutcome
 from abkit.pipeline.analyze import analyze_cutoff, comparison_alpha, effective_alphas
 from abkit.pipeline.enrich import rows_for_cutoff
-from abkit.pipeline.state import materialize_state
+from abkit.pipeline.state import comparison_state_eligible, materialize_state
 from abkit.stats import (
     DEFAULT_SRM_ALPHA,
     SrmResult,
@@ -361,12 +363,74 @@ def run_experiment(
             tables.release_lock(experiment.name, LOCK_SCOPE, LOCK_PROCESS, STATUS_COMPLETED)
             return outcome
 
+        # ── The m9 WP4 read-path resolver: opt-in, per comparison ────────────
+        # STATE-eligible comparisons (the SAME predicate the WP3 writer uses —
+        # bootstrap/stratified/explicit-covariate always stay recompute) read
+        # `_ab_unit_state` when the experiment/project opts in; any state gap
+        # falls back inside the backend. The flag changes HOW a number is
+        # computed, never the number (m9 §0.1) — with it off nothing below
+        # this block changes.
+        incremental_reads = (
+            experiment.incremental_reads
+            if experiment.incremental_reads is not None
+            else project.compute.incremental_reads
+        )
+        # A skipped STATE step can only leave day state ABSENT (the gap
+        # fallback's territory) — except under --full-refresh/--resync-cohort,
+        # which re-plan results while leaving already-materialized days
+        # IN-PLACE STALE (a backfilled window / a rebuilt copy). Staleness is
+        # undetectable by the gap check, so those runs force recompute.
+        if (
+            incremental_reads
+            and PipelineStep.STATE not in steps
+            and (full_refresh_window is not None or resync_cohort)
+        ):
+            outcome.warnings.append(
+                f"{experiment.name}: incremental reads disabled for this run — "
+                "--full-refresh/--resync-cohort without the 'state' step would "
+                "read day state the refresh made stale; include 'state' in "
+                "--steps to re-materialize it"
+            )
+            incremental_reads = False
+        incremental_backend: IncrementalBackend | None = None
+        if incremental_reads:
+            snap = snapshot
+
+            def _cohort_variant_map() -> dict[str, str]:
+                # Copy mode joins the persisted cohort (what the renders
+                # see); direct mode starts from this run's FREE validated
+                # LOAD snapshot — the refresh loader below covers the
+                # LOAD→STATE enrollment race without paying a routine second
+                # source query (the R1 cohort fix, re-shaped by R2).
+                if copy_enabled:
+                    return tables.get_exposure_variant_map(experiment.name)
+                return {str(unit): variant for unit, (variant, _, _) in snap.by_unit.items()}
+
+            def _cohort_variant_refresh() -> dict[str, str]:
+                return load_variant_map(manager, experiment, project_root, grid)
+
+            incremental_backend = IncrementalBackend(
+                tables,
+                backend,
+                experiment,
+                variant_map_loader=_cohort_variant_map,
+                variant_map_refresh=None if copy_enabled else _cohort_variant_refresh,
+                project_root=project_root,
+                on_warning=outcome.warnings.append,
+            )
+
         # ── PLAN + COMPUTE per comparison (backend built by the WP4 factory) ─
         for comparison in experiment.comparisons:
             metric = metrics_by_name[comparison.metric]
             method_config_id = comparison.method.method_config_id
             metric_sql = metric.get_query_text(project_root)
             effective_alpha = comparison_alpha(comparison, alphas)
+            comp_backend: IncrementalBackend | RecomputeBackend = (
+                incremental_backend
+                if incremental_backend is not None
+                and comparison_state_eligible(comparison, metric, metric_sql)
+                else backend
+            )
 
             method_cls = get_method_class(comparison.method.name)
             seq_eligible = experiment.sequential.enabled and method_cls.supports_sequential
@@ -392,7 +456,7 @@ def run_experiment(
             sequential_tau2: dict[tuple[str, str], float] | None = None
             if seq_eligible and (pending or computed):
                 sequential_tau2 = _sequential_tau2(
-                    backend,
+                    comp_backend,
                     experiment,
                     comparison,
                     metric,
@@ -463,7 +527,7 @@ def run_experiment(
             n_pending = len(pending)
             beat_every = max(1, n_pending // 20)
             for look_index, cutoff in enumerate(pending, start=1):
-                loaded = backend.load_cutoff(comparison, metric, metric_sql, grid, cutoff)
+                loaded = comp_backend.load_cutoff(comparison, metric, metric_sql, grid, cutoff)
                 outcomes = analyze_cutoff(
                     experiment,
                     comparison,

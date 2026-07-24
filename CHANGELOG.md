@@ -14,6 +14,41 @@ number change).
 ## [Unreleased]
 
 ### Added
+- **M9 WP4 — `IncrementalBackend`: the opt-in additive read path.** With
+  `compute.incremental_reads: true` (project-level; experiments override via
+  their own `incremental_reads`; **default `false`** until the WP5
+  `verify-incremental` gate bakes), closed-form non-stratified comparisons
+  load each cutoff from `_ab_unit_state` — one additive
+  `SUM(...) GROUP BY unit_id` over the closed-day moments (cached per day
+  within a run) plus, for sub-day cutoffs, a fact scan of at most the
+  current-day tail (cumulative-intervals §6.4) — instead of re-scanning the
+  full cumulative window. The reshaped per-unit totals feed the SAME
+  `MetricLoadResult` → `build_container` → `SufficientStats` path, so no new
+  numerical code computes the arm statistic; the CUPED pre-period covariate
+  keeps its one cached recompute-side load. Safety posture (m9 §0.2): any
+  state gap (series absent, trailing, or truncated) falls back to full
+  recompute for that cutoff with a per-(metric, reason) warning — never a
+  silent undercount; a non-finite current-day tail falls back too;
+  bootstrap/stratified/explicit-covariate comparisons always stay on
+  recompute (the same eligibility predicate the STATE writer uses);
+  `--full-refresh`/`--resync-cohort` without the `state` step disable
+  incremental reads for that run (re-planned results must not read day state
+  the refresh made stale). Arm split: tail units carry the tail render's own
+  arm; state-only units join this run's cohort map — the free LOAD snapshot
+  in direct mode, the persisted `_ab_exposures` in copy mode — and a state
+  unit missing from it (enrolled between LOAD and the STATE render) triggers
+  ONE quiet re-read of the live assignment source, so a static cohort never
+  pays a second validation query.
+  **The flag changes HOW a number is computed, never the number**: flag-off
+  behavior is untouched, and flag-on agrees with recompute at rel-1e-9
+  (float summation order differs between the two read paths by design —
+  the M7 lesson; never byte-compared). **Documented limitation** (the m8
+  copy-mode precedent): an event backfilled into an already-materialized
+  day LATER than `data_lag` is frozen in day state — `data_lag` is the
+  declared ingestion SLA; `abk run --full-refresh --from/--to`
+  re-materializes and recomputes, and WP5's `verify-incremental` is the
+  drift detector. No `ALGORITHM_VERSION` bump; adversarially reviewed
+  (2 rounds, 5+3 lenses with per-finding skeptic verification).
 - **M9 WP3 — the STATE stage: per-(unit, day) moment materialization.** A new
   `state` pipeline step (between `load` and `compute`; the `abk run --steps`
   default is now `validate,plan,load,state,compute`) renders every
@@ -25,8 +60,15 @@ number change).
   Eligible: closed-form (unseeded) comparisons over non-stratified
   sample/fraction/ratio metrics with no explicit `columns.covariate` role
   (a snapshot covariate is not additive across day renders — such metrics
-  stay on full recompute) and whose SQL does not reference `ab_cov_*`;
-  bootstrap-only metrics never pay the write. The per-day render goes
+  stay on full recompute), whose SQL does not reference `ab_cov_*`, and
+  **whose every summed role column comes from a recognisably additive
+  aggregate** (`sum`/`count`, optionally `…If`): the reader sums per-day
+  rows, so `max(...)` or a literal trial count inflates with the number of
+  active days — the scaffolded `example_signup_cr` (`max(signed_up)`,
+  `1 AS visits`) is exactly such a metric and now stays on full recompute.
+  Recognition is a positive allowlist, so an exotic or unparseable
+  projection is treated as non-additive (a missed optimisation, never a
+  wrong number). Bootstrap-only metrics never pay the write. The per-day render goes
   through the SAME M8 `build_cohort_backend` factory as every other cohort
   reader (never a hand-rolled `_ab_exposures` join — both cohort modes are
   parity-tested). The state series identity is

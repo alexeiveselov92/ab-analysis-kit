@@ -38,6 +38,11 @@ class TestDefaults:
     def test_compute_default_is_recompute(self):
         assert make().compute.mode == "recompute"
 
+    def test_incremental_reads_default_is_false(self):
+        # m9 WP4: opt-in until verify-incremental (WP5) bakes
+        assert make().compute.incremental_reads is False
+        assert make(compute={"incremental_reads": True}).compute.incremental_reads is True
+
 
 class TestValidation:
     def test_alpha_range(self):

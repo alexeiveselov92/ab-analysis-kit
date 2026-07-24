@@ -40,6 +40,10 @@ assignment:                      # READ-ONLY exposure source — abkit never ran
 alpha: 0.05                      # experiment-level significance (unset -> project default)
 correction: bonferroni           # none | bonferroni | benjamini_hochberg (unset -> project default)
 sequential: {enabled: false, scheme: always_valid}   # opt-in peeking-safe CIs (default OFF)
+# incremental_reads: true        # override project.compute.incremental_reads here (unset -> project
+                                 # default): eligible closed-form comparisons read `_ab_unit_state`
+                                 # day moments instead of re-scanning the fact window. Changes HOW a
+                                 # number is computed, never the number; any state gap falls back.
 
 readout:                         # READ-TIME verdict knobs — NEVER enter method_config_id
   stabilization_days: 7          # trailing elapsed-DAYS window for "persistent significance" (default 7)
