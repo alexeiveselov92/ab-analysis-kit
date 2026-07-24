@@ -238,6 +238,52 @@ def render_assignment_sql(
     return template.render(experiment.assignment.get_query_text(project_root), builtins)
 
 
+def load_variant_map(
+    manager: BaseDatabaseManager,
+    experiment: ExperimentConfig,
+    project_root: Path | None,
+    grid: Grid,
+) -> dict[str, str]:
+    """One QUIET re-read of the live assignment source: ``{unit: variant}``.
+
+    The m9 WP4 incremental reader's mid-run cohort-map refresh — paid ONLY
+    when a state unit misses the LOAD snapshot (a unit enrolled between LOAD
+    and the STATE render). Runs the same pushdown aggregation shape as
+    :func:`validate_and_snapshot` and keeps BOTH of its hard errors — the
+    cross-variant conflict and the undeclared variant (corruption fails
+    loudly at every surface, the m8 doctrine), each naming the mid-run
+    context so an operator can tell it from a LOAD-stage failure. What it
+    skips is only the redundant half: the LIMIT-1 probe and the duplicate-row
+    warning, since LOAD already validated and warned on this same source once
+    this run (warning twice for one source was an R2 review finding).
+    """
+    rendered = render_assignment_sql(manager, experiment, project_root, grid)
+    unit_key = experiment.unit_key
+    declared = set(experiment.assignment.variants)
+    rows = manager.execute_query(_pushdown_sql(unit_key, rendered, has_stratum=False))
+    variant_map: dict[str, str] = {}
+    for row in rows:
+        unit = str(row[unit_key])
+        variant = row["variant"]
+        if variant not in declared:
+            raise ExposureLoadError(
+                f"assignment returned variant '{variant}' not declared in "
+                f"assignment.variants {sorted(declared)} — detected while "
+                "refreshing the incremental-read cohort map mid-run (the "
+                "source changed since LOAD)"
+            )
+        previous = variant_map.get(unit)
+        if previous is not None and previous != variant:
+            raise ExposureLoadError(
+                f"unit '{unit}' is assigned to BOTH '{previous}' and "
+                f"'{variant}' — detected while refreshing the incremental-read "
+                "cohort map mid-run (the source changed since LOAD); the "
+                "assignment source is corrupted"
+            )
+        variant_map[unit] = variant
+    return variant_map
+
+
 def build_cohort_backend(
     manager: BaseDatabaseManager,
     experiment: ExperimentConfig,

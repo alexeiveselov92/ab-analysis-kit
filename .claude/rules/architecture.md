@@ -52,7 +52,9 @@ abkit/
                          #   the driver since WP5 (external callers only);
                          #   ✅ M9 WP3: state_loader (per-day moment extraction)
   compute/               # ✅ M2: recompute_backend (v1 full-window strategy;
-                         #   ✅ M9 WP3: load_window — the STATE day render)
+                         #   ✅ M9 WP3: load_window — the STATE day render);
+                         #   ✅ M9 WP4: incremental_backend (the opt-in
+                         #   additive read path over _ab_unit_state)
   pipeline/              # ✅ M2: driver (lock→load→SRM→plan→compute→persist),
                          #   analyze, enrich, _types; worker pool;
                          #   ✅ M9 WP3: state (the write-only STATE stage)
@@ -105,7 +107,7 @@ tests/
                          #   seed_null_events — the exact-null A/A fixture)
 ```
 
-Not yet present (v2): `compute/incremental_backend`.
+Not yet present: `compute/reconcile` (`abk verify-incremental`, m9 WP5).
 M3's WP9 (PG/MySQL testcontainers + the two-process lock race) is deferred to a
 Docker-equipped environment.
 
@@ -317,8 +319,37 @@ Docker-equipped environment.
   self-healing prefix); a non-finite moment truncates from the failing day
   (earlier days retained, one-render retry per run, a loud CLI warning).
   Copy mode clamps day-close to the copy's coverage; `--resync-cohort`
-  force-rebuilds day state with the copy. Nothing reads the rows until
-  WP4's `IncrementalBackend`.
+  force-rebuilds day state with the copy. WP4's `IncrementalBackend` is the
+  (opt-in) reader.
+- **WP4 (shipped): `IncrementalBackend` — the opt-in additive read path.**
+  With `compute.incremental_reads: true` (project-level, experiment
+  override; **default false** until WP5's `verify-incremental` bakes), the
+  driver routes each STATE-eligible comparison (the SAME
+  `comparison_state_eligible` predicate the WP3 writer uses — bootstrap/
+  stratified/explicit-covariate always stay recompute) to
+  `compute/incremental_backend.py`: closed days come from ONE
+  `per_unit_cumulative` SUM over `_ab_unit_state` (cached per
+  `(series, required_last)` — sub-day looks of one day share one read);
+  a sub-day tail `[last tz-midnight, end_ts)` renders through the SAME m8
+  factory backend (`load_window`); the per-unit totals reshape into the
+  UNCHANGED `MetricLoadResult → build_container → SufficientStats` path
+  (no new numerical code); the CUPED covariate keeps the one cached
+  recompute-side load. **Safety net:** any state gap (absent/trailing/
+  truncated series) falls back to full recompute for that cutoff with a
+  per-(metric, reason) warning in `RunOutcome.warnings`; a non-finite tail
+  falls back too; `--full-refresh`/`--resync-cohort` without the `state`
+  step disable incremental reads for the run (stale-in-place state is
+  undetectable by the gap check). Arm split: tail units carry the live
+  tail render's arm; state-only units join the LOAD snapshot (direct) /
+  `_ab_exposures` (copy), with ONE quiet refresh-on-miss re-read
+  (`loaders/exposure_source.load_variant_map`) for units enrolled between
+  LOAD and the STATE render; still-unmapped units drop (the INNER JOIN
+  mirror). **Cross-path parity is rel-1e-9, never byte** (summation order
+  differs by design — the M7 lesson); flag-off behavior is untouched.
+  **Documented limitation** (m8 copy-mode precedent): an event backfilled
+  into an already-materialized day LATER than `data_lag` freezes in day
+  state — `data_lag` is the declared SLA; `--full-refresh` re-materializes
+  + recomputes; WP5's `verify-incremental` is the drift detector.
 
 ## The stats core (`abkit.stats`) — the implemented system
 

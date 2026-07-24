@@ -122,7 +122,9 @@ class TestLoadParity:
         (CTR, {"name": "ratio-delta", "params": {"test_type": "relative"}}),
     ]
 
-    @pytest.mark.parametrize("metric,method", CELLS, ids=lambda c: getattr(c, "name", None) or c["name"])
+    @pytest.mark.parametrize(
+        "metric,method", CELLS, ids=lambda c: getattr(c, "name", None) or c["name"]
+    )
     def test_daily_cadence_parity(self, warehouse, tables, metric, method):
         experiment = make_experiment("exp_par", metric.name, method)
         run_pipeline(warehouse, tables, experiment)  # materializes the state days
@@ -374,7 +376,9 @@ class TestDriverRouting:
         float is exactly what §0.1 forbids)."""
         warehouse_on, tables_on = _seeded_recording()
         experiment = make_experiment("exp_identity", "arpu", T_TEST)
-        run_experiment(experiment, METRICS, PROJECT_INCREMENTAL, warehouse_on, tables_on, now_utc=NOW)
+        run_experiment(
+            experiment, METRICS, PROJECT_INCREMENTAL, warehouse_on, tables_on, now_utc=NOW
+        )
         warehouse_off, tables_off = _seeded_recording()
         run_experiment(experiment, METRICS, PROJECT, warehouse_off, tables_off, now_utc=NOW)
         rows_on = _results_comparable(tables_on.load_results("exp_identity"))
@@ -386,9 +390,9 @@ class TestDriverRouting:
             for key, expected in row_off.items():
                 actual = row_on[key]
                 if isinstance(expected, float) and isinstance(actual, float):
-                    assert actual == pytest.approx(expected, rel=1e-9, abs=1e-12), (
-                        f"{row_off['end_ts']}/{key}: {actual!r} != {expected!r}"
-                    )
+                    assert actual == pytest.approx(
+                        expected, rel=1e-9, abs=1e-12
+                    ), f"{row_off['end_ts']}/{key}: {actual!r} != {expected!r}"
                 else:
                     assert actual == expected, f"{row_off['end_ts']}/{key}"
 
@@ -415,7 +419,9 @@ class TestDriverRouting:
         )
         assert outcome.status == "completed", outcome.error
         # bootstrap-only metric: no state is written OR read...
-        assert not any("_ab_unit_state" in q and "GROUP BY unit_id" in q for q in warehouse.executed)
+        assert not any(
+            "_ab_unit_state" in q and "GROUP BY unit_id" in q for q in warehouse.executed
+        )
         # ...and the cumulative fact scans are all there (the recompute path)
         assert len(_cumulative_fact_scans(warehouse, "user_revenue")) >= 3
 
@@ -506,7 +512,7 @@ class TestR1ReviewFixes:
 
         monkeypatch.setattr(driver_module, "materialize_state", enroll_then_materialize)
         outcome = run_experiment(
-            experiment := make_experiment("exp_midrun", "arpu", T_TEST),
+            make_experiment("exp_midrun", "arpu", T_TEST),
             METRICS,
             PROJECT_INCREMENTAL,
             warehouse,
@@ -519,6 +525,39 @@ class TestR1ReviewFixes:
         # the late unit is IN the persisted control counts for the last look
         last = max(rows, key=lambda r: r["end_ts"])
         assert last["size_1"] == 121  # 120 seeded + the mid-run enrollee
+
+    def test_static_cohort_pays_no_second_source_read(self):
+        """R2 review fix: with a static cohort the map is the FREE LOAD
+        snapshot — no second pushdown query, no duplicate validation."""
+        warehouse, tables = _seeded_recording()
+        experiment = make_experiment("exp_nosecond", "arpu", T_TEST)
+        outcome = run_experiment(
+            experiment, METRICS, PROJECT_INCREMENTAL, warehouse, tables, now_utc=NOW
+        )
+        assert outcome.status == "completed", outcome.error
+        # incremental reads actually served (state read happened)...
+        assert any("GROUP BY unit_id" in q and "_ab_unit_state" in q for q in warehouse.executed)
+        # ...and the assignment source paid exactly ONE validation pushdown
+        pushdowns = [q for q in warehouse.executed if "ab_row_count" in q]
+        assert len(pushdowns) == 1
+
+    def test_duplicate_row_warning_fires_once_per_run(self):
+        """R2 review fix: the map refresh must not re-warn about the same
+        source's duplicate rows a second time."""
+        import warnings as warnings_module
+
+        warehouse, tables = _seeded_recording()
+        # a benign duplicate assignment row (same unit, same variant)
+        warehouse.cohort.append(("c000", "control", START + timedelta(hours=3)))
+        experiment = make_experiment("exp_dupwarn", "arpu", T_TEST)
+        with warnings_module.catch_warnings(record=True) as caught:
+            warnings_module.simplefilter("always")
+            outcome = run_experiment(
+                experiment, METRICS, PROJECT_INCREMENTAL, warehouse, tables, now_utc=NOW
+            )
+        assert outcome.status == "completed", outcome.error
+        dup_warnings = [w for w in caught if "duplicate unit rows" in str(w.message)]
+        assert len(dup_warnings) == 1
 
     def test_subday_grid_reads_state_once_per_day(self):
         """R1 wiring finding: same-day cutoffs must share one state read."""

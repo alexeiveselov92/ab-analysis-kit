@@ -142,9 +142,12 @@ in the direct (no-copy) default.
 
 **`--steps` tokens** are `validate`, `plan`, `load`, `state`, `compute` (any unknown
 token errors with the valid list). The `state` step (M9) materializes per-unit,
-per-day moments for closed-form metrics into `_ab_unit_state` — the write-only
-half of the incremental engine; skipping it skips only that write, never a
-result. **`--steps validate` alone is the config lint** — it
+per-day moments for closed-form metrics into `_ab_unit_state`; with the default
+`compute.incremental_reads: false` nothing reads them, and skipping the step
+skips only that write, never a result. With `incremental_reads: true` eligible
+comparisons read those moments instead of re-scanning the fact window, so
+skipping `state` there just means the reads fall back to full recompute
+(reported as a warning) until the series catches up. **`--steps validate` alone is the config lint** — it
 parses the YAML, lints every metric SQL for the one-row-per-unit contract and the
 cohort macro, and instantiates each method, all with no database and no lock. This is
 the only meaning of "validate" on `run`; it is a *config* gate and is **not**

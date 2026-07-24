@@ -44,8 +44,12 @@ The arm split happens at read time (state rows are arm-agnostic by design,
 — exactly the arm the full-window recompute would land the unit's whole
 value on — and state-only units join this run's cohort mapping (the LOAD
 snapshot in direct mode, the persisted ``_ab_exposures`` in copy mode; both
-via the driver-supplied loader). A unit absent from the current cohort is
-dropped, mirroring the recompute render's INNER JOIN.
+via the driver-supplied loader). A state unit MISSING from that map (it
+enrolled between LOAD and the STATE render — the live source the render
+joins is fresher than the snapshot) triggers ONE quiet re-read of the live
+source (``variant_map_refresh``, an R1+R2 review fix: never a stale-snapshot
+drop, and never a routine second validation query either). A unit absent
+from the refreshed cohort is dropped, mirroring the recompute INNER JOIN.
 
 The CUPED pre-period covariate is untouched (m9 WP4 step 3): it loads
 through the wrapped backend's one ``preperiod_covariate`` cache, so the
@@ -104,6 +108,7 @@ class IncrementalBackend:
         recompute: RecomputeBackend,
         experiment: ExperimentConfig,
         variant_map_loader: Callable[[], dict[str, str]],
+        variant_map_refresh: Callable[[], dict[str, str]] | None = None,
         project_root: Path | None = None,
         on_warning: Callable[[str], None] | None = None,
     ) -> None:
@@ -111,6 +116,8 @@ class IncrementalBackend:
         self._recompute = recompute
         self._experiment = experiment
         self._variant_map_loader = variant_map_loader
+        self._variant_map_refresh = variant_map_refresh
+        self._map_refreshed = False
         self._project_root = project_root
         self._on_warning = on_warning or (lambda _: None)
         self._zone = ZoneInfo(experiment.timezone)
@@ -203,7 +210,9 @@ class IncrementalBackend:
             key = self._series_key(metric, metric_sql)
             last_state = self._cached_last_state_day(key)
             if last_state is None or last_state < required_last:
-                have = "no materialized days" if last_state is None else f"state through {last_state}"
+                have = (
+                    "no materialized days" if last_state is None else f"state through {last_state}"
+                )
                 return self._fallback(
                     comparison,
                     metric,
@@ -283,6 +292,25 @@ class IncrementalBackend:
         downstream containers are order-identical to the recompute path.
         """
         variant_map = self._cohort_variants()
+        # Refresh-on-miss (an R2 review fix): the initial map is the FREE
+        # LOAD snapshot; a state unit missing from it means the live source
+        # gained the unit after LOAD (the STATE render saw it) — pay ONE
+        # quiet re-read then, and only then.
+        #
+        # ONE refresh is sufficient by construction (the R3 review's
+        # per-instance-budget question): the whole run holds one lock and
+        # STATE precedes COMPUTE, so a refresh taken here reads a source at
+        # least as fresh as the render that WROTE every state row this run —
+        # and rows from earlier runs are older still. Every unit that can
+        # appear in `totals` is therefore in the refreshed map unless it has
+        # since LEFT the cohort, and dropping those is exactly what the
+        # recompute render's INNER JOIN does. Units enrolling later in
+        # COMPUTE have no state rows at all; their tail values (if any) carry
+        # the tail render's own arm.
+        if self._variant_map_refresh is not None and not self._map_refreshed:
+            if any(u not in variant_map and u not in tail_variant for u in totals):
+                self._map_refreshed = True
+                self._variant_map = variant_map = self._variant_map_refresh()
         units_of: dict[str, list[str]] = {}
         for unit in totals:
             variant = tail_variant.get(unit) or variant_map.get(unit)
@@ -298,8 +326,7 @@ class IncrementalBackend:
             units.sort()
             units_by_variant[variant] = np.array(units, dtype=object)
             roles_by_variant[variant] = {
-                role: np.array([totals[u][role] for u in units], dtype=np.float64)
-                for role in roles
+                role: np.array([totals[u][role] for u in units], dtype=np.float64) for role in roles
             }
             strata_by_variant[variant] = None
 

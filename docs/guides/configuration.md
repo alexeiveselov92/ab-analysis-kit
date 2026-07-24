@@ -71,6 +71,9 @@ timeouts:                        # per-step, in seconds (each 1..86400)
 
 compute:
   mode: recompute                # v1 ships full-window recompute only — the only accepted value today
+  incremental_reads: false       # opt-in (m9): eligible comparisons read _ab_unit_state day moments
+                                 # instead of re-scanning the fact window; any gap falls back to
+                                 # recompute. Changes HOW a number is computed, never the number.
 ```
 
 ### The `statistics` block

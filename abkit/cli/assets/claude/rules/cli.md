@@ -77,7 +77,9 @@ abk run [--select <exp>] [--exclude <sel>] [--steps validate,plan,load,state,com
 The pipeline: **validate → plan → load → SRM → state → compute → persist**,
 streaming `VALIDATE → PLAN → LOAD → SRM → STATE → COMPUTE → RESULT` (`state`,
 M9: materializes per-unit day moments into `_ab_unit_state` for closed-form
-metrics — the incremental engine's write half; results math is unchanged).
+metrics; with the opt-in `compute.incremental_reads: true` those moments then
+replace the full-window fact rescan on the compute path — any gap falls back
+to recompute, and results math is unchanged either way).
 It is incremental by
 an anti-join — only cutoffs past the `data_lag` watermark and not already computed
 are (re)computed, so re-running is idempotent.

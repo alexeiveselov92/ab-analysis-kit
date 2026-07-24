@@ -37,6 +37,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from abkit.compute.incremental_backend import IncrementalBackend
+from abkit.compute.recompute_backend import RecomputeBackend
 from abkit.config.experiment_config import ExperimentConfig
 from abkit.config.metric_config import MetricConfig
 from abkit.config.project_config import ProjectConfig
@@ -45,11 +46,7 @@ from abkit.core.period_planner import backlog_seconds, generate_grid, pending_cu
 from abkit.database.internal_tables import InternalTablesManager
 from abkit.database.manager import BaseDatabaseManager
 from abkit.loaders.exposure_copy import copy_exposures_incremental
-from abkit.loaders.exposure_source import (
-    build_cohort_backend,
-    render_assignment_sql,
-    validate_and_snapshot,
-)
+from abkit.loaders.exposure_source import build_cohort_backend, load_variant_map
 from abkit.loaders.query_template import RenderWindow
 from abkit.pipeline._types import STATUS_COMPLETED, STATUS_FAILED, PipelineStep, RunOutcome
 from abkit.pipeline.analyze import analyze_cutoff, comparison_alpha, effective_alphas
@@ -397,29 +394,27 @@ def run_experiment(
             incremental_reads = False
         incremental_backend: IncrementalBackend | None = None
         if incremental_reads:
+            snap = snapshot
 
             def _cohort_variant_map() -> dict[str, str]:
-                # Copy mode joins the persisted cohort (what the renders see).
-                # Direct mode re-validates the LIVE source at first use — NOT
-                # the LOAD snapshot (an R1 review fix): the STATE stage above
-                # rendered the live source, so a unit enrolled between LOAD
-                # and COMPUTE already has day-state rows this map must be able
-                # to place; a stale snapshot would silently drop it where the
-                # recompute join would not.
+                # Copy mode joins the persisted cohort (what the renders
+                # see); direct mode starts from this run's FREE validated
+                # LOAD snapshot — the refresh loader below covers the
+                # LOAD→STATE enrollment race without paying a routine second
+                # source query (the R1 cohort fix, re-shaped by R2).
                 if copy_enabled:
                     return tables.get_exposure_variant_map(experiment.name)
-                fresh = validate_and_snapshot(
-                    manager,
-                    experiment,
-                    render_assignment_sql(manager, experiment, project_root, grid),
-                )
-                return {str(unit): variant for unit, (variant, _, _) in fresh.by_unit.items()}
+                return {str(unit): variant for unit, (variant, _, _) in snap.by_unit.items()}
+
+            def _cohort_variant_refresh() -> dict[str, str]:
+                return load_variant_map(manager, experiment, project_root, grid)
 
             incremental_backend = IncrementalBackend(
                 tables,
                 backend,
                 experiment,
                 variant_map_loader=_cohort_variant_map,
+                variant_map_refresh=None if copy_enabled else _cohort_variant_refresh,
                 project_root=project_root,
                 on_warning=outcome.warnings.append,
             )
@@ -430,7 +425,7 @@ def run_experiment(
             method_config_id = comparison.method.method_config_id
             metric_sql = metric.get_query_text(project_root)
             effective_alpha = comparison_alpha(comparison, alphas)
-            comp_backend = (
+            comp_backend: IncrementalBackend | RecomputeBackend = (
                 incremental_backend
                 if incremental_backend is not None
                 and comparison_state_eligible(comparison, metric, metric_sql)
