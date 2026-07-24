@@ -15,7 +15,13 @@ Eligibility (per metric, within one experiment):
   bootstrap-only metric never pays the write cost (WP3 step 5);
 - the SQL body does not reference ``ab_cov_*`` — such a render depends on
   the comparison's covariate window, so its day moments would not be
-  comparison-independent; the metric stays on full-window recompute.
+  comparison-independent; the metric stays on full-window recompute;
+- no explicit ``columns.covariate`` role (an R2 review exclusion) — that
+  role is documented as an author-computed column that may be a static
+  per-unit snapshot, which is NOT additive across day renders: per-day
+  ``sum_cov`` rows would inflate by the unit's active-day count once
+  summed. Additivity cannot be verified from config, so such metrics stay
+  on full-window recompute.
 
 Contiguity invariant (the WP4 gap-detection contract): days advance strictly
 in order and a failed day TRUNCATES the series from that day before the run
@@ -113,7 +119,7 @@ def _cohort_identity(experiment: ExperimentConfig, project_root: Path | None) ->
     recompute gets for free by re-rendering the whole window every cutoff.
     """
     assignment_sql = experiment.assignment.get_query_text(project_root)
-    return {
+    identity: dict[str, Any] = {
         "assignment_sql_sha256": hashlib.sha256(
             " ".join(assignment_sql.split()).encode("utf-8")
         ).hexdigest(),
@@ -123,6 +129,14 @@ def _cohort_identity(experiment: ExperimentConfig, project_root: Path | None) ->
         "timezone": experiment.timezone,
         "start_date": str(experiment.start_date),
     }
+    # The assignment render's window ends at the GRID HORIZON, so a cohort
+    # SQL referencing ab_end_date/ab_end_ts renders differently when
+    # end_date moves (R2 review) — fold end_date in for exactly those SQLs.
+    # End-invariant assignment SQL (the common case) skips it, so the most
+    # routine edit there is — extending an experiment — never orphans state.
+    if "ab_end_" in assignment_sql:
+        identity["end_date"] = str(experiment.end_date)
+    return identity
 
 
 def state_series_key(
@@ -162,6 +176,8 @@ def state_eligible_metrics(
             continue
         metric = metrics_by_name[comparison.metric]
         if metric.columns.stratum is not None:
+            continue
+        if metric.columns.covariate is not None:
             continue
         metric_sql = metric.get_query_text(project_root)
         if "ab_cov_" in metric_sql:

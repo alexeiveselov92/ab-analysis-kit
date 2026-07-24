@@ -512,11 +512,14 @@ state-materialization tests.
 > "{experiment}/{metric}"` (hash-tail-compacted inside the 128-char column
 > budget). (2) **The identity also folds in the cohort-shaping config**
 > (assignment-SQL hash, `added_filters`, `unit_key`, `variants`,
-> `timezone`, `start_date` — `state_series_key()` in `pipeline/state.py` is
+> `timezone`, `start_date`, and — only when the assignment SQL references
+> `ab_end_*`, so a routine extension never orphans an end-invariant
+> series — `end_date`; `state_series_key()` in `pipeline/state.py` is
 > THE composition every consumer must use): an R1 finding — a mid-flight
 > `added_filters` edit reshapes cohort membership, and a merged series
 > would mix two cohort definitions across days, an inconsistency the
-> full-window recompute path can never have. (3) **Every failure path
+> full-window recompute path can never have (the `end_date` leg is the R2
+> sibling: the assignment render's window ends at the grid horizon). (3) **Every failure path
 > truncates the tail instead of leaving stale rows or dropping history**,
 > preserving the contiguity invariant (every day `<= get_last_state_day()`
 > is materialized; days past it are absent, not stale — the WP4
@@ -527,7 +530,14 @@ state-materialization tests.
 > from the failing day (earlier days retained, one-render retry per run).
 > (4) **Metrics whose SQL references `ab_cov_*` are STATE-ineligible** —
 > their render depends on the comparison's covariate window, so their day
-> moments are not comparison-independent. (5) **Copy mode clamps day-close
+> moments are not comparison-independent — **and so are metrics declaring
+> an explicit `columns.covariate` role** (an R2 finding, narrowing plan
+> step 3): that author-computed column may be a static per-unit snapshot,
+> which is NOT additive across day renders — per-day `sum_cov` rows would
+> inflate by the unit's active-day count under the WP4 summing reader.
+> Additivity cannot be verified from config, so the `sum_cov*` columns
+> stay reserved for a future day-additive covariate contract and such
+> metrics stay on full recompute. (5) **Copy mode clamps day-close
 > to the copy's coverage** (a day materialized from a partial cohort would
 > freeze that way) **and `--resync-cohort` force-rebuilds day state** with
 > the copy it rebuilds. (6) The orphan sweep is ACTIVE: stale
@@ -547,6 +557,20 @@ state-materialization tests.
 > identity gap (P1, split skeptic verdict adjudicated as
 > fix-now-cheaply → deviation (2), pinned by
 > `test_cohort_config_edit_orphans_the_old_series`).
+> **Adversarial review R2** (the two re-run lenses + an R1-fix-verification
+> lens → 1 skeptic per finding): 4 raised → 4 accepted, all fixed
+> in-session: the explicit-covariate additivity violation (P1 → the
+> eligibility exclusion in deviation (4), pinned by
+> `test_explicit_covariate_metric_is_excluded`; empirically reproduced —
+> a 3-active-day unit's summed `sum_cov` read 3× its snapshot value); the
+> `end_date` identity leg (P1, skeptic lost to an infra failure,
+> adjudicated on its own concrete repro → the conditional fold in
+> deviation (2), pinned by
+> `test_end_date_extension_keeps_an_end_invariant_series`); and two P2
+> doc-drift findings in `.claude/rules/architecture.md` (the M9 bullet
+> still described the pre-R1 whole-series drop and the pre-R1 identity
+> formula — both rewritten to the as-shipped truncation + cohort-config
+> semantics).
 
 ---
 

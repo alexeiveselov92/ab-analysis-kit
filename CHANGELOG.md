@@ -23,7 +23,9 @@ number change).
   cumulative-intervals.md §4's v1 strategy (the WP4 `IncrementalBackend`
   reader flips the read path in a later WP; nothing reads the rows yet).
   Eligible: closed-form (unseeded) comparisons over non-stratified
-  sample/fraction/ratio metrics whose SQL does not reference `ab_cov_*`;
+  sample/fraction/ratio metrics with no explicit `columns.covariate` role
+  (a snapshot covariate is not additive across day renders — such metrics
+  stay on full recompute) and whose SQL does not reference `ab_cov_*`;
   bootstrap-only metrics never pay the write. The per-day render goes
   through the SAME M8 `build_cohort_backend` factory as every other cohort
   reader (never a hand-rolled `_ab_exposures` join — both cohort modes are
@@ -31,7 +33,9 @@ number change).
   `source_table = "{experiment}/{metric}"` +
   `column_set_id = hash(column roles + whitespace-normalized SQL body +
   the cohort-shaping config: assignment SQL, added_filters, unit_key,
-  variants, timezone, start_date)`: editing any of them orphans the stale
+  variants, timezone, start_date — plus end_date only when the assignment
+  SQL references `ab_end_*`, so a routine experiment extension never
+  orphans an end-invariant series)`: editing any of them orphans the stale
   series (swept on the next run), mirroring how `method_config_id` orphans
   results; reformatting alone never does. The series is strictly contiguous
   — every day `<= get_last_state_day()` is materialized — and every failure

@@ -201,6 +201,26 @@ class TestStateIdentity:
             REVENUE.columns.role_map(), REVENUE.query
         ) == compute_metric_state_id(REVENUE.columns.role_map(), reformatted)
 
+    def test_end_date_extension_keeps_an_end_invariant_series(self):
+        """R2 fix: extending an experiment (the most routine edit) must not
+        orphan state — unless the assignment SQL actually windows on the end."""
+        base = make_experiment("exp_extend", "arpu", T_TEST)
+        payload = experiment_payload("exp_extend", "arpu", T_TEST)
+        payload["end_date"] = "2024-07-14"
+        extended = ExperimentConfig.model_validate(payload)
+        assert series_key(base, REVENUE) == series_key(extended, REVENUE)
+
+        windowed = experiment_payload("exp_extend", "arpu", T_TEST)
+        windowed["assignment"]["query"] = (
+            "SELECT user_id, variant, exposure_ts FROM assignments "
+            "WHERE event_date <= '{{ ab_end_date }}'"
+        )
+        w_base = ExperimentConfig.model_validate(windowed)
+        windowed["end_date"] = "2024-07-14"
+        w_extended = ExperimentConfig.model_validate(windowed)
+        # an end-windowed cohort SQL renders differently after the extension
+        assert series_key(w_base, REVENUE) != series_key(w_extended, REVENUE)
+
     def test_cohort_config_edit_orphans_the_old_series(self, warehouse, tables):
         """R1 fix: a filter edit reshapes the cohort — the series must not mix."""
         experiment = make_experiment("exp_filters", "arpu", T_TEST)
@@ -411,12 +431,25 @@ class TestEligibility:
         experiment = make_experiment("exp_strat", "arpu", T_TEST)
         assert state_eligible_metrics(experiment, {"arpu": stratified}, None) == []
 
+    def test_explicit_covariate_metric_is_excluded(self):
+        """R2 fix: a snapshot covariate is not day-additive — no state."""
+        with_covariate = MetricConfig.model_validate(
+            {
+                "name": "arpu",
+                "type": "sample",
+                "columns": {"variant": "variant", "value": "gross_usd", "covariate": "prev"},
+                "query": REVENUE.query,
+            }
+        )
+        experiment = make_experiment("exp_snap", "arpu", T_TEST)
+        assert state_eligible_metrics(experiment, {"arpu": with_covariate}, None) == []
+
     def test_cov_window_dependent_sql_is_excluded(self):
         cov_windowed = MetricConfig.model_validate(
             {
                 "name": "arpu",
                 "type": "sample",
-                "columns": {"variant": "variant", "value": "gross_usd", "covariate": "prev"},
+                "columns": {"variant": "variant", "value": "gross_usd"},
                 "query": REVENUE.query + " -- uses {{ ab_cov_start }}",
             }
         )

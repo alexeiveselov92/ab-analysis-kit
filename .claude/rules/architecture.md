@@ -298,17 +298,27 @@ Docker-equipped environment.
   day THROUGH the m8 factory backend (`RecomputeBackend.load_window` — never
   a hand-rolled cohort join, both modes parity-tested) and replaces the
   moments via `replace_day_state`. Eligibility: closed-form (unseeded)
-  comparison, non-stratified metric, SQL body free of `ab_cov_*`. Identity:
-  `source_table = "{experiment}/{metric}"` (`compute_state_source_id` — the
-  §5.3 sharing ideal deliberately narrowed: the render is cohort-filtered,
-  so cross-experiment sharing would clobber) + `column_set_id =
-  compute_metric_state_id(role_map, whitespace-normalized SQL)`; a SQL-body
-  edit orphans the series and the next run sweeps the stale ids.
-  `--full-refresh --from/--to` re-materializes the touched days. Non-finite
-  moments DROP the whole series with a warning (never a silent zero/hole —
-  the metric stays on full recompute); days advance contiguously so
-  `get_last_state_day` implies every earlier day is materialized. Nothing
-  reads the rows until WP4's `IncrementalBackend`.
+  comparison, non-stratified metric, no explicit `columns.covariate` role
+  (a snapshot covariate is not day-additive), SQL body free of `ab_cov_*`.
+  Identity: `source_table = "{experiment}/{metric}"`
+  (`compute_state_source_id` — the §5.3 sharing ideal deliberately
+  narrowed: the render is cohort-filtered, so cross-experiment sharing
+  would clobber) + `column_set_id = compute_metric_state_id(role_map,
+  whitespace-normalized SQL, cohort_config)` where `cohort_config` folds in
+  the cohort-shaping experiment config (assignment-SQL hash, added_filters,
+  unit_key, variants, timezone, start_date; end_date only when the
+  assignment SQL references `ab_end_*`) — compose the key ONLY through
+  `pipeline/state.state_series_key()`. Any such edit orphans the series and
+  the next run sweeps the stale ids. **Every failure path TRUNCATES the
+  tail** (`delete_state_days_from`), preserving contiguity — every day
+  `<= get_last_state_day()` is materialized, days past it are absent, not
+  stale: `--full-refresh --from/--to` deletes from the first touched day
+  BEFORE re-rendering through the end of the series (crash mid-refresh ⇒ a
+  self-healing prefix); a non-finite moment truncates from the failing day
+  (earlier days retained, one-render retry per run, a loud CLI warning).
+  Copy mode clamps day-close to the copy's coverage; `--resync-cohort`
+  force-rebuilds day state with the copy. Nothing reads the rows until
+  WP4's `IncrementalBackend`.
 
 ## The stats core (`abkit.stats`) — the implemented system
 

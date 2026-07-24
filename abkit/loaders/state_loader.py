@@ -5,11 +5,14 @@ into the ``replace_day_state`` batch for ``_ab_unit_state``. Pure array
 reshaping — no I/O, no method knowledge beyond the metric-type → moment-column
 mapping (cumulative-intervals.md §3's additive sufficient statistics):
 
-- ``sample``:   ``n=1, Σx=value, Σx²=value²`` — plus the co-moments of the
-  explicit ``columns.covariate`` role when declared. That role is the
-  author's own covariate column; the CUPED pre-period covariate (the second
-  render over the fixed lookback window) stays a separate one-time load and
-  is untouched by the STATE stage.
+- ``sample``:   ``n=1, Σx=value, Σx²=value²``. Metrics declaring an explicit
+  ``columns.covariate`` role are STATE-ineligible (``pipeline/state.py``, an
+  R2 review exclusion): that author-computed column may be a static
+  per-unit snapshot, which is not additive across day renders — and the
+  CUPED pre-period covariate (the second render over the fixed lookback
+  window) stays a separate one-time load, untouched by the STATE stage.
+  The ``sum_cov*`` schema columns stay reserved for a future day-additive
+  covariate contract.
 - ``fraction``: ``n=nobs, Σx=count`` (the §3 ``{count, nobs}`` suffstats).
 - ``ratio``:    ``n=1, Σx=numerator`` plus ``{Σd, Σd², Σxd}``.
 
@@ -70,11 +73,6 @@ def day_moments(metric: MetricConfig, loaded: MetricLoadResult) -> dict[str, np.
         data["n"] = np.ones(n_units, dtype=np.int64)
         data["sum_value"] = value
         data["sum_value_sq"] = value * value
-        if metric.columns.covariate is not None:
-            cov = _concat_role(loaded, "covariate", metric.name)
-            data["sum_cov"] = cov
-            data["sum_cov_sq"] = cov * cov
-            data["sum_value_cov"] = value * cov
     elif metric.type == "fraction":
         count = _concat_role(loaded, "count", metric.name)
         nobs = _concat_role(loaded, "nobs", metric.name)
