@@ -29,8 +29,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev,clickhouse]"
 
+      # Coverage costs ~+50% wall-clock and only ONE leg's report is kept
+      # (the upload below is 3.12-only), so the other legs opt out. They still
+      # run every test — they just do not measure lines.
       - name: Run unit tests
-        run: pytest -m "not integration"
+        run: pytest -m "not integration" ${{ matrix.python-version == '3.12' && '' || '--no-cov' }}
 
       - name: Upload coverage
         if: matrix.python-version == '3.12'

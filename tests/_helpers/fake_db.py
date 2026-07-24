@@ -362,6 +362,17 @@ class FakeDatabaseManager(BaseDatabaseManager):
         pk = model.primary_key if model else []
         version_col = model.version_column if model else None
 
+        # A per-call primary-key index: the LWW upsert below used to scan the
+        # whole store for every inserted row, which is O(rows²) per table and
+        # made one scaffolded `abk run` cost ~11 s of pure fixture time once
+        # the M9 STATE stage started writing 600 units × 14 days. Built fresh
+        # per call (and discarded after), so there is no cross-call cache to
+        # keep in sync with delete_rows/execute_query.
+        index: dict[tuple, dict] = {}
+        if pk and not (self._clickhouse_like and version_col is not None):
+            for existing_row in store:
+                index[tuple(existing_row.get(c) for c in pk)] = existing_row
+
         inserted = 0
         for i in range(num_rows):
             row = {col: _coerce(data[col][i]) for col in data}
@@ -373,7 +384,7 @@ class FakeDatabaseManager(BaseDatabaseManager):
                 continue
             if pk:
                 key = tuple(row.get(c) for c in pk)
-                existing = next((r for r in store if tuple(r.get(c) for c in pk) == key), None)
+                existing = index.get(key)
                 if existing is not None:
                     if conflict_strategy == "fail":
                         raise ValueError(f"duplicate primary key: {key}")
@@ -389,6 +400,7 @@ class FakeDatabaseManager(BaseDatabaseManager):
                         existing.update(row)
                     inserted += 1
                     continue
+                index[key] = row  # a later row in THIS batch must find it too
             store.append(row)
             inserted += 1
         return inserted
