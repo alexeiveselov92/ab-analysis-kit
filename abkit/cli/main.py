@@ -88,7 +88,7 @@ def init_claude(target_dir: str) -> None:
 @click.option("--exclude", multiple=True, help="Selectors to exclude (same forms)")
 @click.option(
     "--steps",
-    default="validate,plan,load,compute",
+    default="validate,plan,load,state,compute",
     show_default=True,
     help="Comma-separated pipeline steps. 'validate' alone = config-lint, no DB.",
 )

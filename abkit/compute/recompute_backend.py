@@ -118,6 +118,29 @@ class RecomputeBackend:
         """The provenance copy of the executed SQL."""
         return self._template.render(metric_sql, self._builtins(window))
 
+    def load_window(
+        self,
+        metric: MetricConfig,
+        metric_sql: str,
+        window: RenderWindow,
+    ) -> MetricLoadResult:
+        """A bare one-window load — the m9 WP3 STATE stage's per-day render.
+
+        Threads the SAME cohort-mode builtins as :meth:`load_cutoff` (the m8
+        §0.5(e) factory contract): under the no-copy default the render joins
+        the live assignment source, never a hand-rolled ``_ab_exposures``.
+        No covariate attachment — day state persists only the window's own
+        additive moments.
+        """
+        return load_metric(
+            self._manager,
+            metric,
+            metric_sql,
+            self._builtins(window),
+            declared_variants=self._experiment.assignment.variants,
+            template=self._template,
+        )
+
     def load_cutoff(
         self,
         comparison: ComparisonConfig,

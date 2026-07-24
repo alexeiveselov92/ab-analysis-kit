@@ -49,10 +49,13 @@ abkit/
                          #   copy-vs-direct switch every cohort reader uses, WP2/WP4)
                          #   + exposure_copy (the append-only incremental engine,
                          #   WP5); exposure_loader's full-reload path is dead from
-                         #   the driver since WP5 (external callers only)
-  compute/               # ✅ M2: recompute_backend (v1 full-window strategy)
+                         #   the driver since WP5 (external callers only);
+                         #   ✅ M9 WP3: state_loader (per-day moment extraction)
+  compute/               # ✅ M2: recompute_backend (v1 full-window strategy;
+                         #   ✅ M9 WP3: load_window — the STATE day render)
   pipeline/              # ✅ M2: driver (lock→load→SRM→plan→compute→persist),
-                         #   analyze, enrich, _types; worker pool
+                         #   analyze, enrich, _types; worker pool;
+                         #   ✅ M9 WP3: state (the write-only STATE stage)
   reporting/             # ✅ M3: builder (the §5.3 terse payload + verdicts),
     assets/report.js     #   html_report (hardened bake), the committed bundle;
                          #   ✅ M4: calibration.py (the payload calibration block)
@@ -121,9 +124,10 @@ Docker-equipped environment.
   §3 as amended); loaded once per run, absent units default to 0.
 - **Bootstrap rows are byte-stable:** per-row `seed =
   derive_seed(exp, metric, name_1, name_2, end_ts, n_samples)`, identity-excluded.
-- **`ci_kind` is always `"fixed"` in M2** (sequential lands M5); the STATE
-  stage is deliberately not wired in v1 (recompute read path — see the driver
-  docstring); paired methods are notebook-only.
+- **`ci_kind` is always `"fixed"` in M2** (sequential lands M5); paired
+  methods are notebook-only. *(The STATE stage, "deliberately not wired"
+  through M8, is wired write-only since M9 WP3 — see the M9 facts below;
+  the read path stays recompute until WP4.)*
 
 ### M3 reporting/explore facts an assistant must know
 
@@ -276,6 +280,45 @@ Docker-equipped environment.
   `tests/e2e/test_first_run_copy_enabled.py`) pin `_ab_results`/`_ab_aa_runs`/
   the baked explore payload identical across modes (`watermark_ts` is the one
   legitimately differing column) — zero statistical numbers moved in M8.
+
+### M9 facts an assistant must know (milestone in flight)
+
+- **WP1 (shipped):** `_ab_results` carries the 4 persisted CUPED covariate
+  moments (`cov_std_1/2`, `corr_coef_1/2`, nullable) + the
+  `ensure_columns()` additive ALTER-ADD-COLUMN migration primitive (the
+  project's first post-release schema change; idempotent, never drops).
+- **WP2 (shipped):** `cuped-t-test` is Tier E in explore — covariate
+  suffstats reconstruct from the persisted moments for every knob except
+  `covariate_lookback` (unconditionally Tier R); pre-migration rows keep the
+  old fallbacks.
+- **WP3 (shipped): the STATE stage is wired, write-only.**
+  `PipelineStep.STATE` sits between LOAD and COMPUTE (`--steps state`
+  supported; the `abk run` default is `validate,plan,load,state,compute`).
+  `pipeline/state.py` renders each STATE-eligible metric per closed local
+  day THROUGH the m8 factory backend (`RecomputeBackend.load_window` — never
+  a hand-rolled cohort join, both modes parity-tested) and replaces the
+  moments via `replace_day_state`. Eligibility: closed-form (unseeded)
+  comparison, non-stratified metric, no explicit `columns.covariate` role
+  (a snapshot covariate is not day-additive), SQL body free of `ab_cov_*`.
+  Identity: `source_table = "{experiment}/{metric}"`
+  (`compute_state_source_id` — the §5.3 sharing ideal deliberately
+  narrowed: the render is cohort-filtered, so cross-experiment sharing
+  would clobber) + `column_set_id = compute_metric_state_id(role_map,
+  whitespace-normalized SQL, cohort_config)` where `cohort_config` folds in
+  the cohort-shaping experiment config (assignment-SQL hash, added_filters,
+  unit_key, variants, timezone, start_date; end_date only when the
+  assignment SQL references `ab_end_*`) — compose the key ONLY through
+  `pipeline/state.state_series_key()`. Any such edit orphans the series and
+  the next run sweeps the stale ids. **Every failure path TRUNCATES the
+  tail** (`delete_state_days_from`), preserving contiguity — every day
+  `<= get_last_state_day()` is materialized, days past it are absent, not
+  stale: `--full-refresh --from/--to` deletes from the first touched day
+  BEFORE re-rendering through the end of the series (crash mid-refresh ⇒ a
+  self-healing prefix); a non-finite moment truncates from the failing day
+  (earlier days retained, one-render retry per run, a loud CLI warning).
+  Copy mode clamps day-close to the copy's coverage; `--resync-cohort`
+  force-rebuilds day state with the copy. Nothing reads the rows until
+  WP4's `IncrementalBackend`.
 
 ## The stats core (`abkit.stats`) — the implemented system
 

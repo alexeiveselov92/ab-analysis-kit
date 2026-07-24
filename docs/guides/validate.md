@@ -22,7 +22,7 @@ things called "validate":
 
 - **`abk run --steps validate`** — the **config lint**: schema / SQL / cross-reference
   checks, no database, no statistics. (`--steps` defaults to
-  `validate,plan,load,compute`; naming `validate` alone runs only the lint.)
+  `validate,plan,load,state,compute`; naming `validate` alone runs only the lint.)
 - **`abk validate`** — the **A/A statistical matrix** described on this page: placebo
   splits, empirical FPR, power, coverage. It reads persisted data and writes
   `_ab_aa_runs`.

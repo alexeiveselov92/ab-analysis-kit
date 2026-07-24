@@ -101,10 +101,10 @@ with no upstream change reports everything unchanged.
 ## `abk run`
 
 Run the pipeline for the selected experiments: validate → plan → load → SRM →
-compute → persist.
+state → compute → persist.
 
 ```bash
-abk run [--select <exp>]... [--exclude <sel>]... [--steps validate,plan,load,compute] \
+abk run [--select <exp>]... [--exclude <sel>]... [--steps validate,plan,load,state,compute] \
         [--from TS] [--to TS] [--full-refresh] [--resync-cohort] [--workers N] \
         [--report [PATH]] [--force] [--profile NAME]
 ```
@@ -113,7 +113,7 @@ abk run [--select <exp>]... [--exclude <sel>]... [--steps validate,plan,load,com
 |---|---|---|
 | `--select`, `-s` | all experiments | Experiment selector (repeatable) |
 | `--exclude` | — | Selectors to remove from the selection (same forms) |
-| `--steps` | `validate,plan,load,compute` | Comma-separated pipeline steps |
+| `--steps` | `validate,plan,load,state,compute` | Comma-separated pipeline steps |
 | `--from` | — | Full-refresh window start (with `--full-refresh`) |
 | `--to` | — | Full-refresh window end, exclusive (with `--full-refresh`) |
 | `--full-refresh` | off | Re-open already-computed cutoffs in `[--from, --to)` and recompute |
@@ -140,8 +140,11 @@ still-open or maturing bucket return on a later run, never half-fresh). It
 never touches results windows (`--full-refresh` keeps that job) and is a no-op
 in the direct (no-copy) default.
 
-**`--steps` tokens** are `validate`, `plan`, `load`, `compute` (any unknown token
-errors with the valid list). **`--steps validate` alone is the config lint** — it
+**`--steps` tokens** are `validate`, `plan`, `load`, `state`, `compute` (any unknown
+token errors with the valid list). The `state` step (M9) materializes per-unit,
+per-day moments for closed-form metrics into `_ab_unit_state` — the write-only
+half of the incremental engine; skipping it skips only that write, never a
+result. **`--steps validate` alone is the config lint** — it
 parses the YAML, lints every metric SQL for the one-row-per-unit contract and the
 cohort macro, and instantiates each method, all with no database and no lock. This is
 the only meaning of "validate" on `run`; it is a *config* gate and is **not**

@@ -17,7 +17,12 @@ from fake_db import FakeDatabaseManager
 
 import abkit.database.internal_tables._base as base_mod
 from abkit.core.models import ColumnDefinition, TableModel
-from abkit.database.internal_tables import InternalTablesManager, compute_column_set_id
+from abkit.database.internal_tables import (
+    InternalTablesManager,
+    compute_column_set_id,
+    compute_metric_state_id,
+    compute_state_source_id,
+)
 from abkit.database.internal_tables._results import RESULT_COLUMNS
 from abkit.database.tables import TABLE_RESULTS, TABLE_TASKS, get_results_table_model
 from abkit.utils.datetime_utils import now_utc_naive
@@ -338,9 +343,7 @@ class TestExposures:
 
     def test_insert_incremental_missing_columns_raises(self, tables):
         with pytest.raises(ValueError, match="missing columns"):
-            tables.insert_exposures_incremental(
-                "exp1", {"unit_id": np.array(["u1"], dtype=object)}
-            )
+            tables.insert_exposures_incremental("exp1", {"unit_id": np.array(["u1"], dtype=object)})
 
     def test_insert_incremental_empty_batch_writes_nothing(self, tables):
         empty = {
@@ -471,6 +474,61 @@ class TestUnitState:
         assert a == b  # dict order must not matter
         assert a != c
         assert len(a) == 16 and all(ch in "0123456789abcdef" for ch in a)
+
+    def test_metric_state_id_identity(self):
+        """m9 WP3: the metric-hash invalidation is whitespace-normalized."""
+        roles = {"variant": "variant", "value": "gross_usd"}
+        base = compute_metric_state_id(roles, "SELECT  user_id,\n  sum(x) FROM t")
+        reformatted = compute_metric_state_id(roles, "SELECT user_id, sum(x) FROM t")
+        edited_sql = compute_metric_state_id(roles, "SELECT user_id, sum(y) FROM t")
+        edited_roles = compute_metric_state_id(
+            {"variant": "variant", "value": "net_usd"}, "SELECT  user_id,\n  sum(x) FROM t"
+        )
+        assert base == reformatted  # reformatting never orphans a series
+        assert base != edited_sql
+        assert base != edited_roles
+        assert len(base) == 16 and all(ch in "0123456789abcdef" for ch in base)
+        # the cohort-shaping config is part of the identity (the R1 fix):
+        # an added_filters edit must orphan the series like a SQL edit does
+        cohort_a = {"added_filters": "", "unit_key": "user_id"}
+        cohort_b = {"added_filters": "AND user_id != 'bot'", "unit_key": "user_id"}
+        with_a = compute_metric_state_id(roles, "SELECT 1", cohort_config=cohort_a)
+        with_b = compute_metric_state_id(roles, "SELECT 1", cohort_config=cohort_b)
+        assert with_a != with_b
+        assert with_a == compute_metric_state_id(roles, "SELECT 1", cohort_config=dict(cohort_a))
+
+    def test_state_source_id_stays_inside_the_column_budget(self):
+        assert compute_state_source_id("exp", "arpu") == "exp/arpu"
+        long_a = compute_state_source_id("e" * 100, "m" * 100 + "a")
+        long_b = compute_state_source_id("e" * 100, "m" * 100 + "b")
+        assert len(long_a) <= 128
+        assert long_a != long_b  # the hash tail keeps overlong names distinct
+
+    def test_list_and_delete_state_series(self, tables):
+        """m9 WP3: the orphan sweep primitives."""
+        source = "exp1/arpu"
+        tables.replace_day_state(source, "old_series_0000/1", self.DAY, self._day_state())
+        tables.replace_day_state(source, "new_series_0000/2", self.DAY, self._day_state())
+        assert tables.list_state_column_sets(source) == [
+            "new_series_0000/2",
+            "old_series_0000/1",
+        ]
+        tables.delete_state_series(source, "old_series_0000/1")
+        assert tables.list_state_column_sets(source) == ["new_series_0000/2"]
+        kept = tables.sum_moments(source, "new_series_0000/2", self.DAY, self.DAY)
+        assert kept["sum_value"] == pytest.approx(4.5)
+
+    def test_delete_state_days_from_truncates_the_tail_only(self, tables):
+        """m9 WP3: the crash-safety / non-finite truncation primitive."""
+        source, series = "exp1/arpu", "series_0000000001"
+        for offset in range(3):
+            tables.replace_day_state(
+                source, series, self.DAY + timedelta(days=offset), self._day_state(1)
+            )
+        tables.delete_state_days_from(source, series, self.DAY + timedelta(days=1))
+        assert tables.get_last_state_day(source, series) == self.DAY
+        kept = tables.sum_moments(source, series, self.DAY, self.DAY + timedelta(days=2))
+        assert kept["sum_value"] == pytest.approx(1.5)  # only the first day survives
 
 
 def make_result_batch(**overrides) -> dict[str, np.ndarray]:
