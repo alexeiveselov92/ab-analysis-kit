@@ -898,6 +898,32 @@ default-flip criteria doc), `docs/specs/cli-and-dx.md`,
 > landed**: pointed at the scaffolded example, `verify-incremental`
 > immediately reported a real divergence and exposed the non-additive-role
 > P0 recorded as deviation (7) in WP4's note above.
+> **Adversarial review R1** (5 sonnet lenses — false-green, additivity,
+> clean-GC, counters, CLI — → 2 skeptics per finding with mandatory repro):
+> 12 raised → 12 confirmed, all fixed in-session. Five were one root:
+> **the deviation-(7) additivity check was a substring search over the whole
+> SQL text**, so a dead CTE, an ordinary two-level aggregation
+> (`max(s) AS s` outside `sum(x) AS s`), a comment, a string literal,
+> `count(DISTINCT …)` and `sum(x)/count(*)` all passed it — the check closed
+> the case it was written against, not the class. Rewritten to the strictest
+> cheap question: after stripping comments and literals, **every** `AS
+> <role column>` in the body must alias exactly one additive aggregate call
+> (nothing before it but a select-list or paren boundary, no `DISTINCT`, no
+> `OVER`), and a role column with no alias at all is refused. It stays a
+> NECESSARY, not sufficient, condition — which is why the flip criteria
+> (§4.1) demand clean `verify-incremental` runs as the authoritative oracle.
+> The other seven: computed cutoffs that the CURRENT grid no longer produces
+> were silently intersected away (a schedule edit could hide an unexamined
+> chunk of the series behind a green exit 0 — now reported as a skip naming
+> the stranded range); a pair demoted on BOTH sides compared as a match
+> without checking the demoted unit counts; `abk clean`'s state sweep raised
+> `KeyError` on a dangling metric reference (it walks the project without
+> `abk run`'s config lint, so a half-finished rename crashed housekeeping);
+> the sequential τ² anchor load was unattributed in `stage_costs`,
+> understating COMPUTE in `--cost-report`; and `verify-incremental`
+> constructed its manager OUTSIDE the per-experiment guard, so one bad
+> connection aborted the whole sweep. Regressions pin all of them,
+> including a 15-case additivity matrix carrying every review vector.
 
 ---
 

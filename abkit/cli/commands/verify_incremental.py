@@ -19,9 +19,10 @@ from __future__ import annotations
 import click
 
 from abkit.cli._output import echo_done, echo_error, echo_noop, echo_tree
-from abkit.cli.commands._context import load_project_context
+from abkit.cli.commands._context import ProjectContext, load_project_context
 from abkit.compute.reconcile import DEFAULT_REL_TOL, ReconcileOutcome, reconcile_experiment
 from abkit.config import select_experiments
+from abkit.config.experiment_config import ExperimentConfig
 
 #: how many diverging cutoffs to print in full before summarising the rest
 _MAX_REPORTED_MISMATCHES = 10
@@ -62,11 +63,22 @@ def run_verify_incremental(
         raise SystemExit(1)
 
 
-def _verify_one(experiment, context, profile, metric, rel_tol) -> ReconcileOutcome:
-    manager = context.manager_factory(profile)()
+def _verify_one(
+    experiment: ExperimentConfig,
+    context: ProjectContext,
+    profile: str | None,
+    metric: str | None,
+    rel_tol: float,
+) -> ReconcileOutcome:
+    # Manager construction is INSIDE the guard: a per-experiment connection
+    # failure (a bad profile override, a warehouse hiccup) must fail that one
+    # experiment, not abort the sweep — the same contract the comment on the
+    # except clause promises (an R1 review finding).
+    manager = None
     try:
         from abkit.database.internal_tables import InternalTablesManager
 
+        manager = context.manager_factory(profile)()
         tables = InternalTablesManager(manager)
         if not tables.results_table_exists():
             echo_noop(experiment.name, "no _ab_results yet — run `abk run` first")
@@ -85,7 +97,8 @@ def _verify_one(experiment, context, profile, metric, rel_tol) -> ReconcileOutco
         echo_error(experiment.name, f"{type(exc).__name__}: {exc}")
         return ReconcileOutcome(experiment=experiment.name, error=str(exc))
     finally:
-        manager.close()
+        if manager is not None:
+            manager.close()
 
     _render(outcome, rel_tol)
     return outcome
@@ -119,9 +132,7 @@ def _render(outcome: ReconcileOutcome, rel_tol: float) -> None:
                 children.append(click.style(f"    {diff.describe()}", fg="red"))
         if len(mismatches) > _MAX_REPORTED_MISMATCHES:
             children.append(
-                click.style(
-                    f"  … and {len(mismatches) - _MAX_REPORTED_MISMATCHES} more", fg="red"
-                )
+                click.style(f"  … and {len(mismatches) - _MAX_REPORTED_MISMATCHES} more", fg="red")
             )
     for skip in outcome.skipped:
         children.append(f"skipped {skip.metric}: {skip.reason}")

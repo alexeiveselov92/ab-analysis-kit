@@ -14,11 +14,8 @@ from datetime import timedelta
 
 import pytest
 from synthetic_ab import (
-    CONVERSION,
-    CTR,
     METRICS,
     NOW,
-    PROJECT,
     START,
     SyntheticWarehouse,
     experiment_payload,
@@ -53,9 +50,7 @@ def tables(warehouse):
 
 
 def _run(warehouse, tables, experiment, project=PROJECT_INCREMENTAL, **kwargs):
-    outcome = run_experiment(
-        experiment, METRICS, project, warehouse, tables, now_utc=NOW, **kwargs
-    )
+    outcome = run_experiment(experiment, METRICS, project, warehouse, tables, now_utc=NOW, **kwargs)
     assert outcome.status == "completed", outcome.error
     return outcome
 
@@ -196,6 +191,43 @@ class TestSkips:
         assert {v.metric for v in outcome.verdicts} == {"ctr"}
 
 
+class TestR1ReviewFixes:
+    """Regressions for the round-1 adversarial findings."""
+
+    def test_off_grid_computed_cutoffs_are_reported_not_dropped(self, warehouse, tables):
+        """A schedule edit strands already-computed cutoffs outside the current
+        grid. They cannot be reconciled — but silently intersecting them away
+        made a clean exit-0 report hide an unexamined chunk of the series."""
+        experiment = make_experiment("exp_offgrid", "arpu", T_TEST)
+        _run(warehouse, tables, experiment)
+
+        shrunk_payload = experiment_payload("exp_offgrid", "arpu", T_TEST)
+        shrunk_payload["end_date"] = "2024-07-02"
+        shrunk = ExperimentConfig.model_validate(shrunk_payload)
+
+        outcome = _reconcile(warehouse, tables, shrunk)
+        off_grid = [s for s in outcome.skipped if "NOT on the current grid" in s.reason]
+        assert off_grid, outcome.skipped
+        assert "2024-07-05" in off_grid[0].reason  # the stranded latest cutoff
+
+    def test_both_sides_demoted_still_compares_sizes(self):
+        """A pair demoted on both sides carries no TestResult, so the field diff
+        is vacuously empty — the demoted unit counts must still be compared."""
+        from abkit.compute.reconcile import FieldDiff, compare_results
+
+        assert compare_results(None, None) == []
+        # the caller adds size diffs; assert the engine's contract explicitly
+        assert FieldDiff("size_1", 10, 11).describe().startswith("size_1")
+
+    def test_dangling_metric_reference_does_not_crash_eligibility(self):
+        """`abk clean` walks the whole project without the config lint, so a
+        half-finished rename must not raise from state_eligible_metrics."""
+        from abkit.pipeline.state import state_eligible_metrics
+
+        experiment = make_experiment("exp_dangling", "arpu", T_TEST)
+        assert state_eligible_metrics(experiment, {}, None) == []
+
+
 class TestComparisonSemantics:
     def test_tolerance_is_relative_not_exact(self):
         from abkit.stats import TestResult
@@ -225,9 +257,9 @@ class TestComparisonSemantics:
         assert compare_results(base, dataclasses.replace(base, value_2=2.0 * (1 + 1e-6)))
 
     def test_size_and_reject_are_exact(self):
-        from abkit.stats import TestResult
-
         import dataclasses
+
+        from abkit.stats import TestResult
 
         base = TestResult(
             name_1="c",

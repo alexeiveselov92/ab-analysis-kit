@@ -19,8 +19,8 @@ The STATE stage (``_ab_unit_state`` materialization, m9 WP3) is the
 write-only half of cumulative-intervals.md §4's v1 strategy: after LOAD,
 every STATE-eligible metric's not-yet-materialized closed days are rendered
 through the SAME m8 cohort backend and replaced into ``_ab_unit_state``
-(``pipeline/state.py``). The read path stays recompute until WP4's
-``IncrementalBackend`` flips it.
+(``pipeline/state.py``); WP4's opt-in ``IncrementalBackend`` is the reader
+(``compute.incremental_reads``, default off).
 
 Concurrency (§5.7): experiments are independent series — ``run_experiments``
 fans them out on a thread pool, ONE manager per worker (DB-API connections
@@ -31,7 +31,7 @@ Generator-based RNG made the stats core process/thread-safe.
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime, timedelta
@@ -81,7 +81,7 @@ def _noop_log(_: str) -> None:  # pragma: no cover - trivial
 
 
 @contextmanager
-def _stage_cost(outcome: RunOutcome, manager: BaseDatabaseManager, stage: str):
+def _stage_cost(outcome: RunOutcome, manager: BaseDatabaseManager, stage: str) -> Iterator[None]:
     """Accumulate one stage's wall-time + warehouse cost into the outcome.
 
     The m9 WP5 observability seam. Re-entering the same stage name ADDS to it
@@ -480,17 +480,22 @@ def run_experiment(
             # load per sequential comparison per run (the accepted anytime price).
             sequential_tau2: dict[tuple[str, str], float] | None = None
             if seq_eligible and (pending or computed):
-                sequential_tau2 = _sequential_tau2(
-                    comp_backend,
-                    experiment,
-                    comparison,
-                    metric,
-                    metric_sql,
-                    grid,
-                    alphas,
-                    project,
-                    effective_alpha,
-                )
+                # Counted as COMPUTE: it is a real warehouse load on the
+                # compute path, and leaving it unattributed made --cost-report
+                # (and the perf gate built on it) understate the stage (an R1
+                # review finding).
+                with _stage_cost(outcome, manager, "compute"):
+                    sequential_tau2 = _sequential_tau2(
+                        comp_backend,
+                        experiment,
+                        comparison,
+                        metric,
+                        metric_sql,
+                        grid,
+                        alphas,
+                        project,
+                        effective_alpha,
+                    )
 
             # M5 WP3 (B4): the toggle self-invalidates. ``sequential.enabled`` is
             # (correctly) not in ``method_config_id``, so the anti-join would skip
@@ -553,9 +558,7 @@ def run_experiment(
             beat_every = max(1, n_pending // 20)
             for look_index, cutoff in enumerate(pending, start=1):
                 with _stage_cost(outcome, manager, "compute"):
-                    loaded = comp_backend.load_cutoff(
-                        comparison, metric, metric_sql, grid, cutoff
-                    )
+                    loaded = comp_backend.load_cutoff(comparison, metric, metric_sql, grid, cutoff)
                 outcomes = analyze_cutoff(
                     experiment,
                     comparison,

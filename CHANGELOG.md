@@ -96,13 +96,19 @@ number change).
   (a snapshot covariate is not additive across day renders — such metrics
   stay on full recompute), whose SQL does not reference `ab_cov_*`, and
   **whose every summed role column comes from a recognisably additive
-  aggregate** (`sum`/`count`, optionally `…If`): the reader sums per-day
-  rows, so `max(...)` or a literal trial count inflates with the number of
-  active days — the scaffolded `example_signup_cr` (`max(signed_up)`,
-  `1 AS visits`) is exactly such a metric and now stays on full recompute.
-  Recognition is a positive allowlist, so an exotic or unparseable
-  projection is treated as non-additive (a missed optimisation, never a
-  wrong number). Bootstrap-only metrics never pay the write. The per-day render goes
+  aggregate**: the reader sums per-day rows, so `max(...)` or a literal trial
+  count inflates with the number of active days — the scaffolded
+  `example_signup_cr` (`max(signed_up)`, `1 AS visits`) is exactly such a
+  metric and now stays on full recompute. The check is deliberately strict:
+  after stripping comments and string literals, EVERY `AS <role column>` in
+  the body must alias exactly one additive aggregate call (`sum`/`count`,
+  optionally `…If`), with nothing before it but a select-list or paren
+  boundary, no `DISTINCT` and no `OVER` — so a dead CTE, a two-level
+  aggregation, a ratio like `sum(x)/count(*)`, or a role column that is
+  never aliased all read as non-additive. It is a necessary, not sufficient,
+  condition (SQL is not parsed): `abk verify-incremental` is the
+  authoritative additivity oracle, which is why `incremental_reads` defaults
+  off. Bootstrap-only metrics never pay the write. The per-day render goes
   through the SAME M8 `build_cohort_backend` factory as every other cohort
   reader (never a hand-rolled `_ab_exposures` join — both cohort modes are
   parity-tested). The state series identity is

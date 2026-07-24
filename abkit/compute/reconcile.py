@@ -159,6 +159,8 @@ def compare_results(
         if recompute is None and incremental is None:
             return []
         return [FieldDiff("insufficient_data", recompute is None, incremental is None)]
+    # A both-demoted pair carries no TestResult to compare; the caller in
+    # reconcile_experiment additionally diffs the demoted unit counts.
 
     left = recompute.to_dict()
     right = incremental.to_dict()
@@ -175,9 +177,7 @@ def _diff_value(
 ) -> Iterable[FieldDiff]:
     if isinstance(left, dict) and isinstance(right, dict):
         for sub in sorted(set(left) | set(right)):
-            yield from _diff_value(
-                f"{key}.{sub}", left.get(sub), right.get(sub), rel_tol, abs_tol
-            )
+            yield from _diff_value(f"{key}.{sub}", left.get(sub), right.get(sub), rel_tol, abs_tol)
         return
     # bool is an int subclass — compare it exactly, never as a float
     if (
@@ -259,6 +259,27 @@ def reconcile_experiment(
         method_config_id = comparison.method.method_config_id
         computed = tables.list_computed_cutoffs(experiment.name, metric.name, method_config_id)
         cutoffs = [c for c in grid.cutoffs if c.end_ts in computed]
+        # A persisted cutoff the CURRENT grid no longer produces (the schedule
+        # was edited: end_date moved, cadence changed, max_looks lowered)
+        # cannot be reconciled — the incremental read needs a grid cutoff to
+        # load. Silently intersecting them away would let a clean exit-0
+        # report hide a whole unexamined chunk of the series, which is exactly
+        # the "whole series, not just the latest cutoff" promise this command
+        # exists to keep (an R1 review finding).
+        off_grid = sorted(computed - {c.end_ts for c in grid.cutoffs})
+        if off_grid:
+            outcome.skipped.append(
+                MetricSkip(
+                    metric=metric.name,
+                    reason=(
+                        f"{len(off_grid)} computed cutoff(s) are NOT on the current grid "
+                        f"(earliest {off_grid[0]:%Y-%m-%d %H:%M:%S}, latest "
+                        f"{off_grid[-1]:%Y-%m-%d %H:%M:%S}) — the schedule changed since "
+                        "they were computed, so they cannot be reconciled; `abk clean` "
+                        "prunes a series the config no longer produces"
+                    ),
+                )
+            )
         if not cutoffs:
             outcome.skipped.append(
                 MetricSkip(
@@ -324,6 +345,18 @@ def reconcile_experiment(
                 diffs = compare_results(
                     pair_outcome.result, other.result, rel_tol=rel_tol, abs_tol=abs_tol
                 )
+                # A pair demoted on BOTH sides carries no TestResult, so the
+                # field diff is vacuously empty — but the demoted UNIT COUNTS
+                # are still observable and must agree, otherwise a divergence
+                # hiding under the small-sample floor reads as a match (an R1
+                # review finding).
+                if pair_outcome.result is None and other.result is None:
+                    for label, left, right in (
+                        ("size_1", pair_outcome.size_1, other.size_1),
+                        ("size_2", pair_outcome.size_2, other.size_2),
+                    ):
+                        if left != right:
+                            diffs.append(FieldDiff(label, left, right))
                 outcome.verdicts.append(
                     PairVerdict(
                         metric=metric.name,
