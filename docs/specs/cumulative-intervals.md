@@ -87,9 +87,51 @@ general rule.
   lifetime, late/backfill events, stratum-membership changes, covariate updates,
   reproducible seeds — so it is premature before the win is proven.
 
-`abk run --profile` emits rows-scanned / bytes-read / wall-time per stage so the
-v2 trigger is **data-driven** (a concrete p95 cost/latency threshold over E·M·D),
-not guessed.
+`abk run --cost-report` emits rows-scanned / bytes-read / wall-time per stage so
+the trigger is **data-driven**, not guessed. (The flag is `--cost-report`, not
+`--profile`: every `abk` command already uses `--profile` for the DB-connection
+profile — m9 §8(3).)
+
+### 4.1 As built (M9) and the default-flip criteria
+
+M9 delivered the v1 strategy end to end:
+
+| Piece | Where |
+|---|---|
+| STATE writer — per-(unit, day) moments | `pipeline/state.py` (m9 WP3), always on |
+| Additive reader | `compute/incremental_backend.py` (m9 WP4), **opt-in** |
+| Reconciliation gate | `abk verify-incremental` → `compute/reconcile.py` (m9 WP5) |
+| Cost evidence | `abk run --cost-report` (m9 WP5) |
+
+**Measured shape** (the executable gate, `tests/compute/test_incremental_perf.py`):
+with N units over D days at daily cadence, the recompute path scans
+`N·D(D+1)/2` fact rows across the series (quadratic — every cutoff re-reads the
+whole window) while the incremental path scans `N·D` (linear — each closed day
+is rendered exactly once, by the STATE stage) and its COMPUTE stage touches the
+fact table not at all. A sub-day grid adds at most the current day's tail
+(§6.4).
+
+**`incremental_reads` stays `false` by default.** Flip it per project only
+when all of the following hold — this is the concrete threshold §4 asks for,
+not a vibe:
+
+1. **Three consecutive clean `abk verify-incremental` runs** over the
+   project's live experiments, each reporting zero divergences AND zero
+   `unverified` cutoffs (an unverified cutoff means the incremental path
+   never ran, so it proves nothing).
+2. **A measured win**: `abk run --cost-report` shows the COMPUTE stage's
+   fact-table cost dropping by a factor worth the STATE stage's write cost
+   for that project's D — at D ≲ 5 days the two are within noise, and the
+   saving grows linearly with D thereafter.
+3. **`data_lag` is honest**: it covers the project's real ingestion delay.
+   The incremental path freezes an out-of-SLA backfill in day state (the
+   documented m9 WP4 limitation, the m8 copy-mode precedent), and
+   `verify-incremental` is what detects that drift after the fact —
+   `abk run --full-refresh --from/--to` re-materializes and heals it.
+
+A project that cannot satisfy (3) should stay on recompute: it self-heals
+late data prospectively, which is exactly what an unreliable ingestion SLA
+needs.
 
 ## 5. Compute must-fixes (from the quorum — blocking)
 

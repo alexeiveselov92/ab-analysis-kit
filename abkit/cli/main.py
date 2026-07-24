@@ -129,6 +129,16 @@ def init_claude(target_dir: str) -> None:
         "or directory; defaults to reports/<experiment>.html."
     ),
 )
+@click.option(
+    "--cost-report",
+    is_flag=True,
+    help=(
+        "Print per-stage warehouse cost (wall-time, queries, rows returned, "
+        "and rows scanned where the backend reports them) — the evidence for "
+        "turning compute.incremental_reads on. Unrelated to --profile, which "
+        "selects the DB connection."
+    ),
+)
 def run(
     select: tuple[str, ...],
     exclude: tuple[str, ...],
@@ -141,8 +151,9 @@ def run(
     force: bool,
     workers: int,
     report_path: str | None,
+    cost_report: bool,
 ) -> None:
-    """Run the pipeline: validate → plan → load → SRM → compute → persist."""
+    """Run the pipeline: validate → plan → load → SRM → state → compute → persist."""
     from abkit.cli.commands.run import run_run
 
     run_run(
@@ -157,6 +168,7 @@ def run(
         workers,
         report_path,
         resync_cohort=resync_cohort,
+        cost_report=cost_report,
     )
 
 
@@ -346,6 +358,39 @@ def plan(
     from abkit.cli.commands.plan import run_plan
 
     run_plan(select, metric, mde, power, alpha, baseline, arrival_rate, profile)
+
+
+@cli.command(name="verify-incremental")
+@click.option(
+    "--select",
+    "-s",
+    multiple=True,
+    help="Experiment selector — name, path glob, tag:<tag>, or * (repeatable; default all)",
+)
+@click.option("--metric", help="Verify only this metric (default: every eligible comparison)")
+@click.option(
+    "--rel-tol",
+    type=float,
+    default=None,
+    help="Relative tolerance for the per-field diff (default: 1e-9, the project's parity gate)",
+)
+@click.option("--profile", help="Profile name (default: profiles.yml default_profile)")
+def verify_incremental(
+    select: tuple[str, ...], metric: str | None, rel_tol: float | None, profile: str | None
+) -> None:
+    """Reconcile the incremental read path against full recompute.
+
+    The gate for `compute.incremental_reads`: for every already-computed cutoff
+    of every eligible comparison it loads the data BOTH ways and diffs the
+    numbers, so a state-accumulation drift that only shows up after many days
+    cannot hide. Read-only — no lock, no writes — and deliberately NOT part of
+    `abk run` (it costs more than the run it checks). Exits non-zero on any
+    divergence. Cutoffs where the incremental read fell back to recompute are
+    reported as UNVERIFIED, never as passing.
+    """
+    from abkit.cli.commands.verify_incremental import DEFAULT_REL_TOL, run_verify_incremental
+
+    run_verify_incremental(select, metric, DEFAULT_REL_TOL if rel_tol is None else rel_tol, profile)
 
 
 @cli.command(name="test-report")

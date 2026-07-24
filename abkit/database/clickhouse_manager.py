@@ -92,6 +92,7 @@ class ClickHouseDatabaseManager(BaseDatabaseManager):
             List of dictionaries where each dict represents a row
         """
         # Execute query with or without parameters
+        started = time.perf_counter()
         if params:
             result = self._client.execute(query, params, with_column_types=True)
         else:
@@ -101,6 +102,21 @@ class ClickHouseDatabaseManager(BaseDatabaseManager):
         # columns_with_types is list of tuples: (name, type)
         rows, columns_with_types = result
         column_names = [col[0] for col in columns_with_types]
+
+        # m9 WP5 cost accounting: ClickHouse is the one backend that reports
+        # what the ENGINE read (server-side progress), not just what came back
+        # — the number the O(D²)→O(D) claim is actually about. Defensive:
+        # driver internals are not a public contract, so a missing/renamed
+        # attribute degrades to rows-returned instead of breaking a query.
+        scanned_rows: int | None = None
+        scanned_bytes: int | None = None
+        progress = getattr(getattr(self._client, "last_query", None), "progress", None)
+        if progress is not None:
+            scanned_rows = int(getattr(progress, "rows", 0) or 0)
+            scanned_bytes = int(getattr(progress, "bytes", 0) or 0)
+        self._record_query(
+            len(rows), time.perf_counter() - started, scanned_rows, scanned_bytes
+        )
 
         # Convert to list of dicts
         return [dict(zip(column_names, row, strict=True)) for row in rows]

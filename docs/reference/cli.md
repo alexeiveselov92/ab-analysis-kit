@@ -120,6 +120,7 @@ abk run [--select <exp>]... [--exclude <sel>]... [--steps validate,plan,load,sta
 | `--resync-cohort` | off | Copy mode only: delete the persisted cohort and rebuild it from the experiment start through the incremental engine |
 | `--workers` | `1` | Worker threads across experiments (each gets its own DB connection) |
 | `--report [PATH]` | off | Emit a self-contained HTML readout per experiment |
+| `--cost-report` | off | Print per-stage warehouse cost (wall-time, queries, rows returned, rows scanned where the backend reports them) — the evidence for turning `compute.incremental_reads` on. Unrelated to `--profile`. |
 | `--force` | off | Take over a held lock (use with care) |
 | `--profile` | `profiles.yml` `default_profile` | Connection profile to use |
 
@@ -327,7 +328,7 @@ abk clean [--select <exp>]... [--orphaned-experiments] [--execute] [--yes] [--pr
 | `--yes` | off | Skip the per-experiment purge confirmation |
 | `--profile` | `default_profile` | Connection profile to use |
 
-Two modes:
+Two modes (plus one always-on sweep):
 
 - **Drift mode** (`abk clean --select <exp>`): for each still-existing experiment,
   deletes `_ab_results` rows whose `method_config_id` the current YAML no longer
@@ -339,9 +340,55 @@ Two modes:
 - **GC mode** (`abk clean --orphaned-experiments`): purges all internal rows for
   experiment names present in the DB but no longer defined by any YAML. It asks for
   confirmation per experiment on `--execute` unless `--yes` is passed.
+- **State sweep** (runs alongside drift mode, no flag): drops `_ab_unit_state`
+  series no live `(experiment, metric)` pair claims — a removed comparison, a
+  renamed metric, a deleted experiment, or a comparison that stopped being
+  state-eligible. A normal `abk run` already drops series superseded by an edit to
+  a metric it still materializes; only this sweep can reach the rest. It is
+  deliberately **not** narrowed by `--select`: state rows are keyed by
+  `(source_table, column_set_id)`, not by experiment, so pruning under a narrow
+  selection could delete another experiment's live series.
 
 **Exit behavior:** prints `DRY RUN` and changes nothing unless `--execute` is given;
 exits non-zero on a database error.
+
+## `abk verify-incremental`
+
+Reconcile the incremental read path against full recompute — the gate for turning
+`compute.incremental_reads` on.
+
+```bash
+abk verify-incremental [--select <exp>]... [--metric <m>] [--rel-tol <x>] [--profile NAME]
+```
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--select`, `-s` | all experiments | Experiment selector (repeatable) |
+| `--metric` | every eligible comparison | Verify only this metric |
+| `--rel-tol` | `1e-9` | Relative tolerance for the per-field diff |
+| `--profile` | `default_profile` | Connection profile to use |
+
+For **every already-computed cutoff** of every state-eligible comparison it loads
+the data both ways — `_ab_unit_state` day moments vs a full-window fact rescan —
+and diffs the resulting numbers field by field (effect, bounds, p-value, per-arm
+value/std/size, CUPED moments, diagnostics). Whole-series by design: a drift that
+only accumulates after many days cannot hide behind a green latest cutoff.
+
+Read-only and lock-free — it persists nothing, so it never races a running
+pipeline. It costs strictly more than the run it checks, so it is an explicit
+maintainer command and never part of `abk run`.
+
+Three outcomes per pair comparison:
+
+- **matched** — the two paths agree within `--rel-tol`.
+- **DIVERGED** — they disagree; the command prints the offending fields and
+  **exits non-zero**. The usual cause is an event backfilled into an
+  already-materialized day later than `data_lag` (the documented incremental-read
+  limitation); `abk run --full-refresh --from/--to` re-materializes and heals it.
+- **unverified** — the incremental read fell back to recompute for that cutoff
+  (a state gap), so both sides ran the same code and agreement proves nothing.
+  Reported separately, never counted as a pass. Run the `state` step so the
+  series covers those days, then verify again.
 
 ## `abk test-report`
 

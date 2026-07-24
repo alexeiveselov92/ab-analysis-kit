@@ -14,6 +14,40 @@ number change).
 ## [Unreleased]
 
 ### Added
+- **M9 WP5 — `abk verify-incremental`, `abk run --cost-report`, and the
+  state GC.** The reconciliation gate that makes turning
+  `compute.incremental_reads` on a data-driven decision: for every
+  already-computed cutoff of every state-eligible comparison,
+  `abk verify-incremental` loads the data through BOTH backends and diffs
+  the results field by field at rel-1e-9 (`--rel-tol` to tighten), reporting
+  per-cutoff and whole-series pass/fail and exiting non-zero on any
+  divergence. Whole-series by design — a drift that only accumulates over
+  many days cannot hide behind a green latest cutoff. Read-only and
+  lock-free (it persists nothing, so it never races a run), and deliberately
+  never part of `abk run`. **A fallback is not a pass**: a cutoff where the
+  incremental read fell back to recompute is reported as `unverified`, since
+  both sides then ran the same code and agreeing proves nothing. Both this
+  command and the driver build the reader through one
+  `build_incremental_backend` factory, so the command certifies exactly the
+  backend the pipeline runs.
+  `abk run --cost-report` prints per-stage warehouse cost — wall-time,
+  queries, rows returned, and rows *scanned* where the backend reports them
+  (ClickHouse does; PostgreSQL/MySQL print `n/a` rather than passing
+  rows-returned off as a scan count). The flag is `--cost-report`, never
+  `--profile`, which keeps its one meaning on every command.
+  `abk clean` gains a state sweep: `_ab_unit_state` series that no live
+  `(experiment, metric)` pair claims — a removed comparison, a renamed
+  metric, a deleted experiment, or a comparison that stopped being
+  state-eligible — are reported and (with `--execute`) dropped. It is
+  deliberately not narrowed by `--select`, since state rows are keyed by
+  `(source_table, column_set_id)`, not by experiment.
+  The milestone's **executable perf gate** ships with it: with N units over
+  D days the recompute path scans `N·D(D+1)/2` fact rows across the series
+  while the incremental path scans `N·D` and its COMPUTE stage touches the
+  fact table not at all — asserted with exact arithmetic, not wall-clock.
+  The concrete criteria for flipping the default are recorded in
+  `cumulative-intervals.md` §4.1. No `ALGORITHM_VERSION` bump; no
+  statistical number changed.
 - **M9 WP4 — `IncrementalBackend`: the opt-in additive read path.** With
   `compute.incremental_reads: true` (project-level; experiments override via
   their own `incremental_reads`; **default `false`** until the WP5

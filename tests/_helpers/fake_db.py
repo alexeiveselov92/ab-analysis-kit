@@ -240,6 +240,11 @@ class FakeDatabaseManager(BaseDatabaseManager):
                 else int(limit_raw)
             )
             result = result[: int(limit)]
+        # m9 WP5 cost accounting: the fake mirrors a SQL backend — it can
+        # honestly report rows RETURNED and wall-time, never engine scans
+        # (so `scan_stats` stays False and a report prints n/a, exactly like
+        # PostgreSQL/MySQL).
+        self._record_query(len(result), 0.0)
         return result
 
     def _project(

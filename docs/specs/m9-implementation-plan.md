@@ -861,6 +861,44 @@ default-flip criteria doc), `docs/specs/cli-and-dx.md`,
 
 **Session estimate:** 2 sessions.
 
+> **As-built note (2026-07-25, the WP5 session).** Shipped as specified —
+> `abk verify-incremental` over the new `compute/reconcile.py`, per-stage
+> cost counters behind `abk run --cost-report` (§8(3)'s decided name), the
+> `abk clean` state sweep, and the §7 executable perf gate. Disclosed
+> decisions:
+> (1) **A fallback is reported as UNVERIFIED, never as a pass.** When the
+> incremental read falls back for a cutoff, both sides run the same code and
+> agree trivially; counting that as verification would make a green report
+> meaningless exactly when the state series is broken. The reader gained an
+> undeduped `on_fallback` hook for the per-cutoff resolution this needs
+> (the user-facing warning stays deduped).
+> (2) **One construction path for the reader** — `build_incremental_backend`
+> (in `compute/incremental_backend.py`) is now what BOTH the driver and the
+> reconciler call, so the command that certifies the incremental path
+> certifies the backend the pipeline actually runs. This mirrors m8's
+> `build_cohort_backend` discipline and removed the driver's inline
+> closures.
+> (3) **Cost counters live on the manager, honestly split**: `queries`,
+> `rows` (returned) and `seconds` are universal; `scanned_rows`/
+> `scanned_bytes` come from ClickHouse's per-query progress and carry a
+> `scan_stats` flag so PostgreSQL/MySQL print `n/a` instead of passing
+> rows-returned off as a scan count. Counters are always collected (they are
+> ~free); the flag only decides whether the CLI prints them.
+> (4) **The perf gate measures fact rows SCANNED, not wall-clock** — the
+> quantity the O(D²)→O(D) claim is about — with exact arithmetic:
+> `N·D(D+1)/2` for recompute vs `N·D` for the incremental path, and zero
+> fact scans inside COMPUTE at daily cadence.
+> (5) **The reconciler is lock-free**: unlike `abk validate` (which writes
+> `_ab_aa_runs`), it persists nothing, so it must not serialize behind a
+> nightly run.
+> (6) The `abk clean` state sweep is deliberately **selection-independent**:
+> state rows are keyed by `(source_table, column_set_id)`, so pruning under
+> a narrow `--select` could delete another experiment's live series.
+> **The milestone's most valuable finding came from this WP before it even
+> landed**: pointed at the scaffolded example, `verify-incremental`
+> immediately reported a real divergence and exposed the non-additive-role
+> P0 recorded as deviation (7) in WP4's note above.
+
 ---
 
 ## WP6 — Exit gate: e2e, twice-run idempotence, ≥2 adversarial review rounds, three-way docs sync
@@ -991,16 +1029,30 @@ a performance claim with no test does not hold.
    — `MetricConfig` has no declared `source_table` today and adding one is
    its own design question. **Needs explicit maintainer sign-off** on
    deferring true §5.3 sharing to a follow-up.
+   **DECIDED (2026-07-22, maintainer): no cross-metric sharing** — "metrics
+   are separate entities and wiring them into one cache is a hassle". The
+   v1 identity stays per-(experiment, metric); WP3 additionally scoped it by
+   experiment and cohort config (see its as-built note), which narrows §5.3
+   further and for the same reason: the day render is cohort-filtered.
 2. **Stratified metrics stay out of scope for the incremental engine in this
    milestone** (no stratum dimension in `_ab_unit_state`'s key, and adding
    one multiplies cardinality per §5.3's own concern) — confirm this is
    acceptable (stratified stays full-window recompute forever, or is a named
    follow-up milestone).
+   **DECIDED (2026-07-22, maintainer): not a real choice, so not a
+   deferral.** Stratification in abkit exists ONLY in the bootstrap family
+   (`STRATIFY_PARAM` is declared in `bootstrap.py`; no parametric method
+   takes strata), and bootstrap cannot be served additively at all — a
+   percentile CI needs the raw per-unit values, not moments. So "stratified
+   stays on recompute" is implied by "bootstrap stays on recompute" and
+   costs the incremental path nothing. This argument supersedes the plan's
+   weaker cardinality framing.
 3. **The `--profile` naming collision** (cumulative-intervals.md §4's
    proposed observability flag vs. the existing DB-connection `--profile` on
    every `abk` command) needs a naming decision before WP5 starts.
-   **Recommendation: `--cost-report`** (or `--explain`/`--diagnostics`) —
-   pick one before WP5, not during it.
+   **DECIDED (2026-07-22, maintainer): `--cost-report`.** `--profile` keeps
+   its one meaning (the DB-connection profile selector) on every command;
+   the new observability flag on `abk run` is `--cost-report`.
 4. **Should WP3's STATE write step run standalone via `--steps state` (like
    today's `--steps load,compute`), or always bundle with LOAD?** Affects
    the `PipelineStep` enum's public CLI surface. The plan leans toward
@@ -1022,10 +1074,15 @@ a performance claim with no test does not hold.
    default-flip" framing of WP5), with per-metric recorded as a named
    follow-up if profiling shows heterogeneous metric costs within one
    experiment.
+   **DECIDED (2026-07-22, maintainer): per-experiment**, as recommended.
+   Shipped in WP4 as `project.compute.incremental_reads` (the staged
+   default-flip surface WP5 needs) plus an experiment-level
+   `incremental_reads: bool | None` override that wins when set. Per-metric
+   granularity stays a named follow-up, unblocked by WP5's cost counters
+   if they show heterogeneous per-metric cost inside one experiment.
 
 Per the source plan's "Перед стартом" line: settle (3) and (5) before WP5
-starts and **(4) before WP3 starts** (WP3 step 7 is written conditional on
-it — settled above, `--steps state` shipped); (1) and (2) can be recorded
-as open decisions folded into the WP6 docs sync rather than blocking
-earlier WPs, since they narrow rather than change WP3/WP4's shipped
-behavior.
+starts and **(4) before WP3 starts** — all four are now DECIDED above, as
+are (1) and (2), so no open question blocks WP5 or WP6. §8 is closed; the
+WP6 docs sync carries the decisions into `cumulative-intervals.md` §5.3
+(the recorded scoping narrowing) rather than re-litigating them.

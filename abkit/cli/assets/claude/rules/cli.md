@@ -17,6 +17,7 @@ task = one `abk` invocation), so a broken run fails the job instead of exiting 0
 | `abk plan --select <exp>` | Read-only pre-launch sizing: required-N / achievable-MDE / power (see `plan.md`) |
 | `abk unlock --select <exp>` | Clear a stuck pipeline / validate lock |
 | `abk clean --select <exp>` | Prune internal rows that no longer match the config |
+| `abk verify-incremental --select <exp>` | Reconcile the incremental read path against full recompute across the whole computed series — the gate for `compute.incremental_reads`; read-only, no lock, non-zero exit on any divergence |
 | `abk test-report <exp>` | Send a **mock** WIN readout through the configured notification channels — a connectivity smoke test (no lock, no warehouse read); `--channel <name>` (repeatable) / `--profile`; non-zero exit if any channel fails. See `project.md` `notification_channels` |
 | `abk --version` | Show the installed abkit version |
 
@@ -105,6 +106,9 @@ are (re)computed, so re-running is idempotent.
   experiment (best-effort — never fails the run). Tri-state: bare `--report` →
   `reports/<exp>.html`; a directory → `<dir>/<exp>.html`; a `.html` path → that
   file. Reads persisted rows, so even a load-only run can produce one.
+- `--cost-report` — print per-stage warehouse cost (wall-time, queries, rows returned,
+  rows scanned where the backend reports them). The evidence for turning
+  `compute.incremental_reads` on; unrelated to `--profile` (the DB connection).
 - `--force` — take over a held lock (prefer `abk unlock`; risky with concurrent runs).
 - `--profile` — override `profiles.yml`'s `default_profile` (e.g. run against staging).
 
@@ -221,6 +225,32 @@ default** — pass `--execute` to actually delete.
 - **GC mode** — `abk clean --orphaned-experiments`: purges all internal rows for
   experiment names present in the DB but no longer defined by any YAML (renamed or
   deleted experiments). Asks for confirmation on `--execute` unless `--yes`.
+- **State sweep** — runs alongside drift mode, no flag: drops `_ab_unit_state`
+  series no live `(experiment, metric)` pair claims (a removed comparison, a renamed
+  metric, a deleted experiment, or a comparison that stopped being state-eligible).
+  A normal run only drops series superseded by an edit to a metric it still
+  materializes. Deliberately NOT narrowed by `--select` — state rows are keyed by
+  `(source_table, column_set_id)`, not by experiment.
+
+## `abk verify-incremental`
+
+```bash
+abk verify-incremental [--select <exp>] [--metric <m>] [--rel-tol 1e-9] [--profile NAME]
+```
+
+The gate before turning `compute.incremental_reads` on (and the drift detector
+after). For EVERY already-computed cutoff of every state-eligible comparison it
+loads the data both ways — `_ab_unit_state` day moments vs a full-window fact
+rescan — and diffs the numbers field by field. Whole-series by design: a drift
+that accumulates over many days cannot hide behind a green latest cutoff.
+
+Read-only and lock-free; never part of `abk run` (it costs more than the run it
+checks). Outcomes: **matched** (agree within `--rel-tol`), **DIVERGED** (prints
+the offending fields, exits non-zero — usually an event backfilled into an
+already-materialized day later than `data_lag`; heal with `abk run --full-refresh
+--from/--to`), and **unverified** (the incremental read fell back to recompute for
+that cutoff, so both sides ran the same code — reported separately, never counted
+as a pass).
 
 ## Common workflows
 

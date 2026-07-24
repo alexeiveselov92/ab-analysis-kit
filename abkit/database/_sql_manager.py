@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import math
 from datetime import datetime, timedelta, timezone
+from time import perf_counter
 from typing import Any
 
 import numpy as np
@@ -210,6 +211,7 @@ class SQLDatabaseManager(BaseDatabaseManager):
         self, query: str, params: dict[str, Any] | None = None
     ) -> list[dict[str, Any]]:
         """Execute a query and return rows as dicts (commits the transaction)."""
+        started = perf_counter()
         try:
             with self._conn.cursor() as cur:
                 cur.execute(query, params if params else None)
@@ -219,6 +221,11 @@ class SQLDatabaseManager(BaseDatabaseManager):
                     columns = [desc[0] for desc in cur.description]
                     rows = [dict(zip(columns, row, strict=True)) for row in cur.fetchall()]
             self._conn.commit()
+            # Rows RETURNED only: neither DB-API driver reports the engine's
+            # scanned-row count without a second round trip (EXPLAIN ANALYZE /
+            # Handler_read status), so the cost report says "n/a" for scans on
+            # these backends rather than passing this off as one (m9 WP5).
+            self._record_query(len(rows), perf_counter() - started)
             return rows
         except Exception:
             self._conn.rollback()

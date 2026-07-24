@@ -54,7 +54,9 @@ abkit/
   compute/               # ✅ M2: recompute_backend (v1 full-window strategy;
                          #   ✅ M9 WP3: load_window — the STATE day render);
                          #   ✅ M9 WP4: incremental_backend (the opt-in
-                         #   additive read path over _ab_unit_state)
+                         #   additive read path over _ab_unit_state);
+                         #   ✅ M9 WP5: reconcile (the verify-incremental
+                         #   cross-backend diff engine)
   pipeline/              # ✅ M2: driver (lock→load→SRM→plan→compute→persist),
                          #   analyze, enrich, _types; worker pool;
                          #   ✅ M9 WP3: state (the write-only STATE stage)
@@ -107,9 +109,8 @@ tests/
                          #   seed_null_events — the exact-null A/A fixture)
 ```
 
-Not yet present: `compute/reconcile` (`abk verify-incremental`, m9 WP5).
-M3's WP9 (PG/MySQL testcontainers + the two-process lock race) is deferred to a
-Docker-equipped environment.
+Every module in the map above exists; M3's WP9 (PG/MySQL testcontainers + the
+two-process lock race) is deferred to a Docker-equipped environment.
 
 ### M2 pipeline facts an assistant must know
 
@@ -356,6 +357,25 @@ Docker-equipped environment.
   into an already-materialized day LATER than `data_lag` freezes in day
   state — `data_lag` is the declared SLA; `--full-refresh` re-materializes
   + recomputes; WP5's `verify-incremental` is the drift detector.
+- **WP5 (shipped): the reconciliation gate + cost observability.**
+  `abk verify-incremental` (`compute/reconcile.py`) loads every
+  already-computed cutoff through BOTH backends and diffs the `TestResult`
+  dicts at rel-1e-9 — whole-series, read-only, lock-free, non-zero exit on
+  divergence, and **never part of `abk run`**. A cutoff the incremental
+  read fell back on is reported `unverified`, NOT as a pass (both sides
+  ran the same code) — the reader's undeduped `on_fallback` hook gives the
+  per-cutoff resolution. Both the driver and the reconciler construct the
+  reader through the ONE `build_incremental_backend` factory, so the gate
+  certifies the backend the pipeline runs. `abk run --cost-report` prints
+  per-stage cost from counters on the manager (`QueryCost`): queries/rows
+  returned/seconds everywhere, rows+bytes SCANNED only where the backend
+  reports them (ClickHouse progress; PG/MySQL print `n/a`). `abk clean`
+  sweeps `_ab_unit_state` series no live `(experiment, metric)` claims —
+  selection-INDEPENDENT, since state rows are not experiment-keyed. The
+  §7 perf gate (`tests/compute/test_incremental_perf.py`) asserts fact
+  rows scanned exactly: `N·D(D+1)/2` recompute vs `N·D` incremental, zero
+  inside COMPUTE at daily cadence. Default-flip criteria:
+  [cumulative-intervals.md §4.1](../../docs/specs/cumulative-intervals.md).
 
 ## The stats core (`abkit.stats`) — the implemented system
 
