@@ -9,6 +9,7 @@ like a real backend — no Docker required. The real-ClickHouse variant lives in
 
 from __future__ import annotations
 
+import functools
 import re
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -48,6 +49,20 @@ def _experiment_rows():
         yield user_idx, event_time, signed_up, gross
 
 
+@functools.lru_cache(maxsize=1)
+def _seed_rows() -> tuple[tuple[int, datetime, int, float], ...]:
+    """The whole mirrored seed table, built ONCE per process.
+
+    Every metric query used to re-materialize both generators — 2 × 600 × 14
+    rows with per-row datetime arithmetic — and one ``abk run`` issues ~30
+    metric queries, so a single scaffolded run cost ~50 s of pure fixture
+    overhead (measured; it dominated the entire CI unit-test wall-clock).
+    The rows are immutable and identical for every query, so they are
+    generated once and filtered per window.
+    """
+    return (*_experiment_rows(), *_preperiod_rows())
+
+
 def _preperiod_rows():
     """Mirror of the pre-period INSERT (no lift, no signups, by construction)."""
     for number in range(USERS * DAYS):
@@ -79,10 +94,7 @@ class SeedMirrorWarehouse(FakeDatabaseManager):
             wants_signups = "signed_up" in flat
 
             per_unit: dict[int, dict[str, float]] = {}
-            for user_idx, event_time, signed_up, gross in (
-                *_experiment_rows(),
-                *_preperiod_rows(),
-            ):
+            for user_idx, event_time, signed_up, gross in _seed_rows():
                 if not (w_start <= event_time < w_end):
                     continue
                 if exposure_filter and event_time < EXPOSURE_TS:
