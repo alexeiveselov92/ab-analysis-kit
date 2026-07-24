@@ -60,8 +60,15 @@ number change).
   Eligible: closed-form (unseeded) comparisons over non-stratified
   sample/fraction/ratio metrics with no explicit `columns.covariate` role
   (a snapshot covariate is not additive across day renders — such metrics
-  stay on full recompute) and whose SQL does not reference `ab_cov_*`;
-  bootstrap-only metrics never pay the write. The per-day render goes
+  stay on full recompute), whose SQL does not reference `ab_cov_*`, and
+  **whose every summed role column comes from a recognisably additive
+  aggregate** (`sum`/`count`, optionally `…If`): the reader sums per-day
+  rows, so `max(...)` or a literal trial count inflates with the number of
+  active days — the scaffolded `example_signup_cr` (`max(signed_up)`,
+  `1 AS visits`) is exactly such a metric and now stays on full recompute.
+  Recognition is a positive allowlist, so an exotic or unparseable
+  projection is treated as non-additive (a missed optimisation, never a
+  wrong number). Bootstrap-only metrics never pay the write. The per-day render goes
   through the SAME M8 `build_cohort_backend` factory as every other cohort
   reader (never a hand-rolled `_ab_exposures` join — both cohort modes are
   parity-tested). The state series identity is

@@ -21,7 +21,14 @@ Eligibility (per metric, within one experiment):
   per-unit snapshot, which is NOT additive across day renders: per-day
   ``sum_cov`` rows would inflate by the unit's active-day count once
   summed. Additivity cannot be verified from config, so such metrics stay
-  on full-window recompute.
+  on full-window recompute;
+- **every summed role column comes from a recognisably additive aggregate**
+  (``sum``/``count``, optionally ``…If``). The same non-additivity hazard
+  applies to the ordinary roles, not just the covariate: the scaffolded
+  ``example_signup_cr`` projects ``max(signed_up)`` and a literal
+  ``1 AS visits``, both of which inflate when eleven daily renders are
+  summed. Recognition is a positive allowlist, so an unparseable or exotic
+  projection stays on recompute rather than becoming silently wrong.
 
 Contiguity invariant (the WP4 gap-detection contract): days advance strictly
 in order and a failed day TRUNCATES the series from that day before the run
@@ -36,6 +43,7 @@ partially-written or stale day the future reader would trust.
 from __future__ import annotations
 
 import hashlib
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -160,6 +168,44 @@ def state_series_key(
     return source_id, series_id
 
 
+#: aggregates whose per-day results SUM to the whole-window result. The list is
+#: a positive allowlist on purpose: an unrecognised projection makes a metric
+#: INELIGIBLE (a missed optimisation), never eligible-and-wrong.
+_ADDITIVE_AGGREGATES = ("sum", "sumif", "count", "countif")
+
+#: ``<additive-aggregate>( … ) AS <role column>`` — one level of nesting so
+#: ``sum(if(x, 1, 0)) AS c`` still reads as additive.
+_ADDITIVE_PROJECTION = r"(?<![\w.])(?:{aggs})\s*\((?:[^()]|\([^()]*\))*\)\s+AS\s+{col}(?![\w])"
+
+
+def _role_projections_are_additive(metric: MetricConfig, metric_sql: str) -> bool:
+    """Does every summed role column come from an additive aggregate?
+
+    The STATE stage stores one row per (unit, DAY) and the reader SUMS those
+    days, so a role column that is not additive across days is silently
+    inflated — the project's own scaffolded fraction metric proves the
+    hazard: ``max(signed_up) AS signed_up`` and ``1 AS visits`` both satisfy
+    the one-row-per-unit contract, yet summing eleven daily renders gives
+    eleven trials where the window has one (found by
+    ``abk verify-incremental``, m9 WP5).
+
+    Additivity cannot be *proven* from config, so this asks the conservative
+    question instead — can we positively RECOGNISE an additive projection for
+    each role column? — and refuses everything else. The same reasoning WP3
+    already applied to the explicit covariate role, generalised to all of
+    them (the R2 lesson, widened).
+    """
+    for role, column in metric.columns.role_map().items():
+        if role in ("variant", "stratum"):
+            continue
+        pattern = _ADDITIVE_PROJECTION.format(
+            aggs="|".join(_ADDITIVE_AGGREGATES), col=re.escape(column)
+        )
+        if not re.search(pattern, metric_sql, flags=re.IGNORECASE | re.DOTALL):
+            return False
+    return True
+
+
 def comparison_state_eligible(
     comparison: ComparisonConfig, metric: MetricConfig, metric_sql: str
 ) -> bool:
@@ -175,6 +221,7 @@ def comparison_state_eligible(
         and metric.columns.stratum is None
         and metric.columns.covariate is None
         and "ab_cov_" not in metric_sql
+        and _role_projections_are_additive(metric, metric_sql)
     )
 
 

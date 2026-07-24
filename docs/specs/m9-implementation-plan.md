@@ -740,6 +740,23 @@ construction from reconstructed per-unit arrays), new `tests/compute/`.
 > run lock), one aggregation per closed-day boundary instead of per look.
 > (6) Fallback warnings dedupe per `(metric, reason-kind)` so a benign gap
 > disclosure cannot swallow a later non-finite-tail signal.
+> (7) **Eligibility additionally requires recognisably ADDITIVE role
+> projections** — found while building WP5's `verify-incremental`, which
+> immediately reported a real divergence on the project's own scaffolded
+> example: `example_signup_cr` projects `max(signed_up)` and a literal
+> `1 AS visits`, so summing eleven daily state rows gave `size_1 = 3300`
+> where the window has 300 (and a value 11× too small). The one-row-per-unit
+> metric contract does not imply day-additivity, and WP3's covariate-only
+> exclusion was too narrow: the same hazard applies to `value`, `count`,
+> `nobs`, `numerator`, `denominator`. `comparison_state_eligible` now asks
+> the conservative question — can an additive aggregate (`sum`/`count`,
+> optionally `…If`, one nesting level) be POSITIVELY recognised for every
+> summed role column? — and refuses everything else, so an unparseable
+> projection costs an optimisation, never correctness. Pinned by
+> `TestEligibility::test_non_additive_role_projections_are_excluded` and an
+> 8-case allowlist matrix. This is the milestone's strongest evidence that
+> the WP5 gate earns its keep: it caught a P0 in shipped WP3/WP4 behaviour
+> on its first real run.
 > **Adversarial review R1** (5 sonnet lenses → 2 skeptics per finding with
 > mandatory repro): 4 raised → 4 confirmed (all skeptic-reproduced) → 3
 > fixed in-session (the stale LOAD-snapshot arm map; the per-look state

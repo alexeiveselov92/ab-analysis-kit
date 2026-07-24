@@ -431,6 +431,59 @@ class TestEligibility:
         experiment = make_experiment("exp_strat", "arpu", T_TEST)
         assert state_eligible_metrics(experiment, {"arpu": stratified}, None) == []
 
+    def test_non_additive_role_projections_are_excluded(self):
+        """A metric whose role columns are not additive across days must never
+        materialize state: the reader SUMS days, so ``max(...)`` and a literal
+        trial count inflate. This is the project's OWN scaffolded fraction
+        metric (`example_signup_cr`), caught by `abk verify-incremental`."""
+        scaffolded_shape = MetricConfig.model_validate(
+            {
+                "name": "signup_cr",
+                "type": "fraction",
+                "columns": {"variant": "variant", "count": "signed_up", "nobs": "visits"},
+                "query": (
+                    "{% import 'abkit_assignment.jinja' as ab %}\n"
+                    "SELECT {{ ab.variant_col() }} AS variant, user_id, "
+                    "max(signed_up) AS signed_up, 1 AS visits "
+                    "FROM {{ data_database }}.events {{ ab.exposed_units() }} "
+                    "GROUP BY variant, user_id"
+                ),
+            }
+        )
+        experiment = make_experiment("exp_nonadd", "signup_cr", {"name": "z-test"})
+        assert state_eligible_metrics(experiment, {"signup_cr": scaffolded_shape}, None) == []
+
+    @pytest.mark.parametrize(
+        "projection,eligible",
+        [
+            ("sum(gross_usd) AS gross_usd", True),
+            ("sumIf(gross_usd, ok) AS gross_usd", True),
+            ("sum(if(x > 0, gross_usd, 0)) AS gross_usd", True),
+            ("max(gross_usd) AS gross_usd", False),
+            ("avg(gross_usd) AS gross_usd", False),
+            ("uniq(gross_usd) AS gross_usd", False),
+            ("any(gross_usd) AS gross_usd", False),
+            ("1 AS gross_usd", False),
+        ],
+    )
+    def test_additive_aggregate_allowlist(self, projection, eligible):
+        metric = MetricConfig.model_validate(
+            {
+                "name": "arpu",
+                "type": "sample",
+                "columns": {"variant": "variant", "value": "gross_usd"},
+                "query": (
+                    "{% import 'abkit_assignment.jinja' as ab %}\n"
+                    f"SELECT {{{{ ab.variant_col() }}}} AS variant, user_id, {projection} "
+                    "FROM {{ data_database }}.t {{ ab.exposed_units() }} "
+                    "GROUP BY variant, user_id"
+                ),
+            }
+        )
+        experiment = make_experiment("exp_allow", "arpu", T_TEST)
+        chosen = state_eligible_metrics(experiment, {"arpu": metric}, None)
+        assert bool(chosen) is eligible
+
     def test_explicit_covariate_metric_is_excluded(self):
         """R2 fix: a snapshot covariate is not day-additive — no state."""
         with_covariate = MetricConfig.model_validate(

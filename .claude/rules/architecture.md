@@ -301,7 +301,13 @@ Docker-equipped environment.
   a hand-rolled cohort join, both modes parity-tested) and replaces the
   moments via `replace_day_state`. Eligibility: closed-form (unseeded)
   comparison, non-stratified metric, no explicit `columns.covariate` role
-  (a snapshot covariate is not day-additive), SQL body free of `ab_cov_*`.
+  (a snapshot covariate is not day-additive), SQL body free of `ab_cov_*`,
+  and every summed role column produced by a recognisably ADDITIVE
+  aggregate (`sum`/`count`, optionally `…If`) — the reader sums per-day
+  rows, so `max(...)`/a literal trial count inflates by the active-day
+  count (the scaffolded `example_signup_cr` is exactly that shape; caught
+  by WP5's `verify-incremental`). The allowlist is positive: an
+  unrecognised projection stays on recompute.
   Identity: `source_table = "{experiment}/{metric}"`
   (`compute_state_source_id` — the §5.3 sharing ideal deliberately
   narrowed: the render is cohort-filtered, so cross-experiment sharing
