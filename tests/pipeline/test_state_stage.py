@@ -474,6 +474,9 @@ class TestEligibility:
             ("sum(gross_usd) OVER (PARTITION BY user_id) AS gross_usd", False),
             ("max(gross_usd) AS gross_usd -- sum(gross_usd) AS gross_usd", False),
             ("max(gross_usd) AS gross_usd, 'sum(g) AS gross_usd' AS note", False),
+            # R2: a multi-branch query binds later branches positionally,
+            # so an alias scan cannot see what they project at all.
+            ("sum(gross_usd) AS gross_usd FROM a UNION ALL SELECT variant, user_id, avg(x)", False),
         ],
     )
     def test_additive_aggregate_allowlist(self, projection, eligible):

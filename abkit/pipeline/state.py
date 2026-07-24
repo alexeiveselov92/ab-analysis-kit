@@ -184,6 +184,11 @@ _ADDITIVE_CALL = r"(?:{aggs})\s*\((?:[^()]|\([^()]*\))*\)"
 #: value at all.
 _NON_ADDITIVE_MODIFIERS = re.compile(r"\bdistinct\b|\bover\b", re.IGNORECASE)
 
+#: a multi-branch query binds later branches to the output columns POSITIONALLY
+#: — they need no alias at all, so an alias scan cannot see what they project
+#: (an R2 review finding). Refuse the whole shape rather than guess.
+_MULTI_BRANCH = re.compile(r"\bunion\b|\bintersect\b|\bexcept\b", re.IGNORECASE)
+
 #: ``--`` / ``/* */`` comments and single-quoted literals: text that looks like
 #: SQL but never executes. Stripped before any structural question is asked.
 _SQL_NOISE = re.compile(r"--[^\n]*|/\*.*?\*/|'(?:[^']|'')*'", re.DOTALL)
@@ -222,6 +227,8 @@ def _role_projections_are_additive(metric: MetricConfig, metric_sql: str) -> boo
     (cumulative-intervals.md §4.1) demand clean reconciliation runs first.
     """
     body = _strip_sql_noise(metric_sql)
+    if _MULTI_BRANCH.search(body):
+        return False
     call = _ADDITIVE_CALL.format(aggs="|".join(_ADDITIVE_AGGREGATES))
     for role, column in metric.columns.role_map().items():
         if role in ("variant", "stratum"):

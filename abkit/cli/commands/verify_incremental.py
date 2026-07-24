@@ -46,8 +46,10 @@ def run_verify_incremental(
 
     failed = 0
     diverged = 0
+    examined = 0
     for _, experiment in selected:
         outcome = _verify_one(experiment, context, profile, metric, rel_tol)
+        examined += len(outcome.verdicts)
         if outcome.error is not None:
             failed += 1
         elif not outcome.ok:
@@ -60,6 +62,18 @@ def run_verify_incremental(
         summary += f", {failed} FAILED"
     echo_done(summary)
     if diverged or failed:
+        raise SystemExit(1)
+    if examined == 0:
+        # Nothing was actually compared — a `--metric` that matches no
+        # comparison, a project with no eligible comparison, a series never
+        # run. Exiting 0 there reads as "verified" and is the one outcome
+        # this command must never fake (an R2 review finding).
+        echo_error(
+            "verify-incremental",
+            "nothing was verified — no eligible comparison had computed cutoffs"
+            + (f" matching --metric '{metric}'" if metric else "")
+            + ". Run `abk run` (with the `state` step) first, or widen the selection.",
+        )
         raise SystemExit(1)
 
 
