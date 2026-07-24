@@ -40,6 +40,7 @@ class TestHappyPath:
         assert config.timezone == "UTC"
         assert not config.is_sub_day()
         assert config.sequential.enabled is False
+        assert config.incremental_reads is None  # m9 WP4: None -> project default
         assert config.main_metrics() == ["signup_cr"]
 
     def test_cadence_segments_scalar_normalisation(self):

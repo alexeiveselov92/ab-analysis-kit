@@ -188,6 +188,38 @@ class _UnitStateMixin(_InternalTablesBase):
         row: dict[str, Any] = rows[0]
         return {m: float(row[m]) if row.get(m) is not None else 0.0 for m in MOMENT_COLUMNS}
 
+    def per_unit_cumulative(
+        self,
+        source_table: str,
+        column_set_id: str,
+        from_day: date,
+        to_day: date,
+    ) -> dict[str, dict[str, float]]:
+        """Per-unit cumulative moments over ``[from_day, to_day]`` (inclusive).
+
+        The v2 incremental read (m9 WP4): one cheap additive ``SUM`` per unit
+        over the closed-day state rows — no subtraction, no cancellation risk —
+        replacing the raw fact rescan. Deduped (FINAL on ClickHouse) so
+        replace-not-sum versions never double-count mid-merge (§5.2). Returns
+        ``{unit_id: {moment: float}}`` with every :data:`MOMENT_COLUMNS` key
+        present; unit ids are strings (the metric loader's convention — state
+        rows are written from its arrays).
+        """
+        full_table_name = self._manager.get_full_table_name(TABLE_UNIT_STATE, use_internal=True)
+        select = ", ".join(f"sum({m}) AS {m}" for m in MOMENT_COLUMNS)
+        rows = self._manager.execute_query(
+            f"SELECT unit_id, {select} FROM {full_table_name}{self._manager.final_modifier} "
+            "WHERE source_table = %(s)s AND column_set_id = %(c)s "
+            "AND day >= %(from)s AND day <= %(to)s GROUP BY unit_id",
+            {"s": source_table, "c": column_set_id, "from": from_day, "to": to_day},
+        )
+        return {
+            str(row["unit_id"]): {
+                m: float(row[m]) if row.get(m) is not None else 0.0 for m in MOMENT_COLUMNS
+            }
+            for row in rows
+        }
+
     def list_state_column_sets(self, source_table: str) -> list[str]:
         """Distinct ``column_set_id`` series stored under one source key.
 

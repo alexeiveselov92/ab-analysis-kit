@@ -328,6 +328,12 @@ class ExperimentConfig(BaseModel):
         default=None, description="Experiment-level significance (None -> project default)"
     )
     correction: CorrectionKind | None = Field(default=None, description="None -> project default")
+    incremental_reads: bool | None = Field(
+        default=None,
+        description="m9 WP4: override project.compute.incremental_reads for "
+        "this experiment (None -> project default). Never changes a persisted "
+        "number — only whether eligible comparisons read _ab_unit_state.",
+    )
     sequential: SequentialConfig = Field(default_factory=SequentialConfig)
     readout: ReadoutConfig = Field(default_factory=ReadoutConfig)
     comparisons: list[ComparisonConfig] = Field(...)

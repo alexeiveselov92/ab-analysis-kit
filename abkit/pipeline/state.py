@@ -44,7 +44,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from abkit.compute.recompute_backend import RecomputeBackend
-from abkit.config.experiment_config import ExperimentConfig
+from abkit.config.experiment_config import ComparisonConfig, ExperimentConfig
 from abkit.config.metric_config import MetricConfig
 from abkit.core.period_planner import Grid, tz_midnight_utc
 from abkit.database.internal_tables import (
@@ -160,6 +160,24 @@ def state_series_key(
     return source_id, series_id
 
 
+def comparison_state_eligible(
+    comparison: ComparisonConfig, metric: MetricConfig, metric_sql: str
+) -> bool:
+    """Is this (comparison, metric) on the additive-state contract?
+
+    THE eligibility predicate (module docstring) — shared by the WP3 writer
+    (below) and the WP4 read-path resolver in ``pipeline/driver.py``: a
+    comparison the writer never materializes must never route to the
+    incremental reader, and vice versa, so both sides ask one function.
+    """
+    return (
+        not _needs_seed(comparison.method.name)
+        and metric.columns.stratum is None
+        and metric.columns.covariate is None
+        and "ab_cov_" not in metric_sql
+    )
+
+
 def state_eligible_metrics(
     experiment: ExperimentConfig,
     metrics_by_name: dict[str, MetricConfig],
@@ -172,15 +190,9 @@ def state_eligible_metrics(
     """
     chosen: dict[str, tuple[MetricConfig, str]] = {}
     for comparison in experiment.comparisons:
-        if _needs_seed(comparison.method.name):
-            continue
         metric = metrics_by_name[comparison.metric]
-        if metric.columns.stratum is not None:
-            continue
-        if metric.columns.covariate is not None:
-            continue
         metric_sql = metric.get_query_text(project_root)
-        if "ab_cov_" in metric_sql:
+        if not comparison_state_eligible(comparison, metric, metric_sql):
             continue
         chosen[metric.name] = (metric, metric_sql)
     return list(chosen.values())

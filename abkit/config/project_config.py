@@ -146,6 +146,16 @@ class ProjectComputeConfig(BaseModel):
         description="v1: full-window recompute (the golden reference). "
         "'incremental' arrives in v2 behind verify-incremental.",
     )
+    incremental_reads: bool = Field(
+        default=False,
+        description="m9 WP4 opt-in: closed-form, non-stratified comparisons "
+        "read per-unit cumulative moments from _ab_unit_state instead of "
+        "re-scanning the fact table (any state gap falls back to recompute). "
+        "Distinct from `mode` (the reserved v2 backend selector): this flag "
+        "changes HOW a number is computed, never the number. Experiments "
+        "override via their own `incremental_reads`. Default false until "
+        "verify-incremental (m9 WP5) bakes.",
+    )
 
 
 class ProjectConfig(BaseModel):
