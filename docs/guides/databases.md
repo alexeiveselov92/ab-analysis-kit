@@ -187,8 +187,17 @@ The internal state, in the internal location (architecture §6):
 | `_ab_aa_runs` | `abk validate` A/A audit (FPR, power, peeking-FPR, verdict) |
 | `_ab_tasks` | run/validate locks + idempotency |
 
-You never create or migrate these by hand — abkit creates them on first run and
-prunes stale rows with `abk clean`.
+abkit creates them on first run and prunes stale rows with `abk clean`. Schema
+changes are additive by default: new columns are added in place, so you never
+migrate for a normal upgrade.
+
+The exception is a release that **removes or retypes** a column — abkit ships
+no migration tooling, so those are announced in the CHANGELOG as a
+breaking-change note with copy-pasteable SQL, and you run it once. `0.5.0` is
+such a release — it reshapes the window columns of `_ab_results` and
+`_ab_experiments`. Read its CHANGELOG entry before upgrading a live install:
+on ClickHouse a skipped recreate does not error, it writes wrong values into
+the leftover columns.
 
 ## Referencing your data location in SQL
 

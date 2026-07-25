@@ -35,11 +35,9 @@ RESULTS_CONTRACT_COLUMNS = [
     "method_config_id",
     "name_1",
     "name_2",
-    # window
+    # window (m10 WP3 dropped the derived start_date/end_date Dates)
     "start_ts",
     "end_ts",
-    "start_date",
-    "end_date",
     "window_seconds",
     "elapsed_days",
     # per-arm
@@ -113,11 +111,22 @@ class TestResultsContract:
         for col in ("size_1", "size_2", "srm_flag", "alpha"):
             assert not model.get_column(col).nullable, f"{col} must stay visible"
 
-    def test_end_ts_is_datetime_end_date_is_date(self):
+    def test_the_window_is_instants_only(self):
+        """m10 WP3: the derived Date columns are gone.
+
+        They were never read — not by the pipeline, the readout, explore, the
+        report or the shipped BI examples — and an exclusive `end_ts` plus the
+        experiment timezone reconstructs them exactly (`end_ts - 1µs`, read in
+        that zone). A `Date` column also cannot represent a sub-day cutoff
+        (first-class since M2), so it collapsed same-day looks onto one value
+        from the day it shipped.
+        """
         model = get_results_table_model()
         assert model.get_column("end_ts").type.startswith("DateTime64")
-        assert model.get_column("end_date").type == "Date"
+        assert model.get_column("start_ts").type.startswith("DateTime64")
         assert model.get_column("elapsed_days").type == "Float64"
+        assert model.get_column("start_date") is None
+        assert model.get_column("end_date") is None
 
 
 class TestExperimentsCatalogSchema:

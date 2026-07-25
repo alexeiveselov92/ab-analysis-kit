@@ -239,7 +239,7 @@ method_config_id = sha256( method_name              # registry name (NOT class n
   **all** bootstrap methods (stable per-day series identity); the param schema
   marks `seed` identity-excluded and rejects it for closed-form methods. Re-runs
   stay byte-stable via a deterministic per-row seed derived from
-  `(exp, metric, name_1, name_2, end_date, n_samples)` — see
+  `(exp, metric, name_1, name_2, end_ts, n_samples)` — see
   [statistics-changes.md](statistics-changes.md).
 - Editing any identity-bearing param orphans the prior series (new id);
   `abk clean` GCs it, and `run`/`explore` warn when an experiment has >1 `method_config_id`

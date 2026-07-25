@@ -130,9 +130,43 @@ stay visible — but inference (`pvalue`, `effect`, bounds, `reject`) is withhel
 |---|---|---|
 | `start_ts` | `DateTime64(3,'UTC')` | Window start (experiment start). |
 | `end_ts` | `DateTime64(3,'UTC')` | Cutoff — **exclusive** half-open edge, the canonical key. |
-| `start_date`, `end_date` | `Date` | Derived dates (legacy-identical at `cadence: 1d`). |
 | `window_seconds` | `Int64` | Window length in seconds. |
 | `elapsed_days` | `Float64` | Fractional elapsed days — the chart x-axis. |
+
+#### Deriving the calendar day a look covers
+
+The window is a pair of **instants**; there are no `start_date`/`end_date`
+columns (they were dropped in `0.5.0` — nothing read them). Group and order by
+`end_ts`, which is exact at every cadence including sub-day.
+
+When a dashboard genuinely wants a calendar day, derive it — but mind the two
+traps that make the naive form wrong. `end_ts` is **exclusive**, so a daily
+cutoff carries the *next* day's midnight; and it is stored in UTC, while the
+day a stakeholder means is a day in the **experiment's** timezone. Subtract one
+microsecond, then read in that timezone:
+
+| Backend | Column type | Expression |
+|---|---|---|
+| ClickHouse | `DateTime64(3,'UTC')` | `toDate(end_ts - toIntervalMicrosecond(1), 'Europe/Moscow')` |
+| PostgreSQL | `TIMESTAMP(3)` | `((end_ts - interval '1 microsecond') AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Moscow')::date` |
+| MySQL | `DATETIME(3)` | `DATE(CONVERT_TZ(end_ts - INTERVAL 1 MICROSECOND, '+00:00', 'Europe/Moscow'))` |
+
+Substitute the experiment's own `timezone`. Two backend notes: the PostgreSQL
+parentheses are load-bearing (the column is `timestamp without time zone`
+holding naive UTC, so the first `AT TIME ZONE` *interprets* it as UTC and the
+second *converts* it — and `::date` binds tighter than `AT TIME ZONE`, so the
+outer pair is required too); MySQL's named-zone `CONVERT_TZ` returns `NULL`
+unless the server's `mysql.time_zone%` tables are populated
+(`mysql_tzinfo_to_sql`), so use a fixed `'+03:00'`-style offset if they are not
+and the zone has no DST.
+
+`toDate(end_ts)` alone is wrong on both counts: a Moscow experiment's
+`2024-07-02 00:00 MSK` cutoff is stored as `2024-07-01 21:00 UTC` and would
+read as July 1 by luck, while a UTC experiment would read as July 2 — the day
+*after* the one it measures.
+
+`start_ts` needs no such care (it is inclusive), but the same timezone shift
+applies: `toDate(start_ts, '<experiment timezone>')`.
 
 ### Per-arm
 

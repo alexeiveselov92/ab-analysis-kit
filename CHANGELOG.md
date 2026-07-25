@@ -40,10 +40,50 @@ number change).
   `_ab_results.start_ts`, so a BI join lines up instead of differing by the
   timezone offset. A new `interval_anchor` `String` column records the knob
   below. `ensure_tables()` is create-if-not-exists-only and `ensure_columns()`
-  is ADD-only, so a **type change is not auto-migrated**: existing installs
-  must `DROP TABLE <internal>._ab_experiments` and re-run `abk run` (the table
-  is informational — the pipeline never reads it back for a decision, so
-  nothing is lost but the catalog row, which the next run rewrites).
+  is ADD-only, so a **type change is not auto-migrated** — see the combined
+  recreate step below, which covers this table and `_ab_results` together.
+- **BREAKING — M10 WP3: `_ab_results.start_date`/`end_date` are removed.** The
+  window is a pair of instants (`start_ts`/`end_ts`) and nothing read the two
+  derived `Date` columns — not the pipeline, the readout, explore, the HTML
+  report, or the shipped Grafana/SQL BI examples. They were also degenerate at
+  sub-day cadence — first-class since M2, and shipped in the *same* M2 bullet
+  as these columns — where every look on one day collapses onto one `end_date`.
+  **What a BI query does instead:** group and order by `end_ts`, which is exact
+  at every cadence. If you genuinely want the calendar day a look *covers*,
+  derive it — and keep both corrections, because dropping either moves the day:
+  `end_ts` is the **EXCLUSIVE** edge (a daily cutoff carries the *next* day's
+  midnight) and it is stored in **UTC** (not the experiment's timezone):
+
+      -- ClickHouse
+      toDate(end_ts - toIntervalMicrosecond(1), '<experiment timezone>')
+
+  `docs/reference/internal-tables.md` carries the PostgreSQL and MySQL forms
+  and worked examples; `tests/pipeline/test_pipeline.py::TestTimezoneDates`
+  executes the recipe against a real Moscow run and pins that it reproduces the
+  dropped columns to the day. No `ALGORITHM_VERSION` bump and no
+  `statistics-changes.md` entry — schema-only, zero numeric change.
+- **Upgrading: recreate both internal tables, once.** This release is where
+  **both** breaking schema changes of the 0.2.0→0.12.0 polish track land
+  deliberately, so there is one recreate step rather than a note per milestone.
+  `ensure_tables()` only ever creates what is missing and `ensure_columns()`
+  only ever ADDs, so neither change is auto-migrated. Before the first `abk run`
+  on `0.5.0`:
+
+      DROP TABLE <internal_schema>._ab_experiments;   -- renamed + retyped (WP1)
+      ALTER TABLE <internal_schema>._ab_results DROP COLUMN start_date;
+      ALTER TABLE <internal_schema>._ab_results DROP COLUMN end_date;
+
+  (Or drop `_ab_results` too and re-run — it rebuilds from the warehouse, at
+  the cost of recomputing the series.) **Do not skip the `_ab_results` step on
+  ClickHouse.** PostgreSQL and MySQL declare those columns `DATE NOT NULL`, so
+  an insert that omits them errors and you cannot miss it (MySQL under any
+  strict `sql_mode` — the default since 5.7; abkit does not set it); ClickHouse
+  instead fills an omitted column with its type default, so a stale table keeps
+  accepting writes and silently stamps **`1970-01-01`** into both columns — a
+  dashboard still grouping by `end_date` would collapse every look onto one
+  day rather than error. `_ab_experiments` is informational (the pipeline never
+  reads it back for a decision); nothing is lost but the catalog row, which the
+  next run rewrites.
 - **Materialized day state re-keys once.** `_ab_unit_state`'s series identity
   folds in the window fields by name, so this rename orphans every existing
   series; the next `abk run` re-materializes it and `abk clean` sweeps the

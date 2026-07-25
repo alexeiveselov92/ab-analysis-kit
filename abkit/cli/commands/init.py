@@ -372,10 +372,23 @@ experiment analysis (YAML + SQL) over your warehouse.
 
 4. Look at the numbers:
 
-       SELECT metric, end_date, effect, pvalue, left_bound, right_bound
+       SELECT metric, end_ts, effect, pvalue, left_bound, right_bound
        FROM abkit_internal._ab_results
        WHERE experiment = 'example_signup_test'
        ORDER BY metric, end_ts
+
+   `end_ts` is the **exclusive** right edge of the cumulative window, and it
+   is the canonical cutoff key — group and order by it. If you need the
+   calendar DAY a look covers, derive it from `end_ts` minus one microsecond
+   in the experiment's timezone; a bare `toDate(end_ts)` takes the UTC date of
+   an exclusive edge and misdates every non-UTC experiment by a day (the
+   example experiment's `timezone` is `UTC`; substitute your own). In
+   ClickHouse:
+
+       toDate(end_ts - toIntervalMicrosecond(1), 'UTC')
+
+   The PostgreSQL and MySQL forms — and the traps each one avoids — are in the
+   `_ab_results` reference: https://abkit.pipelab.dev/reference/internal-tables/
 
 ## Layout
 
