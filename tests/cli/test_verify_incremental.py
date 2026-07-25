@@ -69,9 +69,7 @@ class TestVerifyIncremental:
         FAIL through its own public surface — it proves the exit path, the
         red rendering and that the diff is really being evaluated (the
         engine-level test covers a real backfill drift)."""
-        result = runner.invoke(
-            cli, ["verify-incremental", "--select", EXP, "--rel-tol", "0"]
-        )
+        result = runner.invoke(cli, ["verify-incremental", "--select", EXP, "--rel-tol", "0"])
         # rel_tol=0 still passes on bit-identical values, so this asserts the
         # command runs clean rather than crashing on an extreme tolerance
         assert result.exit_code in (0, 1), result.output
@@ -138,7 +136,9 @@ class TestStateGarbageCollection:
         )
         experiment_path = Path("experiments") / f"{EXP}.yml"
         experiment_path.write_text(
-            experiment_path.read_text().replace(f"metric: {STATE_METRIC}", f"metric: {STATE_METRIC}2")
+            experiment_path.read_text().replace(
+                f"metric: {STATE_METRIC}", f"metric: {STATE_METRIC}2"
+            )
         )
 
         dry = runner.invoke(cli, ["clean"])

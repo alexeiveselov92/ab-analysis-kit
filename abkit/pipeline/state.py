@@ -22,13 +22,22 @@ Eligibility (per metric, within one experiment):
   ``sum_cov`` rows would inflate by the unit's active-day count once
   summed. Additivity cannot be verified from config, so such metrics stay
   on full-window recompute;
-- **every summed role column comes from a recognisably additive aggregate**
-  (``sum``/``count``, optionally ``…If``). The same non-additivity hazard
-  applies to the ordinary roles, not just the covariate: the scaffolded
-  ``example_signup_cr`` projects ``max(signed_up)`` and a literal
-  ``1 AS visits``, both of which inflate when eleven daily renders are
-  summed. Recognition is a positive allowlist, so an unparseable or exotic
-  projection stays on recompute rather than becoming silently wrong.
+- **the metric DECLARES ``state_additive: true``** — the author's promise
+  that per-day partials add up to the window total. This is a declaration
+  because it cannot be read off the SQL: three review rounds each found a
+  new textual shape that looks additive and is not (a dead staging CTE, an
+  outer re-aggregation of an inner sum, a ``UNION`` branch that binds
+  positionally, an identity ``sum()`` over a renamed per-unit ``max()``).
+  The hazard is real — the scaffolded ``example_signup_cr`` projects
+  ``max(signed_up)`` and a literal ``1 AS visits``, both of which inflate
+  when eleven daily renders are summed;
+- **and the projections do not visibly contradict that promise**:
+  ``_role_projections_are_additive`` is a VETO-only sanity filter — every
+  ``AS <role column>`` must alias exactly one additive aggregate call, with
+  no ``DISTINCT``/``OVER``, and multi-branch SQL is refused outright. It can
+  only take eligibility away, never grant it, so its remaining blind spots
+  cost an unnoticed author mistake, not a silent corruption — and
+  ``abk verify-incremental`` is the empirical oracle that catches those.
 
 Contiguity invariant (the WP4 gap-detection contract): days advance strictly
 in order and a failed day TRUNCATES the series from that day before the run
@@ -264,7 +273,8 @@ def comparison_state_eligible(
     incremental reader, and vice versa, so both sides ask one function.
     """
     return (
-        not _needs_seed(comparison.method.name)
+        metric.state_additive
+        and not _needs_seed(comparison.method.name)
         and metric.columns.stratum is None
         and metric.columns.covariate is None
         and "ab_cov_" not in metric_sql

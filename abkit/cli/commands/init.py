@@ -206,6 +206,9 @@ sql: |
       user_id,
       max(signed_up)          AS signed_up,   -- converted within the window?
       1                       AS visits       -- one trial per exposed unit
+  -- NOT day-additive (max() and a constant), hence no `state_additive: true`
+  -- above: summing per-day partials would count one trial PER ACTIVE DAY.
+  -- This metric is always computed over the whole window.
   FROM {{ data_database }}.example_signup_events
   {{ ab.exposed_units() }}
   GROUP BY variant, user_id
@@ -220,6 +223,12 @@ tags: [example]
 columns:
   variant: variant
   value: gross_usd
+# Every role column is a plain sum() over the window, so per-day partials add
+# up to the window total — that promise is what lets the `state` step
+# materialize this metric's day moments (and `compute.incremental_reads`
+# serve them). Leave it off for max()/avg()/uniq()/DISTINCT metrics,
+# constants and ratios of aggregates; `abk verify-incremental` checks it.
+state_additive: true
 sql: |
   {% import 'abkit_assignment.jinja' as ab %}
   -- CUPED needs no extra SQL: with covariate_lookback set on the method,

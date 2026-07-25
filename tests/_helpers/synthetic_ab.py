@@ -42,6 +42,7 @@ REVENUE = MetricConfig.model_validate(
         "name": "arpu",
         "type": "sample",
         "columns": {"variant": "variant", "value": "gross_usd"},
+        "state_additive": True,
         "query": _metric_sql("user_revenue", "sum(gross_usd) AS gross_usd"),
     }
 )
@@ -50,6 +51,7 @@ CONVERSION = MetricConfig.model_validate(
         "name": "conversion",
         "type": "fraction",
         "columns": {"variant": "variant", "count": "conversions", "nobs": "trials"},
+        "state_additive": True,
         "query": _metric_sql(
             "user_conversions", "sum(conversions) AS conversions, sum(trials) AS trials"
         ),
@@ -60,6 +62,7 @@ CTR = MetricConfig.model_validate(
         "name": "ctr",
         "type": "ratio",
         "columns": {"variant": "variant", "numerator": "clicks", "denominator": "views"},
+        "state_additive": True,
         "query": _metric_sql("user_engagement", "sum(clicks) AS clicks, sum(views) AS views"),
     }
 )

@@ -89,9 +89,7 @@ def _clean_state_series(
     metrics_by_name = context.metrics_by_name
     valid: dict[str, str] = {}
     for _, experiment in context.experiments:
-        for metric, metric_sql in state_eligible_metrics(
-            experiment, metrics_by_name, context.root
-        ):
+        for metric, metric_sql in state_eligible_metrics(experiment, metrics_by_name, context.root):
             source_id, series_id = state_series_key(experiment, metric, metric_sql, context.root)
             valid[source_id] = series_id
 

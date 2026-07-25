@@ -303,12 +303,14 @@ two-process lock race) is deferred to a Docker-equipped environment.
   moments via `replace_day_state`. Eligibility: closed-form (unseeded)
   comparison, non-stratified metric, no explicit `columns.covariate` role
   (a snapshot covariate is not day-additive), SQL body free of `ab_cov_*`,
-  and every summed role column produced by a recognisably ADDITIVE
-  aggregate (`sum`/`count`, optionally `…If`) — the reader sums per-day
-  rows, so `max(...)`/a literal trial count inflates by the active-day
-  count (the scaffolded `example_signup_cr` is exactly that shape; caught
-  by WP5's `verify-incremental`). The allowlist is positive: an
-  unrecognised projection stays on recompute.
+  and the metric DECLARING `state_additive: true` (m9 WP5) — additivity
+  cannot be read off SQL (a dead CTE, an outer re-aggregation, a UNION
+  branch, an identity `sum()` over a renamed `max()` all look additive), so
+  the author promises it and `_role_projections_are_additive` is a
+  VETO-ONLY filter that refuses visibly contradicting projections
+  (`max(...)`, a constant, `DISTINCT`, `OVER`, multi-branch SQL). The
+  scaffolded `example_signup_cr` is exactly the hazard shape — caught by
+  WP5's `verify-incremental`, which is the empirical oracle.
   Identity: `source_table = "{experiment}/{metric}"`
   (`compute_state_source_id` — the §5.3 sharing ideal deliberately
   narrowed: the render is cohort-filtered, so cross-experiment sharing

@@ -431,6 +431,47 @@ class TestEligibility:
         experiment = make_experiment("exp_strat", "arpu", T_TEST)
         assert state_eligible_metrics(experiment, {"arpu": stratified}, None) == []
 
+    def test_the_declaration_is_required(self):
+        """The promise is opt-in: a metric that never declares state_additive
+        materializes nothing, however additive its SQL looks. abkit cannot read
+        additivity off SQL — three review rounds each found a new shape that
+        looks additive and is not — so the author declares it."""
+        undeclared = MetricConfig.model_validate(
+            {
+                "name": "arpu",
+                "type": "sample",
+                "columns": {"variant": "variant", "value": "gross_usd"},
+                "query": REVENUE.query,
+            }
+        )
+        assert undeclared.state_additive is False  # the default
+        experiment = make_experiment("exp_undeclared", "arpu", T_TEST)
+        assert state_eligible_metrics(experiment, {"arpu": undeclared}, None) == []
+
+        declared = undeclared.model_copy(update={"state_additive": True})
+        assert state_eligible_metrics(experiment, {"arpu": declared}, None)
+
+    def test_declaring_it_cannot_override_a_visibly_non_additive_projection(self):
+        """The textual filter is VETO-only: declaring the promise over
+        `max(...)` still refuses, so an author's mistake is caught cheaply."""
+        contradictory = MetricConfig.model_validate(
+            {
+                "name": "arpu",
+                "type": "sample",
+                "state_additive": True,
+                "columns": {"variant": "variant", "value": "gross_usd"},
+                "query": (
+                    "{% import 'abkit_assignment.jinja' as ab %}\n"
+                    "SELECT {{ ab.variant_col() }} AS variant, user_id, "
+                    "max(gross_usd) AS gross_usd "
+                    "FROM {{ data_database }}.t {{ ab.exposed_units() }} "
+                    "GROUP BY variant, user_id"
+                ),
+            }
+        )
+        experiment = make_experiment("exp_contradiction", "arpu", T_TEST)
+        assert state_eligible_metrics(experiment, {"arpu": contradictory}, None) == []
+
     def test_non_additive_role_projections_are_excluded(self):
         """A metric whose role columns are not additive across days must never
         materialize state: the reader SUMS days, so ``max(...)`` and a literal
@@ -484,6 +525,7 @@ class TestEligibility:
             {
                 "name": "arpu",
                 "type": "sample",
+                "state_additive": True,  # the matrix isolates the veto filter
                 "columns": {"variant": "variant", "value": "gross_usd"},
                 "query": (
                     "{% import 'abkit_assignment.jinja' as ab %}\n"

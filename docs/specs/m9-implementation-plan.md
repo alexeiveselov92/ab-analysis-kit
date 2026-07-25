@@ -924,6 +924,32 @@ default-flip criteria doc), `docs/specs/cli-and-dx.md`,
 > constructed its manager OUTSIDE the per-experiment guard, so one bad
 > connection aborted the whole sweep. Regressions pin all of them,
 > including a 15-case additivity matrix carrying every review vector.
+> **Adversarial review R2** (rewritten-additivity, false-green and
+> fix-verification lenses → 2 skeptics each): the fix-verification lens
+> returned zero; 3 confirmed. Two fixed: a `UNION`/`INTERSECT`/`EXCEPT`
+> query binds later branches POSITIONALLY, so an alias scan cannot see what
+> they project (multi-branch metric SQL is now refused outright), and
+> `verify-incremental` could exit 0 having examined nothing (a `--metric`
+> that matches no comparison, a project with no eligible comparison) — it
+> now says so and exits non-zero. The third was **not patched, by
+> decision**: an identity `sum()` over a renamed non-additive intermediate
+> (`WITH raw AS (SELECT max(f) AS flag …) SELECT sum(flag) AS signed_up`)
+> is additive by every textual measure; only dataflow analysis over
+> grouping levels distinguishes it.
+> **§8 Q6 — DECIDED (2026-07-25, maintainer): additivity becomes an explicit
+> metric-level declaration.** Three review rounds each defeated the textual
+> check with a new SQL shape, which is the empirical case that text cannot
+> decide this. `MetricConfig.state_additive` (default **false**) is the
+> author's promise that per-day partials add up to the window total;
+> `comparison_state_eligible` requires it, `_role_projections_are_additive`
+> is demoted to a VETO-ONLY sanity filter (it can refuse a visibly
+> contradicting projection but never grant eligibility), and
+> `abk verify-incremental` stays the empirical oracle. Consequence, accepted:
+> the STATE stage now materializes nothing until a metric opts in — the
+> write cost is no longer paid by projects that never read it. The
+> scaffolded `example_arpu` (`sum(gross_usd)`) declares it; the scaffolded
+> `example_signup_cr` deliberately does not, with the reason inline in the
+> generated SQL.
 
 ---
 

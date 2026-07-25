@@ -114,9 +114,7 @@ class ClickHouseDatabaseManager(BaseDatabaseManager):
         if progress is not None:
             scanned_rows = int(getattr(progress, "rows", 0) or 0)
             scanned_bytes = int(getattr(progress, "bytes", 0) or 0)
-        self._record_query(
-            len(rows), time.perf_counter() - started, scanned_rows, scanned_bytes
-        )
+        self._record_query(len(rows), time.perf_counter() - started, scanned_rows, scanned_bytes)
 
         # Convert to list of dicts
         return [dict(zip(column_names, row, strict=True)) for row in rows]
