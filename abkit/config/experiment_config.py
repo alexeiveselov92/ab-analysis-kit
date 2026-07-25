@@ -713,20 +713,33 @@ class ExperimentConfig(BaseModel):
     def cadence_fits_horizon(self) -> bool:
         """Can the densest cadence step produce a cutoff inside the window?
 
-        A whole-day step is measured in CALENDAR days — the space the planner
-        actually steps in — not in elapsed seconds. Across a spring-forward a
-        local day is 23h, and a seconds comparison would reject an ordinary
-        one-day daily experiment ("cadence 1d is longer than the 82800s
-        horizon") whose grid is byte-identical to what it always was. Sub-day
-        steps have no calendar component, so they compare in seconds.
+        Two cheap accepts, then the planner as the authority — because with
+        `interval_anchor` the answer is no longer a property of the step
+        length alone.
+
+        1. A whole-day step is measured in CALENDAR days, the space the
+           planner steps in. Across a spring-forward a local day is 23h, and a
+           seconds comparison would reject an ordinary one-day daily
+           experiment ("cadence 1d is longer than the 82800s horizon") whose
+           grid is byte-identical to what it always was.
+        2. Any other step compares in seconds.
+        3. If neither accepts, ENUMERATE. A step longer than the window can
+           still land a cutoff inside it when the lattice is anchored
+           elsewhere (`36h` steps off local midnight, a window opening at
+           04:00 — the point at midnight+36h falls inside). Arithmetic cannot
+           see that; the grid can. Only reached when the cheap checks say
+           "too long", so the grid enumerated here is always tiny.
         """
         step = self.cadence_seconds_min()
-        if step % DAY_SECONDS:
-            return step <= self.horizon_seconds()
-        span_days = (
-            as_local_datetime(self.horizon_ts).date() - as_local_datetime(self.start_ts).date()
-        ).days
-        return step // DAY_SECONDS <= span_days
+        if step % DAY_SECONDS == 0:
+            span_days = (
+                as_local_datetime(self.horizon_ts).date() - as_local_datetime(self.start_ts).date()
+            ).days
+            if step // DAY_SECONDS <= span_days:
+                return True
+        elif step <= self.horizon_seconds():
+            return True
+        return any(not cutoff.is_horizon for cutoff in self.grid().cutoffs)
 
     def horizon_seconds(self) -> int:
         """Length of the full experiment window: ``[start_ts, horizon_ts)``.

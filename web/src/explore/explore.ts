@@ -2028,7 +2028,7 @@ function createExploreChart(
   const esB = base.map((p) => num(p.e));
   const horizonEd = (payload.period.horizon - payload.period.start) / MS_PER_DAY;
   // §4 corroborated horizon: a stored hz=1 row is decision-grade only while
-  // it still IS the current config horizon — after an end_date extension the
+  // it still IS the current config horizon — after a horizon_ts extension the
   // old horizon row goes stale mid-series (the planner never rewrites
   // computed rows) and everything must render pre-horizon again
   // (milestone-review finding).

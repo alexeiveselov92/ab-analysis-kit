@@ -1365,6 +1365,21 @@ the config value); plus docstring drift left by the rename.
 | 4 | Sub-second precision validated but is unrepresentable end to end: the rendered SQL window formats to whole seconds and `_ab_results.end_ts` is `DateTime64(3)`, so a microsecond cutoff would persist rounded, never match the planned instant, and re-plan every run — forever. | silent-replan-loop | reject `microsecond != 0` alongside the existing offset/number rejections |
 | 5 | A calendar-edge window raised a raw `OverflowError` out of `model_validate` (pydantic wraps only `ValueError`), naming neither field nor cause. | UX | resolve the edges inside `validate_window` and re-raise as a `ValueError` naming both fields and the timezone |
 
+**The adjudicator's own pass** (re-running every lens finding, then probing
+what the lenses covered least — the explore/tuning + persistence surface)
+found one more that no lens saw, and that the round-1 gate fix did not close:
+
+| # | Defect | Severity | Fix |
+|---|---|---|---|
+| 6 | The cadence gate still did ARITHMETIC about whether a cutoff exists. With `interval_anchor` that stopped being a property of the step length: a lattice hung off midnight can put a real cutoff inside a window SHORTER than its own step. A 6 000-case property vet found 6 such wrongly-rejected configs; the same vet finds 454 with the arithmetic-only gate and **0** once the gate enumerates. | crash-on-parse | keep the two cheap accepts, then ask the planner — `any(not c.is_horizon for c in self.grid().cutoffs)`. Only reached when the arithmetic says "too long", so the enumerated grid is always tiny. |
+
+It also verified, and cleared, two things worth recording: the explore **Apply
+seam** round-trips all four window shapes with an identical grid and preserved
+`date`-vs-`datetime` typing (the type reaches the state identity hash); and
+editing `interval_anchor` on a live experiment interleaves new rows with old
+— which is **pre-existing behavior**, not new, since editing `cadence` does
+exactly the same at `f85371d`.
+
 **Self-review, same round:** the planner raised an uncaught `OverflowError`
 for a window butting against the representable calendar edge (year 1 / 9999).
 A lattice step off the end now saturates, which every comparison in the

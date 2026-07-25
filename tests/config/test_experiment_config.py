@@ -459,7 +459,23 @@ class TestWindowFields:
         grids did not move."""
         ExperimentConfig.model_validate(base_payload(**overrides))
 
+    def test_a_step_longer_than_the_window_can_still_fire_off_an_anchor(self):
+        """With `interval_anchor` the gate stopped being a property of the step
+        LENGTH. A daily lattice hung at 06:00 puts a real cutoff inside a
+        12h window opening at midnight — arithmetic cannot see that, so the
+        gate enumerates instead of guessing."""
+        config = ExperimentConfig.model_validate(
+            base_payload(
+                start_ts="2024-07-01",
+                horizon_ts="2024-07-01 12:00:00",
+                interval_anchor="2024-07-01 06:00:00",
+            )
+        )
+        cutoffs = config.grid().cutoffs
+        assert [c.end_ts for c in cutoffs if not c.is_horizon] == [datetime(2024, 7, 1, 6, 0)]
+
     def test_a_cadence_that_genuinely_cannot_fire_is_still_refused(self):
+        """Same window, default anchor: the only point is the horizon itself."""
         with pytest.raises(ValidationError, match="longer than the experiment horizon"):
             ExperimentConfig.model_validate(
                 base_payload(start_ts="2024-07-01", horizon_ts="2024-07-01 12:00:00")
