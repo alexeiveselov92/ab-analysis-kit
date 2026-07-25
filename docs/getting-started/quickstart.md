@@ -122,11 +122,17 @@ that were already computed are skipped.
 Inspect the raw numbers directly:
 
 ```sql
-SELECT metric, end_date, effect, pvalue, left_bound, right_bound
+SELECT metric, end_ts, effect, pvalue, left_bound, right_bound
 FROM abkit_internal._ab_results
 WHERE experiment = 'example_signup_test'
 ORDER BY metric, end_ts;
 ```
+
+`end_ts` is the **exclusive** right edge of the cumulative window and the
+canonical cutoff key — group and order by it. To get the calendar day a look
+covers, derive it from `end_ts` minus one microsecond in the experiment's
+timezone; see [the `_ab_results` reference](../reference/internal-tables.md)
+for the per-dialect expression and the two traps it avoids.
 
 Common flags:
 

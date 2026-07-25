@@ -6,7 +6,7 @@ Legacy hygiene fixes H1/H2 (docs/specs/statistics-changes.md §2):
   explicit ``np.random.Generator``, so the core is reentrant and process-safe.
 - Bootstrap re-runs must be byte-stable: the pipeline derives a deterministic
   per-row seed from the row identity ``(experiment, metric, name_1, name_2,
-  end_date, n_samples)`` via :func:`derive_seed`. The seed is *excluded* from
+  end_ts, n_samples)`` via :func:`derive_seed`. The seed is *excluded* from
   ``method_config_id`` (docs/specs/declarative-config.md §7).
 """
 
@@ -25,7 +25,7 @@ def derive_seed(*parts: object) -> int:
     """Derive a deterministic 63-bit seed from identity parts.
 
     Parts are joined by their ``str()`` form — pass plain values (strings, dates,
-    ints), e.g. ``derive_seed(experiment, metric, name_1, name_2, end_date,
+    ints), e.g. ``derive_seed(experiment, metric, name_1, name_2, end_ts,
     n_samples)``. The mapping is pinned by a known-answer test and must never
     change (it would silently re-draw every published bootstrap CI).
     """

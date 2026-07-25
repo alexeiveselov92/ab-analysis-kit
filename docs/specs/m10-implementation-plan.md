@@ -560,7 +560,47 @@ date-only anchor behavior. Every other consumer enumerated in §0.2 needs
 
 ---
 
-### WP3 — Drop `start_date`/`end_date` from `_ab_results`; fix stale hints and comments
+### WP3 — Drop `start_date`/`end_date` from `_ab_results`; fix stale hints and comments ✅ SHIPPED
+
+> **As-built notes (what the session found beyond the contract):**
+>
+> - **The WP's own "re-run the grep, don't trust the prior pass" instruction
+>   paid for itself.** A repo-wide audit found a **live** `SELECT metric,
+>   end_date, … FROM abkit_internal._ab_results` in
+>   `docs/getting-started/quickstart.md` — the twin of the `abk init` hint this
+>   WP's step 4 names, which the step did not mention and a scoped grep over
+>   `abkit/` could never see. The governing spec §6.3 of
+>   [cumulative-intervals.md](cumulative-intervals.md) still declared `end_date`
+>   a stored derived column, and four more docs (`architecture.md` ×3,
+>   `PRINCIPLES.md`, `declarative-config.md`, `statistics-changes.md`) named
+>   `end_date` as the results grain / anti-join key / seed-identity part where
+>   the code has always used `end_ts`. All corrected here.
+> - **A new gate closes the shape that hid it.** `tests/docs/`'s existing
+>   window-key check is anchored to `^\s*name:` — the YAML **key** form — so a
+>   `SELECT … end_date` sailed past it. The companion
+>   `test_no_dropped_result_columns_in_pasteable_sql` bans the bare identifier
+>   on every paste surface in any syntax, and asserts a **file count** so a
+>   renamed directory cannot turn it into a silent no-op.
+> - **The step-6 test rewrite went further than "delete or rewrite".**
+>   `TestTimezoneDates` encoded a real past review finding (a Moscow
+>   experiment's date must be the Moscow date), so instead of deleting it the
+>   suite now proves the **replacement recipe** reproduces the dropped values
+>   exactly — and gates each of its two corrections **separately**. That split
+>   was forced by review: the original single test passed with the timezone leg
+>   of the recipe deleted, because at UTC+3 `end_ts − 1µs` lands on the right
+>   day by coincidence. The leg is only observable west of Greenwich (the
+>   America/New_York case now pinning it). Mutating either leg fails a test.
+> - **The operator hazard is backend-asymmetric, and the CHANGELOG says so.**
+>   `ensure_columns` is ADD-only and nothing drops columns, so a pre-0.5.0
+>   `_ab_results` keeps both. PostgreSQL/MySQL declare them `DATE NOT NULL`, so
+>   the omitting INSERT fails loudly; **ClickHouse fills an omitted column with
+>   its type default and silently stamps `1970-01-01`** — the one silent path,
+>   called out explicitly in the combined recreate note.
+> - Scope note: `statistics-changes.md`'s H2 row was edited to say `end_ts`.
+>   That is a **factual correction to a stale field name** (the code has always
+>   passed `end_ts` — the same correction step 5 makes in `rng.py`), **not** a
+>   new deviation entry. No `ALGORITHM_VERSION` moved; `git diff -- abkit/stats
+>   tests/golden` shows only the `rng.py` docstring.
 
 **Goal.** Remove the two derived, effectively-unread `start_date`/`end_date`
 `Date` columns from the `_ab_results` schema (`tables.py`, `enrich.py`, the

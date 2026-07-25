@@ -76,8 +76,6 @@ def make_row(experiment: ExperimentConfig, metric: str = "revenue", **overrides)
         "name_2": "treatment",
         "start_ts": START,
         "end_ts": end_ts,
-        "start_date": START.date(),
-        "end_date": (end_ts - timedelta(microseconds=1)).date(),
         "window_seconds": day * 86400,
         "elapsed_days": float(day),
         "value_1": 10.0,

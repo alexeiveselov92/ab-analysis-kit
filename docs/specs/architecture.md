@@ -45,7 +45,7 @@ here independently.
    harness — never a silent number change. (We are **not** bound to the legacy
    table or its production numbers — storage is greenfield.)
 2. **The cumulative daily expanding-window is a first-class compute primitive.**
-   One row per `(experiment, metric, variant-pair, method, end_date)`, cumulative
+   One row per `(experiment, metric, variant-pair, method, end_ts)`, cumulative
    from a pinned start. This is the stabilization chart's data and the heart of
    the product ([cumulative-intervals.md](cumulative-intervals.md)).
 3. **A pure, importable, numpy-first statistical core (`abkit.stats`)** with zero
@@ -138,9 +138,9 @@ resumed cursor — an experiment is a finite, re-runnable recomputation).
    name uniqueness, validate method params against each method's schema, compute
    `method_config_id`. No DB/compute. ([declarative-config.md](declarative-config.md))
 1. **plan** — `core/period_planner` reproduces the legacy cumulative grid: for
-   each experiment day `d`, emit `[start_date (pinned), start_date+d]`; LEFT-ANTI-JOIN
-   against already-computed `(exp, metric, method_config_id, end_date)` rows;
-   keep only complete days (`end_date <= data_complete_through`, an explicit
+   each experiment day `d`, emit `[start_ts (pinned), start_ts+d]`; LEFT-ANTI-JOIN
+   against already-computed `(exp, metric, method_config_id, end_ts)` rows;
+   keep only complete days (`end_ts <= data_complete_through`, an explicit
    single-source boundary, **not** `today()`). ([cumulative-intervals.md](cumulative-intervals.md))
 2. **maintain unit-state** *(the scalability seam)* — advance `_ab_unit_state`
    with the new day's per-unit deltas. ClickHouse: a merge-tree agg state keyed
@@ -197,7 +197,7 @@ backend-specific incremental-aggregate DDL.
 | `_ab_experiments` | experiment catalog (name, window, status, usage) |
 | `_ab_exposures` | OPTIONAL, copy-mode only (M8): the persisted per-unit assignment copy (exp, unit, variant, exposure_ts, stratum), created and appended-to ONLY under `assignment.cohort_copy.enabled` via the incremental watermark engine (a full rebuild is `--resync-cohort`, never a routine run). By default the table is never created — the cohort is read live from the assignment SQL on every invocation; the SRM gate always measures the live validated source |
 | `_ab_unit_state` | cumulative per-unit moments; ClickHouse agg-state seam (keyed per source-table+column-set+unit; idempotent per day). The scalability substrate |
-| `_ab_results` | **our clean BI contract** — one cumulative row per (exp, metric, pair, method, end_date). Designed from the decision logic, not the legacy schema |
+| `_ab_results` | **our clean BI contract** — one cumulative row per (exp, metric, pair, method, end_ts). Designed from the decision logic, not the legacy schema |
 | `_ab_aa_runs` | A/A validation audit (FPR, power, peeking-FPR, verdict) |
 | `_ab_tasks` | run locks + idempotency (⟲ verbatim) |
 

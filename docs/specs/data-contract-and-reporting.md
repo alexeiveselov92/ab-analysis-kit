@@ -9,10 +9,10 @@
 ## 1. The decision logic we must support (from the legacy dashboard)
 
 A winner is called on a single series keyed by `(experiment, metric, variant-pair,
-method, params)` tracked over `end_date`, where every point is **cumulative** from
-`start_date`. Three signals, read together:
+method, params)` tracked over `end_ts`, where every point is **cumulative** from
+`start_ts`. Three signals, read together:
 
-1. **Significance** — at the latest `end_date`, the (1−α) CI `[left_bound,
+1. **Significance** — at the latest `end_ts`, the (1−α) CI `[left_bound,
    right_bound]` excludes zero (≡ `pvalue < alpha` ≡ `reject = 1`); the sign of
    `effect` says who wins.
 2. **Stabilization** — significance must be **persistent**: the CI narrows as
@@ -64,14 +64,14 @@ verdict is READ-TIME only, recomputed at render, never persisted):*
 
 ## 2. The results contract (`_ab_results`) — clean & BI-first
 
-One row per `(experiment, metric, variant-pair, method, end_date)`. Designed so any
+One row per `(experiment, metric, variant-pair, method, end_ts)`. Designed so any
 BI tool can build the chart + tables above with plain SQL. Columns (greenfield —
 names/types are ours to choose; this is the proposed v1 contract):
 
 | Group | Columns |
 |---|---|
 | identity | `experiment`, `metric`, `is_main_metric`, `is_guardrail`, `method_name`, `method_params` (canonical JSON), `method_config_id`, `name_1`, `name_2` |
-| window | `start_ts`/`end_ts` (UTC DateTimes; `end_ts` **exclusive** — the canonical cutoff key), `start_date`/`end_date` (derived Dates — legacy-identical at `cadence: 1d`), `window_seconds`, `elapsed_days` (fractional; the chart x-axis) — see cumulative-intervals.md §6.3 |
+| window | `start_ts`/`end_ts` (UTC DateTimes; `end_ts` **exclusive** — the canonical cutoff key), `window_seconds`, `elapsed_days` (fractional; the chart x-axis) — see cumulative-intervals.md §6.3. *(The derived `start_date`/`end_date` `Date` columns shipped in M2 and were **removed in M10 WP3** — nothing in the pipeline, report, explore or BI-example surface ever read them, and the calendar day a cutoff covers is `end_ts − 1µs` read in the experiment timezone: docs/reference/internal-tables.md gives the per-dialect expression.)* |
 | per-arm | `value_1/2`, `std_1/2`, `cov_value_1/2`, `cov_std_1/2`, `corr_coef_1/2`, `size_1/2` — `cov_std`/`corr_coef` *(added in M9 WP1)* complete the per-arm covariate sufficient statistics (`cov_m2 = cov_std²·n`, `cross_c = corr_coef·√(m2·cov_m2)`), populated by `cuped-t-test` only; NULL for every other method and for pre-migration rows |
 | test | `alpha` (effective, post-correction), `pvalue`, `effect`, `left_bound`, `right_bound`, `ci_length`, `reject`, `mde_1/2` |
 | integrity | `srm_flag`, `srm_pvalue`, `decision_blocked`, `insufficient_data` (small-n demotion: row written, inference withheld) |

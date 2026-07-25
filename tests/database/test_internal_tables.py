@@ -587,8 +587,6 @@ def make_result_batch(**overrides) -> dict[str, np.ndarray]:
         "name_2": "treatment",
         "start_ts": datetime(2024, 1, 1),
         "end_ts": datetime(2024, 1, 2),
-        "start_date": date(2024, 1, 1),
-        "end_date": date(2024, 1, 1),
         "window_seconds": 86400,
         "elapsed_days": 1.0,
         "value_1": 1.0,

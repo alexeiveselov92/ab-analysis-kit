@@ -15,8 +15,9 @@ behaviour, watermark planning, and full-refresh re-opening.
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pytest
 from fake_db import FakeDatabaseManager, serve_assignment_pushdown
@@ -428,9 +429,30 @@ class TestSrmGate:
 
 
 class TestTimezoneDates:
-    def test_stored_dates_are_experiment_tz_dates(self, warehouse, tables):
-        """Review finding: a Moscow daily experiment's end_date must be the
-        Moscow calendar date, not the UTC date of the naive end_ts."""
+    """m10 WP3: the derived Date columns are gone; the RECIPE that replaces
+    them is what now needs a gate.
+
+    `_ab_results` stores instants only. docs/reference/internal-tables.md and
+    the `abk init` scaffold both tell an operator to recover the calendar day a
+    look covers as **`end_ts − 1µs`, read in the experiment timezone** — the
+    two traps being that `end_ts` is EXCLUSIVE and stored in UTC. These tests
+    run the recipe (transcribed to Python; the SQL forms live in the docs)
+    against a real Moscow run and pin that it reproduces, to the day, exactly
+    what the dropped columns used to hold — then gate each of its two
+    corrections separately, since a single fixture cannot observe both.
+    """
+
+    @staticmethod
+    def _covered_day(end_ts: datetime, tz: str) -> date:
+        """The documented recipe, in Python (SQL equivalents in the docs)."""
+        return (
+            (end_ts - timedelta(microseconds=1))
+            .replace(tzinfo=ZoneInfo("UTC"))
+            .astimezone(ZoneInfo(tz))
+            .date()
+        )
+
+    def _moscow_run(self, warehouse, tables):
         # re-anchor the synthetic events to Moscow midnights (21:00 UTC prev day)
         warehouse.events = [
             (unit, variant, ts - timedelta(hours=3), value)
@@ -442,17 +464,66 @@ class TestTimezoneDates:
         experiment = make_experiment(timezone="Europe/Moscow")
         outcome = run(warehouse, tables, experiment=experiment)
         assert outcome.status == "completed", outcome.error
-        rows = tables.load_results("signup_test")
+        return tables.load_results("signup_test")
+
+    def test_the_window_is_stored_as_instants(self, warehouse, tables):
+        """The grid still anchors on MOSCOW midnights, and nothing else is
+        persisted about the window — no Date column survives the drop."""
+        rows = self._moscow_run(warehouse, tables)
         first = min(rows, key=lambda r: r["end_ts"])
-        # first cutoff: end_ts = 2024-06-30 21:00 UTC (Moscow midnight July 2...
-        # start_ts = 2024-06-30 21:00 UTC; first end_ts = 2024-07-01 21:00 UTC
+        # start_ts = 2024-06-30 21:00 UTC (Moscow midnight July 1);
+        # first end_ts = 2024-07-01 21:00 UTC (Moscow midnight July 2, exclusive)
+        assert first["start_ts"] == datetime(2024, 6, 30, 21, 0)
         assert first["end_ts"] == datetime(2024, 7, 1, 21, 0)
-        # ...whose MOSCOW date is July 1 (the UTC date would wrongly be July 1 21:00 -> July 1;
-        # the window covers Moscow July 1 in full)
-        assert str(first["start_date"]) == "2024-07-01"
-        assert str(first["end_date"]) == "2024-07-01"
+        assert "start_date" not in first
+        assert "end_date" not in first
+
+    def test_the_documented_recipe_reproduces_the_dropped_dates(self, warehouse, tables):
+        """`end_ts − 1µs` in the experiment tz == the old `end_date`, exactly."""
+        rows = self._moscow_run(warehouse, tables)
+        first = min(rows, key=lambda r: r["end_ts"])
         last = max(rows, key=lambda r: r["end_ts"])
-        assert str(last["end_date"]) == "2024-07-05"
+        # the window covers Moscow July 1 in full, so the day it MEASURES is
+        # July 1 — even though the exclusive edge is stamped July 1 21:00 UTC
+        assert self._covered_day(first["end_ts"], "Europe/Moscow") == date(2024, 7, 1)
+        assert self._covered_day(last["end_ts"], "Europe/Moscow") == date(2024, 7, 5)
+
+    def test_dropping_the_exclusivity_correction_moves_the_day(self, warehouse, tables):
+        """`end_ts` is the EXCLUSIVE edge, so it is stamped with the NEXT day's
+        boundary. Read it without the −1µs and every look is dated a day late."""
+        rows = self._moscow_run(warehouse, tables)
+        end_ts = min(rows, key=lambda r: r["end_ts"])["end_ts"]
+
+        assert self._covered_day(end_ts, "Europe/Moscow") == date(2024, 7, 1)
+        no_microsecond = (
+            end_ts.replace(tzinfo=ZoneInfo("UTC")).astimezone(ZoneInfo("Europe/Moscow")).date()
+        )
+        assert no_microsecond == date(2024, 7, 2)  # off by a day
+
+    def test_dropping_the_timezone_correction_moves_the_day(self):
+        """The leg the Moscow fixture CANNOT gate — and why this test is
+        arithmetic rather than another pipeline run.
+
+        At UTC+3 a local midnight lands at 21:00 UTC of the previous day, so
+        `end_ts − 1µs` already carries the right calendar date and the
+        `astimezone` is a no-op: delete it and the Moscow assertions above stay
+        green. That coincidence is a property of the sign of the offset, so the
+        leg only becomes observable west of Greenwich. New York in July is
+        UTC−4: local midnight July 2 is 04:00 UTC *July 2*, and the naive read
+        dates the look July 2 — a day after the one it measures.
+        """
+        ny_midnight_utc = datetime(2024, 7, 2, 4, 0)  # 2024-07-02 00:00 EDT
+
+        assert self._covered_day(ny_midnight_utc, "America/New_York") == date(2024, 7, 1)
+        no_tz = (ny_midnight_utc - timedelta(microseconds=1)).date()
+        assert no_tz == date(2024, 7, 2)  # off by a day
+
+        # ...and eastward the two agree, which is exactly the trap: a fixture
+        # in a positive-offset zone proves nothing about this correction.
+        msk_midnight_utc = datetime(2024, 7, 1, 21, 0)  # 2024-07-02 00:00 MSK
+        assert (msk_midnight_utc - timedelta(microseconds=1)).date() == self._covered_day(
+            msk_midnight_utc, "Europe/Moscow"
+        )
 
 
 def seed_subday_cohort(warehouse: SyntheticWarehouse) -> None:

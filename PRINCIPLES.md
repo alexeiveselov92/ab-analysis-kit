@@ -51,7 +51,7 @@ stays coherent as it grows and as multiple authors (human and AI) contribute.
     first, PostgreSQL/MySQL correct & supported via the same contract. No
     backend-specific logic leaks into the pipeline.
 13. **Idempotent & re-runnable.** An experiment is a finite, re-runnable full
-    recomputation (last-writer-wins on `method_config_id × end_date`), not a resumed
+    recomputation (last-writer-wins on `method_config_id × end_ts`), not a resumed
     cursor. Re-runs are byte-stable (deterministic seeds).
 14. **Methods are plugins.** A new estimator is one `BaseMethod` class + a registry
     entry; the pipeline/DB/CLI never special-case a method name.

@@ -158,9 +158,14 @@ def get_results_table_model() -> TableModel:
     """``_ab_results`` — the clean BI contract (data-contract §2).
 
     One row per (experiment, metric, variant-pair, method_config_id, end_ts).
-    ``end_ts`` is the canonical cutoff key (UTC, EXCLUSIVE half-open window);
-    ``end_date``/``start_date`` are derived Dates, legacy-identical at daily
-    cadence. Idempotency is last-writer-wins on the PK via the
+    ``end_ts`` is the canonical cutoff key (UTC, EXCLUSIVE half-open window).
+    The derived ``start_date``/``end_date`` ``Date`` columns were REMOVED in
+    m10 WP3 — nothing read them, and they are reconstructable from the
+    instants: the calendar day a cutoff *covers* is ``end_ts`` minus one
+    microsecond, read in the EXPERIMENT timezone (a naive ``toDate(end_ts)``
+    takes the UTC date of an exclusive edge and misdates every non-UTC
+    experiment by a day). See docs/reference/internal-tables.md for the
+    per-dialect recipe. Idempotency is last-writer-wins on the PK via the
     strictly-monotonic ``created_at`` version (quorum must-fix); BI dedup
     reads use argMax/LIMIT 1 BY, internal reads use FINAL.
 
@@ -185,8 +190,6 @@ def get_results_table_model() -> TableModel:
             # window (cumulative-intervals §6.3)
             ColumnDefinition("start_ts", "DateTime64(3, 'UTC')"),
             ColumnDefinition("end_ts", "DateTime64(3, 'UTC')"),  # EXCLUSIVE
-            ColumnDefinition("start_date", "Date"),
-            ColumnDefinition("end_date", "Date"),
             ColumnDefinition("window_seconds", "Int64"),
             ColumnDefinition("elapsed_days", "Float64"),  # fractional; chart x-axis
             # per-arm

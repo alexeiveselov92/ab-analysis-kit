@@ -67,7 +67,7 @@ itself is their arbitration — with a §7 record.
 | # | Legacy issue | Change |
 |---|---|---|
 | H1 | Global `np.random.seed` mutates process-wide state (non-reentrant, breaks parallelism) | Thread `np.random.default_rng(seed)` Generators; paired bootstrap shares one explicit Generator. Process-safe (enables the concurrency model). |
-| H2 | Bootstrap CIs non-deterministic run-to-run; seed excluded from identity ⇒ an idempotent re-write silently changes published CIs (can flip `reject`) | **Deterministic per-row seed** from `(exp, metric, name_1, name_2, end_date, n_samples)`; seed excluded from `method_config_id` for **all** bootstrap methods. Golden test: two runs over the same window → byte-identical rows. |
+| H2 | Bootstrap CIs non-deterministic run-to-run; seed excluded from identity ⇒ an idempotent re-write silently changes published CIs (can flip `reject`) | **Deterministic per-row seed** from `(exp, metric, name_1, name_2, end_ts, n_samples)`; seed excluded from `method_config_id` for **all** bootstrap methods. Golden test: two runs over the same window → byte-identical rows. |
 | H3 | `np.apply_along_axis(mean,…)` loops in Python — the dominant bootstrap cost | Fast path `matrix.mean(axis=1)`; `apply_along_axis` only for arbitrary callables. |
 | H4 | Bootstrap p-value can be exactly 0 (no smoothing); ties at 0 uncounted | `(#extreme + 1)/(n + 1)` plug-in; documented tie convention. |
 | H5 | Relative effect divides by control mean with no guard (inf/NaN on sparse metrics) | Small-denominator guard → warn/NaN, surfaced in the report. |

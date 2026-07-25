@@ -11,9 +11,8 @@ columns, the R7 ``warnings``/``diagnostics`` JSON payloads, and provenance.
 from __future__ import annotations
 
 import math
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any
-from zoneinfo import ZoneInfo
 
 import numpy as np
 
@@ -26,7 +25,6 @@ from abkit.stats import SrmResult
 from abkit.utils.json_utils import json_dumps_sorted
 
 DAY_SECONDS = 86400.0
-_ONE_US = timedelta(microseconds=1)
 
 
 def _clean(value: float | None) -> float | None:
@@ -56,13 +54,6 @@ def rows_for_cutoff(
     window_seconds = int((cutoff.end_ts - grid.start_ts).total_seconds())
     method_config_id = comparison.method.method_config_id
     method_params_json = comparison.method.canonical_params_json
-    # Derived dates are EXPERIMENT-timezone dates (§6.3 'legacy-identical at
-    # daily cadence' — a Moscow daily experiment's end_date must be the Moscow
-    # date, not the UTC date of the naive timestamp).
-    zone = ZoneInfo(experiment.timezone)
-    utc = ZoneInfo("UTC")
-    start_date_local = grid.start_ts.replace(tzinfo=utc).astimezone(zone).date()
-    end_date_local = (cutoff.end_ts - _ONE_US).replace(tzinfo=utc).astimezone(zone).date()
 
     for outcome in outcomes:
         result = outcome.result
@@ -78,11 +69,11 @@ def rows_for_cutoff(
             "method_config_id": method_config_id,
             "name_1": outcome.name_1,
             "name_2": outcome.name_2,
-            # window (§6.3: end_ts exclusive; dates derived; fractional x-axis)
+            # window (§6.3: end_ts exclusive; instants only since m10 WP3 —
+            # the calendar day a cutoff covers is derived BI-side, see
+            # docs/reference/internal-tables.md; fractional x-axis)
             "start_ts": grid.start_ts,
             "end_ts": cutoff.end_ts,
-            "start_date": start_date_local,
-            "end_date": end_date_local,
             "window_seconds": window_seconds,
             "elapsed_days": window_seconds / DAY_SECONDS,
             # per-arm

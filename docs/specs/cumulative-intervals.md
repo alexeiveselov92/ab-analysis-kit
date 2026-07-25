@@ -317,13 +317,12 @@ cutoff is plannable ⇔ end_ts ≤ watermark_ts     # planner anti-join as befor
 - Each row stores the `watermark_ts` in force when computed (provenance).
 - v2 (deferred): probe-based watermark from per-source freshness.
 
-### 6.3 Window contract (timestamps canonical, dates derived)
+### 6.3 Window contract (instants only)
 
 One row per `(experiment, metric, pair, method_config_id, end_ts)`:
 `start_ts`/`end_ts` are UTC DateTimes, `end_ts` **exclusive** (half-open windows
-partition event time exactly; daily parity is byte-clean); `end_date` stays as a
-derived stored Date (legacy-identical for `cadence: 1d` — daily users never see
-a timestamp); plus `window_seconds` and fractional `elapsed_days` (the chart
+partition event time exactly; daily parity is byte-clean); plus `window_seconds`
+and fractional `elapsed_days` (the chart
 x-axis; day 0.5 = hour 12). An ordinal `look_index` is deliberately NOT stored —
 it breaks under schedule grids and cadence edits; ordinality is `ORDER BY
 end_ts`. **Cadence is NOT part of `method_config_id`** — it is a sampling
@@ -331,6 +330,17 @@ schedule of the same series, so changing it mid-experiment is purely additive
 (new grid points appear; nothing is orphaned). Experiments gain an optional
 `timezone:` (default project tz → UTC) used to interpret date-typed YAML and
 snap daily grid points; storage/comparison is always UTC.
+
+**No derived `Date` columns** *(amended M10 WP3 — M2 shipped `start_date`/
+`end_date` as stored Dates "legacy-identical at `cadence: 1d`"; they were
+removed)*. Nothing read them, and a `Date` cannot express a sub-day cutoff —
+first-class since M2 (§6.1), so these columns collapsed same-day looks onto one
+value from the day they shipped. BI derives the calendar day a look
+covers from the instant — `end_ts − 1µs`, read in the **experiment** timezone,
+because `end_ts` is exclusive and stored in UTC. The per-dialect expression is
+in [internal-tables.md](../reference/internal-tables.md); the derivation is
+gated against a real Moscow run by
+`tests/pipeline/test_pipeline.py::TestTimezoneDates`.
 
 ### 6.4 Compute strategy (state stays day-grained)
 
