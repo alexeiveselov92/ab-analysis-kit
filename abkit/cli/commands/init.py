@@ -145,18 +145,28 @@ profiles:
 
 EXPERIMENT_YML = """\
 # The runnable example experiment — works against seed/seed_dataset.*.sql.
-# Fixed past dates keep every daily cutoff complete, so a first run computes
-# the full 14-point stabilization series immediately.
+# Fixed past timestamps keep every daily cutoff complete, so a first run
+# computes the full 14-point stabilization series immediately.
 name: example_signup_test
 description: "Example: onboarding experiment against the synthetic seed dataset"
 status: running
 is_actual: true
 tags: [example]
 
-start_date: 2024-07-01      # PINNED left edge of every cumulative window
-end_date: 2024-07-14        # planner horizon (the last cutoff covers this day)
+start_ts: 2024-07-01        # PINNED left edge of every cumulative window
+                            # (a bare date = local midnight; a full timestamp,
+                            # e.g. 2024-07-01 14:30:00, is that exact instant)
+horizon_ts: 2024-07-15      # planner horizon — the EXCLUSIVE right edge, so
+                            # this covers July 1..14 in full
 unit_key: user_id
 cadence: 1d                 # or dense-early: [{every: 1h, until: 48h}, {every: 1d}]
+interval_anchor: midnight   # WHERE the cutoffs land: midnight (local midnight
+                            # of `timezone` — whole calendar days, what BI
+                            # reads) | start (count from start_ts: a 14:00
+                            # start ⇒ 14:00 cutoffs) | an explicit timestamp to
+                            # align to an external cycle (it MAY precede
+                            # start_ts — the first window is then partial).
+                            # Cutoffs are anchor + k*cadence, kept after start_ts
 timezone: UTC
 
 assignment:                 # READ-ONLY exposure source — abkit never randomizes

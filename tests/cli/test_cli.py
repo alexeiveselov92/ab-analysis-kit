@@ -35,8 +35,8 @@ profiles:
 
 EXPERIMENT_YML = """
 name: signup_test
-start_date: 2024-07-01
-end_date: 2024-07-05
+start_ts: 2024-07-01
+horizon_ts: 2024-07-06
 unit_key: user_id
 assignment:
   query: "SELECT user_id, variant, exposure_ts FROM assignments"

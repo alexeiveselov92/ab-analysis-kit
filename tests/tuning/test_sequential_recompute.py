@@ -191,8 +191,8 @@ def _three_arm_experiment(sequential: dict) -> ExperimentConfig:
     return ExperimentConfig.model_validate(
         {
             "name": "seq3",
-            "start_date": "2024-07-01",
-            "end_date": "2024-07-04",
+            "start_ts": "2024-07-01",
+            "horizon_ts": "2024-07-05",
             "unit_key": "user_id",
             "assignment": {
                 "query": "SELECT user_id, variant, exposure_ts FROM assignments",

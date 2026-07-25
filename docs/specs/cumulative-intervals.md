@@ -256,11 +256,21 @@ needs.
      - {every: 1h, until: 48h}      # dense while impatient
      - {every: 1d}                  # then daily to horizon
    ```
-   Grid rules: dense segments anchor at `start_ts`; daily segments snap to
-   experiment-timezone midnights (point-for-point comparable with pure-daily
-   series); segments non-overlapping and coarsening; the horizon point is always
-   appended and carries `is_horizon=1` even when cadence does not divide the
-   duration.
+   Grid rules (m10 WP1 generalized these; the defaults below are the
+   pre-m10 behavior verbatim): cutoffs are `interval_anchor + k*every`, kept
+   strictly after the segment's left edge. `interval_anchor` defaults to
+   `midnight` — local midnight of the day the window opens — so daily
+   segments land on experiment-timezone midnights (point-for-point comparable
+   with a pure-daily series under the same anchor) and, at a midnight
+   `start_ts`, dense segments still anchor at `start_ts`. Day-or-coarser
+   steps advance in CALENDAR days at the anchor's local wall-clock time
+   (DST-safe); sub-day steps advance in absolute duration. A whole-day
+   segment `until` bound is compared in day space — the DST compensation that
+   keeps a 25h fall-back day from dropping a boundary look — but only while
+   the anchor shares `start_ts`'s wall clock; off-phase, the bound is read as
+   elapsed seconds, which is its literal meaning. Segments stay
+   non-overlapping and coarsening; the horizon point is always appended and
+   carries `is_horizon=1` even when cadence does not divide the duration.
 3. **Honesty posture (extends decision Q2).** `cadence < 1d` with
    `sequential.enabled: false` is allowed but is **monitoring mode**: rows carry
    `ci_kind: fixed`, the readout still refuses pre-horizon WIN/LOSE, and the

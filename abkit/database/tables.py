@@ -43,10 +43,16 @@ def get_experiments_table_model() -> TableModel:
             ColumnDefinition("description", "Nullable(String)", nullable=True),
             ColumnDefinition("status", "String"),  # design|running|concluded|archived
             ColumnDefinition("is_actual", "Bool"),
-            ColumnDefinition("start_date", "Date"),
-            ColumnDefinition("end_date", "Date"),
+            # The RESOLVED window edges in naive UTC — the same frame as
+            # _ab_results.start_ts/end_ts, so a BI join lines up instead of
+            # differing by the timezone offset (`timezone` below converts
+            # back). horizon_ts is EXCLUSIVE; a `Date` here would silently
+            # truncate a sub-day window (m10 D3).
+            ColumnDefinition("start_ts", "DateTime64(3, 'UTC')"),
+            ColumnDefinition("horizon_ts", "DateTime64(3, 'UTC')"),
             ColumnDefinition("unit_key", "String"),
             ColumnDefinition("cadence", "String"),  # canonical JSON: scalar or schedule
+            ColumnDefinition("interval_anchor", "String"),  # midnight|start|an ISO instant
             ColumnDefinition("data_lag_seconds", "Int64"),
             ColumnDefinition("timezone", "String"),
             ColumnDefinition("variants", "String"),  # canonical JSON array, order = config

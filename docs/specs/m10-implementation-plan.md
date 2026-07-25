@@ -128,13 +128,19 @@ scattered breaking notes across milestones:
 
 1. **Drop** the two derived, unread `start_date`/`end_date` `Date` columns
    from `_ab_results` (WP3).
-2. **Widen** `_ab_experiments.start_date`/`end_date` from `Date` to
-   `DateTime64(3)` (WP2) — a genuine discovery made while implementing WP1's
-   type widen (`_ab_experiments` mirrors the config field directly:
-   `experiment_config.py:462` → `pipeline/driver.py:177` → `upsert_experiment`),
-   not itself named in REPORT.md §8's explicit scope, but a real
-   silent-truncation bug the type widen would otherwise introduce into an
-   informational catalog table.
+2. **Rename + widen** the `_ab_experiments` window columns (shipped in WP1,
+   `aef6c66`) — a genuine discovery made while implementing WP1's type widen
+   (`_ab_experiments` mirrors the config field directly: `catalog_record()` →
+   `pipeline/driver.py` → `upsert_experiment`), not itself named in
+   REPORT.md §8's explicit scope, but a real silent-truncation bug the type
+   widen would otherwise introduce into an informational catalog table.
+   **As built** (wider than this line originally said): `start_date`/
+   `end_date` `Date` → `start_ts`/`horizon_ts` `DateTime64(3, 'UTC')`
+   holding the RESOLVED window in naive UTC — the same frame as
+   `_ab_results.start_ts`, so a BI join lines up instead of differing by the
+   timezone offset — plus a new `interval_anchor` `String` column. Note this
+   is a TYPE change, which `ensure_columns` (ADD-only) cannot migrate: the
+   raised error names the drop-and-recreate remedy since the round-1 review.
 
 Both breaks ship as **CHANGELOG breaking-change notes + drop/recreate
 guidance** (matching `ensure_tables()`'s existing create-if-not-exists-only
@@ -221,9 +227,9 @@ canonical design JSON's own step-by-step content (not replacing it):
 
 ## 1. Work packages
 
-### WP1 — Config + planner core: sub-day start/horizon timestamps (byte-identical for existing configs)
+### WP1 — Config + planner core: sub-day start/horizon timestamps ✅ SHIPPED (`aef6c66`)
 
-> **Amended by the §4 decisions (2026-07-25) — read them first.** Two things
+> **Amended by the §4 decisions (2026-07-25) — read them first.** Three things
 > in the body below are superseded: (a) the fields are **renamed** to
 > `start_ts`/`horizon_ts` with no aliases (D1), so "existing configs stay
 > byte-identical" no longer holds — the numeric gate replaces it: an
@@ -231,8 +237,52 @@ canonical design JSON's own step-by-step content (not replacing it):
 > anchoring is not a fixed rule to be chosen but the configurable
 > `interval_anchor` knob — `midnight` (the absent-key behavior, written
 > explicitly by the scaffold) | `start` | an explicit timestamp — with the
-> engine rule "cutoffs = anchor + k·interval, snapped forward to ≥ start"
-> (D2). Everything else below stands.
+> engine rule "cutoffs = anchor + k·interval, kept strictly after start"
+> (D2); (c) **step 3/step 5's type-branching horizon is dead** — a bare date
+> is local midnight of that day for BOTH edges, so `horizon_ts` is the
+> exclusive right edge and there is no `+1 day` bump anywhere (D6).
+>
+> **As-built notes (what the session actually found, beyond the contract):**
+>
+> - **§0.2's register was ~60% accurate and its central claim was false.**
+>   "Only sites 2 and 8 reimplement date arithmetic; sites 3–7 and 9 need no
+>   code change" missed six further sites, four of them in M9 code that
+>   post-dates the register: `IncrementalBackend` compared a `date` against
+>   the config field (`TypeError` on *every* cutoff under
+>   `compute.incremental_reads`) and passed it as an `_ab_unit_state` day
+>   key; the STATE stage seeded its day loop from it, carrying a `datetime`
+>   into a `Date` column and into comparisons against `get_last_state_day()`;
+>   and `horizon_seconds()`'s own `(end − start).days + 1`. §0.2's list of
+>   nine *consumers* also omits two real `generate_grid` callers
+>   (`explore.py`, `reconcile.py`) — there are **eight** call sites in all.
+>   Line numbers throughout §0.2/§0.3 had drifted 20–70 lines.
+> - **The knob reached nothing.** Adding `interval_anchor` to the planner
+>   signature left all eight hand-copied call sites passing their old
+>   argument lists — a decorative knob. Fixed by `ExperimentConfig.grid()`,
+>   the one factory composing window + cadence + anchor (m8's
+>   `build_cohort_backend` contract applied to the planner), pinned by an AST
+>   gate (`tests/core/test_grid_factory_is_the_only_entry.py`). One of those
+>   sites passed `timezone` **positionally as the 4th argument**, so any
+>   future parameter inserted before `tz` would have silently re-bound it.
+> - **Day-space comparison is gated on anchor phase.** A whole-day segment
+>   `until` bound is compared in day space — the DST compensation that keeps
+>   a 25h fall-back day from dropping a boundary look — **only while the
+>   anchor shares `start_ts`'s wall clock**. Off-phase it reads as elapsed
+>   seconds, which is its literal meaning. The boolean is pinned in BOTH
+>   directions (mutating it either way fails a test).
+> - **The STATE stage clamps the opening day** to `grid.start_ts`, so a
+>   sub-day start cannot sum pre-experiment facts into day state; the CUPED
+>   pre-period stays whole-day (`[midnight(D − lookback), midnight(D))`) and
+>   is byte-identical at a midnight start.
+> - **`_ab_experiments` stores the RESOLVED window in naive UTC**, not the
+>   local config value — the same frame as `_ab_results.start_ts`, so a BI
+>   join lines up instead of differing by the timezone offset.
+>   `interval_anchor` is persisted alongside; it is deliberately **not**
+>   folded into the m9 state identity (it moves cutoffs, never day
+>   boundaries).
+> - Gates: the full suite (2 214 tests) green with only config keys and
+>   ported horizon values edited; zero `ALGORITHM_VERSION` changes; zero new
+>   mypy errors (111 → 111).
 
 **Goal.** Widen `ExperimentConfig.start_date`/`end_date` from `date` to a
 type-preserving `date | datetime` union (not a coercing `datetime` field —
@@ -382,7 +432,36 @@ verification).
 
 ---
 
-### WP2 — Propagate sub-day anchors: CUPED lookback, SQL render-smoke, catalog table, docs
+### WP2 — Propagate sub-day anchors: CUPED lookback, SQL render-smoke, catalog table, docs ✅ SHIPPED INSIDE WP1 (`aef6c66`)
+
+> **This WP has no separate session: the rename made it inseparable from WP1.**
+> A field rename cannot land half-way — every consumer must move in the same
+> commit or the package does not import — so all four steps below shipped
+> with WP1. Read the body for the *intent*; the shapes it names are
+> pre-decision and in places now dead. What actually shipped:
+>
+> - **Step 1 (CUPED pre-period)** — done, and stronger than described: the
+>   window is derived from `grid.start_ts` at BOTH edges
+>   (`[midnight(D − lookback), midnight(D))`), so a sub-day start keeps a
+>   whole-day lookback instead of gaining a partial tail. Byte-identical at a
+>   midnight start. Pinned by
+>   `test_the_cuped_preperiod_stays_whole_day_under_a_sub_day_start`.
+> - **Step 2 (render smoke)** — done, but not by the guard this step
+>   proposes: the fixture window now comes from `experiment.start_instant()`,
+>   the same resolver the grid uses, so `datetime.combine` is gone rather
+>   than special-cased. Pinned by `test_a_sub_day_start_still_lints`.
+> - **Step 3 (catalog table)** — done, wider than described: a rename **and**
+>   a widen **and** a new `interval_anchor` column, storing resolved UTC. See
+>   §0.3 item 2. Pinned by `TestExperimentsCatalogSchema` (the coverage gap
+>   this step suspected was real — there was no `_ab_experiments` contract
+>   test at all).
+> - **Step 4 (docs)** — done across `cumulative-intervals.md`,
+>   `declarative-config.md`, the guides, the packaged operator assets and the
+>   landing page; the `ab_start_date`/`ab_end_date` builtins were left
+>   untouched exactly as this step demands.
+>
+> Two consumers this WP's body claims need **no** code change did:
+> `IncrementalBackend` and the STATE stage. See WP1's as-built notes.
 
 **Goal.** Fix the two remaining call sites that reimplement date arithmetic
 against `start_date`/`end_date` directly (the CUPED pre-period window and the
@@ -959,15 +1038,19 @@ better) — that:
    `look_days`/`horizon_days` in `abk plan`, `weekly_cycle_pct`) are
    **byte-identical** to a captured pre-change golden — the regression gate
    this milestone demands, not a new-behavior test.
-2. Adds one **new** fixture with an explicit sub-day `start_date`/`end_date`
-   (e.g. `start_date: '2024-07-01T14:30:00'`) and asserts the grid anchors
+2. Adds one **new** fixture with an explicit sub-day `start_ts`/`horizon_ts`
+   (e.g. `start_ts: '2024-07-01 14:30:00'`) and asserts the grid anchors
    at that instant with no midnight snap, validator/plan/driver/explore all
-   accept it, and CUPED lookback still lands on a whole-day boundary.
+   accept it, and CUPED lookback still lands on a whole-day boundary. It must
+   also drive a cutoff INSIDE the opening local day (sub-day cadence, or an
+   off-phase `interval_anchor`) — the shape that hid two silent-wrong-number
+   defects from WP1's own tests, see §6.
 3. Runs `abk run` against a fresh ClickHouse (testcontainers, matching the
-   project's existing `e2e-clickhouse` CI job) and confirms `_ab_results`/
-   `_ab_experiments` are created **without** `start_date`/`end_date` on
-   results (**with** widened `DateTime` `start_date`/`end_date` on the
-   experiments catalog), and that `abk init`'s printed hint / BI docs no
+   project's existing `e2e-clickhouse` CI job) and confirms `_ab_results` is
+   created **without** `start_date`/`end_date` and `_ab_experiments` **with**
+   `start_ts`/`horizon_ts` `DateTime64(3)` + `interval_anchor`, that a
+   pre-m10 `_ab_experiments` fails with the drop-and-recreate message rather
+   than a bare type error, and that `abk init`'s printed hint / BI docs no
    longer mention the dropped columns.
 4. Spins up `abk explore --no-serve=false` (the real HTTP server) against
    that fixture and drives: a slow `/validate` (monkeypatched or reduced-N
@@ -1085,6 +1168,32 @@ posture; an irreversible DROP behind a convenience command is a bigger risk
 surface than a documented one-time manual step, and there are no installed
 users to shield.
 
+### D6 — A bare date means local midnight of THAT day, for BOTH edges (settled at WP1 time, 2026-07-25)
+
+**Decision: `horizon_ts` is the EXCLUSIVE right edge.** D1 renamed the field
+but left one thing open: what a bare `date` means in a field now called
+`horizon_ts`. The WP1 body (written pre-D1) branched on the type — `date` kept
+the legacy "+1 day, inclusive of that day" convention, `datetime` was exact.
+That is overturned: **one resolver for both edges**, a bare date is local
+midnight of that day, and therefore
+
+```
+config.horizon_ts resolved  ==  grid.horizon_ts     (always, exactly)
+```
+
+Why: under type-branching a field named `horizon_ts` whose bare-date form
+means "the day *after* me" is still an inclusive end **date** — precisely the
+legacy shape D1 exists to delete — and `2024-07-14` vs `2024-07-14T00:00:00`
+would denote instants a day apart in the same field. The rename's whole point
+is that the config speaks the engine's vocabulary; this is the only reading
+that delivers it.
+
+**Cost, accepted:** porting is no longer a pure key rename — the horizon VALUE
+moves one day (`end_date: 2024-07-14` → `horizon_ts: 2024-07-15`). Every
+fixture, scaffold and doc example was ported accordingly, and the rename error
+text spells the shift out. The numeric gate is unchanged and still the real
+one: **an unchanged window persists unchanged numbers.**
+
 ### D5 — Explore: decouple the global request lock
 
 **Decision: decouple.** Cheap tiers (alpha/method knobs) run concurrently;
@@ -1182,3 +1291,97 @@ before WP2 touches `tables.py`.
   server/stats-core only, no `web/src/**` edits) — if a later review finds
   an explore-client-visible behavior change is needed, `cd web && npm run
   build` and commit the bundle in the same PR per the standing rule.
+
+---
+
+## 6. Adversarial review record
+
+The m4/m6 pattern: per-round, per-finding, with the executed evidence. A
+finding nobody ran is not recorded here.
+
+### WP1 round 1 (`eaf5e47` + follow-ups) — 2 silent-wrong-number defects
+
+Both at the window edges, both introduced by WP1, both found by a lens that
+built the scenario and ran it rather than reasoning about the code.
+
+| # | Defect | Severity | Fix |
+|---|---|---|---|
+| 1 | `IncrementalBackend`'s tail render opened at local midnight, unclamped. WP1 clamped the STATE *writer*'s opening day to `grid.start_ts` and left the *reader*'s mirror alone, so a cutoff landing inside the opening local day summed pre-experiment facts. No gap, no fallback, no warning. | silent-wrong-number | `RenderWindow(max(last_midnight, grid.start_ts), end_ts)` |
+| 2 | A sub-day `horizon_ts` materialized a TRUNCATED trailing state day. Pre-m10 the `min(midnight(d+1), horizon_ts)` clamp was provably a no-op; widening the field made it live. A materialized day is never re-rendered and `horizon_ts` does not generally re-key the series, so extending the experiment kept summing the truncated day (~8× wrong effect, across runs). | silent-wrong-number | do not clamp — a trailing day the horizon would cut is not materialized at all; nothing reads it |
+
+**The test lesson.** WP1's own `test_sub_day_start_parity` was written to cover
+defect 1 and could not fail: daily cadence with a `midnight` anchor produces no
+cutoff inside the opening day. Both defects now have tests that fail without
+the fix (verified by reverting each), and defect 1's needs a fact seeded in
+the pre-start hours to be observable at all.
+
+**Also from round 1:** test-side `_grid()` helpers called `generate_grid`
+directly and dropped `interval_anchor`, so a test grid could differ from the
+production one (19 sites moved to `experiment.grid()`); the `ensure_columns`
+error on a pre-m10 `_ab_experiments` never named the documented
+drop-and-recreate remedy (and blocked `abk clean` too); the new "first look is
+short" config-lint note measured elapsed seconds and therefore accused the
+anchor at every spring-forward experiment (now gated on the anchor's PHASE);
+the AST factory gate was evadable by an aliased import or `getattr` and
+false-positived on a nested helper inside the factory; `abk plan` printed the
+horizon as an unlabelled naive-UTC instant for non-UTC experiments (now echoes
+the config value); plus docstring drift left by the rename.
+
+**Verified clean in round 1, with the evidence:**
+
+- pre-m10 vs m10 `generate_grid` over **40 000** randomized configs (10
+  timezones incl. 30-min DST, 45-min offsets, Apia, Chatham; DST-straddling
+  windows; 1–3 coarsening segments) — **0 mismatches** on `start_ts`,
+  `horizon_ts` and every `(end_ts, is_horizon)`. Independently re-run by two
+  more lenses over 5 760 and 300 000 combinations: 0 mismatches — **with one
+  documented exception**, found only by an exhaustive sweep of every real
+  tzdata transition 2009–2027 (146 412 grids): **38 grids in Pacific/Apia
+  across the 2011-12-30 date-line skip**, where local 2011-12-30 does not
+  exist. There the pre-m10 engine emitted a first cutoff EQUAL to `start_ts`
+  — a look over an empty window — because it compared calendar-day offsets,
+  which run one ahead of elapsed days after a line skip. The m10 forward snap
+  works in instant space and cannot. The new grid is the correct one in all
+  38; pinned by
+  `test_a_date_line_skip_does_not_emit_a_zero_length_window`. State the
+  byte-identity claim as "identical except where the old engine emitted a
+  degenerate point".
+- **60 000** anchored grids — 0 violations of: edges equal `resolve_instant`
+  of the config values, non-empty, strictly ascending and deduped, first
+  cutoff strictly after `start_ts`, last cutoff exactly the horizon with
+  nothing past it, exactly one `is_horizon` flag last, `_snap_forward` cap
+  never firing, no grid slower than 0.5 s.
+- `local_date(tz_midnight_utc(d, z), z) == d` over **all 599 tzdata zones ×
+  732 days** — 0 violations (the invariant the STATE/CUPED rewrites rest on).
+- Every complete experiment YAML snippet in the docs, the packaged operator
+  assets and the landing page validates (7 by one sweep, 15 by another).
+- Zero `ALGORITHM_VERSION` changes; `git show <wp1> --stat -- abkit/stats
+  tests/golden` empty.
+
+**Round 1, second wave** (three more lenses, each running its own harness):
+
+| # | Defect | Severity | Fix |
+|---|---|---|---|
+| 3 | `horizon_seconds()` became honest elapsed time, and the HARD cadence gate read a 23h spring-forward window as "a day does not fit in a day" — rejecting ordinary configs (a one-day daily experiment starting on the transition day; the very common "one week, look once at the end" weekly shape) whose grids had not moved at all. Nothing in the suite covered it. | crash-on-parse | `cadence_fits_horizon()` — a whole-day step compares in CALENDAR days, the space the planner steps in; sub-day steps keep seconds |
+| 4 | Sub-second precision validated but is unrepresentable end to end: the rendered SQL window formats to whole seconds and `_ab_results.end_ts` is `DateTime64(3)`, so a microsecond cutoff would persist rounded, never match the planned instant, and re-plan every run — forever. | silent-replan-loop | reject `microsecond != 0` alongside the existing offset/number rejections |
+| 5 | A calendar-edge window raised a raw `OverflowError` out of `model_validate` (pydantic wraps only `ValueError`), naming neither field nor cause. | UX | resolve the edges inside `validate_window` and re-raise as a `ValueError` naming both fields and the timezone |
+
+**The adjudicator's own pass** (re-running every lens finding, then probing
+what the lenses covered least — the explore/tuning + persistence surface)
+found one more that no lens saw, and that the round-1 gate fix did not close:
+
+| # | Defect | Severity | Fix |
+|---|---|---|---|
+| 6 | The cadence gate still did ARITHMETIC about whether a cutoff exists. With `interval_anchor` that stopped being a property of the step length: a lattice hung off midnight can put a real cutoff inside a window SHORTER than its own step. A 6 000-case property vet found 6 such wrongly-rejected configs; the same vet finds 454 with the arithmetic-only gate and **0** once the gate enumerates. | crash-on-parse | keep the two cheap accepts, then ask the planner — `any(not c.is_horizon for c in self.grid().cutoffs)`. Only reached when the arithmetic says "too long", so the enumerated grid is always tiny. |
+
+It also verified, and cleared, two things worth recording: the explore **Apply
+seam** round-trips all four window shapes with an identical grid and preserved
+`date`-vs-`datetime` typing (the type reaches the state identity hash); and
+editing `interval_anchor` on a live experiment interleaves new rows with old
+— which is **pre-existing behavior**, not new, since editing `cadence` does
+exactly the same at `f85371d`.
+
+**Self-review, same round:** the planner raised an uncaught `OverflowError`
+for a window butting against the representable calendar edge (year 1 / 9999).
+A lattice step off the end now saturates, which every comparison in the
+enumeration already reads correctly as "beyond that edge". (Pre-m10 raised
+identically, so it is a hardening, not a regression.)

@@ -6,9 +6,13 @@ from abkit.core.period_planner import (
     Cutoff,
     Grid,
     GridLimitExceeded,
+    as_local_datetime,
     backlog_seconds,
     generate_grid,
+    local_date,
     pending_cutoffs,
+    resolve_instant,
+    tz_localize_utc,
     tz_midnight_utc,
 )
 
@@ -19,8 +23,12 @@ __all__ = [
     "GridLimitExceeded",
     "Interval",
     "TableModel",
+    "as_local_datetime",
     "backlog_seconds",
     "generate_grid",
+    "local_date",
     "pending_cutoffs",
+    "resolve_instant",
+    "tz_localize_utc",
     "tz_midnight_utc",
 ]

@@ -39,7 +39,6 @@ import numpy as np
 from abkit.config.experiment_config import ComparisonConfig, ExperimentConfig
 from abkit.config.metric_config import MetricConfig
 from abkit.config.project_config import ProjectConfig
-from abkit.core.period_planner import generate_grid
 from abkit.database.internal_tables import InternalTablesManager
 from abkit.database.manager import BaseDatabaseManager
 from abkit.loaders.exposure_source import (
@@ -359,12 +358,7 @@ def build_report_payload(
     if end is not None:
         end = to_naive_utc(end)
 
-    grid = generate_grid(
-        experiment.start_date,
-        experiment.end_date,
-        experiment.cadence_segments(),
-        experiment.timezone,
-    )
+    grid = experiment.grid()
     variants = list(experiment.assignment.variants)
 
     declared_pairs = set(combinations(variants, 2))

@@ -5,7 +5,9 @@ for every STATE-eligible metric, each not-yet-materialized closed local day
 ``[tz-midnight(d), tz-midnight(d+1))`` is rendered through the m8 cohort
 factory backend (a single-day, non-cumulative window — never a hand-rolled
 cohort join, m9 §0.2) and replaced into ``_ab_unit_state`` via the §5.2
-replace-not-sum primitive. No reader exists in this milestone — WP4's
+replace-not-sum primitive. The opening day is clamped to ``grid.start_ts``
+when the window starts mid-day (m10), and a trailing day the horizon would
+truncate is not materialized at all — see :func:`closed_state_days`. No reader exists in this milestone — WP4's
 ``IncrementalBackend`` flips the read path.
 
 Eligibility (per metric, within one experiment):
@@ -63,7 +65,7 @@ from zoneinfo import ZoneInfo
 from abkit.compute.recompute_backend import RecomputeBackend
 from abkit.config.experiment_config import ComparisonConfig, ExperimentConfig
 from abkit.config.metric_config import MetricConfig
-from abkit.core.period_planner import Grid, tz_midnight_utc
+from abkit.core.period_planner import Grid, local_date, tz_midnight_utc
 from abkit.database.internal_tables import (
     InternalTablesManager,
     compute_metric_state_id,
@@ -104,18 +106,36 @@ def closed_state_days(
     """The closed local days of the grid window, in order.
 
     A day is closed iff its full window ``[tz-midnight(d), tz-midnight(d+1))``
-    — clamped to the grid horizon — has passed the compute watermark (§6.4:
-    the state stage advances only at day close; the same
-    ``end_ts <= watermark_ts`` completeness rule the cutoff planner uses).
+    has passed the compute watermark (§6.4: the state stage advances only at
+    day close; the same ``end_ts <= watermark_ts`` completeness rule the
+    cutoff planner uses) AND lies inside the grid window. The two edges are
+    treated asymmetrically, for the reason spelled out below.
+
+    The enumeration is keyed off the GRID, not off ``experiment.start_ts``:
+    the config field may carry a time-of-day (m10), in which case the opening
+    local day is legitimately PARTIAL and its window starts at
+    ``grid.start_ts`` — no state row may ever cover an instant outside the
+    experiment window, or the additive read would count pre-experiment rows.
+    That clamp is safe on the START side only because ``start_ts`` is folded
+    into the series identity: moving it re-keys the series.
+
+    A sub-day ``horizon_ts`` gets the opposite treatment — the trailing
+    partial day is **not materialized at all**. Clamping it would freeze a
+    part-day row that no later run re-renders (a materialized day is never
+    revisited) while ``horizon_ts`` does NOT generally re-key the series, so
+    extending the experiment would keep summing the truncated day. Nothing
+    needs it: a cutoff reads closed days only through ``cutoff_day - 1``, and
+    no cutoff exceeds the horizon, so the trailing day is served by the
+    reader's own sub-day tail render.
     """
     zone = ZoneInfo(experiment.timezone)
     days: list[StateDay] = []
-    day = experiment.start_date
+    day = local_date(grid.start_ts, zone)
     while True:
-        window_start = tz_midnight_utc(day, zone)
-        if window_start >= grid.horizon_ts:
+        window_start = max(tz_midnight_utc(day, zone), grid.start_ts)
+        window_end = tz_midnight_utc(day + timedelta(days=1), zone)
+        if window_start >= grid.horizon_ts or window_end > grid.horizon_ts:
             break
-        window_end = min(tz_midnight_utc(day + timedelta(days=1), zone), grid.horizon_ts)
         if window_end > watermark_ts:
             break
         days.append(StateDay(day=day, window=RenderWindow(window_start, window_end)))
@@ -148,15 +168,20 @@ def _cohort_identity(experiment: ExperimentConfig, project_root: Path | None) ->
         "unit_key": experiment.unit_key,
         "variants": list(experiment.assignment.variants),
         "timezone": experiment.timezone,
-        "start_date": str(experiment.start_date),
+        # str() of a date and of a midnight datetime differ ('2024-07-01' vs
+        # '2024-07-01 00:00:00'), which is why the config layer preserves the
+        # written type instead of normalizing: a re-parse must not re-hash.
+        # `interval_anchor` is deliberately NOT folded in — it moves cutoffs,
+        # never day boundaries, and a day's contents are what this key covers.
+        "start_ts": str(experiment.start_ts),
     }
     # The assignment render's window ends at the GRID HORIZON, so a cohort
     # SQL referencing ab_end_date/ab_end_ts renders differently when
-    # end_date moves (R2 review) — fold end_date in for exactly those SQLs.
+    # horizon_ts moves (R2 review) — fold it in for exactly those SQLs.
     # End-invariant assignment SQL (the common case) skips it, so the most
     # routine edit there is — extending an experiment — never orphans state.
     if "ab_end_" in assignment_sql:
-        identity["end_date"] = str(experiment.end_date)
+        identity["horizon_ts"] = str(experiment.horizon_ts)
     return identity
 
 

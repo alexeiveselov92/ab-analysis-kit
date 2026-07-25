@@ -18,7 +18,6 @@ import pytest
 from fake_db import FakeDatabaseManager, serve_assignment_pushdown
 
 from abkit.config import ExperimentConfig
-from abkit.core.period_planner import generate_grid
 from abkit.database.internal_tables import InternalTablesManager
 from abkit.loaders.exposure_copy import _batch_added_filters, copy_exposures_incremental
 from abkit.loaders.exposure_source import ExposureLoadError
@@ -63,8 +62,8 @@ def make_experiment(**overrides) -> ExperimentConfig:
     assignment.update(overrides.pop("assignment", {}))
     payload = {
         "name": "copy_test",
-        "start_date": "2024-07-01",
-        "end_date": "2024-07-28",
+        "start_ts": "2024-07-01",
+        "horizon_ts": "2024-07-29",
         "unit_key": "user_id",
         "assignment": assignment,
         "comparisons": [
@@ -80,12 +79,7 @@ def make_experiment(**overrides) -> ExperimentConfig:
 
 
 def make_grid(experiment: ExperimentConfig):
-    return generate_grid(
-        experiment.start_date,
-        experiment.end_date,
-        experiment.cadence_segments(),
-        tz=experiment.timezone,
-    )
+    return experiment.grid()
 
 
 def row(unit, variant, ts, **extra):
@@ -241,9 +235,7 @@ class TestWatermarkResume:
         first_pass_queries = len(manager.assignment_queries)
 
         manager.scripted_rows.append(row("u2", "treatment", START + timedelta(days=11)))
-        outcome = copy_once(
-            manager, tables, make_experiment(), now=NOW + timedelta(days=3)
-        )
+        outcome = copy_once(manager, tables, make_experiment(), now=NOW + timedelta(days=3))
         assert outcome.resumed is True
         # resume re-scans from the WATERMARK'S BUCKET FLOOR (grid-anchored) —
         # the partially-persisted bucket is re-read and its units are
@@ -262,9 +254,7 @@ class TestWatermarkResume:
         manager.scripted_rows = [row("u1", "control", START + timedelta(hours=2))]
         first = copy_once(manager, tables, make_experiment())
 
-        outcome = copy_once(
-            manager, tables, make_experiment(), now=NOW + timedelta(hours=1)
-        )
+        outcome = copy_once(manager, tables, make_experiment(), now=NOW + timedelta(hours=1))
         assert outcome.rows_written in (0, 1)  # the re-scan only LWW-upserts u1
         assert outcome.covered_through == first.covered_through == START + timedelta(days=10)
         assert set(persisted(tables, manager)) == {"u1"}
@@ -292,16 +282,12 @@ class TestWatermarkResume:
             row("u1", "control", late),
         ]
         experiment = make_experiment(
-            assignment={
-                "cohort_copy": {"enabled": True, "batch_intervals_per_round_trip": 1}
-            }
+            assignment={"cohort_copy": {"enabled": True, "batch_intervals_per_round_trip": 1}}
         )
         copy_once(manager, tables, experiment)
         assert persisted(tables, manager)["u1"] == ("control", late)
 
-    def test_resume_rescan_takes_the_window_minimum_on_duplicate_input(
-        self, manager, tables
-    ):
+    def test_resume_rescan_takes_the_window_minimum_on_duplicate_input(self, manager, tables):
         """Pinned DISCLOSED divergence (round 2, same LWW class): a resume
         re-scan window that no longer sees a duplicate unit's earliest row
         LWW-overwrites the persisted earliest with the window's own minimum.
@@ -324,7 +310,9 @@ class TestWatermarkResume:
 class TestBatchingInvariance:
     def test_round_trip_size_never_changes_the_persisted_rows(self, manager, tables):
         manager.scripted_rows = [
-            row(f"u{i}", "control" if i % 2 else "treatment", START + timedelta(days=i % 9, hours=3))
+            row(
+                f"u{i}", "control" if i % 2 else "treatment", START + timedelta(days=i % 9, hours=3)
+            )
             for i in range(20)
         ]
         results = {}
@@ -348,9 +336,7 @@ class TestBatchingInvariance:
     def test_round_trip_count_matches_the_chunk_arithmetic(self, manager, tables):
         manager.scripted_rows = [row("u1", "control", START + timedelta(hours=2))]
         experiment = make_experiment(
-            assignment={
-                "cohort_copy": {"enabled": True, "batch_intervals_per_round_trip": 4}
-            }
+            assignment={"cohort_copy": {"enabled": True, "batch_intervals_per_round_trip": 4}}
         )
         outcome = copy_once(manager, tables, experiment)
         # 10 matured days / (4 × 1d) per round trip = ceil(2.5) = 3
@@ -379,9 +365,7 @@ class TestCustomUpdateColumn:
         assert set(snapshot) == {"u2"}
         assert snapshot["u2"] == ("treatment", START + timedelta(hours=3))
 
-    def test_resume_never_bounds_update_column_by_the_exposure_watermark(
-        self, manager, tables
-    ):
+    def test_resume_never_bounds_update_column_by_the_exposure_watermark(self, manager, tables):
         """Review-confirmed MAJOR: MAX(exposure_ts) says nothing about another
         column's frontier — bounding updated_at by it silently drops
         legitimate new rows forever. A custom update_column therefore takes

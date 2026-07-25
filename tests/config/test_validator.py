@@ -14,8 +14,8 @@ from abkit.config.validator import (
 
 EXPERIMENT_YML = """
 name: {name}
-start_date: 2024-07-01
-end_date: 2024-07-28
+start_ts: 2024-07-01
+horizon_ts: 2024-07-29
 unit_key: user_id
 assignment:
   query: "SELECT user_id, variant, exposure_ts FROM a"

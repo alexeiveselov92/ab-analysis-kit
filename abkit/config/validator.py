@@ -17,6 +17,7 @@ detectkit users will assume the one-level model.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import timezone
 from pathlib import Path
 from typing import Protocol, TypeVar
 
@@ -24,7 +25,7 @@ from abkit.config.experiment_config import DAY_SECONDS, ExperimentConfig
 from abkit.config.metric_config import MetricConfig
 from abkit.config.project_config import ProjectConfig
 from abkit.core.interval import Interval
-from abkit.core.period_planner import GridLimitExceeded, generate_grid
+from abkit.core.period_planner import GridLimitExceeded
 
 
 class _NamedConfig(Protocol):
@@ -283,13 +284,7 @@ def validate_experiment_level2(
 
     # ── cadence & looks gates (through the planner's own enumeration) ───────
     try:
-        grid = generate_grid(
-            experiment.start_date,
-            experiment.end_date,
-            experiment.cadence_segments(),
-            tz=experiment.timezone,
-            limit=project.limits.max_looks,
-        )
+        grid = experiment.grid(limit=project.limits.max_looks)
     except GridLimitExceeded as exc:
         report.errors.append(f"{where}: {exc}")
         grid = None
@@ -309,6 +304,31 @@ def validate_experiment_level2(
                 "grid drifts across midnight (diurnal composition oscillates "
                 "across looks; daily BI rollups misalign)"
             )
+    # The single most likely surprise of an off-phase `interval_anchor`: the
+    # lattice does not start at start_ts, so the FIRST window is shorter than
+    # the cadence. Expected, never an error — but it must be said out loud,
+    # because it looks like a dropped look in the readout.
+    #
+    # Gated on the PHASE, not on elapsed seconds: a 23h spring-forward day
+    # makes an ordinary midnight-anchored daily first look "short" in seconds
+    # while being a perfectly whole local day, and blaming the anchor there
+    # would be a lie printed at every DST-crossing experiment.
+    if grid is not None and grid.cutoffs and grid.anchor_ts is not None:
+        zone = experiment.zone()
+        off_phase = (
+            grid.anchor_ts.replace(tzinfo=timezone.utc).astimezone(zone).time()
+            != grid.start_ts.replace(tzinfo=timezone.utc).astimezone(zone).time()
+        )
+        first_step = experiment.cadence_segments()[0][0]
+        first_window = (grid.cutoffs[0].end_ts - grid.start_ts).total_seconds()
+        if off_phase and first_window < first_step:
+            report.warnings.append(
+                f"{where}: the first look covers {first_window:.0f}s of the "
+                f"{first_step}s cadence (interval_anchor: "
+                f"{experiment.interval_anchor}) — expected when the anchor is "
+                "off-phase with start_ts; every window is [start_ts, end_ts), "
+                "so only the first one is short"
+            )
 
     # ── SQL render smoke (StrictUndefined, no DB) + macro-usage lint ────────
     report.extend(_render_smoke(experiment, metrics_by_name, project_root))
@@ -326,9 +346,12 @@ def _render_smoke(
 
     report = ValidationReport()
     template = QueryTemplate()
-    from datetime import datetime, timedelta
+    from datetime import timedelta
 
-    start = datetime.combine(experiment.start_date, datetime.min.time())
+    # A fixture window only (StrictUndefined render smoke, never executed) —
+    # but taken through the same resolver the grid uses, so a sub-day
+    # `start_ts` renders the shape it will really run with.
+    start = experiment.start_instant()
     builtins = build_builtins(
         experiment_id=experiment.name,
         unit_key=experiment.unit_key,

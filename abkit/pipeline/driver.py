@@ -44,7 +44,7 @@ from abkit.config.experiment_config import ExperimentConfig
 from abkit.config.metric_config import MetricConfig
 from abkit.config.project_config import ProjectConfig
 from abkit.core.exposure_counting import bucket_timestamps, count_stream
-from abkit.core.period_planner import backlog_seconds, generate_grid, pending_cutoffs
+from abkit.core.period_planner import backlog_seconds, pending_cutoffs
 from abkit.database.internal_tables import InternalTablesManager
 from abkit.database.manager import BaseDatabaseManager
 from abkit.loaders.exposure_copy import copy_exposures_incremental
@@ -234,13 +234,7 @@ def run_experiment(
         # The grid is the single source of the experiment's window bounds —
         # the exposure load below must use the SAME tz-snapped edges the
         # analysis windows use, never naive calendar midnights.
-        grid = generate_grid(
-            experiment.start_date,
-            experiment.end_date,
-            experiment.cadence_segments(),
-            tz=experiment.timezone,
-            limit=project.limits.max_looks,
-        )
+        grid = experiment.grid(limit=project.limits.max_looks)
 
         # The compute watermark (cutoffs pend iff end_ts ≤ it) — computed once
         # per run, never now() in SQL (§6.2); the copy-coverage check below

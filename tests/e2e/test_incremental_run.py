@@ -175,7 +175,7 @@ class TestTwiceRun:
         # stays incremental (WP4 only disables it when `state` is NOT run).
         result = runner.invoke(
             cli,
-            # the scaffolded horizon: start_date 2024-07-01, end_date 2024-07-14
+            # the scaffolded horizon: start_ts 2024-07-01, horizon_ts 2024-07-15
             # (the last cutoff covers that day, so the exclusive edge is the 15th)
             [
                 "run",

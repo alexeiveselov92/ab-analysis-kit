@@ -23,8 +23,10 @@ name: dating_intro_v2            # globally unique (DB key); legacy exp_id
 description: "Onboarding redesign for the dating intro funnel"
 status: running                  # design | running | concluded | archived
 is_actual: true                  # scheduled (Prefect) runs pick it up
-start_date: 2024-07-31           # PINNED left edge of every cumulative window
-end_date:   2024-08-27           # planner horizon (also drives the power plan)
+start_ts:   2024-07-31           # PINNED left edge of every cumulative window; a bare
+                                 # date is local midnight, a timestamp is the exact instant
+horizon_ts: 2024-08-28           # planner horizon — the EXCLUSIVE right edge (this covers
+                                 # through Aug 27); also drives the power plan
 unit_key: user_id                # randomization + default analysis unit
 cadence: 1d                      # cumulative cutoff step — any duration ("1h", "30m", "1d");
                                  # or a coarsening schedule (dense-early, the sanctioned
@@ -35,8 +37,13 @@ cadence: 1d                      # cumulative cutoff step — any duration ("1h"
 data_lag: 0                      # completeness watermark: data assumed complete through
                                  # now() - data_lag. REQUIRED when cadence < 1d (declare your
                                  # ingestion SLA); default 0 reproduces *_wo_curr_day at 1d
-timezone: UTC                    # interprets date-typed fields & daily midnight snapping;
-                                 # storage/comparison is always UTC
+interval_anchor: midnight        # WHERE the cutoff lattice sits: midnight (default — local
+                                 # midnight of the opening day) | start (count from start_ts)
+                                 # | an explicit timestamp to align to an external cycle
+                                 # (it MAY precede start_ts). Cutoffs = anchor + k*cadence,
+                                 # kept strictly after start_ts
+timezone: UTC                    # interprets bare-date edges, an explicit interval_anchor,
+                                 # and the DST-safe day lattice; storage/comparison is UTC
 
 assignment:                      # READ-ONLY exposure source (abkit does not randomize)
   query_file: sql/assignment.sql # must SELECT unit_key, variant, exposure_ts [, stratum]

@@ -14,7 +14,6 @@ from synthetic_ab import (
 from abkit.compute.recompute_backend import RecomputeBackend
 from abkit.config.experiment_config import ExperimentConfig
 from abkit.config.method_config import MethodConfig
-from abkit.core.period_planner import generate_grid
 from abkit.pipeline.analyze import comparison_alpha, effective_alphas
 from abkit.validate.result import CellResult
 from abkit.validate.runner import (
@@ -31,20 +30,15 @@ NOW_ISO = "2026-07-05T00:00:00"
 
 
 def _grid(experiment):
-    return generate_grid(
-        experiment.start_date,
-        experiment.end_date,
-        experiment.cadence_segments(),
-        tz=experiment.timezone,
-    )
+    return experiment.grid()
 
 
 def _two_tier_experiment() -> ExperimentConfig:
     return ExperimentConfig.model_validate(
         {
             "name": "twotier",
-            "start_date": "2024-07-01",
-            "end_date": "2024-07-04",
+            "start_ts": "2024-07-01",
+            "horizon_ts": "2024-07-05",
             "unit_key": "user_id",
             "alpha": 0.05,
             "correction": "bonferroni",
@@ -267,8 +261,8 @@ def test_bh_family_budget_anchors_to_member_level_not_the_composition():
     experiment = ExperimentConfig.model_validate(
         {
             "name": "bh_family",
-            "start_date": "2024-07-01",
-            "end_date": "2024-07-04",
+            "start_ts": "2024-07-01",
+            "horizon_ts": "2024-07-05",
             "unit_key": "user_id",
             "alpha": 0.05,
             "correction": "benjamini_hochberg",

@@ -15,7 +15,7 @@ need the project config + the planner grid, and SQL render checks live in
 from __future__ import annotations
 
 import zoneinfo
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from abkit.config.method_config import MethodConfig
 from abkit.core.interval import Interval
+from abkit.core.period_planner import Grid, as_local_datetime, resolve_instant
 from abkit.database.tables import MAX_EXPERIMENT_NAME_LENGTH, MAX_VARIANT_NAME_LENGTH
 from abkit.utils.json_utils import json_dumps_sorted
 
@@ -32,17 +33,101 @@ ExperimentStatus = Literal["design", "running", "concluded", "archived"]
 CorrectionKind = Literal["none", "bonferroni", "benjamini_hochberg"]
 SequentialScheme = Literal["always_valid", "alpha_spending"]
 
+#: ``interval_anchor``'s two symbolic forms (the third is an explicit instant).
+AnchorMode = Literal["midnight", "start"]
+
+_ANCHOR_FORMS = (
+    "use 'midnight' (local midnight in the experiment's `timezone` — the default), "
+    "'start' (count from start_ts), or an explicit timestamp such as 2024-06-28 or "
+    "2024-06-28 21:00:00 (read in the experiment's timezone; it MAY precede start_ts)"
+)
+
+#: 0.5.0 renamed the window fields; the old spellings are rejected by name.
+_RENAMED_WINDOW_FIELDS = {
+    "start_date": (
+        "start_ts",
+        "a bare date still means local midnight of that day, so the value carries over unchanged",
+    ),
+    "end_date": (
+        "horizon_ts",
+        "horizon_ts is the EXCLUSIVE right edge, so port `end_date: 2024-07-14` "
+        "as `horizon_ts: 2024-07-15` (or `2024-07-14 18:00:00` for a sub-day horizon)",
+    ),
+}
+
+
+def parse_window_scalar(value: Any, field: str) -> date | datetime:
+    """Parse one window scalar, PRESERVING ``date`` vs ``datetime``.
+
+    A bare ``date`` and an explicit midnight ``datetime`` denote the same
+    instant, so nothing here depends on telling them apart — but the union is
+    kept type-preserving anyway, because ``str(value)`` reaches the state
+    identity hash and the catalog, and a type that flips under a re-parse
+    would silently orphan a materialized series.
+
+    Two coercions pydantic would otherwise perform are rejected outright:
+
+    - a bare number (``start_ts: 20240101``, an unquoted YAML scalar) is read
+      by pydantic's ``datetime`` member as a UNIX timestamp — 20240101 seconds
+      after the epoch, i.e. 1970-08-23. A wildly wrong window that validates.
+    - a UTC offset (``2024-07-01T14:30:00+03:00``) would give an experiment
+      two sources of truth for its timezone; the experiment's ``timezone``
+      field is the only one.
+    """
+    if isinstance(value, datetime):
+        # only the datetime branches reach the offset check below; both `date`
+        # branches return early (a calendar day carries no offset)
+        parsed: datetime = value
+    elif isinstance(value, date):
+        return value  # a calendar day; no offset to check
+    elif isinstance(value, str):
+        text = value.strip()
+        try:
+            # Sniff on shape, never on pydantic's union ordering: exactly
+            # `YYYY-MM-DD` is a calendar day, anything longer is an instant.
+            if len(text) == 10 and text.count("-") == 2:
+                return date.fromisoformat(text)
+            parsed = datetime.fromisoformat(text)
+        except ValueError as exc:
+            raise ValueError(
+                f"{field}: {value!r} is not an ISO date (2024-07-01) or "
+                f"timestamp (2024-07-01 14:30:00)"
+            ) from exc
+    else:
+        raise ValueError(
+            f"{field}: expected an ISO date or timestamp, got {type(value).__name__} "
+            f"({value!r}) — quote it if YAML parsed it as a number"
+        )
+    if parsed.tzinfo is not None:
+        raise ValueError(
+            f"{field}: drop the UTC offset ({value!r}) — window timestamps are "
+            "local wall-clock times interpreted in the experiment's `timezone`"
+        )
+    if parsed.microsecond:
+        # Nothing downstream can carry sub-second precision: the rendered SQL
+        # window formats to whole seconds, and `_ab_results.end_ts` is
+        # DateTime64(3) on every backend — so a microsecond cutoff would be
+        # stored rounded, never match the planned one, and re-plan forever.
+        raise ValueError(
+            f"{field}: drop the sub-second part ({value!r}) — window timestamps "
+            "are whole seconds (the cadence grammar is too, and cutoffs persist "
+            "at millisecond precision)"
+        )
+    return parsed
+
 
 class CadenceSegment(BaseModel):
     """One segment of a coarsening cadence schedule: ``{every: 1h, until: 48h}``.
 
-    ``until`` is measured from ``start_ts``; the LAST segment may omit it
-    (runs to the horizon).
+    ``until`` is an elapsed offset from the WINDOW START (``start_ts``) — not
+    from ``interval_anchor``, which only decides where the lattice sits; the
+    LAST segment may omit it (runs to the horizon).
     """
 
     every: int | str = Field(..., description="Cutoff step within this segment")
     until: int | str | None = Field(
-        default=None, description="Segment end, measured from start_ts (last segment: omit)"
+        default=None,
+        description="Segment end as an offset from start_ts (last segment: omit)",
     )
 
     @field_validator("every", "until")
@@ -302,13 +387,36 @@ class ExperimentConfig(BaseModel):
     is_actual: bool = Field(default=True, description="Scheduled runs pick it up")
     tags: list[str] | None = Field(default=None)
 
-    start_date: date = Field(..., description="PINNED left edge of every cumulative window")
-    end_date: date = Field(..., description="Planner horizon (drives the power plan)")
+    start_ts: date | datetime = Field(
+        ...,
+        description=(
+            "PINNED left edge of every cumulative window. A bare date is local "
+            "midnight of that day in `timezone`; a timestamp is that exact instant"
+        ),
+    )
+    horizon_ts: date | datetime = Field(
+        ...,
+        description=(
+            "Planner horizon — the EXCLUSIVE right edge of the last window "
+            "(drives the power plan). A bare date is local midnight of that day, "
+            "so `2024-07-15` means 'through the end of July 14'"
+        ),
+    )
     unit_key: str = Field(..., description="Randomization + default analysis unit")
 
     cadence: int | str | list[CadenceSegment] = Field(
         default="1d",
         description="Cumulative cutoff step: duration scalar or coarsening schedule",
+    )
+    interval_anchor: AnchorMode | date | datetime = Field(
+        default="midnight",
+        description=(
+            "WHERE the cutoff lattice sits (cadence decides how far apart the "
+            "points are): 'midnight' (default — local midnight in `timezone`, "
+            "i.e. whole calendar days) | 'start' (count from start_ts) | an "
+            "explicit timestamp to align to an external cycle. Cutoffs are "
+            "anchor + k*cadence, kept strictly after start_ts"
+        ),
     )
     data_lag: int | str | None = Field(
         default=None,
@@ -320,7 +428,8 @@ class ExperimentConfig(BaseModel):
     )
     timezone: str = Field(
         default="UTC",
-        description="Interprets date-typed fields & daily midnight snapping; storage is UTC",
+        description="Interprets bare-date window edges, an explicit "
+        "interval_anchor, and the DST-safe day lattice; storage is UTC",
     )
 
     assignment: AssignmentConfig = Field(...)
@@ -388,19 +497,79 @@ class ExperimentConfig(BaseModel):
             Interval(v)  # whole seconds >= 1s (the §6.1 grammar)
         return v
 
+    @field_validator("start_ts", "horizon_ts", mode="before")
+    @classmethod
+    def _parse_window_edge(cls, v: Any, info: Any) -> Any:
+        return parse_window_scalar(v, info.field_name)
+
+    @field_validator("interval_anchor", mode="before")
+    @classmethod
+    def _parse_interval_anchor(cls, v: Any) -> Any:
+        if isinstance(v, str) and v.strip() in ("midnight", "start"):
+            return v.strip()
+        try:
+            return parse_window_scalar(v, "interval_anchor")
+        except ValueError as exc:
+            # Every rejection path names all three forms — a bare
+            # `interval_anchor: noon` otherwise reads as "not a timestamp",
+            # never mentioning that two keywords exist.
+            raise ValueError(
+                f"interval_anchor: {v!r} is not a valid anchor — {_ANCHOR_FORMS}"
+            ) from exc
+
     # ── model validators ─────────────────────────────────────────────────────
 
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_renamed_window_fields(cls, data: Any) -> Any:
+        """0.5.0 renamed start_date/end_date — fail by name, never by silence.
+
+        ``extra="ignore"`` (pydantic's default) would otherwise drop the old
+        key and report a bare "Field required: start_ts", leaving the reader
+        to guess that the VALUE also moves (horizon_ts is exclusive).
+        """
+        if not isinstance(data, dict):
+            return data
+        for old, (new, note) in _RENAMED_WINDOW_FIELDS.items():
+            if old in data:
+                raise ValueError(
+                    f"`{old}` was renamed to `{new}` (abkit 0.5.0 — experiment "
+                    f"windows are timestamps, not dates): {note}"
+                )
+        return data
+
     @model_validator(mode="after")
-    def validate_dates(self) -> ExperimentConfig:
-        if self.end_date < self.start_date:
-            raise ValueError(f"end_date ({self.end_date}) is before start_date ({self.start_date})")
+    def validate_window(self) -> ExperimentConfig:
+        """The window must be non-empty, compared as resolved instants.
+
+        Never compare the raw fields: a ``date`` start against a ``datetime``
+        horizon raises ``TypeError`` in Python, and a mixed pair is legal
+        config.
+        """
+        try:
+            start, horizon = self.start_instant(), self.horizon_instant()
+        except (OverflowError, OSError) as exc:
+            # `astimezone` off the end of the representable calendar. pydantic
+            # only wraps ValueError/AssertionError, so without this the raw
+            # OverflowError escapes model_validate naming neither field.
+            raise ValueError(
+                f"start_ts ({self.start_ts}) / horizon_ts ({self.horizon_ts}) fall "
+                f"outside the representable calendar in timezone {self.timezone!r}"
+            ) from exc
+        if horizon <= start:
+            raise ValueError(
+                f"horizon_ts ({self.horizon_ts}) is not after start_ts "
+                f"({self.start_ts}) — the horizon is the EXCLUSIVE right edge, "
+                "so a one-day experiment starting 2024-07-01 has "
+                "horizon_ts: 2024-07-02"
+            )
         return self
 
     @model_validator(mode="after")
     def validate_cadence_schedule(self) -> ExperimentConfig:
         """Schedule segments: non-overlapping, strictly coarsening, increasing until."""
         if not isinstance(self.cadence, list):
-            if self.cadence_seconds_min() > self.horizon_seconds():
+            if not self.cadence_fits_horizon():
                 raise ValueError(
                     f"cadence ({self.cadence}) is longer than the experiment horizon "
                     f"({self.horizon_seconds()}s) — no cutoff would ever be produced"
@@ -439,7 +608,7 @@ class ExperimentConfig(BaseModel):
                     )
                 previous_until = until
             previous_every = every
-        if self.cadence_seconds_min() > self.horizon_seconds():
+        if not self.cadence_fits_horizon():
             raise ValueError("cadence schedule's densest segment is longer than the horizon")
         return self
 
@@ -501,9 +670,84 @@ class ExperimentConfig(BaseModel):
             return 0
         return Interval(self.data_lag).seconds
 
+    def zone(self) -> zoneinfo.ZoneInfo:
+        """The experiment timezone (validated at parse)."""
+        return zoneinfo.ZoneInfo(self.timezone)
+
+    def start_instant(self) -> datetime:
+        """``start_ts`` as naive UTC — the same instant ``Grid.start_ts`` holds.
+
+        The config field is a LOCAL wall-clock value; everything stored or
+        compared downstream is naive UTC. Resolving through the planner's
+        primitive keeps the two definitions from drifting.
+        """
+        return resolve_instant(self.start_ts, self.zone())
+
+    def horizon_instant(self) -> datetime:
+        """``horizon_ts`` as naive UTC — equals ``Grid.horizon_ts`` exactly."""
+        return resolve_instant(self.horizon_ts, self.zone())
+
+    def grid(self, *, limit: int | None = None) -> Grid:
+        """THE experiment → grid factory: window + cadence + anchor, composed once.
+
+        Every production consumer goes through this, mirroring m8's
+        ``build_cohort_backend`` contract: ``generate_grid`` keeps its
+        primitive signature (tests and purity want it), but nothing under
+        ``abkit/`` outside this method may call it. A hand-copied argument
+        list is exactly how a new planner knob gets silently dropped at eight
+        call sites — and one of those sites passed ``timezone`` positionally,
+        so inserting a parameter before ``tz`` would have re-bound it in
+        silence. Pinned by ``tests/core/test_grid_factory_is_the_only_entry.py``.
+        """
+        from abkit.core.period_planner import generate_grid
+
+        return generate_grid(
+            self.start_ts,
+            self.horizon_ts,
+            self.cadence_segments(),
+            tz=self.timezone,
+            limit=limit,
+            interval_anchor=self.interval_anchor,
+        )
+
+    def cadence_fits_horizon(self) -> bool:
+        """Can the densest cadence step produce a cutoff inside the window?
+
+        Two cheap accepts, then the planner as the authority — because with
+        `interval_anchor` the answer is no longer a property of the step
+        length alone.
+
+        1. A whole-day step is measured in CALENDAR days, the space the
+           planner steps in. Across a spring-forward a local day is 23h, and a
+           seconds comparison would reject an ordinary one-day daily
+           experiment ("cadence 1d is longer than the 82800s horizon") whose
+           grid is byte-identical to what it always was.
+        2. Any other step compares in seconds.
+        3. If neither accepts, ENUMERATE. A step longer than the window can
+           still land a cutoff inside it when the lattice is anchored
+           elsewhere (`36h` steps off local midnight, a window opening at
+           04:00 — the point at midnight+36h falls inside). Arithmetic cannot
+           see that; the grid can. Only reached when the cheap checks say
+           "too long", so the grid enumerated here is always tiny.
+        """
+        step = self.cadence_seconds_min()
+        if step % DAY_SECONDS == 0:
+            span_days = (
+                as_local_datetime(self.horizon_ts).date() - as_local_datetime(self.start_ts).date()
+            ).days
+            if step // DAY_SECONDS <= span_days:
+                return True
+        elif step <= self.horizon_seconds():
+            return True
+        return any(not cutoff.is_horizon for cutoff in self.grid().cutoffs)
+
     def horizon_seconds(self) -> int:
-        """Length of the full experiment window: [start_date .. end_date] inclusive."""
-        return ((self.end_date - self.start_date).days + 1) * DAY_SECONDS
+        """Length of the full experiment window: ``[start_ts, horizon_ts)``.
+
+        Measured between resolved instants, so a DST transition inside the
+        window makes it legitimately 23h or 25h longer than a day count.
+        """
+        return int(round((self.horizon_instant() - self.start_instant()).total_seconds()))
 
     def cadence_canonical_json(self) -> str:
         """Canonical JSON for the ``_ab_experiments`` catalog (always a segment list)."""
@@ -537,10 +781,23 @@ class ExperimentConfig(BaseModel):
             "description": self.description,
             "status": self.status,
             "is_actual": self.is_actual,
-            "start_date": self.start_date,
-            "end_date": self.end_date,
+            # Resolved instants, not the raw local fields: every other
+            # timestamp column in the warehouse is naive UTC, and a BI join
+            # onto _ab_results.start_ts must line up rather than differ by the
+            # timezone offset. `timezone` is right there to convert back.
+            "start_ts": self.start_instant(),
+            "horizon_ts": self.horizon_instant(),
             "unit_key": self.unit_key,
             "cadence": self.cadence_canonical_json(),
+            # ISO, not str(): a `date` and a midnight `datetime` anchor
+            # resolve to the same instant but stringify differently. The
+            # column is INFORMATIONAL — hash `grid.anchor_ts`, never this
+            # string, if something needs "did the lattice change?".
+            "interval_anchor": (
+                self.interval_anchor
+                if isinstance(self.interval_anchor, str)
+                else self.interval_anchor.isoformat()
+            ),
             "data_lag_seconds": self.data_lag_seconds(),
             "timezone": self.timezone,
             "variants": json_dumps_sorted(self.assignment.variants),

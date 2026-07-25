@@ -777,7 +777,7 @@ function createStabilizationChart(
   // yields exactly one hz=1 cutoff (the last), and a post band of one point
   // would otherwise paint the decision-grade cutoff with the pre-horizon
   // de-emphasis (WP3 review finding). A stored hz=1 row counts only while it
-  // still IS the current config horizon: after an end_date extension the old
+  // still IS the current config horizon: after a horizon_ts extension the old
   // horizon row goes stale mid-series (the planner never rewrites computed
   // rows) and everything must render pre-horizon again (milestone-review
   // finding).
@@ -935,7 +935,7 @@ function createStabilizationChart(
     drawSeriesDecimated(g!, xs, es, viewMin, viewMax, r.left, sc.plotW(), sc.px, sc.py, accent, 2, dpr);
 
     // planned-horizon marker — anchored at the stored hz=1 cutoff (data
-    // truth) when one exists, so an end_date edit after runs cannot make the
+    // truth) when one exists, so a horizon_ts edit after runs cannot make the
     // divider contradict the band split (WP3 review finding); the current-
     // config grid horizon is the fallback for a not-yet-reached horizon
     drawVDivider(g!, canvas, MARGINS, dpr, sc.px, dividerEd, grid, 'planned horizon →');

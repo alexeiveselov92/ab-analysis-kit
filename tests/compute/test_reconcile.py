@@ -239,7 +239,7 @@ class TestR1ReviewFixes:
         _run(warehouse, tables, experiment)
 
         shrunk_payload = experiment_payload("exp_offgrid", "arpu", T_TEST)
-        shrunk_payload["end_date"] = "2024-07-02"
+        shrunk_payload["horizon_ts"] = "2024-07-03"
         shrunk = ExperimentConfig.model_validate(shrunk_payload)
 
         outcome = _reconcile(warehouse, tables, shrunk)

@@ -44,7 +44,6 @@ from abkit.compute.incremental_backend import build_incremental_backend
 from abkit.config.experiment_config import ExperimentConfig
 from abkit.config.metric_config import MetricConfig
 from abkit.config.project_config import ProjectConfig
-from abkit.core.period_planner import generate_grid
 from abkit.database.internal_tables import InternalTablesManager
 from abkit.database.manager import BaseDatabaseManager
 from abkit.loaders.exposure_source import build_cohort_backend
@@ -215,13 +214,7 @@ def reconcile_experiment(
     """
     outcome = ReconcileOutcome(experiment=experiment.name)
     alphas = effective_alphas(experiment, project)
-    grid = generate_grid(
-        experiment.start_date,
-        experiment.end_date,
-        experiment.cadence_segments(),
-        tz=experiment.timezone,
-        limit=project.limits.max_looks,
-    )
+    grid = experiment.grid(limit=project.limits.max_looks)
 
     backend, snapshot = build_cohort_backend(
         manager, experiment, project_root, grid, with_snapshot=True
@@ -260,7 +253,8 @@ def reconcile_experiment(
         computed = tables.list_computed_cutoffs(experiment.name, metric.name, method_config_id)
         cutoffs = [c for c in grid.cutoffs if c.end_ts in computed]
         # A persisted cutoff the CURRENT grid no longer produces (the schedule
-        # was edited: end_date moved, cadence changed, max_looks lowered)
+        # was edited: horizon_ts moved, the cadence or interval_anchor changed,
+        # max_looks lowered)
         # cannot be reconciled — the incremental read needs a grid cutoff to
         # load. Silently intersecting them away would let a clean exit-0
         # report hide a whole unexamined chunk of the series, which is exactly

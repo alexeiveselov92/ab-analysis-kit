@@ -103,8 +103,8 @@ def seed_events(warehouse: SyntheticWarehouse, days: int = 5, lift: float = 1.2)
 def make_experiment(**overrides) -> ExperimentConfig:
     payload = {
         "name": "signup_test",
-        "start_date": "2024-07-01",
-        "end_date": "2024-07-05",
+        "start_ts": "2024-07-01",
+        "horizon_ts": "2024-07-06",
         "unit_key": "user_id",
         "assignment": {
             "query": "SELECT user_id, variant, exposure_ts FROM assignments",
@@ -481,7 +481,7 @@ class TestSubDaySrmGate:
 
     def _subday_experiment(self) -> ExperimentConfig:
         return make_experiment(
-            start_date="2024-07-01", end_date="2024-07-01", cadence="6h", data_lag="1h"
+            start_ts="2024-07-01", horizon_ts="2024-07-02", cadence="6h", data_lag="1h"
         )
 
     def test_subday_uses_anytime_gate_stamped_per_look(self, tables):
@@ -732,11 +732,11 @@ class TestCohortModeParity:
             tbl = InternalTablesManager(wh)
             experiment = (
                 make_experiment(
-                    start_date="2024-07-01", end_date="2024-07-01", cadence="6h", data_lag="1h"
+                    start_ts="2024-07-01", horizon_ts="2024-07-02", cadence="6h", data_lag="1h"
                 )
                 if mode == "direct"
                 else self._copy_experiment(
-                    start_date="2024-07-01", end_date="2024-07-01", cadence="6h", data_lag="1h"
+                    start_ts="2024-07-01", horizon_ts="2024-07-02", cadence="6h", data_lag="1h"
                 )
             )
             outcome = run(wh, tbl, experiment=experiment)
@@ -774,9 +774,7 @@ class TestIncrementalCopySeam:
 
         deletes = self._spy_deletes(warehouse)
         # the source grows: 4 new units exposed AFTER the watermark
-        for i, ts in enumerate(
-            (START + timedelta(days=2), START + timedelta(days=3)), start=900
-        ):
+        for i, ts in enumerate((START + timedelta(days=2), START + timedelta(days=3)), start=900):
             warehouse.cohort.append((f"c{i}", "control", ts))
             warehouse.cohort.append((f"t{i}", "treatment", ts))
         second = run(warehouse, tables, experiment=experiment)
@@ -805,7 +803,7 @@ class TestIncrementalCopySeam:
         """The flag's purpose: a backfilled row below the watermark is missed
         by routine runs (the disclosed §4 Q3 limitation) — the resync's
         from-scratch re-scan recovers it."""
-        experiment = TestCohortModeParity._copy_experiment(end_date="2024-08-30")
+        experiment = TestCohortModeParity._copy_experiment(horizon_ts="2024-08-31")
         run(warehouse, tables, experiment=experiment)
         # advance the watermark into a later bucket first — a backfill into
         # the watermark's OWN bucket is rescued by the floor re-scan
@@ -834,7 +832,7 @@ class TestIncrementalCopySeam:
             "expected_split": {"control": 0.5, "treatment": 0.5},
             "cohort_copy": {"enabled": True, "maturity_delay": "1d"},
         }
-        experiment = make_experiment(assignment=assignment, end_date="2024-08-30")
+        experiment = make_experiment(assignment=assignment, horizon_ts="2024-08-31")
         outcome = run(
             warehouse,
             tables,
@@ -867,18 +865,14 @@ class TestIncrementalCopySeam:
             "expected_split": {"control": 0.5, "treatment": 0.5},
             "cohort_copy": {"enabled": True, "maturity_delay": "1d"},
         }
-        experiment = make_experiment(assignment=assignment, end_date="2024-08-30")
-        outcome = run(
-            warehouse, tables, experiment=experiment, now_utc=datetime(2024, 7, 20, 12)
-        )
+        experiment = make_experiment(assignment=assignment, horizon_ts="2024-08-31")
+        outcome = run(warehouse, tables, experiment=experiment, now_utc=datetime(2024, 7, 20, 12))
         assert outcome.status == "completed", outcome.error
         trailing = [w for w in outcome.warnings if "cohort copy trails" in w]
         assert trailing, outcome.warnings
         assert "data_lag" in trailing[0]
         # the withheld-window unit is absent from the copy (closed intervals only)
-        assert all(
-            r["unit_id"] != "late1" for r in warehouse._rows["_ab_exposures"]
-        )
+        assert all(r["unit_id"] != "late1" for r in warehouse._rows["_ab_exposures"])
 
     def test_matured_experiment_never_warns(self, warehouse, tables):
         # horizon long past, everything matured: coverage reaches the horizon
@@ -890,7 +884,7 @@ class TestIncrementalCopySeam:
         """Review-confirmed: coverage is the deterministic grid bound, not the
         data maximum — a cohort whose source stopped producing rows must not
         read as 'trailing' on every subsequent run forever."""
-        experiment = TestCohortModeParity._copy_experiment(end_date="2024-08-30")
+        experiment = TestCohortModeParity._copy_experiment(horizon_ts="2024-08-31")
         first = run(warehouse, tables, experiment=experiment)
         assert first.status == "completed", first.error
         assert not any("cohort copy trails" in w for w in first.warnings)
@@ -898,9 +892,7 @@ class TestIncrementalCopySeam:
         # the 30min offset lands INSIDE the pre-fix failure branch (the old
         # floating-watermark snap left a ~1h residual — verified to false-warn
         # on the pre-fix engine), so this pin actually bites
-        second = run(
-            warehouse, tables, experiment=experiment, now_utc=NOW + timedelta(minutes=30)
-        )
+        second = run(warehouse, tables, experiment=experiment, now_utc=NOW + timedelta(minutes=30))
         assert second.status == "completed", second.error
         assert not any("cohort copy trails" in w for w in second.warnings)
 
@@ -918,23 +910,19 @@ class TestIncrementalCopySeam:
             "expected_split": {"control": 0.5, "treatment": 0.5},
             "cohort_copy": {"enabled": True, "maturity_delay": "1d"},
         }
-        experiment = make_experiment(assignment=assignment, end_date="2024-08-30")
+        experiment = make_experiment(assignment=assignment, horizon_ts="2024-08-31")
         t0 = datetime(2024, 7, 20, 12)
         run(warehouse, tables, experiment=experiment, now_utc=t0)
 
         # a unit exposed 2h before the resync — still inside the maturity window
         warehouse.cohort.append(("freshA", "control", t0 - timedelta(hours=2)))
-        resync = run(
-            warehouse, tables, experiment=experiment, resync_cohort=True, now_utc=t0
-        )
+        resync = run(warehouse, tables, experiment=experiment, resync_cohort=True, now_utc=t0)
         assert resync.status == "completed", resync.error
         exposures = warehouse._rows["_ab_exposures"]
         assert all(r["unit_id"] != "freshA" for r in exposures)  # gated out
 
         # a routine later run picks the SAME unit up once its bucket matures —
         # nothing was fenced out by the resync
-        later = run(
-            warehouse, tables, experiment=experiment, now_utc=t0 + timedelta(days=3)
-        )
+        later = run(warehouse, tables, experiment=experiment, now_utc=t0 + timedelta(days=3))
         assert later.status == "completed", later.error
         assert any(r["unit_id"] == "freshA" for r in warehouse._rows["_ab_exposures"])

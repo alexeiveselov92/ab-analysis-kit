@@ -16,7 +16,6 @@ import pytest
 
 from abkit.config.experiment_config import ExperimentConfig
 from abkit.config.metric_config import MetricConfig
-from abkit.core.period_planner import generate_grid
 from abkit.database.internal_tables import InternalTablesManager
 from abkit.database.internal_tables._results import RESULT_COLUMNS
 from abkit.pipeline.readout import evaluate
@@ -56,8 +55,8 @@ def make_experiment(**overrides) -> ExperimentConfig:
     config = {
         "name": "report_exp",
         "description": "the readout fixture",
-        "start_date": "2026-01-01",
-        "end_date": "2026-01-14",  # horizon = 2026-01-15 00:00 (day 14)
+        "start_ts": "2026-01-01",
+        "horizon_ts": "2026-01-15",  # horizon = 2026-01-15 00:00 (day 14 covered)
         "unit_key": "user_id",
         "assignment": {
             "query": "SELECT 1",
@@ -855,13 +854,8 @@ class TestProvenanceAndWarnings:
 
 class TestLookCounter:
     def test_look_at_subday_cadence(self, tables):
-        experiment = make_experiment(end_date="2026-01-03", cadence="6h", data_lag=0)
-        grid = generate_grid(
-            experiment.start_date,
-            experiment.end_date,
-            experiment.cadence_segments(),
-            experiment.timezone,
-        )
+        experiment = make_experiment(horizon_ts="2026-01-04", cadence="6h", data_lag=0)
+        grid = experiment.grid()
         rows = [
             make_row(experiment, end_ts=START + timedelta(hours=6 * k), day=0, is_horizon=False)
             for k in range(1, 5)

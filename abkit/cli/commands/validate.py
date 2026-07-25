@@ -30,7 +30,6 @@ from abkit.cli._output import (
 from abkit.cli.commands._context import load_project_context
 from abkit.config import select_experiments, validate_level2
 from abkit.config.method_config import MethodConfig
-from abkit.core.period_planner import generate_grid
 from abkit.pipeline import effective_alphas
 from abkit.stats import n_comparisons
 
@@ -167,12 +166,7 @@ def _validate_one(
         renderer = StageLogRenderer(titles=_VALIDATE_STAGE_TITLES)
         try:
             tables.ensure_tables()
-            grid = generate_grid(
-                experiment.start_date,
-                experiment.end_date,
-                experiment.cadence_segments(),
-                tz=experiment.timezone,
-            )
+            grid = experiment.grid()
             # the WP4 factory: copy mode joins the persisted cohort (query-free
             # here), direct mode renders + validates the live source once —
             # the snapshot is reused by --report so one invocation never

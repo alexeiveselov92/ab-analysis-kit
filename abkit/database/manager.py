@@ -286,7 +286,13 @@ class BaseDatabaseManager(ABC):
                 raise ValueError(
                     f"ensure_columns: cannot add NOT-NULL column {col.name!r} with no "
                     f"default to existing table {table_name} — additive migrations "
-                    "require nullable-or-defaulted columns"
+                    "require nullable-or-defaulted columns.\n"
+                    "If this follows an upgrade, the table's shape changed in a "
+                    "BREAKING release: drop and recreate it "
+                    f"(DROP TABLE {table_name}), then re-run — see the CHANGELOG "
+                    "entry for the release you upgraded to for what is lost. "
+                    "abkit ships no migration tooling by design; `ensure_tables` "
+                    "only ever creates what is missing."
                 )
         added: list[str] = []
         for col in missing:

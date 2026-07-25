@@ -48,7 +48,6 @@ def run_explore(
     no_serve: bool,
     no_open: bool,
 ) -> None:
-    from abkit.core.period_planner import generate_grid
     from abkit.database.internal_tables import InternalTablesManager
     from abkit.loaders.exposure_source import ExposureLoadError, build_cohort_backend
     from abkit.reporting import build_report_payload
@@ -136,13 +135,7 @@ def run_explore(
         }
         # the WP4 factory (the same grid parameters load_session enumerates):
         # copy mode joins the persisted cohort, direct mode the live source
-        grid = generate_grid(
-            experiment.start_date,
-            experiment.end_date,
-            experiment.cadence_segments(),
-            tz=experiment.timezone,
-            limit=context.project.limits.max_looks,
-        )
+        grid = experiment.grid(limit=context.project.limits.max_looks)
         try:
             backend, cohort_snapshot = build_cohort_backend(manager, experiment, context.root, grid)
         except ExposureLoadError as exc:

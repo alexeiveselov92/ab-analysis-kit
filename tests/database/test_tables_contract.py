@@ -15,6 +15,7 @@ from abkit.database.tables import (
     TABLE_RESULTS,
     TABLE_TASKS,
     TABLE_UNIT_STATE,
+    get_experiments_table_model,
     get_exposures_table_model,
     get_results_table_model,
     get_tasks_table_model,
@@ -117,6 +118,30 @@ class TestResultsContract:
         assert model.get_column("end_ts").type.startswith("DateTime64")
         assert model.get_column("end_date").type == "Date"
         assert model.get_column("elapsed_days").type == "Float64"
+
+
+class TestExperimentsCatalogSchema:
+    """m10 WP1/D3: the catalog mirrors the window as INSTANTS, in UTC."""
+
+    def test_window_columns_are_timestamps_not_dates(self):
+        model = get_experiments_table_model()
+        for column in ("start_ts", "horizon_ts"):
+            assert model.get_column(column).type == "DateTime64(3, 'UTC')", column
+        # the pre-m10 spellings are gone — a `Date` here silently truncated a
+        # sub-day window, and the names must match the config keys
+        assert [c.name for c in model.columns if c.name in ("start_date", "end_date")] == []
+
+    def test_the_anchor_is_persisted_for_bi(self):
+        assert get_experiments_table_model().get_column("interval_anchor").type == "String"
+
+    def test_every_catalog_record_key_is_a_column(self):
+        """The three-way lockstep (catalog_record keys ↔ _EXPERIMENT_FIELDS ↔
+        columns): a partial rename raises 'missing fields' at write time, far
+        from the edit that caused it."""
+        from abkit.database.internal_tables._experiments import _ExperimentsMixin
+
+        columns = {c.name for c in get_experiments_table_model().columns}
+        assert set(_ExperimentsMixin._EXPERIMENT_FIELDS) <= columns
 
 
 class TestTableRegistry:

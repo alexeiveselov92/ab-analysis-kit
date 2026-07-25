@@ -161,7 +161,7 @@ look count — otherwise an hourly grid would "stabilize" in six hours.
 
 **The horizon** (`data-contract-and-reporting.md §4`; `readout.py` step 2): the
 default confidence intervals are **fixed-horizon** — mathematically valid only *at*
-the planned `end_date`. Reading them early and stopping is peeking, which inflates
+the planned `horizon_ts`. Reading them early and stopping is peeking, which inflates
 your real error rate. So under the default (`ci_kind = "fixed"`), the readout
 **withholds WIN, LOSE, and FLAT before `is_horizon`** — FLAT is equally a stop
 decision. The pre-horizon series is informational; the chart de-emphasizes those
