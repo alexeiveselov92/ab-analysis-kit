@@ -377,11 +377,36 @@ class IncrementalBackend:
                 self._map_refreshed = True
                 self._variant_map = variant_map = self._variant_map_refresh()
         units_of: dict[str, list[str]] = {}
+        disagreeing: list[str] = []
         for unit in totals:
-            variant = tail_variant.get(unit) or variant_map.get(unit)
+            snapshot_variant = variant_map.get(unit)
+            live_variant = tail_variant.get(unit)
+            if live_variant is not None and snapshot_variant is not None:
+                if live_variant != snapshot_variant:
+                    disagreeing.append(unit)
+            variant = live_variant or snapshot_variant
             if variant is None:
                 continue
             units_of.setdefault(variant, []).append(unit)
+        if disagreeing:
+            # An already-exposed unit changed arm between this run's cohort
+            # snapshot and the tail render. That is out of contract — the
+            # assignment source is an append-shaped exposure log deduped by
+            # MIN(exposure_ts), so a unit's arm is immutable — and it is
+            # exactly the shape whose IN-render form m8 hard-errors on. The
+            # live arm wins (never the stale snapshot), but the event is
+            # surfaced rather than resolved silently: it means the two read
+            # paths sampled the cohort at different instants and their numbers
+            # may legitimately differ (an R1 exit-gate finding, adjudicated
+            # SPLIT — the divergence is real, the trigger is out of contract).
+            self._warn_once(
+                metric.name,
+                "variant-drift",
+                f"{self._experiment.name}/{metric.name}: {len(disagreeing)} unit(s) "
+                f"changed variant mid-run (e.g. '{sorted(disagreeing)[0]}') — the live "
+                "render's arm was used; re-check the assignment source and run "
+                "`abk verify-incremental`",
+            )
 
         roles = list(_ROLE_MOMENTS[metric.type])
         units_by_variant: dict[str, np.ndarray] = {}

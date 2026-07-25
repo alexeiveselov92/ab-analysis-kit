@@ -201,6 +201,33 @@ class TestStateIdentity:
             REVENUE.columns.role_map(), REVENUE.query
         ) == compute_metric_state_id(REVENUE.columns.role_map(), reformatted)
 
+    def test_whitespace_INSIDE_a_literal_orphans_the_series(self):
+        """R1 exit-gate finding: whitespace is formatting outside a quoted
+        literal and DATA inside one. ``'Summer  Sale'`` and ``'Summer Sale'``
+        select different rows, so they must not share a materialized series
+        (a blanket ``" ".join(sql.split())`` mapped them to one id)."""
+        roles = REVENUE.columns.role_map()
+        double = "SELECT user_id, sum(x) AS value FROM t WHERE c = 'Summer  Sale'"
+        single = double.replace("Summer  Sale", "Summer Sale")
+        assert compute_metric_state_id(roles, double) != compute_metric_state_id(roles, single)
+        # …while reformatting AROUND the literal still keeps the identity
+        rewrapped = double.replace("FROM t", "\n  FROM   t\n ")
+        assert compute_metric_state_id(roles, double) == compute_metric_state_id(roles, rewrapped)
+
+    def test_assignment_literal_edit_orphans_the_series(self):
+        """The same rule on the cohort side: the assignment SQL's literals
+        decide WHICH UNITS the day render sees."""
+        payload = experiment_payload("exp_literal", "arpu", T_TEST)
+        payload["assignment"][
+            "query"
+        ] = "SELECT user_id, variant, exposure_ts FROM assignments WHERE campaign = 'Summer  Sale'"
+        base = ExperimentConfig.model_validate(payload)
+        payload["assignment"]["query"] = payload["assignment"]["query"].replace(
+            "Summer  Sale", "Summer Sale"
+        )
+        edited = ExperimentConfig.model_validate(payload)
+        assert series_key(base, REVENUE) != series_key(edited, REVENUE)
+
     def test_end_date_extension_keeps_an_end_invariant_series(self):
         """R2 fix: extending an experiment (the most routine edit) must not
         orphan state — unless the assignment SQL actually windows on the end."""

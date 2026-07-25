@@ -68,6 +68,7 @@ from abkit.database.internal_tables import (
     InternalTablesManager,
     compute_metric_state_id,
     compute_state_source_id,
+    normalize_sql_for_identity,
 )
 from abkit.loaders.query_template import RenderWindow
 from abkit.loaders.state_loader import StateMomentError, day_moments
@@ -137,8 +138,11 @@ def _cohort_identity(experiment: ExperimentConfig, project_root: Path | None) ->
     """
     assignment_sql = experiment.assignment.get_query_text(project_root)
     identity: dict[str, Any] = {
+        # the SAME literal-preserving normalization the metric SQL gets: a
+        # whitespace edit INSIDE a quoted literal (`'Summer  Sale'`) changes
+        # which units the cohort holds and must orphan the series
         "assignment_sql_sha256": hashlib.sha256(
-            " ".join(assignment_sql.split()).encode("utf-8")
+            normalize_sql_for_identity(assignment_sql).encode("utf-8")
         ).hexdigest(),
         "added_filters": experiment.assignment.added_filters,
         "unit_key": experiment.unit_key,

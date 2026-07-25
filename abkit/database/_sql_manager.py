@@ -235,13 +235,33 @@ class SQLDatabaseManager(BaseDatabaseManager):
     #: does; MySQL does not — it falls back to swallowing the duplicate error).
     _ADD_COLUMN_IF_NOT_EXISTS = True
 
+    def _catalog_name(self, identifier: str) -> str:
+        """How the CATALOG spells an identifier this manager writes unquoted.
+
+        Schema/table names are interpolated into DDL unquoted
+        (``get_full_table_name``, ``CREATE SCHEMA IF NOT EXISTS {schema}``),
+        so a dialect that case-folds unquoted identifiers stores something
+        different from what the config says. ``information_schema`` lookups
+        compare STRINGS, so without this hook a mixed-case
+        ``internal_schema: AbkitInternal`` makes every catalog lookup miss:
+        ``table_exists`` answers False for a table that exists, the schema
+        sync then takes the create-if-not-exists branch, ``ensure_columns``
+        never runs, and an existing install silently misses the M9 additive
+        migration until the next insert fails on the column mismatch (an R1
+        exit-gate finding). Identity here; PostgreSQL folds to lower case.
+        """
+        return identifier
+
     def list_columns(self, table_name: str, schema: str | None = None) -> list[str]:
         """Live column names from ``information_schema.columns``, by position."""
         rows = self.execute_query(
             "SELECT column_name AS column_name FROM information_schema.columns "
             "WHERE table_schema = %(schema)s AND table_name = %(table)s "
             "ORDER BY ordinal_position",
-            {"schema": schema or self._internal_location, "table": table_name},
+            {
+                "schema": self._catalog_name(schema or self._internal_location),
+                "table": self._catalog_name(table_name),
+            },
         )
         return [row["column_name"] for row in rows]
 
@@ -270,7 +290,11 @@ class SQLDatabaseManager(BaseDatabaseManager):
             "WHERE table_schema = %(schema)s AND table_name = %(table)s"
         )
         for loc in locations:
-            if self.execute_query(query, {"schema": loc, "table": table_name}):
+            params = {
+                "schema": self._catalog_name(loc),
+                "table": self._catalog_name(table_name),
+            }
+            if self.execute_query(query, params):
                 return True
         return False
 

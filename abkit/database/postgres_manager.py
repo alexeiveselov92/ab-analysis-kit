@@ -76,6 +76,18 @@ class PostgresDatabaseManager(SQLDatabaseManager):
             settings=settings,
         )
 
+    def _catalog_name(self, identifier: str) -> str:
+        """PostgreSQL folds unquoted identifiers to LOWER case.
+
+        We interpolate schema/table names unquoted (``CREATE SCHEMA IF NOT
+        EXISTS {schema}``, ``{schema}.{table}``), so ``AbkitInternal`` is
+        stored as ``abkitinternal`` — and an ``information_schema`` lookup for
+        the config spelling would find nothing. Folding here makes
+        ``table_exists``/``list_columns`` (and therefore the additive
+        ``ensure_columns`` migration) agree with what was actually created.
+        """
+        return identifier.lower()
+
     def _connect(self) -> Any:
         return psycopg2.connect(
             host=self._host,

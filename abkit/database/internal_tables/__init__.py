@@ -4,6 +4,7 @@ from abkit.database.internal_tables._unit_state import (
     compute_column_set_id,
     compute_metric_state_id,
     compute_state_source_id,
+    normalize_sql_for_identity,
 )
 from abkit.database.internal_tables.manager import InternalTablesManager
 
@@ -12,4 +13,5 @@ __all__ = [
     "compute_column_set_id",
     "compute_metric_state_id",
     "compute_state_source_id",
+    "normalize_sql_for_identity",
 ]

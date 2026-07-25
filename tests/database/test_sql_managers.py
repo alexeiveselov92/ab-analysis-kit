@@ -526,3 +526,62 @@ class TestEnsureColumns:
         self._raising_alter_conn(conn, Exception('relation "abk._ab_results" does not exist'))
         with pytest.raises(Exception, match="does not exist"):
             mgr.ensure_columns("abk._ab_results", model)
+
+
+class TestCatalogIdentifierFolding:
+    """An M9 exit-gate finding: the catalog is queried by STRING, so a
+    mixed-case schema in the profile must be looked up the way the dialect
+    actually STORED it — otherwise `table_exists` misses an existing table,
+    the schema sync takes the create branch, `ensure_columns` never runs, and
+    an existing install silently skips the additive migration."""
+
+    @staticmethod
+    def _mixed_case_manager(backend: str, monkeypatch):
+        conn = FakeConn()
+        if backend == "postgres":
+            monkeypatch.setattr(pg_mod, "PSYCOPG2_AVAILABLE", True)
+            monkeypatch.setattr(pg_mod.PostgresDatabaseManager, "_connect", lambda self: conn)
+            monkeypatch.setattr(
+                pg_mod.PostgresDatabaseManager, "_ensure_locations", lambda self: None
+            )
+            return (
+                pg_mod.PostgresDatabaseManager(
+                    database="db", internal_schema="AbkitInternal", data_schema="Public"
+                ),
+                conn,
+            )
+        monkeypatch.setattr(mysql_mod, "PYMYSQL_AVAILABLE", True)
+        monkeypatch.setattr(mysql_mod.MySQLDatabaseManager, "_connect", lambda self: conn)
+        monkeypatch.setattr(mysql_mod.MySQLDatabaseManager, "_ensure_locations", lambda self: None)
+        return (
+            mysql_mod.MySQLDatabaseManager(
+                internal_database="AbkitInternal", data_database="Analytics"
+            ),
+            conn,
+        )
+
+    def test_postgres_folds_the_lookup_to_lower_case(self, monkeypatch):
+        """`CREATE SCHEMA IF NOT EXISTS AbkitInternal` stores `abkitinternal`."""
+        mgr, conn = self._mixed_case_manager("postgres", monkeypatch)
+        conn.next_description = [("exists",)]
+        conn.next_result = [(1,)]
+        assert mgr.table_exists("_ab_results", schema="AbkitInternal") is True
+        _, params = conn.executed[-1]
+        assert params == {"schema": "abkitinternal", "table": "_ab_results"}
+
+        model = results_like_model()
+        _script_live_columns(conn, model, drop={"effect"})
+        assert mgr.ensure_columns("AbkitInternal._ab_results", model) == ["effect"]
+        introspect = conn.executed[0][1]
+        assert introspect["schema"] == "abkitinternal"
+
+    def test_mysql_preserves_case(self, monkeypatch):
+        """MySQL does NOT fold: `CREATE DATABASE AbkitInternal` keeps the case
+        (and on Linux database names are case-sensitive), so folding the
+        lookup there would break it instead of fixing it."""
+        mgr, conn = self._mixed_case_manager("mysql", monkeypatch)
+        conn.next_description = [("exists",)]
+        conn.next_result = [(1,)]
+        assert mgr.table_exists("_ab_results", schema="AbkitInternal") is True
+        _, params = conn.executed[-1]
+        assert params == {"schema": "AbkitInternal", "table": "_ab_results"}

@@ -22,6 +22,7 @@ from abkit.database.internal_tables import (
     compute_column_set_id,
     compute_metric_state_id,
     compute_state_source_id,
+    normalize_sql_for_identity,
 )
 from abkit.database.internal_tables._results import RESULT_COLUMNS
 from abkit.database.tables import TABLE_RESULTS, TABLE_TASKS, get_results_table_model
@@ -496,6 +497,23 @@ class TestUnitState:
         with_b = compute_metric_state_id(roles, "SELECT 1", cohort_config=cohort_b)
         assert with_a != with_b
         assert with_a == compute_metric_state_id(roles, "SELECT 1", cohort_config=dict(cohort_a))
+
+    def test_identity_normalization_separates_formatting_from_data(self):
+        """m9 WP6 (an R1 exit-gate finding): whitespace is FORMATTING outside a
+        quoted span and DATA inside one — and an apostrophe in a comment must
+        not be read as the start of a literal."""
+        pairs = [
+            # (differs only in formatting → same identity?, a, b)
+            (True, "-- don't  sum\nSELECT   x FROM t", "-- don't sum\nSELECT x   FROM  t"),
+            (True, "/* a\n   b */ SELECT x", "/* a b */ SELECT   x"),
+            (True, "SELECT   x\n\nFROM t", "SELECT x FROM t"),
+            (False, "SELECT x WHERE c = 'A  B'", "SELECT x WHERE c = 'A B'"),
+            (False, "SELECT 'a' 'b'", "SELECT 'a''b'"),
+            (False, 'SELECT "a  b" FROM t', 'SELECT "a b" FROM t'),
+            (False, "SELECT x -- note\n", "SELECT x -- other note\n"),
+        ]
+        for same, a, b in pairs:
+            assert (normalize_sql_for_identity(a) == normalize_sql_for_identity(b)) is same, (a, b)
 
     def test_state_source_id_stays_inside_the_column_budget(self):
         assert compute_state_source_id("exp", "arpu") == "exp/arpu"
