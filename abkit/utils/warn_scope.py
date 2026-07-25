@@ -41,6 +41,8 @@ Nothing here changes a number: warning *routing* only.
 
 from __future__ import annotations
 
+import contextlib
+import sys
 import threading
 import warnings
 from collections.abc import Iterator
@@ -66,10 +68,50 @@ _install_lock = threading.Lock()
 _stacks = threading.local()
 _depth = 0
 #: The one ``catch_warnings`` that saves/restores the global state for a whole
-#: nest, plus the ``showwarning`` it displaced. Typed loosely because mypy
-#: rejects assigning to a module-level function (hence the ``setattr`` below).
+#: nest, plus the ``showwarning`` it displaced (typed loosely: both are stdlib
+#: internals whose exact types are not worth pinning).
 _guard: Any = None
 _delegate: Any = None
+#: what ``showwarning`` was handed back to at the last uninstall — the value a
+#: zombie router is evicted in favour of (see :func:`_evict_zombie_router`).
+_last_handling: Any = None
+
+
+def _fallback_show(
+    message: Warning | str,
+    category: type[Warning],
+    filename: str,
+    lineno: int,
+    file: Any = None,
+    line: str | None = None,
+) -> None:
+    """Last-resort delivery: print like the module default would.
+
+    Only reached if the interpreter has no ``_showwarning_orig`` to hand back,
+    which no CPython does — but a warning must never be silently dropped just
+    because this module could not identify the previous handling.
+    """
+    stream = file if file is not None else sys.stderr
+    if stream is None:
+        return
+    with contextlib.suppress(OSError):
+        stream.write(warnings.formatwarning(message, category, filename, lineno, line))
+
+
+def _evict_zombie_router() -> None:
+    """Hand ``showwarning`` back if it is an UNOWNED router.
+
+    A foreign ``catch_warnings`` window that opens after the router is installed
+    and closes after the last scope leaves restores ``_route`` behind our back
+    (the stdlib restores the value it snapshotted, not the one we handed over).
+    Nobody owns it then: ``_depth`` is 0. Put the last handling we displaced back
+    in its place, so warnings resume reaching the application's own handler
+    instead of the module default. (Review round 1.)
+    """
+    if warnings.showwarning is not _route or _depth != 0:
+        return
+    recovered = _last_handling or getattr(warnings, "_showwarning_orig", None)
+    warnings.showwarning = recovered if recovered is not None else _fallback_show
 
 
 def _current_handling() -> Any:
@@ -85,6 +127,13 @@ def _current_handling() -> Any:
     current = warnings.showwarning
     original = getattr(warnings, "_showwarning_orig", None)
     impl = getattr(warnings, "_showwarnmsg_impl", None)
+    if current is _route:
+        # A ZOMBIE router: some other ``catch_warnings`` window opened after we
+        # installed and closed after the last scope left, restoring ``_route``
+        # behind our back. Delegating to it would recurse until RecursionError —
+        # raised from inside ``warnings.warn``, i.e. out of a live compute. Treat
+        # the module default as the handling instead. (Review round 1.)
+        return original if original is not None else _fallback_show
     if impl is not None and original is not None and current is original:
 
         def _via_impl(
@@ -136,29 +185,71 @@ def _route(
                 return
             if isinstance(category, type) and issubclass(category, frame.category):
                 return
-    delegate = _delegate
+    # No frame claimed it. ``_delegate`` is None only if the router outlived its
+    # own install (a foreign ``catch_warnings`` restored it after the last scope
+    # left) — resolve the handling live rather than DROP the warning, which is
+    # how a zombie router becomes a silent process-wide blackhole. (Review round 1.)
+    _evict_zombie_router()
+    delegate = _delegate or _current_handling()
     if delegate is not None:
         delegate(message, category, filename, lineno, file, line)
 
 
+def _install() -> None:
+    """Take over ``showwarning`` for the whole nest. Caller holds ``_install_lock``."""
+    global _guard, _delegate
+    # BEFORE the guard snapshots the global state — otherwise a zombie router
+    # would be snapshotted as the thing to restore, and outlive us again.
+    _evict_zombie_router()
+    # ONE catch_warnings for the whole nest: it snapshots the filter list and
+    # showwarning here and restores both when the LAST scope leaves, so no
+    # individual scope ever writes global state a peer thread owns.
+    guard = warnings.catch_warnings()
+    guard.__enter__()
+    _guard = guard
+    _delegate = _current_handling()
+    # exactly what the stdlib's own catch_warnings(record=True) does
+    warnings.showwarning = _route
+
+
+def _uninstall() -> None:
+    """Hand ``showwarning`` back. Caller holds ``_install_lock``.
+
+    Order matters: restore FIRST, clear ``_delegate`` after. Clearing it while
+    the router is still installed opens a window in which a frameless thread's
+    warning reaches ``_route`` with nothing to hand it to (review round 1).
+    """
+    global _guard, _delegate, _last_handling
+    guard, _guard = _guard, None
+    if guard is not None:
+        guard.__exit__(None, None, None)  # restores the filter list AND showwarning
+    if warnings.showwarning is not _route:
+        _last_handling = warnings.showwarning
+    _delegate = None
+
+
 @contextmanager
 def _scope(frame: _Frame) -> Iterator[_Frame]:
-    global _depth, _guard, _delegate
+    global _depth
+    if not (isinstance(frame.category, type) and issubclass(frame.category, Warning)):
+        # Rejected BEFORE any global is touched: a category ``filterwarnings``
+        # refuses used to orphan a half-installed router (review round 1).
+        raise TypeError(f"category must be a Warning subclass, got {frame.category!r}")
     with _install_lock:
-        if _depth == 0:
-            # ONE catch_warnings for the whole nest: it snapshots the filter list
-            # and showwarning here and restores both when the LAST scope leaves,
-            # so no individual scope ever writes global state a peer thread owns.
-            guard = warnings.catch_warnings()
-            guard.__enter__()
-            _guard = guard
-            _delegate = _current_handling()
-            # exactly what the stdlib's own catch_warnings(record=True) does
-            warnings.showwarning = _route
-        # "always" so the per-module registry cannot dedupe repeats BEFORE they
-        # reach the recorder — routing decides what happens to a warning, never
-        # a filter (an "ignore" filter would silence a concurrent thread too).
-        warnings.filterwarnings("always", category=frame.category)
+        installed_here = _depth == 0
+        if installed_here:
+            _install()
+        try:
+            # "always" so the per-module registry cannot dedupe repeats BEFORE
+            # they reach the recorder — routing decides what happens to a
+            # warning, never a filter (an "ignore" filter would silence a
+            # concurrent thread too).
+            warnings.filterwarnings("always", category=frame.category)
+        except BaseException:
+            # the install is all-or-nothing: never leave an unowned router behind
+            if installed_here:
+                _uninstall()
+            raise
         _depth += 1
     stack = _thread_stack()
     stack.append(frame)
@@ -169,11 +260,7 @@ def _scope(frame: _Frame) -> Iterator[_Frame]:
         with _install_lock:
             _depth -= 1
             if _depth == 0:
-                guard, _guard = _guard, None
-                _delegate = None
-                if guard is not None:
-                    # restores BOTH the filter list and showwarning
-                    guard.__exit__(None, None, None)
+                _uninstall()
 
 
 @contextmanager

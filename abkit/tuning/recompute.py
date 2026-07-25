@@ -53,7 +53,7 @@ permanently lose) warnings across concurrent handler threads.
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Literal
@@ -556,6 +556,14 @@ def _clean(value: float | None) -> float | None:
     return value if math.isfinite(value) else None
 
 
+class RecomputeSuperseded(Exception):
+    """A newer request arrived while this recompute was running (m10 WP4).
+
+    Not an error: the caller replies ``409 {stale: true}``, exactly as it would
+    have for a request the pre-WP4 lock dropped while it waited in the queue.
+    """
+
+
 # ── the engine ───────────────────────────────────────────────────────────────
 
 
@@ -646,12 +654,29 @@ class RecomputeEngine:
 
     # -- recompute ------------------------------------------------------------
 
-    def recompute(self, metric: str, knobs: KnobState) -> RecomputeResult:
+    def recompute(
+        self,
+        metric: str,
+        knobs: KnobState,
+        should_stop: Callable[[], bool] | None = None,
+    ) -> RecomputeResult:
         """One knob state → per-pair series + chips + identity + calibration.
 
         Raises the stats-core exceptions verbatim (``UnknownMethodError``,
         ``QuarantinedMethodError``, ``MethodParamError``) — WP6 maps them to
         HTTP 400s; they are never swallowed or substituted.
+
+        ``should_stop`` is the cancellation hook (m10 WP4, review round 1).
+        Before WP4 the coarse request lock did double duty: it queued computes
+        AND cancelled every queued one a newer knob turn had superseded, so a
+        knob-drag burst cost ONE compute. Unserialized, nothing cancelled
+        superseded work any more and a 6-request burst ran six full computes —
+        measured: the answer the user waits for went from 0.80 s to 3.40 s, at
+        8.7× the CPU. The queue is not coming back; the cancellation is: the
+        caller passes its staleness predicate, it is polled between points, and
+        a superseded request raises :class:`RecomputeSuperseded` within one
+        point instead of finishing an answer nobody will read. ``None`` (the
+        default) never cancels — ``/reload``'s final recompute passes it.
         """
         session = self._session
         series = session.series(metric)
@@ -719,6 +744,10 @@ class RecomputeEngine:
         for (name_1, name_2), rows in pair_rows.items():
             points: list[ExplorePoint] = []
             for row in rows:
+                if should_stop is not None and should_stop():
+                    # a newer knob state is already being answered — stop
+                    # burning CPU on a reply nobody will adopt
+                    raise RecomputeSuperseded(metric)
                 point = self._compute_point(
                     series, row, method_cls, probe.params, knobs, reusable, identity_changed
                 )

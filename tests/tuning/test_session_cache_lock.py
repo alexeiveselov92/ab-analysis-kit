@@ -18,6 +18,7 @@ hold, and both are pinned here so they cannot regress into "it looked fine":
 from __future__ import annotations
 
 import ast
+import sys
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -38,6 +39,34 @@ def _entry(size: int) -> MetricLoadResult:
         roles_by_variant={"control": {"value": np.arange(size, dtype=float)}},
         strata_by_variant={"control": None},
     )
+
+
+class _HookedLock:
+    """A ``threading.Lock`` that runs a callback after every release.
+
+    The instrument for "was the pair read in ONE critical section?": it lets a
+    writer complete between two reads that only *look* atomic.
+    """
+
+    def __init__(self, on_release) -> None:  # type: ignore[no-untyped-def]
+        self._lock = threading.Lock()
+        self._on_release = on_release
+
+    def acquire(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        return self._lock.acquire(*args, **kwargs)
+
+    def release(self) -> None:
+        self._lock.release()
+        self._on_release()
+
+    def locked(self) -> bool:
+        return self._lock.locked()
+
+    def __enter__(self) -> bool:
+        return self._lock.acquire()
+
+    def __exit__(self, *exc: object) -> None:
+        self.release()
 
 
 def _session() -> ExploreSession:
@@ -101,23 +130,81 @@ class TestPairAtomicity:
         entry, tag = pair[0]
         assert loaded_value_count(entry) == 9 and tag == "14d"  # type: ignore[arg-type]
 
+    def test_cached_entry_reads_the_pair_in_ONE_critical_section(self):
+        """The test above proves the accessor takes the lock; this one proves it
+        takes it ONCE around both reads.
+
+        Review round 1 found the gap: an accessor rewritten as two separately
+        locked reads passes everything else while returning a genuinely torn
+        pair. Here the lock itself is instrumented — a complete ``/reload``
+        install runs at the reader's FIRST release — so a two-read
+        implementation reports the fresh entry with the previous tag, and the
+        shipped one cannot.
+        """
+        session = _session()
+        session.install_cutoff("arpu", CUTOFF, _entry(4), "7d")
+
+        reader_holder: list[threading.Thread] = []
+        fired = threading.Event()
+
+        def on_release() -> None:
+            # only the reader's own release, and only once (install_cutoff
+            # releases the same lock)
+            if fired.is_set() or threading.current_thread() not in reader_holder:
+                return
+            fired.set()
+            writer = threading.Thread(
+                target=lambda: session.install_cutoff("arpu", CUTOFF, _entry(9), "14d")
+            )
+            writer.start()
+            writer.join(timeout=10)
+            assert not writer.is_alive()
+
+        session.cache_lock = _HookedLock(on_release)  # type: ignore[assignment]
+
+        pair: list[tuple[object, object]] = []
+        reader = threading.Thread(
+            target=lambda: pair.append(session.cached_entry("arpu", CUTOFF)), daemon=True
+        )
+        reader_holder.append(reader)
+        reader.start()
+        reader.join(timeout=20)
+        assert not reader.is_alive()
+        assert fired.is_set(), "the instrumented release never ran — the test proved nothing"
+
+        entry, tag = pair[0]
+        observed = (loaded_value_count(entry), tag)  # type: ignore[arg-type]
+        assert observed in {(4, "7d"), (9, "14d")}, f"torn pair: {observed}"
+
     def test_concurrent_installs_keep_the_budget_counter_exact(self):
         """``cache_values`` is a read-modify-write pair (subtract the previous
-        entry, add the new one) — two unsynchronized installs would lose one."""
+        entry, add the new one) — two unsynchronized installs lose one.
+
+        The contention has to be REAL: at the default 5 ms switch interval the
+        interpreter never preempts between the load and the store, and the
+        first version of this test passed 25/25 with the lock removed (review
+        round 1). A microsecond switch interval and 3 000 installs per thread
+        make the lost update reliable.
+        """
         session = _session()
         for i in range(4):
-            session.install_cutoff("arpu", datetime(2024, 1, 1 + i), _entry(1), None)
+            session.install_cutoff("arpu", CUTOFF + timedelta(days=i), _entry(1), None)
 
         def churn(worker: int) -> None:
-            for i in range(60):
-                key = datetime(2024, 1, 1 + (worker + i) % 4)
+            for i in range(3000):
+                key = CUTOFF + timedelta(days=(worker + i) % 4)
                 session.install_cutoff("arpu", key, _entry(2 + (i % 5)), f"{i}d")
 
-        threads = [threading.Thread(target=churn, args=(w,)) for w in range(4)]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join(timeout=30)
+        previous_interval = sys.getswitchinterval()
+        sys.setswitchinterval(1e-6)
+        try:
+            threads = [threading.Thread(target=churn, args=(w,)) for w in range(4)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=120)
+        finally:
+            sys.setswitchinterval(previous_interval)
         assert not any(t.is_alive() for t in threads)
 
         expected = sum(loaded_value_count(entry) for entry in session.cache.values())
@@ -127,10 +214,17 @@ class TestPairAtomicity:
 
     def test_a_scan_snapshot_survives_a_concurrent_install(self):
         """``cached_entries`` exists because iterating the dict while ``/reload``
-        installs into it raises "dictionary changed size during iteration"."""
+        installs into it raises "dictionary changed size during iteration".
+
+        The installer must keep GROWING the dict and the scanned metric must be
+        big enough to be preempted mid-comprehension: review round 1 found the
+        first version installed the same 27 keys over and over, so after one
+        pass the dict never resized again and the test could not fail with the
+        lock removed (20/20 green). It now fails 3/3.
+        """
         session = _session()
-        for i in range(30):
-            session.install_cutoff("arpu", CUTOFF + timedelta(days=i), _entry(2), "7d")
+        for i in range(2000):
+            session.install_cutoff("arpu", CUTOFF + timedelta(seconds=i), _entry(2), "7d")
 
         stop = threading.Event()
         failures: list[BaseException] = []
@@ -139,14 +233,14 @@ class TestPairAtomicity:
             i = 0
             while not stop.is_set():
                 i += 1
-                session.install_cutoff("other", CUTOFF + timedelta(days=i % 27), _entry(2), "7d")
+                session.install_cutoff("other", CUTOFF + timedelta(seconds=i), _entry(2), "7d")
 
         def scanner() -> None:
             try:
                 for _ in range(400):
                     entries = session.cached_entries("arpu")
                     assert [ts for ts, _ in entries] == sorted(ts for ts, _ in entries)
-                    assert len(entries) == 30
+                    assert len(entries) == 2000
                     assert session.cached_cutoffs("arpu") == [ts for ts, _ in entries]
             except BaseException as exc:  # noqa: BLE001 — re-raised below
                 failures.append(exc)

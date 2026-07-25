@@ -697,12 +697,52 @@ class TestLockDecoupling:
         assert validate_entered.is_set()  # …and it ran once the lock was free
         assert validate_out and validate_out[0][0] == 200
 
+    def test_apply_also_waits_for_the_heavy_lock(self, explore, monkeypatch):
+        """The third pairing (review round 1 found it untested): the one-shot
+        ``srv.applied is not None`` check AND the YAML archive/rewrite seam live
+        inside ``heavy_lock``. Without it two Applies can both pass the check
+        and both archive."""
+        from abkit.tuning import server as server_mod
+
+        reload_entered, reload_release = self._freeze(monkeypatch, "_run_reload")
+        applied = threading.Event()
+        real_apply = server_mod.apply_tuned_config
+
+        def watched(*args, **kwargs):
+            applied.set()
+            return real_apply(*args, **kwargs)
+
+        monkeypatch.setattr(server_mod, "apply_tuned_config", watched)
+
+        reload_thread, _ = self._fire(explore.endpoint("reload"), recompute_request())
+        assert reload_entered.wait(timeout=30)
+        apply_thread, apply_out = self._fire(
+            explore.endpoint("apply"), {**TestApply.APPLY, "confirm_uncalibrated": True}
+        )
+        try:
+            apply_thread.join(timeout=1.0)
+            assert not applied.is_set(), "Apply ran the write seam while /reload held heavy_lock"
+            assert apply_thread.is_alive()
+        finally:
+            reload_release.set()
+            reload_thread.join(timeout=60)
+            apply_thread.join(timeout=60)
+        assert applied.is_set()  # …and it ran once the lock was free
+        assert apply_out and apply_out[0][0] == 200
+        assert len(list((explore.path.parent / ".history").rglob("*.yml"))) == 1
+
     def test_a_recompute_superseded_mid_compute_409s_instead_of_replying(self, explore):
         """The post-compute re-check. Without it, the slow request would reply
         200 AFTER the newer one — overwriting the fresher answer in the rail."""
 
         class _SlowOnMarkerAlpha:
-            """Engine proxy: freeze only the marked request's compute."""
+            """Engine proxy that freezes the marked request AFTER computing.
+
+            Deliberately drops ``should_stop`` when delegating and blocks on the
+            way OUT: the mid-compute cancellation poll therefore cannot fire and
+            the 409 can only come from the handler's post-compute re-check —
+            the guarantee this test exists for.
+            """
 
             MARKER = 0.011
 
@@ -711,11 +751,12 @@ class TestLockDecoupling:
                 self.computing = threading.Event()
                 self.release = threading.Event()
 
-            def recompute(self, metric, knobs):
+            def recompute(self, metric, knobs, should_stop=None):
+                result = self._inner.recompute(metric, knobs)
                 if knobs.alpha == self.MARKER:
                     self.computing.set()
                     assert self.release.wait(timeout=30)
-                return self._inner.recompute(metric, knobs)
+                return result
 
         proxy = _SlowOnMarkerAlpha(explore.engine)
         explore.server.engine = proxy
@@ -736,6 +777,48 @@ class TestLockDecoupling:
         status, body = slow_out[0]
         assert status == 409, body
         assert body["stale"] is True and body["request_id"] == 100
+
+    def test_a_superseded_recompute_stops_computing_instead_of_finishing(
+        self, explore, monkeypatch
+    ):
+        """The lock did double duty: it queued computes AND cancelled the ones a
+        newer knob turn outranked while they waited. Dropping it dropped the
+        cancellation too — review round 1 measured a 6-turn drag going from
+        0.80 s / 0.80 CPU-s to 3.40 s / 6.94 CPU-s because all six ran in full.
+        The engine now polls the same staleness predicate between points.
+        """
+        from abkit.tuning.recompute import RecomputeEngine
+
+        marker = 0.011
+        real_point = RecomputeEngine._compute_point
+        points: dict[float, int] = {}
+        inside_first, keep_going = threading.Event(), threading.Event()
+
+        def counting(self, *args, **kwargs):
+            knobs = args[4]
+            points[knobs.alpha] = points.get(knobs.alpha, 0) + 1
+            if knobs.alpha == marker and points[knobs.alpha] == 1:
+                inside_first.set()
+                assert keep_going.wait(timeout=30)
+            return real_point(self, *args, **kwargs)
+
+        monkeypatch.setattr(RecomputeEngine, "_compute_point", counting)
+
+        slow_thread, slow_out = self._fire(
+            explore.endpoint("recompute"), recompute_request(alpha=marker, request_id=200)
+        )
+        assert inside_first.wait(timeout=30)
+        status, fresh = http(explore.endpoint("recompute"), recompute_request(request_id=201))
+        assert status == 200 and fresh["request_id"] == 201
+        keep_going.set()
+        slow_thread.join(timeout=60)
+        assert not slow_thread.is_alive()
+
+        assert slow_out[0][0] == 409
+        # a full answer for this fixture is 4 cutoffs; the superseded request
+        # stopped after the one point it was already inside
+        assert points[marker] == 1
+        assert points[0.05] == 4
 
     def test_lock_free_recomputes_keep_the_cache_consistent_under_a_reload(self, explore):
         """A REAL ``/reload`` racing 20 Tier-S bootstrap knob turns over the same

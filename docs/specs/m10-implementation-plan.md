@@ -719,7 +719,61 @@ policy: CHANGELOG + drop/recreate guidance, no migration tooling.
 
 ---
 
-### WP4 — Explore: decouple the global request lock (cheap tiers vs Reload/Auto-validate)
+### WP4 — Explore: decouple the global request lock (cheap tiers vs Reload/Auto-validate) ✅ SHIPPED (`708b8a5`)
+
+> **As-built notes (what the session found beyond the contract):**
+>
+> - **The lock was not the only thing the lock was doing.** Removing it from
+>   `/recompute` exposed `warnings.catch_warnings`, which saves and restores
+>   PROCESS-global state (the filter list, the recorder) and is documented as
+>   not thread-safe. Two overlapping scopes cross-attribute warnings, an
+>   "ignore" filter set by one silences the other (exactly Auto-validate's A/A
+>   scoring × a concurrent `/recompute`), and exits in the wrong order leave a
+>   finished thread's recorder installed — after which **every warning in the
+>   process disappears silently**. The last shape was already reachable on
+>   `main`: `abk run` fans experiments out over a `ThreadPoolExecutor`
+>   (`driver.py:673`), so a guard could be persisted against the wrong
+>   experiment's rows. All three abkit scopes now route through the new
+>   `abkit/utils/warn_scope.py` (one process-global recorder installed by the
+>   outermost scope, per-thread frame stacks); the stdlib's failure is pinned
+>   as a test, so if `catch_warnings` ever becomes thread-safe the module can
+>   be reconsidered.
+> - **The lock is an invariant of the data structure, not a call-site
+>   convention.** The contract's steps 4–6 place `with cache_lock:` at each of
+>   the five sites; as built, `ExploreSession` owns the lock and exposes
+>   `loaded`/`cached_entry`/`cached_cutoffs`/`cached_entries`/`install_cutoff`/
+>   `cached_value_count`/`disable_cache`, and an AST gate
+>   (`tests/tuning/test_session_cache_lock.py`) refuses any `session.cache*`
+>   access outside `session.py`. This is the WP1 lesson applied — a discipline
+>   spread over N call sites is forgotten at the N+1st — and the gate proved it
+>   immediately: it found a **sixth** site the contract's enumeration missed
+>   (`tuning/payload.py`'s baked `cache.values`).
+> - **The torn pair is demonstrated, not just prevented.** A dict subclass
+>   freezes `/reload` between installing the entry and installing its lookback
+>   tag; the test then shows the OLD two-read shape observing the tear
+>   (fresh 9-value entry + stale `"7d"` tag) and `cached_entry` blocking
+>   instead. Mattering, not cosmetic: at the Tier-S gate a fresh entry paired
+>   with the previous tag is a 14d-rendered cutoff scored as a 7d one, labelled
+>   `exact`.
+> - **`heavy_lock`'s remaining job is pinned in both directions.** One test
+>   proves a knob turn answers *while* a frozen `/reload` (and a frozen
+>   `/validate`) holds it; another proves a `/validate` still cannot start
+>   while `/reload` holds it. Both force the overlap with events, so neither
+>   can pass by timing luck.
+> - The post-compute re-check needed an engine proxy that freezes only the
+>   marked request's compute to be testable at all: the superseded request must
+>   reply 409 *after* the newer one has already answered 200.
+> - **The lock was also the CANCELLATION point — the review's biggest find.**
+>   Its post-lock `is_stale` re-check killed every queued request a newer knob
+>   turn had outranked, so a knob-drag burst cost ONE compute. Deleting the
+>   queue deleted that: measured on a 6-turn drag, the answer the user waits
+>   for went 0.80 s → 3.40 s at 8.7× the CPU (and up to ~3× peak RSS — every
+>   superseded bootstrap holds its own resample block). The queue is NOT back:
+>   `recompute()` takes a `should_stop` predicate, polls it between points, and
+>   raises `RecomputeSuperseded` → the same 409. Restores 1.04 s / 1.14 CPU-s
+>   while keeping WP4's win (never waiting on `/reload`/`/validate`). §0.4(e)'s
+>   "post-compute re-check" is necessary but was **not sufficient** — that is
+>   the correction this WP carries back into the contract.
 
 **Goal.** Split `_ExploreServer.request_lock` (`server.py:116`) — which today
 serializes `/recompute`, `/reload`, `/validate`, and `/apply` against each
@@ -961,7 +1015,20 @@ subsequent `_finalize` call at a different alpha.
    factor a small `_finalize_captured(method, s1, s2, boot_data, effect,
    warnings) -> tuple[TestResult, list[str]]` helper mirroring `_compare`'s
    warning-capture pattern.
-6. Invalidate `boot_memo` whenever the underlying raw cache changes:
+6. **[Amended by WP4's review — read this before implementing step 6.]** The
+   purge extends `ExploreSession.install_cutoff` (WP4 made the session the one
+   owner of the cache lock; `server.py` never touches `cache_lock`), and the
+   §0.4(f) lock order is honoured there. But a purge alone is **provably
+   insufficient now that `/recompute` is unserialized**, and WP4's review
+   demonstrated the losing interleaving: a Tier-S reader reads the PRE-reload
+   entry through `cached_entry()`, the reload then installs + purges, and the
+   reader finally inserts its resample — keyed to data that no longer exists.
+   Give the guarded set a monotonic `cache_epoch` bumped inside
+   `install_cutoff`, return it from `cached_entry()`, and insert into
+   `boot_memo` only if the epoch still matches (re-read under `cache_lock`,
+   insert under `boot_memo_lock`): the race then costs a discarded resample
+   instead of a stale hit. The original step-6 text follows.
+   Invalidate `boot_memo` whenever the underlying raw cache changes:
    `_run_reload` (WP4's territory) mutates `session.cache[(metric, end_ts)]`
    for specific cutoffs — any memo entries keyed by an `end_ts` whose raw
    cache entry was just reloaded are now stale (resampled against old
@@ -1425,3 +1492,68 @@ for a window butting against the representable calendar edge (year 1 / 9999).
 A lattice step off the end now saturates, which every comparison in the
 enumeration already reads correctly as "beyond that edge". (Pre-m10 raised
 identically, so it is a hardening, not a regression.)
+
+### WP4 round 1 (`708b8a5` + `fdb103c`) — 5 lenses, 10 refutations
+
+Five lenses (concurrency, the warning primitive, behavior-preservation + the
+client contract, test mutation, contract/docs compliance), each required to
+BUILD and RUN its scenario, then one skeptic per finding tasked with refuting
+it. Every defect below reproduced deterministically; every fix below is
+mutation-checked (revert it and a named test goes red).
+
+| # | Defect | Severity | Fix |
+|---|---|---|---|
+| 1 | **The lock was also the CANCELLATION point.** Its post-lock `is_stale` re-check dropped every queued request a newer knob turn outranked; unserialized, all of them ran to completion instead. Measured on a 6-turn drag: the answer the user waits for went 0.80 s → **3.40 s**, at **8.7×** the CPU and up to ~3× peak RSS (each superseded bootstrap holds its own resample block). | perf/resource regression | `recompute(..., should_stop=)`, polled between points → `RecomputeSuperseded` → the same 409. Restores 1.04 s / 1.14 CPU-s with no queue reintroduced. §0.4(e)'s post-compute re-check is necessary but was **not sufficient**. |
+| 2 | **`_route` could delegate to itself.** A foreign `catch_warnings()` that opens after the router is installed and closes after the last scope leaves restores `_route` behind the module's back; the next scope adopted it as its own delegate — every warning silently dropped, then `RecursionError` **raised out of `warnings.warn`**, i.e. out of a live compute. Not theoretical: instrumenting a real `abk run` + `abk validate` caught **pandas entering `catch_warnings()` 15 times inside abkit capture scopes**. | crash + silent loss | never adopt the router as its own delegate; resolve the handling live instead of dropping; evict an unowned router (`_depth == 0`) back to the last handling it displaced. |
+| 3 | The install was not atomic: an exception between `guard.__enter__()` and `_depth += 1` (e.g. `capture_warnings("not a class")`) orphaned the router permanently — which then became defect 2. | medium | validate the category before touching any global, and roll the install back on any `BaseException`. |
+| 4 | Teardown cleared `_delegate` **before** un-installing, so a frameless thread's warning inside that window reached a router with nothing to hand it to. | low | restore first, clear after. |
+| 5 | **Four of the primitive's own tests — and BOTH "production call site" tests — passed with the primitive reverted to the stdlib.** They drove LIFO-nested interleavings, which `catch_warnings` handles correctly; `validate/scoring`'s suppression had no failing coverage at all and `pipeline/analyze` had no test. | high (a gate that cannot fail) | the interleavings now overlap (capture open first, the peer warns inside it); hazard 3 asserts DELIVERY through an ambient sink installed **before** the interleave; and an AST gate bans `catch_warnings`/`simplefilter`/`filterwarnings`/`showwarning =` anywhere in `abkit/` outside `warn_scope.py` — covering all three call sites and every future one. 10 of 18 now fail against the stdlib. |
+| 6 | Three of the four cache-lock tests passed with `cache_lock` removed: the scan installer recycled 27 keys so the dict stopped resizing, and 4×60 installs at the default 5 ms switch interval never interleaved the read-modify-write. | medium (same) | growing keys + 2 000 pre-filled entries; `sys.setswitchinterval(1e-6)` + 3 000 installs; plus a new test that instruments the lock itself to prove `cached_entry` reads the pair in ONE critical section (a two-locked-reads implementation now returns a torn pair and fails). |
+| 7 | `/apply`'s `heavy_lock` was untested — dropping it left the whole tuning+CLI suite green, though the one-shot `srv.applied` check and the YAML archive/rewrite seam both live inside it. | low | the third pairing added to `TestLockDecoupling`. |
+| 8 | Three docstrings still said "the request lock" after the rename — the exact conflation §0.4(e)'s risk note warns about, in the file M11 is scheduled to clone. | low | renamed to `heavy_lock`. |
+
+**Verified clean, with the evidence:**
+
+- **Reply parity against `main`** over a scripted session (the payload block,
+  `knob_surface`, `/recompute` in nine shapes incl. every 400 and the
+  stale-409, Auto `/validate`, `/apply` incl. the rewritten YAML, a CUPED
+  `/reload` 7d→14d round trip, and a budget-degraded session):
+  **byte-identical, 78 963 bytes both sides** — the only diffs the apply
+  timestamp and the tmpdir path.
+- No reentrancy hazard: no accessor is ever called with `cache_lock` held, and
+  an AST walk found no in-place mutation of anything `recompute()` reads
+  (`session.aa_rows` is only ever rebound — the lock-free claim holds).
+- The warning primitive under stress: 24 threads × 40 randomized
+  capture/suppress/nested scopes with injected exceptions — 0 hangs, 0
+  cross-thread mixups, every global restored. `warnings.filters` does **not**
+  grow with scope count (500 sequential / 200 deep / 2 000 concurrent scopes:
+  5 → 6 entries).
+- The routing cost is real but small: +0.68 µs per suppressed warning; on a
+  realistic A/A cell firing the CUPED guard on every arm (1 500 units × 10
+  looks × 400 iterations = 8 002 warnings) `main` 0.69 s vs 0.72 s, identical
+  FPR. `abk run` / `abk validate` stdout is byte-identical and stderr empty on
+  both trees.
+- Zero `ALGORITHM_VERSION` changes; `git diff main..HEAD -- abkit/stats
+  tests/golden` empty; `tests/stats/test_purity.py` and `tests/golden` green.
+
+**Found, verified, and deliberately NOT fixed here** (recorded so nobody
+re-derives it): `_cache_serves` compares the entry's `covariate_lookback` tag
+only for methods that DECLARE a `covariate_lookback` param, so
+`post-normed-bootstrap` (`requires_covariate = True`, no such param) will
+serve a mixed cache — two covariate windows in one series, every point
+labelled `exact`. The skeptic established this is **pre-existing, not
+WP4-caused**: `_handle_reload` already leaves an installed prefix in place
+when a render fails mid-loop, so `main` reaches the same mixed cache with no
+concurrency at all. The one-line fix the lens proposed is also wrong — a
+post-normed method has no lookback to compare, so it would lose Tier S
+entirely. The correct fix is a per-SERIES lookback-consistency check: a
+change to the Tier-S gate, which belongs in the hardening backlog rather than
+inside a lock-scoping WP.
+
+**The client was cleared, twice.** A lens filed the mid-reload knob turn as a
+lost-Reload regression; the skeptic showed both reproduction paths are
+unreachable from the real UI — `knobChanged`/`onMethodSwitch` already clear
+the debounce timer on the Tier-R edit that raises the Reload bar, and while
+that bar is up every knob turn still reads `needsReload` and dispatches
+nothing. The delta is real for a raw HTTP client only. `web/src/**` is
+therefore untouched, exactly as the WP predicted.

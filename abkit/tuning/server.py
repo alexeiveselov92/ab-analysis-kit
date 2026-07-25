@@ -68,6 +68,7 @@ from abkit.tuning.recompute import (
     KnobState,
     RecomputeEngine,
     RecomputeResult,
+    RecomputeSuperseded,
     find_calibration,
     resolve_fpr_budget,
 )
@@ -270,15 +271,28 @@ class _Handler(BaseHTTPRequestHandler):
         # cache through the session's own locked accessors, so concurrent
         # recomputes cannot corrupt each other — at worst two identical ones
         # both run (D5's accepted trade: wasted CPU, never a wrong number).
+        #
+        # The lock did carry one thing that had to be replaced rather than
+        # dropped: it CANCELLED superseded work. Its post-lock re-check killed
+        # every queued request a newer knob turn had outranked, so a knob-drag
+        # burst cost one compute. The engine now polls the same staleness
+        # predicate between points (review round 1 measured the alternative: a
+        # 6-turn drag went from 0.80 s to 3.40 s at 8.7× the CPU).
         try:
-            result = srv.engine.recompute(metric, knobs)
+            result = srv.engine.recompute(
+                metric, knobs, should_stop=lambda: srv.is_stale(request_id)
+            )
+        except RecomputeSuperseded:
+            self._reply_json({"stale": True, "request_id": request_id}, code=409)
+            return
         except Exception as exc:
             self._reply_error(400, f"recompute failed: {exc}")
             return
         # POST-compute staleness: the pre-check alone was sufficient only while
         # the lock queued computes. Unserialized, a newer request_id can land
         # while this one computes — replying then would overwrite the fresher
-        # answer in the client's rail with a superseded one.
+        # answer in the client's rail with a superseded one. (The poll above
+        # catches most of these earlier; this is the guarantee.)
         if srv.is_stale(request_id):
             self._reply_json({"stale": True, "request_id": request_id}, code=409)
             return
@@ -321,7 +335,7 @@ class _Handler(BaseHTTPRequestHandler):
         """Auto mode (WP6, D11): a reduced-N server-side ``abk validate`` that
         refreshes the live session's calibration in place, then answers with the
         recommended knob state per metric so the client re-seeds + re-renders the
-        chip. Serialized under the request lock (its own manager, its own
+        chip. Serialized under ``heavy_lock`` (its own manager, its own
         ``'validate'`` lock), stale-dropping like ``/recompute`` and ``/reload``.
         The Apply gate is unchanged — Auto only populates rows."""
         if (
@@ -360,7 +374,7 @@ class _Handler(BaseHTTPRequestHandler):
     def _handle_apply(self, srv: _ExploreServer, body: bytes) -> None:
         """The only terminal action: gate → WP5 seam → reply → self-shutdown.
 
-        Serialized under the request lock: two tabs' Applies must not race the
+        Serialized under ``heavy_lock``: two tabs' Applies must not race the
         archive/rewrite seam or the shared CLI-thread DB manager, and a second
         Apply after a successful one is refused (the server is already going
         down). Every request-shaped failure is a clean 400/409 — a handler
@@ -658,7 +672,7 @@ def _run_validate(srv: _ExploreServer) -> dict[str, Any]:
     hundred placebo splits, persist the ``_ab_aa_runs`` rows, refresh the live
     ``session.aa_rows`` snapshot in place (D11 — the chip greens without a
     restart), and return the recommended knob state + refreshed calibration per
-    metric. Runs inside the request lock with its OWN manager and its OWN
+    metric. Runs inside ``heavy_lock`` with its OWN manager and its OWN
     out-of-band ``'validate'`` lock (never the run pipeline's lock, D5)."""
     from abkit.database.internal_tables import InternalTablesManager
     from abkit.loaders.exposure_source import build_cohort_backend

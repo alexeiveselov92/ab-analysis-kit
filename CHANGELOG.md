@@ -97,14 +97,23 @@ number change).
   needs it (`heavy_lock`: `/reload`, `/validate`, `/apply` — own DB managers,
   the out-of-band `_ab_tasks` lock, the YAML archive/rewrite seam), and
   `/recompute` runs concurrently against a session whose Tier-S cache carries
-  its own fine-grained lock. Two consequences worth knowing:
-  - **the accepted trade** is that two identical recomputes racing may both
-    run — wasted CPU, never a wrong number (every input is immutable or
-    read under the cache lock);
+  its own fine-grained lock. Three consequences worth knowing:
+  - **the accepted trade** is that two recomputes racing may both run —
+    wasted CPU and, for bootstrap knobs, one resample block of memory each;
+    never a wrong number (every input is immutable or read under the cache
+    lock);
   - **staleness is re-checked after the compute, not just before it.** A
     request can now be superseded *while it computes*; it replies `409
     {stale: true}` rather than overwriting the fresher answer already in the
-    rail. The two-tab `request_id` machinery is otherwise untouched.
+    rail. The two-tab `request_id` machinery is otherwise untouched;
+  - **superseded work is now cancelled rather than queued.** The old lock did
+    double duty — it also dropped every queued request a newer knob turn had
+    outranked, so a slider drag cost one compute. Without that, a 6-turn drag
+    ran six full computes and the answer the user waits for took 3.40 s
+    instead of 0.80 s, at 8.7× the CPU. The engine therefore polls the same
+    staleness predicate between points and abandons a superseded recompute
+    within one point (1.04 s / 1.14 CPU-s on the same drag) — the queue is
+    gone, the cancellation is not.
 
 ### Added
 - **M10 WP1 — `interval_anchor`: where the cutoff lattice sits.** `cadence`

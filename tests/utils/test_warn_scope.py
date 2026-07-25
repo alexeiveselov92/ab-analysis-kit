@@ -17,6 +17,7 @@ so a green run means the property holds rather than that the race did not fire.
 
 from __future__ import annotations
 
+import contextlib
 import threading
 import warnings
 
@@ -152,32 +153,49 @@ class TestConcurrency:
     def test_a_suppressing_thread_does_not_silence_a_capturing_one(self):
         """Hazard 2 — Auto-mode ``/validate`` (which suppresses the per-split
         A/A guards) running concurrently with a ``/recompute`` that must still
-        report its own guard in the reply."""
+        report its own guard in the reply.
+
+        Order matters: the CAPTURE opens first and the suppressor is open
+        ACROSS the capturer's warn. With the stdlib the suppressor's "ignore"
+        filter is process-global by then, so the capture comes back empty
+        (verified by reverting the module — review round 1 caught the original
+        ordering, which the stdlib survived).
+        """
         captured: list[str] = []
-        suppressing, captured_done = threading.Event(), threading.Event()
+        capturing, suppressing, captured_done = (threading.Event() for _ in range(3))
+
+        def capturer() -> None:
+            with capture_warnings(Alpha) as caught:
+                capturing.set()
+                assert suppressing.wait(timeout=10)
+                warnings.warn("the real guard", Alpha, stacklevel=1)
+                captured.extend(_messages(caught))
+            captured_done.set()
 
         def suppressor() -> None:
+            assert capturing.wait(timeout=10)
             with suppress_warnings(Alpha):
                 warnings.warn("A/A spam", Alpha, stacklevel=1)
                 suppressing.set()
                 assert captured_done.wait(timeout=10)
                 warnings.warn("more A/A spam", Alpha, stacklevel=1)
 
-        def capturer() -> None:
-            assert suppressing.wait(timeout=10)
-            with capture_warnings(Alpha) as caught:
-                warnings.warn("the real guard", Alpha, stacklevel=1)
-                captured.extend(_messages(caught))
-            captured_done.set()
-
-        _run_both(suppressor, capturer)
+        _run_both(capturer, suppressor)
         assert captured == ["the real guard"]
 
     def test_interleaved_exits_do_not_leave_a_dead_recorder_installed(self):
         """Hazard 3, the worst one: A enters before B and leaves before B, so
         with the stdlib B's exit restores A's recorder — nobody owns it, and
         every later warning in the process is appended to a list nobody reads.
-        A silent, permanent loss of every stats warning for the session."""
+        A silent, permanent loss of every stats warning for the session.
+
+        Asserted through DELIVERY, not through which hook holds what, and the
+        ambient sink is installed BEFORE the interleave — installing it after
+        would overwrite the leaked recorder and repair the very thing under
+        test. (Both corrections come from review round 1: the original assertion
+        — ``showwarning is original`` — held against the stdlib too, which
+        records via the private ``_showwarnmsg_impl``.)
+        """
         original = warnings.showwarning
         a_entered, b_entered, a_exited = (threading.Event() for _ in range(3))
 
@@ -193,13 +211,12 @@ class TestConcurrency:
                 b_entered.set()
                 assert a_exited.wait(timeout=10)
 
-        _run_both(thread_a, thread_b)
-        assert warnings.showwarning is original
-
-        seen: list[str] = []
-        with _delegating_to(seen):
+        delivered: list[str] = []
+        with _ambient_sink(delivered):
+            _run_both(thread_a, thread_b)
+            assert warnings.showwarning is original
             warnings.warn("after the interleave", Alpha, stacklevel=1)
-        assert seen == ["after the interleave"]
+        assert delivered == ["after the interleave"]
 
     def test_the_stdlib_really_does_fail_these(self):
         """The hazard is real, not theoretical — if this test ever fails
@@ -249,74 +266,183 @@ class TestConcurrency:
             assert len(a_recorder) == before + 1
 
 
+class TestHostileGlobalState:
+    """Someone else owns ``warnings`` too. (All from review round 1.)"""
+
+    def test_a_foreign_window_that_outlives_the_scope_cannot_wedge_warnings(self):
+        """A plain ``catch_warnings()`` that opens INSIDE a scope and closes
+        after it restores the router behind our back — the stdlib restores what
+        it snapshotted, not what we handed over. Delegating to that zombie would
+        recurse until ``RecursionError``, raised out of ``warnings.warn`` — i.e.
+        out of a live compute — after silently swallowing everything first."""
+        delivered: list[str] = []
+        opened, foreign_in, scope_gone, foreign_done = (threading.Event() for _ in range(4))
+
+        with _delegating_to(delivered):
+
+            def foreign() -> None:
+                assert opened.wait(timeout=10)
+                with warnings.catch_warnings():  # snapshots the router…
+                    foreign_in.set()
+                    assert scope_gone.wait(timeout=10)
+                foreign_done.set()  # …and restores it after we handed it back
+
+            def scoped() -> None:
+                with capture_warnings(Alpha):
+                    opened.set()
+                    assert foreign_in.wait(timeout=10)
+                scope_gone.set()
+
+            _run_both(foreign, scoped)
+            assert foreign_done.is_set()
+
+            # no exception, and the warning still reaches the app's handler
+            warnings.warn("after the zombie", Alpha, stacklevel=1)
+            with capture_warnings(Alpha) as caught:
+                warnings.warn("own-thread", Alpha, stacklevel=1)
+
+        assert delivered == ["after the zombie"]
+        assert _messages(caught) == ["own-thread"]
+
+    def test_a_bad_category_leaves_no_half_installed_router(self):
+        """``filterwarnings`` validates its category; before review round 1 that
+        rejection happened AFTER the router was installed and before the
+        try/finally, orphaning it permanently."""
+        import abkit.utils.warn_scope as scope_mod
+
+        before = warnings.showwarning
+        with pytest.raises(TypeError):
+            with capture_warnings("not a warning class"):  # type: ignore[arg-type]
+                pass
+        assert warnings.showwarning is before
+        assert scope_mod._depth == 0
+        seen: list[str] = []
+        with _delegating_to(seen):
+            warnings.warn("still delivered", Alpha, stacklevel=1)
+        assert seen == ["still delivered"]
+
+    def test_the_filter_list_does_not_grow_with_scope_count(self):
+        """500 scopes must not leave 500 filters behind — a long explore session
+        would otherwise walk an ever-longer list on every warning."""
+        before = len(warnings.filters)
+        for _ in range(500):
+            with capture_warnings(Alpha):
+                pass
+        assert len(warnings.filters) == before
+
+    def test_the_frame_stack_does_not_leak_across_requests_on_one_thread(self):
+        import abkit.utils.warn_scope as scope_mod
+
+        for _ in range(50):
+            with capture_warnings(Alpha):
+                with suppress_warnings(Beta):
+                    pass
+        assert scope_mod._thread_stack() == []
+
+
 class TestTheAbkitCallSites:
     """The two production scopes, exercised through their real entry points."""
 
     def test_concurrent_compares_keep_their_own_warnings(self):
-        """``tuning.recompute._compare`` — the explore reply's warning chips."""
+        """``tuning.recompute._compare`` — the explore reply's warning chips.
+
+        A must warn while B's scope is OPEN (the interleaving the stdlib loses:
+        B installed its recorder last, so A's guard lands in B's list and A's
+        reply reports none). Review round 1: the first version let B finish
+        first, which ``catch_warnings`` survives.
+        """
         from abkit.stats import AbkitStatsWarning
         from abkit.tuning.recompute import _compare
 
         out: dict[str, list[str]] = {}
-        first_in, second_warned = threading.Event(), threading.Event()
+        a_inside, b_inside, a_warned = (threading.Event() for _ in range(3))
 
         class Warny:
-            def __init__(self, tag: str, before: threading.Event | None) -> None:
-                self.tag, self.before = tag, before
+            def __init__(self, tag: str, enter: threading.Event, wait_for: threading.Event) -> None:
+                self.tag, self.enter, self.wait_for = tag, enter, wait_for
 
             def compare_pair(self, group_1: object, group_2: object) -> str:
-                if self.before is not None:
-                    first_in.set()
-                    assert second_warned.wait(timeout=10)
+                self.enter.set()
+                assert self.wait_for.wait(timeout=10)
                 warnings.warn(f"guard {self.tag}", AbkitStatsWarning, stacklevel=1)
+                if self.tag == "a":
+                    a_warned.set()
                 return f"result-{self.tag}"
 
-        def slow() -> None:
-            _, messages = _compare(Warny("slow", first_in), None, None)  # type: ignore[arg-type]
-            out["slow"] = messages
+        def thread_a() -> None:
+            _, messages = _compare(Warny("a", a_inside, b_inside), None, None)  # type: ignore[arg-type]
+            out["a"] = messages
 
-        def quick() -> None:
-            assert first_in.wait(timeout=10)
-            _, messages = _compare(Warny("quick", None), None, None)  # type: ignore[arg-type]
-            out["quick"] = messages
-            second_warned.set()
+        def thread_b() -> None:
+            assert a_inside.wait(timeout=10)
+            _, messages = _compare(Warny("b", b_inside, a_warned), None, None)  # type: ignore[arg-type]
+            out["b"] = messages
 
-        _run_both(slow, quick)
-        assert out == {"slow": ["guard slow"], "quick": ["guard quick"]}
+        _run_both(thread_a, thread_b)
+        assert out == {"a": ["guard a"], "b": ["guard b"]}
 
     def test_validate_scoring_suppression_is_thread_local(self):
         """``validate.scoring.suppress_resample_warnings`` — Auto mode's
-        per-split silence must not reach a concurrent explore capture."""
+        per-split silence must not reach a concurrent explore capture.
+
+        The capture opens FIRST and the suppression is open across its warn:
+        with the stdlib the "ignore" filter is global by then and the explore
+        reply loses its guard (review round 1 — the reverse order passes).
+        """
         from abkit.stats import AbkitStatsWarning
         from abkit.tuning.recompute import _compare
         from abkit.validate.scoring import suppress_resample_warnings
 
-        inside, captured_done = threading.Event(), threading.Event()
+        capturing, suppressing, captured_done = (threading.Event() for _ in range(3))
         out: dict[str, list[str]] = {}
 
         @suppress_resample_warnings
         def scoring_like() -> None:
             warnings.warn("per-split guard", AbkitStatsWarning, stacklevel=1)
-            inside.set()
+            suppressing.set()
             assert captured_done.wait(timeout=10)
             warnings.warn("another per-split guard", AbkitStatsWarning, stacklevel=1)
 
         class Warny:
             def compare_pair(self, group_1: object, group_2: object) -> str:
+                capturing.set()
+                assert suppressing.wait(timeout=10)
                 warnings.warn("the real guard", AbkitStatsWarning, stacklevel=1)
                 return "result"
 
         def explore_side() -> None:
-            assert inside.wait(timeout=10)
             _, messages = _compare(Warny(), None, None)  # type: ignore[arg-type]
             out["explore"] = messages
             captured_done.set()
 
-        _run_both(scoring_like, explore_side)
+        def scoring_side() -> None:
+            assert capturing.wait(timeout=10)
+            scoring_like()
+
+        _run_both(explore_side, scoring_side)
         assert out == {"explore": ["the real guard"]}
 
 
 # -- helpers ------------------------------------------------------------------
+
+
+@contextlib.contextmanager
+def _ambient_sink(sink: list[str]):
+    """Collect warnings at the level a LEAKED recorder would steal them from.
+
+    Deliberately hooks the private ``_showwarnmsg_impl`` rather than
+    ``showwarning``: an overridden ``showwarning`` takes precedence in
+    ``_showwarnmsg``, so it would receive the warning even when a dead
+    ``catch_warnings(record=True)`` recorder is still installed — masking
+    exactly the leak under test. Entering ``pytest.warns`` here would mask it
+    too (it installs its own impl for its window).
+    """
+    saved = warnings._showwarnmsg_impl  # type: ignore[attr-defined]
+    warnings._showwarnmsg_impl = lambda msg: sink.append(str(msg.message))  # type: ignore[attr-defined]
+    try:
+        yield sink
+    finally:
+        warnings._showwarnmsg_impl = saved  # type: ignore[attr-defined]
 
 
 class _delegating_to:
@@ -366,3 +492,34 @@ def _run_both(first, second, timeout: float = 15.0) -> None:  # type: ignore[no-
     assert not alive, f"{len(alive)} thread(s) never finished — deadlock or missed event"
     if errors:
         raise errors[0]
+
+
+def test_the_teardown_window_never_drops_a_frameless_warning():
+    """``_uninstall`` restores ``showwarning`` BEFORE clearing the delegate.
+
+    The other order leaves the router installed with nothing to delegate to,
+    and a warning raised by a frameless thread in that window is dropped
+    (review round 1, found by instrumenting the guard's ``__exit__``).
+    """
+    import abkit.utils.warn_scope as scope_mod
+
+    delivered: list[str] = []
+    observed: list[str] = []
+
+    class _WatchingGuard(warnings.catch_warnings):
+        def __exit__(self, *exc):  # type: ignore[no-untyped-def]
+            # exactly the moment the old order had already cleared _delegate
+            scope_mod._route("mid-teardown", Alpha, __file__, 0)
+            observed.append("ran")
+            return super().__exit__(*exc)
+
+    original_guard = warnings.catch_warnings
+    with _delegating_to(delivered):
+        scope_mod.warnings.catch_warnings = _WatchingGuard  # type: ignore[assignment]
+        try:
+            with capture_warnings(Alpha):
+                pass
+        finally:
+            scope_mod.warnings.catch_warnings = original_guard  # type: ignore[assignment]
+    assert observed == ["ran"]
+    assert delivered == ["mid-teardown"]
