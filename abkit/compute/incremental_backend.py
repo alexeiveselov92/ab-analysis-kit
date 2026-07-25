@@ -372,12 +372,23 @@ class IncrementalBackend:
         # recompute render's INNER JOIN does. Units enrolling later in
         # COMPUTE have no state rows at all; their tail values (if any) carry
         # the tail render's own arm.
+        disagreeing: list[str] = []
         if self._variant_map_refresh is not None and not self._map_refreshed:
             if any(u not in variant_map and u not in tail_variant for u in totals):
                 self._map_refreshed = True
-                self._variant_map = variant_map = self._variant_map_refresh()
+                refreshed = self._variant_map_refresh()
+                # The refresh REPLACES the snapshot, so a unit whose arm moved
+                # would silently start agreeing with the tail and the drift
+                # disclosure below would never fire (an R2 review finding: one
+                # legitimate mid-run enrollee masks every other unit's flip).
+                # Diff the two maps here, while both are still in hand.
+                disagreeing.extend(
+                    unit
+                    for unit, variant in variant_map.items()
+                    if unit in refreshed and refreshed[unit] != variant
+                )
+                self._variant_map = variant_map = refreshed
         units_of: dict[str, list[str]] = {}
-        disagreeing: list[str] = []
         for unit in totals:
             snapshot_variant = variant_map.get(unit)
             live_variant = tail_variant.get(unit)

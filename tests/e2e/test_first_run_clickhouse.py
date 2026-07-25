@@ -159,7 +159,7 @@ def test_pre_m9_install_migrates_and_the_additive_path_reconciles(
     additivity is a property of the metric's *rendered SQL*, not of Python.
     """
     from abkit.core.models import TableModel
-    from abkit.database.clickhouse_manager import ClickHouseManager
+    from abkit.database.clickhouse_manager import ClickHouseDatabaseManager
     from abkit.database.tables import get_results_table_model
 
     project, client, conn = _prepare_project(clickhouse, tmp_path, monkeypatch, "demo_m9")
@@ -174,7 +174,7 @@ def test_pre_m9_install_migrates_and_the_additive_path_reconciles(
         indexes=current.indexes,
         version_column=current.version_column,
     )
-    manager = ClickHouseManager(
+    manager = ClickHouseDatabaseManager(
         **conn, internal_database="abkit_internal", data_database="analytics"
     )
     try:
