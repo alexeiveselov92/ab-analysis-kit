@@ -11,6 +11,14 @@
 > This document must never claim unbuilt code exists — every WP is written in
 > contract/future tense ("WP2 adds…", "the gate asserts…").
 >
+> **Read [§4](#4-decisions--settled-by-the-maintainer-2026-07-25) BEFORE any WP.**
+> All five "before start" questions were settled by the maintainer on
+> 2026-07-25 and two of them **overturn recommendations still written into the
+> WP bodies**: `start_date`/`end_date` are **renamed** to
+> `start_ts`/`horizon_ts` with no compatibility aliases (D1), and grid
+> anchoring becomes the configurable `interval_anchor` knob rather than a
+> fixed rule (D2). Where a WP body and §4 disagree, §4 wins.
+>
 > Governing specs: [cumulative-intervals.md](cumulative-intervals.md) (§6 the
 > window-column contract, the CUPED whole-day pre-period rule),
 > [declarative-config.md](declarative-config.md) (§3 the `start_date`/`end_date`
@@ -214,6 +222,17 @@ canonical design JSON's own step-by-step content (not replacing it):
 ## 1. Work packages
 
 ### WP1 — Config + planner core: sub-day start/horizon timestamps (byte-identical for existing configs)
+
+> **Amended by the §4 decisions (2026-07-25) — read them first.** Two things
+> in the body below are superseded: (a) the fields are **renamed** to
+> `start_ts`/`horizon_ts` with no aliases (D1), so "existing configs stay
+> byte-identical" no longer holds — the numeric gate replaces it: an
+> unchanged window must persist unchanged `_ab_results` numbers; (b) grid
+> anchoring is not a fixed rule to be chosen but the configurable
+> `interval_anchor` knob — `midnight` (the absent-key behavior, written
+> explicitly by the scaffold) | `start` | an explicit timestamp — with the
+> engine rule "cutoffs = anchor + k·interval, snapped forward to ≥ start"
+> (D2). Everything else below stands.
 
 **Goal.** Widen `ExperimentConfig.start_date`/`end_date` from `date` to a
 type-preserving `date | datetime` union (not a coercing `datetime` field —
@@ -987,7 +1006,96 @@ and cross-check the coverage map in [ROADMAP.md](../../ROADMAP.md) (REPORT
 
 ---
 
-## 4. Open questions / decisions needed before start
+## 4. Decisions — SETTLED by the maintainer, 2026-07-25
+
+> **All five questions below were answered before implementation started; the
+> answers are binding and are NOT to be re-litigated at WP time.** The
+> original question text is kept underneath each decision so the reasoning
+> stays legible. Two answers overturn what this document originally
+> recommended — read the decisions, not the recommendations.
+>
+> **The standing principle behind three of them:** abkit has no live external
+> users yet, so "this breaks existing configs/schemas" is **not** an argument.
+> The maintainer's instruction is to choose the correct, scalable design and
+> document the break — never to carry a legacy shape for compatibility. That
+> does not weaken the statistical invariant: numbers still never move
+> silently (`ALGORITHM_VERSION` + change control).
+
+### D1 — Rename `start_date`/`end_date` → `start_ts`/`horizon_ts` (clean break)
+
+**Decision: RENAME. The plan's original "no rename" recommendation is
+overturned.** The fields become `start_ts` / `horizon_ts`, matching the
+vocabulary the engine already uses internally (`grid.start_ts`,
+`grid.horizon_ts`). **No deprecated aliases**: a config carrying
+`start_date`/`end_date` fails validation with an explicit "renamed to
+`start_ts`/`horizon_ts`" error, so the break is loud and one-line-fixable.
+
+Why: abkit is a *flexible-interval* system — sub-day cadences are a
+first-class feature (cumulative-intervals.md §6) — and `*_date` names are a
+leftover from the legacy code the project was asked to **rewrite**, not to
+treat as truth. A field that can hold a timestamp must not be called a date.
+The maintainer has raised this across several sessions; it is settled.
+
+**Scope delta this creates for WP1** (the WP body below still describes the
+pre-decision design): WP1 is no longer "byte-identical YAML, existing tests
+unmodified are the gate". It now also carries a mechanical rename across
+`ExperimentConfig`, every test fixture, the `abk init` scaffold, the packaged
+`init-claude` assets and the docs. The *numeric* gate is unchanged and still
+the real one: for an experiment whose window is unchanged, every persisted
+`_ab_results` number stays identical — only the config key changed.
+
+### D2 — Grid anchoring becomes an explicit, configurable knob
+
+**Decision: add `interval_anchor` with three forms —
+`midnight` | `start` | an explicit timestamp.** The engine rule generalizes to
+one sentence: **cutoffs are `anchor + k·interval`, snapped forward to the
+first point at or after `start_ts`.**
+
+- `midnight` — local midnight of the experiment timezone (whole calendar days,
+  what BI dashboards read). **This is the behavior when the key is absent**,
+  and the `abk init` scaffold writes it out explicitly with the alternatives
+  in a comment, so the choice is visible in the config rather than implicit.
+- `start` — count from the experiment start (`14:00` start ⇒ cutoffs at
+  `14:00` every day; 3-day segments run from the start instant). This is
+  today's engine mechanics unchanged — today's grid is already
+  `start_ts + k·interval` and merely *looks* midnight-anchored because
+  `start_date` forces a midnight start.
+- an explicit timestamp — align the grid to an external cycle. The concrete
+  case that decided it: **3-day windows at 00:00 MSK on a UTC warehouse**,
+  with the experiment starting a little before or after such a boundary. The
+  anchor may therefore precede `start_ts`; the forward snap is what makes
+  that well-defined, and the first window is legitimately partial.
+
+This replaces the original question's "wall-clock generalization vs
+disallow" fork: neither — it is a first-class option, because a system that
+sells flexible intervals cannot hard-code where an interval begins.
+
+### D3 — Widen `_ab_experiments.start_date`/`end_date` to `DateTime64(3)` in the same pass
+
+**Decision: yes, in WP1/WP2.** Leaving a `Date`-typed catalog column while
+the config can carry a sub-day timestamp is silent truncation, i.e. a bug —
+not a design choice. (Column names in that table follow D1's rename too.)
+
+### D4 — Dropping the `_ab_results` date columns: CHANGELOG note + ready-made SQL
+
+**Decision: option 1 — a breaking-change note plus copy-pasteable
+`ALTER TABLE … DROP COLUMN` / recreate SQL per backend. No `abk migrate`
+tooling.** This matches `ensure_tables()`'s existing create-if-not-exists-only
+posture; an irreversible DROP behind a convenience command is a bigger risk
+surface than a documented one-time manual step, and there are no installed
+users to shield.
+
+### D5 — Explore: decouple the global request lock
+
+**Decision: decouple.** Cheap tiers (alpha/method knobs) run concurrently;
+the heavy paths (warehouse reload, Auto-validate) keep the lock. The accepted
+trade is explicit: under a race two identical recomputes may both run —
+wasted CPU, never a wrong number.
+
+---
+
+<details>
+<summary>The original questions, as posed before the decisions above</summary>
 
 Per the track plan's "перед стартом" ("before start") discipline, these need
 an explicit maintainer answer before the corresponding WP lands (recommended
@@ -1038,6 +1146,8 @@ discipline, not new questions): pin the field names as decided in Q1 before
 WP1 begins; settle Q2 (wall-clock vs. disallow) before WP1 step 6 is
 implemented, not after; confirm the `_ab_experiments` widen (Q3) explicitly
 before WP2 touches `tables.py`.
+
+</details>
 
 ---
 
