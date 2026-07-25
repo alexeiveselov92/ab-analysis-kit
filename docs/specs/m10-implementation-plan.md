@@ -221,9 +221,9 @@ canonical design JSON's own step-by-step content (not replacing it):
 
 ## 1. Work packages
 
-### WP1 — Config + planner core: sub-day start/horizon timestamps (byte-identical for existing configs)
+### WP1 — Config + planner core: sub-day start/horizon timestamps ✅ SHIPPED (`aef6c66`)
 
-> **Amended by the §4 decisions (2026-07-25) — read them first.** Two things
+> **Amended by the §4 decisions (2026-07-25) — read them first.** Three things
 > in the body below are superseded: (a) the fields are **renamed** to
 > `start_ts`/`horizon_ts` with no aliases (D1), so "existing configs stay
 > byte-identical" no longer holds — the numeric gate replaces it: an
@@ -231,8 +231,51 @@ canonical design JSON's own step-by-step content (not replacing it):
 > anchoring is not a fixed rule to be chosen but the configurable
 > `interval_anchor` knob — `midnight` (the absent-key behavior, written
 > explicitly by the scaffold) | `start` | an explicit timestamp — with the
-> engine rule "cutoffs = anchor + k·interval, snapped forward to ≥ start"
-> (D2). Everything else below stands.
+> engine rule "cutoffs = anchor + k·interval, kept strictly after start"
+> (D2); (c) **step 3/step 5's type-branching horizon is dead** — a bare date
+> is local midnight of that day for BOTH edges, so `horizon_ts` is the
+> exclusive right edge and there is no `+1 day` bump anywhere (D6).
+>
+> **As-built notes (what the session actually found, beyond the contract):**
+>
+> - **§0.2's register was ~60% accurate and its central claim was false.**
+>   "Only sites 2 and 8 reimplement date arithmetic; sites 3–7 and 9 need no
+>   code change" missed six further sites, four of them in M9 code that
+>   post-dates the register: `IncrementalBackend` compared a `date` against
+>   the config field (`TypeError` on *every* cutoff under
+>   `compute.incremental_reads`) and passed it as an `_ab_unit_state` day
+>   key; the STATE stage seeded its day loop from it, carrying a `datetime`
+>   into a `Date` column and into comparisons against `get_last_state_day()`;
+>   and `horizon_seconds()`'s own `(end − start).days + 1`. There are also
+>   **ten** `generate_grid` callers, not eight (`explore.py`, `reconcile.py`).
+>   Line numbers throughout §0.2/§0.3 had drifted 20–70 lines.
+> - **The knob reached nothing.** Adding `interval_anchor` to the planner
+>   signature left all eight hand-copied call sites passing their old
+>   argument lists — a decorative knob. Fixed by `ExperimentConfig.grid()`,
+>   the one factory composing window + cadence + anchor (m8's
+>   `build_cohort_backend` contract applied to the planner), pinned by an AST
+>   gate (`tests/core/test_grid_factory_is_the_only_entry.py`). One of those
+>   sites passed `timezone` **positionally as the 4th argument**, so any
+>   future parameter inserted before `tz` would have silently re-bound it.
+> - **Day-space comparison is gated on anchor phase.** A whole-day segment
+>   `until` bound is compared in day space — the DST compensation that keeps
+>   a 25h fall-back day from dropping a boundary look — **only while the
+>   anchor shares `start_ts`'s wall clock**. Off-phase it reads as elapsed
+>   seconds, which is its literal meaning. The boolean is pinned in BOTH
+>   directions (mutating it either way fails a test).
+> - **The STATE stage clamps the opening day** to `grid.start_ts`, so a
+>   sub-day start cannot sum pre-experiment facts into day state; the CUPED
+>   pre-period stays whole-day (`[midnight(D − lookback), midnight(D))`) and
+>   is byte-identical at a midnight start.
+> - **`_ab_experiments` stores the RESOLVED window in naive UTC**, not the
+>   local config value — the same frame as `_ab_results.start_ts`, so a BI
+>   join lines up instead of differing by the timezone offset.
+>   `interval_anchor` is persisted alongside; it is deliberately **not**
+>   folded into the m9 state identity (it moves cutoffs, never day
+>   boundaries).
+> - Gates: the full suite (2 214 tests) green with only config keys and
+>   ported horizon values edited; zero `ALGORITHM_VERSION` changes; zero new
+>   mypy errors (111 → 111).
 
 **Goal.** Widen `ExperimentConfig.start_date`/`end_date` from `date` to a
 type-preserving `date | datetime` union (not a coercing `datetime` field —
@@ -1084,6 +1127,32 @@ tooling.** This matches `ensure_tables()`'s existing create-if-not-exists-only
 posture; an irreversible DROP behind a convenience command is a bigger risk
 surface than a documented one-time manual step, and there are no installed
 users to shield.
+
+### D6 — A bare date means local midnight of THAT day, for BOTH edges (settled at WP1 time, 2026-07-25)
+
+**Decision: `horizon_ts` is the EXCLUSIVE right edge.** D1 renamed the field
+but left one thing open: what a bare `date` means in a field now called
+`horizon_ts`. The WP1 body (written pre-D1) branched on the type — `date` kept
+the legacy "+1 day, inclusive of that day" convention, `datetime` was exact.
+That is overturned: **one resolver for both edges**, a bare date is local
+midnight of that day, and therefore
+
+```
+config.horizon_ts resolved  ==  grid.horizon_ts     (always, exactly)
+```
+
+Why: under type-branching a field named `horizon_ts` whose bare-date form
+means "the day *after* me" is still an inclusive end **date** — precisely the
+legacy shape D1 exists to delete — and `2024-07-14` vs `2024-07-14T00:00:00`
+would denote instants a day apart in the same field. The rename's whole point
+is that the config speaks the engine's vocabulary; this is the only reading
+that delivers it.
+
+**Cost, accepted:** porting is no longer a pure key rename — the horizon VALUE
+moves one day (`end_date: 2024-07-14` → `horizon_ts: 2024-07-15`). Every
+fixture, scaffold and doc example was ported accordingly, and the rename error
+text spells the shift out. The numeric gate is unchanged and still the real
+one: **an unchanged window persists unchanged numbers.**
 
 ### D5 — Explore: decouple the global request lock
 
