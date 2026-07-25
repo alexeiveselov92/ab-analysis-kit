@@ -20,19 +20,14 @@ from synthetic_ab import (
 )
 
 from abkit.compute.recompute_backend import RecomputeBackend
-from abkit.core.period_planner import Cutoff, generate_grid
+from abkit.core.period_planner import Cutoff
 from abkit.stats.factory import create_method
 from abkit.validate.load import load_placebo_panel, subsample_grid
 from abkit.validate.scoring import score_cell
 
 
 def _grid(experiment):
-    return generate_grid(
-        experiment.start_ts,
-        experiment.horizon_ts,
-        experiment.cadence_segments(),
-        tz=experiment.timezone,
-    )
+    return experiment.grid()
 
 
 def _band(p, n, sigmas=3.0):

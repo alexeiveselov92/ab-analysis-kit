@@ -356,14 +356,8 @@ class _UntouchableManager(FakeDatabaseManager):
 
 
 def _grid(experiment):
-    from abkit.core.period_planner import generate_grid
 
-    return generate_grid(
-        experiment.start_ts,
-        experiment.horizon_ts,
-        experiment.cadence_segments(),
-        tz=experiment.timezone,
-    )
+    return experiment.grid()
 
 
 def _copy_experiment():

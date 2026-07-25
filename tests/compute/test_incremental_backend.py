@@ -38,7 +38,6 @@ from synthetic_ab import (
 from abkit.compute.incremental_backend import IncrementalBackend
 from abkit.compute.recompute_backend import RecomputeBackend
 from abkit.config import ExperimentConfig, ProjectConfig
-from abkit.core.period_planner import generate_grid
 from abkit.database.internal_tables import InternalTablesManager
 from abkit.pipeline import run_experiment
 
@@ -66,12 +65,7 @@ def tables(warehouse):
 
 
 def _grid(experiment: ExperimentConfig):
-    return generate_grid(
-        experiment.start_ts,
-        experiment.horizon_ts,
-        experiment.cadence_segments(),
-        tz=experiment.timezone,
-    )
+    return experiment.grid()
 
 
 def _snapshot_variant_map(warehouse) -> dict[str, str]:
@@ -143,16 +137,39 @@ class TestLoadParity:
             )
         assert warnings == []  # every cutoff served from state, no fallback
 
-    def test_sub_day_start_parity(self, warehouse, tables):
+    @pytest.mark.parametrize(
+        ("label", "overrides"),
+        [
+            # daily cadence: every cutoff is a midnight, so the tail is empty
+            ("daily", {}),
+            # sub-day cadence: cutoffs land INSIDE the opening (partial) day,
+            # where the tail render is the only source of the window's data
+            ("subday-cadence", {"cadence": "6h", "data_lag": "1h"}),
+            # daily cadence + an off-phase anchor reaches the same shape
+            ("anchored", {"interval_anchor": "2024-07-01 20:00:00"}),
+        ],
+    )
+    def test_sub_day_start_parity(self, warehouse, tables, label, overrides):
         """m10 WP1: the reader compared `required_last >= experiment.start_date`
-        — a `date >= datetime` TypeError the moment a start carries a time, on
-        EVERY cutoff. It now asks the grid which local day opens the window."""
+        — a `date >= datetime` TypeError the moment a start carries a time.
+
+        The `subday-cadence`/`anchored` cases carry the sharper claim: a cutoff
+        INSIDE the opening local day must render its tail from `grid.start_ts`,
+        not from local midnight, or the incremental path silently sums hours of
+        PRE-EXPERIMENT facts that full recompute never sees. A daily+midnight
+        fixture alone cannot fail that way — it has no such cutoff.
+        """
         payload = experiment_payload("exp_subday_start", "arpu", T_TEST)
-        payload["start_ts"] = "2024-07-01 14:30:00"
+        payload["start_ts"] = "2024-07-01 06:00:00"
+        payload.update(overrides)
         experiment = ExperimentConfig.model_validate(payload)
         run_pipeline(warehouse, tables, experiment)
 
         grid = _grid(experiment)
+        opening_day_cutoffs = [c for c in grid.cutoffs if c.end_ts < datetime(2024, 7, 2)]
+        if label != "daily":
+            assert opening_day_cutoffs, "fixture must exercise a cutoff inside the partial day"
+
         comparison = experiment.comparisons[0]
         sql = REVENUE.get_query_text(None)
         recompute = RecomputeBackend(warehouse, experiment)
@@ -162,7 +179,49 @@ class TestLoadParity:
             _assert_load_parity(
                 incremental.load_cutoff(comparison, REVENUE, sql, grid, cutoff),
                 recompute.load_cutoff(comparison, REVENUE, sql, grid, cutoff),
-                what=f"subday@{cutoff.end_ts}",
+                what=f"{label}@{cutoff.end_ts}",
+            )
+        assert warnings == []
+
+    def test_the_tail_render_never_reaches_before_the_window_start(self, warehouse, tables):
+        """The mirror of the STATE writer's opening-day clamp.
+
+        A cutoff INSIDE the opening local day is served entirely by the tail
+        render. Opening that render at local midnight instead of at
+        ``grid.start_ts`` sums facts from BEFORE the experiment — which full
+        recompute, rendering ``[grid.start_ts, end_ts)``, never sees. The
+        divergence is silent: no gap, no fallback, no warning.
+
+        It takes a fact in the pre-start hours to observe, which is why the
+        parity fixtures above cannot show it — their events all land at 12:00.
+        """
+        pre_start = [
+            (unit, variant, datetime(2024, 7, 1, 2, 0), {"gross_usd": 1000.0})
+            for unit, variant, _ in warehouse.cohort
+        ]
+        warehouse.events["user_revenue"] = pre_start + warehouse.events["user_revenue"]
+
+        payload = experiment_payload("exp_tail_clamp", "arpu", T_TEST)
+        payload["start_ts"] = "2024-07-01 06:00:00"  # after the 02:00 facts
+        payload["cadence"] = "6h"
+        payload["data_lag"] = "1h"
+        experiment = ExperimentConfig.model_validate(payload)
+        run_pipeline(warehouse, tables, experiment)
+
+        grid = experiment.grid()
+        inside_opening_day = [c for c in grid.cutoffs if c.end_ts < datetime(2024, 7, 2)]
+        assert inside_opening_day, "fixture must exercise a cutoff inside the partial day"
+
+        comparison = experiment.comparisons[0]
+        sql = REVENUE.get_query_text(None)
+        recompute = RecomputeBackend(warehouse, experiment)
+        warnings: list[str] = []
+        incremental = _incremental(warehouse, tables, experiment, warnings)
+        for cutoff in grid.cutoffs:
+            _assert_load_parity(
+                incremental.load_cutoff(comparison, REVENUE, sql, grid, cutoff),
+                recompute.load_cutoff(comparison, REVENUE, sql, grid, cutoff),
+                what=f"tail-clamp@{cutoff.end_ts}",
             )
         assert warnings == []
 

@@ -13,7 +13,6 @@ from synthetic_ab import (
 )
 
 from abkit.compute.recompute_backend import RecomputeBackend
-from abkit.core.period_planner import generate_grid
 from abkit.database.internal_tables import InternalTablesManager
 from abkit.database.internal_tables._aa_runs import AA_RUN_COLUMNS
 from abkit.pipeline.analyze import comparison_alpha, effective_alphas
@@ -26,12 +25,7 @@ NOW_ISO = "2026-07-05T00:00:00"
 
 def _run(experiment, warehouse, **settings):
     backend = RecomputeBackend(warehouse, experiment)
-    grid = generate_grid(
-        experiment.start_ts,
-        experiment.horizon_ts,
-        experiment.cadence_segments(),
-        tz=experiment.timezone,
-    )
+    grid = experiment.grid()
     return run_validation(
         backend,
         experiment,

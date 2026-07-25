@@ -16,7 +16,6 @@ import pytest
 
 from abkit.config.experiment_config import ExperimentConfig
 from abkit.config.metric_config import MetricConfig
-from abkit.core.period_planner import generate_grid
 from abkit.database.internal_tables import InternalTablesManager
 from abkit.database.internal_tables._results import RESULT_COLUMNS
 from abkit.pipeline.readout import evaluate
@@ -856,12 +855,7 @@ class TestProvenanceAndWarnings:
 class TestLookCounter:
     def test_look_at_subday_cadence(self, tables):
         experiment = make_experiment(horizon_ts="2026-01-04", cadence="6h", data_lag=0)
-        grid = generate_grid(
-            experiment.start_ts,
-            experiment.horizon_ts,
-            experiment.cadence_segments(),
-            experiment.timezone,
-        )
+        grid = experiment.grid()
         rows = [
             make_row(experiment, end_ts=START + timedelta(hours=6 * k), day=0, is_horizon=False)
             for k in range(1, 5)

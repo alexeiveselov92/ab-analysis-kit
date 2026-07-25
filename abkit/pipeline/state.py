@@ -5,7 +5,9 @@ for every STATE-eligible metric, each not-yet-materialized closed local day
 ``[tz-midnight(d), tz-midnight(d+1))`` is rendered through the m8 cohort
 factory backend (a single-day, non-cumulative window — never a hand-rolled
 cohort join, m9 §0.2) and replaced into ``_ab_unit_state`` via the §5.2
-replace-not-sum primitive. No reader exists in this milestone — WP4's
+replace-not-sum primitive. The opening day is clamped to ``grid.start_ts``
+when the window starts mid-day (m10), and a trailing day the horizon would
+truncate is not materialized at all — see :func:`closed_state_days`. No reader exists in this milestone — WP4's
 ``IncrementalBackend`` flips the read path.
 
 Eligibility (per metric, within one experiment):
@@ -104,24 +106,36 @@ def closed_state_days(
     """The closed local days of the grid window, in order.
 
     A day is closed iff its full window ``[tz-midnight(d), tz-midnight(d+1))``
-    — clamped to the grid window at BOTH ends — has passed the compute
-    watermark (§6.4: the state stage advances only at day close; the same
-    ``end_ts <= watermark_ts`` completeness rule the cutoff planner uses).
+    has passed the compute watermark (§6.4: the state stage advances only at
+    day close; the same ``end_ts <= watermark_ts`` completeness rule the
+    cutoff planner uses) AND lies inside the grid window. The two edges are
+    treated asymmetrically, for the reason spelled out below.
 
     The enumeration is keyed off the GRID, not off ``experiment.start_ts``:
     the config field may carry a time-of-day (m10), in which case the opening
     local day is legitimately PARTIAL and its window starts at
     ``grid.start_ts`` — no state row may ever cover an instant outside the
     experiment window, or the additive read would count pre-experiment rows.
+    That clamp is safe on the START side only because ``start_ts`` is folded
+    into the series identity: moving it re-keys the series.
+
+    A sub-day ``horizon_ts`` gets the opposite treatment — the trailing
+    partial day is **not materialized at all**. Clamping it would freeze a
+    part-day row that no later run re-renders (a materialized day is never
+    revisited) while ``horizon_ts`` does NOT generally re-key the series, so
+    extending the experiment would keep summing the truncated day. Nothing
+    needs it: a cutoff reads closed days only through ``cutoff_day - 1``, and
+    no cutoff exceeds the horizon, so the trailing day is served by the
+    reader's own sub-day tail render.
     """
     zone = ZoneInfo(experiment.timezone)
     days: list[StateDay] = []
     day = local_date(grid.start_ts, zone)
     while True:
         window_start = max(tz_midnight_utc(day, zone), grid.start_ts)
-        if window_start >= grid.horizon_ts:
+        window_end = tz_midnight_utc(day + timedelta(days=1), zone)
+        if window_start >= grid.horizon_ts or window_end > grid.horizon_ts:
             break
-        window_end = min(tz_midnight_utc(day + timedelta(days=1), zone), grid.horizon_ts)
         if window_end > watermark_ts:
             break
         days.append(StateDay(day=day, window=RenderWindow(window_start, window_end)))

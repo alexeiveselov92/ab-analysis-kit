@@ -18,7 +18,6 @@ import pytest
 from fake_db import FakeDatabaseManager, serve_assignment_pushdown
 
 from abkit.config import ExperimentConfig
-from abkit.core.period_planner import generate_grid
 from abkit.database.internal_tables import InternalTablesManager
 from abkit.loaders.exposure_copy import _batch_added_filters, copy_exposures_incremental
 from abkit.loaders.exposure_source import ExposureLoadError
@@ -80,12 +79,7 @@ def make_experiment(**overrides) -> ExperimentConfig:
 
 
 def make_grid(experiment: ExperimentConfig):
-    return generate_grid(
-        experiment.start_ts,
-        experiment.horizon_ts,
-        experiment.cadence_segments(),
-        tz=experiment.timezone,
-    )
+    return experiment.grid()
 
 
 def row(unit, variant, ts, **extra):

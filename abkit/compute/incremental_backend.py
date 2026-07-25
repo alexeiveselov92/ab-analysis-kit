@@ -59,7 +59,7 @@ metric's own value load is the only thing this class replaces.
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -68,7 +68,7 @@ import numpy as np
 from abkit.compute.recompute_backend import RecomputeBackend
 from abkit.config.experiment_config import ComparisonConfig, ExperimentConfig
 from abkit.config.metric_config import MetricConfig
-from abkit.core.period_planner import Cutoff, Grid, tz_midnight_utc
+from abkit.core.period_planner import Cutoff, Grid, local_date, tz_midnight_utc
 from abkit.database.internal_tables import InternalTablesManager
 from abkit.database.manager import BaseDatabaseManager
 from abkit.loaders.exposure_source import ExposureSnapshot, load_variant_map
@@ -85,11 +85,6 @@ _ROLE_MOMENTS: dict[str, dict[str, str]] = {
     "fraction": {"count": "sum_value", "nobs": "n"},
     "ratio": {"numerator": "sum_value", "denominator": "sum_denominator"},
 }
-
-
-def _local_date(ts: datetime, zone: ZoneInfo) -> date:
-    """The experiment-timezone calendar date of a naive-UTC timestamp."""
-    return ts.replace(tzinfo=timezone.utc).astimezone(zone).date()
 
 
 def build_incremental_backend(
@@ -265,7 +260,7 @@ class IncrementalBackend:
     ) -> MetricLoadResult:
         """Load one (comparison, cutoff) from state + at most one day of tail."""
         end_ts = cutoff.end_ts
-        cutoff_day = _local_date(end_ts, self._zone)
+        cutoff_day = local_date(end_ts, self._zone)
         last_midnight = tz_midnight_utc(cutoff_day, self._zone)
         required_last = cutoff_day - timedelta(days=1)
         role_moments = _ROLE_MOMENTS[metric.type]
@@ -274,7 +269,7 @@ class IncrementalBackend:
         # The first materialized day is the GRID's opening local day, never
         # the raw config field: with a sub-day start_ts the field carries a
         # time-of-day, and `date >= datetime` is a TypeError, not a comparison.
-        first_state_day = _local_date(grid.start_ts, self._zone)
+        first_state_day = local_date(grid.start_ts, self._zone)
         if required_last >= first_state_day:
             key = self._series_key(metric, metric_sql)
             last_state = self._cached_last_state_day(key)
@@ -304,9 +299,15 @@ class IncrementalBackend:
                 totals[unit] = {role: unit_moments[m] for role, m in role_moments.items()}
 
         tail_variant: dict[str, str] = {}
-        if last_midnight < end_ts:
+        # Clamped to the window's left edge, the mirror of the STATE writer's
+        # opening-day clamp: with a sub-day start_ts a cutoff can land INSIDE
+        # the opening local day, and an unclamped [midnight, end_ts) tail
+        # would sum hours of pre-experiment facts that full recompute — which
+        # renders [grid.start_ts, end_ts) — never sees.
+        tail_start = max(last_midnight, grid.start_ts)
+        if tail_start < end_ts:
             tail = self._recompute.load_window(
-                metric, metric_sql, RenderWindow(last_midnight, end_ts)
+                metric, metric_sql, RenderWindow(tail_start, end_ts)
             )
             for variant in tail.variants():
                 units = tail.units_by_variant[variant]

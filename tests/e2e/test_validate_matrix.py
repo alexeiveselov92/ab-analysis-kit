@@ -36,7 +36,6 @@ from synthetic_ab import METRICS, PROJECT, SyntheticWarehouse, seed_cohort, seed
 
 from abkit.compute.recompute_backend import RecomputeBackend
 from abkit.config.experiment_config import ExperimentConfig
-from abkit.core.period_planner import generate_grid
 from abkit.database.internal_tables import InternalTablesManager
 from abkit.database.internal_tables._aa_runs import AA_RUN_COLUMNS
 from abkit.pipeline.analyze import comparison_alpha, effective_alphas
@@ -77,12 +76,7 @@ def _matrix_experiment() -> ExperimentConfig:
 
 def _run(warehouse, experiment):
     backend = RecomputeBackend(warehouse, experiment)
-    grid = generate_grid(
-        experiment.start_ts,
-        experiment.horizon_ts,
-        experiment.cadence_segments(),
-        tz=experiment.timezone,
-    )
+    grid = experiment.grid()
     return run_validation(
         backend,
         experiment,
@@ -258,12 +252,7 @@ class TestValidateMatrixExitGate:
             seed_null_events(warehouse, days=DAYS)
             experiment = _matrix_experiment()
             backend = RecomputeBackend(warehouse, experiment)
-            grid = generate_grid(
-                experiment.start_ts,
-                experiment.horizon_ts,
-                experiment.cadence_segments(),
-                tz=experiment.timezone,
-            )
+            grid = experiment.grid()
             return run_validation(
                 backend,
                 experiment,

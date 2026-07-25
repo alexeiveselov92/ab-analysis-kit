@@ -18,7 +18,6 @@ import abkit.config.profile as profile_mod
 from abkit.cli.commands.plan import _plan_comparison
 from abkit.cli.main import cli
 from abkit.config.experiment_config import ExperimentConfig
-from abkit.core.period_planner import generate_grid
 from abkit.database.internal_tables import InternalTablesManager
 from abkit.stats import TwoTierAlphas
 from tests.e2e.test_first_run import SeedMirrorWarehouse
@@ -74,7 +73,7 @@ def test_plan_look_count_matches_generate_grid(ran):
     selected, _ = select_experiments(Path("."), (EXP,))
     _, exp = selected[0]
     looks = len(
-        generate_grid(exp.start_ts, exp.horizon_ts, exp.cadence_segments(), tz=exp.timezone)
+        exp.grid()
     )
     result = runner.invoke(cli, ["plan", "--select", EXP, "--mde", "0.05"])
     assert result.exit_code == 0, result.output
@@ -207,7 +206,6 @@ def _refuse_experiment() -> ExperimentConfig:
 def test_plan_multi_arm_warns_sizing_is_first_pair_only(capsys):
     from abkit.cli.commands.plan import _emit_plan, _plan_comparison
     from abkit.config.project_config import ProjectConfig
-    from abkit.core.period_planner import generate_grid
 
     exp = ExperimentConfig.model_validate(
         {
@@ -228,7 +226,7 @@ def test_plan_multi_arm_warns_sizing_is_first_pair_only(capsys):
     plan = _plan_comparison(
         exp, exp.comparisons[0], alphas, 0.8, 0.05, {"prop": 0.1, "n": 10000}, tables=None
     )
-    grid = generate_grid(exp.start_ts, exp.horizon_ts, exp.cadence_segments(), tz=exp.timezone)
+    grid = exp.grid()
     _emit_plan(exp, project, alphas, 0.8, len(grid), grid, 42, [plan])
     out = capsys.readouterr().out
     assert "3-arm experiment" in out
@@ -483,7 +481,7 @@ def test_resolve_arrival_rate_direct_mode_snapshots_the_live_source():
     from abkit.cli.commands.plan import _resolve_arrival_rate
 
     exp = _seq_experiment()  # cohort_copy defaults to disabled
-    grid = generate_grid(exp.start_ts, exp.horizon_ts, exp.cadence_segments(), tz=exp.timezone)
+    grid = exp.grid()
 
     def resolve(raw):
         # tables=None proves the persisted-table path is never touched

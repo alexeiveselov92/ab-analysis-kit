@@ -30,7 +30,6 @@ from synthetic_ab import (
 )
 
 from abkit.config import ExperimentConfig, MetricConfig
-from abkit.core.period_planner import generate_grid
 from abkit.database.internal_tables import (
     InternalTablesManager,
     compute_metric_state_id,
@@ -167,12 +166,7 @@ class TestStateMaterialization:
 
         rows = state_rows(warehouse)
         assert {r["day"] for r in rows} == set(DAYS)
-        grid = generate_grid(
-            experiment.start_ts,
-            experiment.horizon_ts,
-            experiment.cadence_segments(),
-            tz=experiment.timezone,
-        )
+        grid = experiment.grid()
         days = closed_state_days(experiment, grid, NOW)
         # Moscow midnight = 21:00 UTC of the previous calendar day
         assert days[0].window.start_ts == datetime(2024, 6, 30, 21, 0)
@@ -751,12 +745,7 @@ class TestNonFiniteBailout:
 class TestClosedDays:
     def test_watermark_clamps_the_closed_days(self):
         experiment = make_experiment("exp_clamp", "arpu", T_TEST)
-        grid = generate_grid(
-            experiment.start_ts,
-            experiment.horizon_ts,
-            experiment.cadence_segments(),
-            tz=experiment.timezone,
-        )
+        grid = experiment.grid()
         # mid-day watermark: day 3 is chronologically open for state purposes
         days = closed_state_days(experiment, grid, datetime(2024, 7, 3, 12, 0))
         assert [sd.day for sd in days] == DAYS[:2]
@@ -774,12 +763,7 @@ class TestClosedDays:
         payload = experiment_payload("exp_subday", "arpu", T_TEST)
         payload["start_ts"] = "2024-07-01 14:30:00"
         experiment = ExperimentConfig.model_validate(payload)
-        grid = generate_grid(
-            experiment.start_ts,
-            experiment.horizon_ts,
-            experiment.cadence_segments(),
-            tz=experiment.timezone,
-        )
+        grid = experiment.grid()
         days = closed_state_days(experiment, grid, NOW)
         assert days[0].day == date(2024, 7, 1)
         assert days[0].window.start_ts == datetime(2024, 7, 1, 14, 30)  # not midnight
@@ -787,12 +771,67 @@ class TestClosedDays:
         assert days[1].window.start_ts == datetime(2024, 7, 2)  # whole days after
         assert days[-1].window.end_ts == grid.horizon_ts
 
+    def test_a_sub_day_horizon_does_not_materialize_a_partial_last_day(self):
+        """A day clamped to the horizon would be frozen truncated.
+
+        A materialized day is never re-rendered, and `horizon_ts` does NOT
+        generally re-key the series — so extending the experiment would keep
+        summing the truncated day forever. Nothing needs it: a cutoff reads
+        closed days only through `cutoff_day - 1`, so the trailing partial day
+        is served by the reader's own tail render.
+
+        Pre-m10 this was unreachable (the horizon was always a midnight), which
+        is why the clamp looked harmless.
+        """
+        payload = experiment_payload("exp_subday_horizon", "arpu", T_TEST)
+        payload["horizon_ts"] = "2024-07-04 12:00:00"
+        experiment = ExperimentConfig.model_validate(payload)
+        grid = experiment.grid()
+        days = closed_state_days(experiment, grid, NOW)
+
+        assert [sd.day for sd in days] == DAYS[:3]  # 07-04 is NOT materialized
+        for sd in days:
+            assert (sd.window.end_ts - sd.window.start_ts) == timedelta(days=1)
+        assert days[-1].window.end_ts < grid.horizon_ts
+
+    def test_extending_a_sub_day_horizon_does_not_inherit_a_truncated_day(
+        self, warehouse, tables
+    ):
+        """The consequence, end to end: run with a sub-day horizon, then extend.
+
+        The series key is unchanged by design (an end-invariant assignment SQL
+        must not orphan state when an experiment is extended), so a truncated
+        day written by the first run would silently survive into the second.
+
+        The truncated day must be NON-empty to survive — an empty one never
+        advances ``get_last_state_day`` and the trailing-empty-day rule
+        re-renders it. Hence the extra 02:00 fact, on the far side of the
+        first run's horizon from the fixture's usual 12:00 events.
+        """
+        payload = experiment_payload("exp_extend", "arpu", T_TEST)
+        warehouse.events["user_revenue"] = [
+            (unit, variant, datetime(2024, 7, 4, 2, 0), {"gross_usd": 5.0})
+            for unit, variant, _ in warehouse.cohort
+        ] + warehouse.events["user_revenue"]
+        payload["horizon_ts"] = "2024-07-04 06:00:00"
+        short = ExperimentConfig.model_validate(payload)
+        run_pipeline(warehouse, tables, short)
+        source_id, series_id = series_key(short, REVENUE)
+
+        extended = ExperimentConfig.model_validate({**payload, "horizon_ts": "2024-07-05"})
+        assert series_key(extended, REVENUE) == (source_id, series_id), "identity must not move"
+        run_pipeline(warehouse, tables, extended)
+
+        # every materialized day covers its whole day — compare against the
+        # day totals the full-window render produces for the extended config
+        days = closed_state_days(extended, extended.grid(), NOW)
+        assert [sd.day for sd in days] == DAYS
+        moments = tables.sum_moments(source_id, series_id, DAYS[0], DAYS[-1])
+        assert moments["sum_value"] == pytest.approx(
+            event_total(warehouse, "user_revenue", "gross_usd"), rel=1e-9
+        )
+
     def test_before_first_close_yields_nothing(self):
         experiment = make_experiment("exp_none", "arpu", T_TEST)
-        grid = generate_grid(
-            experiment.start_ts,
-            experiment.horizon_ts,
-            experiment.cadence_segments(),
-            tz=experiment.timezone,
-        )
+        grid = experiment.grid()
         assert closed_state_days(experiment, grid, datetime(2024, 7, 1, 23, 0)) == []

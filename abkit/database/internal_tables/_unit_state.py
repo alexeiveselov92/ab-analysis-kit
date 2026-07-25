@@ -224,7 +224,7 @@ def compute_metric_state_id(
     identity (an R1 review fix): the day render joins the experiment's
     cohort, so an edit that reshapes cohort membership (the assignment SQL,
     ``added_filters``, ``unit_key``, ``variants``, ``timezone``,
-    ``start_date``) must orphan the series exactly like a metric-SQL edit —
+    ``start_ts``) must orphan the series exactly like a metric-SQL edit —
     a merged series would otherwise mix two cohort definitions across days,
     an inconsistency the full-window recompute path can never have.
     """

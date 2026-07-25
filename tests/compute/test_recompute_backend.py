@@ -39,7 +39,6 @@ from synthetic_ab import (
 
 from abkit.compute.recompute_backend import RecomputeBackend
 from abkit.config import ExperimentConfig
-from abkit.core.period_planner import generate_grid
 
 DIRECT_SQL = "SELECT user_id, variant, exposure_ts FROM assignments"
 CUPED = {"name": "cuped-t-test", "params": {"covariate_lookback": "7d"}}
@@ -65,12 +64,7 @@ def _seeded() -> RecordingWarehouse:
 
 
 def _load_all(backend: RecomputeBackend, experiment, metric):
-    grid = generate_grid(
-        experiment.start_ts,
-        experiment.horizon_ts,
-        experiment.cadence_segments(),
-        tz=experiment.timezone,
-    )
+    grid = experiment.grid()
     comparison = experiment.comparisons[0]
     sql = metric.get_query_text(None)
     return [backend.load_cutoff(comparison, metric, sql, grid, cutoff) for cutoff in grid.cutoffs]
@@ -153,12 +147,7 @@ def test_the_cuped_preperiod_stays_whole_day_under_a_sub_day_start():
         {**experiment.model_dump(), "start_ts": datetime(2024, 7, 1, 14, 30)}
     )
     backend = RecomputeBackend(warehouse, experiment)
-    grid = generate_grid(
-        experiment.start_ts,
-        experiment.horizon_ts,
-        experiment.cadence_segments(),
-        tz=experiment.timezone,
-    )
+    grid = experiment.grid()
     window = backend._preperiod_window("7d", grid)
     assert window.start_ts == datetime(2024, 6, 24)
     assert window.end_ts == datetime(2024, 7, 1)  # NOT 14:30

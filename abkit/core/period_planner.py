@@ -46,6 +46,11 @@ DAY_SECONDS = 86400
 AnchorSpec = Literal["midnight", "start"] | date | datetime
 
 
+def _saturate(offset: int) -> datetime:
+    """The representable edge a lattice step of *offset* ran off."""
+    return datetime.max if offset > 0 else datetime.min
+
+
 def _ceil_div(numerator: int, denominator: int) -> int:
     """Integer ceiling division (``denominator > 0``), negatives included."""
     return -(-numerator // denominator)
@@ -288,9 +293,17 @@ def generate_grid(
                 _time: time = anchor_time,
                 _step: int = every_days,
             ) -> datetime:
-                return tz_localize_utc(
-                    datetime.combine(_day + timedelta(days=k * _step), _time), zone
-                )
+                try:
+                    return tz_localize_utc(
+                        datetime.combine(_day + timedelta(days=k * _step), _time), zone
+                    )
+                except (OverflowError, OSError):
+                    # A lattice step off the end of the representable calendar
+                    # is, for every comparison here, simply "beyond that edge"
+                    # — saturate instead of raising, so a window butting
+                    # against year 1 or 9999 ends the enumeration rather than
+                    # crashing `abk run` out of the planner.
+                    return _saturate(k * _step)
 
             # First lattice step strictly after the segment's left edge, in
             # closed form: an anchor years before the start must not be walked
@@ -304,9 +317,9 @@ def generate_grid(
             )
             while True:
                 point = day_point(k)
-                day_offset = (anchor_day + timedelta(days=k * every_days) - start_local.date()).days
                 if point > horizon_utc:
-                    break
+                    break  # also the out-of-domain exit: day_point saturates
+                day_offset = (anchor_day + timedelta(days=k * every_days) - start_local.date()).days
                 if until_days is not None:
                     if day_offset > until_days:
                         break
@@ -326,7 +339,10 @@ def generate_grid(
             def sub_day_point(
                 k: int, _step: timedelta = step, _anchor: datetime = anchor_utc
             ) -> datetime:
-                return _anchor + _step * k
+                try:
+                    return _anchor + _step * k
+                except OverflowError:
+                    return _saturate(k)
 
             k = _snap_forward(
                 sub_day_point,

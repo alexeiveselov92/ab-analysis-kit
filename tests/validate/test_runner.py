@@ -14,7 +14,6 @@ from synthetic_ab import (
 from abkit.compute.recompute_backend import RecomputeBackend
 from abkit.config.experiment_config import ExperimentConfig
 from abkit.config.method_config import MethodConfig
-from abkit.core.period_planner import generate_grid
 from abkit.pipeline.analyze import comparison_alpha, effective_alphas
 from abkit.validate.result import CellResult
 from abkit.validate.runner import (
@@ -31,12 +30,7 @@ NOW_ISO = "2026-07-05T00:00:00"
 
 
 def _grid(experiment):
-    return generate_grid(
-        experiment.start_ts,
-        experiment.horizon_ts,
-        experiment.cadence_segments(),
-        tz=experiment.timezone,
-    )
+    return experiment.grid()
 
 
 def _two_tier_experiment() -> ExperimentConfig:

@@ -352,6 +352,28 @@ class TestIntervalAnchor:
             datetime(2024, 7, 10),  # horizon
         ]
 
+    @pytest.mark.parametrize(
+        ("start", "horizon", "segments", "anchor"),
+        [
+            (date(9999, 12, 30), date(9999, 12, 31), DAILY, "midnight"),
+            (date(9999, 12, 1), date(9999, 12, 31), [(7 * 86400, None)], "midnight"),
+            (datetime(9999, 12, 31, 20, 0), datetime(9999, 12, 31, 23, 0), [(3600, None)], "start"),
+            (date(1, 1, 1), date(1, 1, 10), DAILY, "midnight"),
+            (date(2024, 7, 1), date(2024, 12, 1), [(30 * 86400, None)], date(1, 1, 1)),
+        ],
+    )
+    def test_a_window_against_the_calendar_edge_ends_instead_of_crashing(
+        self, start, horizon, segments, anchor
+    ):
+        """A lattice step off the end of the representable calendar is, for
+        every comparison in the enumeration, simply 'beyond that edge'. It
+        used to raise OverflowError straight out of the planner — through
+        config validation and `abk run` alike."""
+        grid = generate_grid(start, horizon, segments, interval_anchor=anchor)
+        assert grid.cutoffs, "the horizon is always planned"
+        assert grid.cutoffs[-1].end_ts == grid.horizon_ts
+        assert grid.cutoffs[-1].is_horizon
+
     def test_an_unknown_anchor_keyword_is_refused(self):
         with pytest.raises(ValueError, match="is not 'midnight', 'start'"):
             generate_grid(START, HORIZON, DAILY, interval_anchor="noon")

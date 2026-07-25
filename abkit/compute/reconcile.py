@@ -253,7 +253,8 @@ def reconcile_experiment(
         computed = tables.list_computed_cutoffs(experiment.name, metric.name, method_config_id)
         cutoffs = [c for c in grid.cutoffs if c.end_ts in computed]
         # A persisted cutoff the CURRENT grid no longer produces (the schedule
-        # was edited: end_date moved, cadence changed, max_looks lowered)
+        # was edited: horizon_ts moved, the cadence or interval_anchor changed,
+        # max_looks lowered)
         # cannot be reconciled — the incremental read needs a grid cutoff to
         # load. Silently intersecting them away would let a clean exit-0
         # report hide a whole unexamined chunk of the series, which is exactly

@@ -8,7 +8,6 @@ import pytest
 from pydantic import ValidationError
 
 from abkit.config import ExperimentConfig
-from abkit.core.period_planner import generate_grid
 
 
 def base_payload(**overrides) -> dict:
@@ -415,9 +414,7 @@ class TestWindowFields:
         """The rename's point: one vocabulary. `config.horizon_ts` resolved IS
         `grid.horizon_ts` — no +1-day translation anywhere."""
         config = ExperimentConfig.model_validate(base_payload())
-        grid = generate_grid(
-            config.start_ts, config.horizon_ts, config.cadence_segments(), tz=config.timezone
-        )
+        grid = config.grid()
         assert grid.start_ts == config.start_instant()
         assert grid.horizon_ts == config.horizon_instant()
 
