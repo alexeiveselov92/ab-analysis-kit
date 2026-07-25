@@ -380,6 +380,31 @@ class TestWindowFields:
         with pytest.raises(ValidationError, match="drop the UTC offset"):
             ExperimentConfig.model_validate(base_payload(start_ts="2024-07-01T10:00:00+03:00"))
 
+    def test_sub_second_precision_is_refused(self):
+        """Accepting it would validate a window nothing downstream can carry:
+        the rendered SQL window formats to whole seconds and `_ab_results.end_ts`
+        is DateTime64(3), so a microsecond cutoff would persist rounded, never
+        match the planned instant, and re-plan on every run — forever."""
+        with pytest.raises(ValidationError, match="drop the sub-second part"):
+            ExperimentConfig.model_validate(base_payload(start_ts="2024-07-01T14:30:00.123456"))
+        # whole seconds stay legal
+        assert ExperimentConfig.model_validate(
+            base_payload(start_ts="2024-07-01T14:30:00")
+        ).start_ts == datetime(2024, 7, 1, 14, 30)
+
+    def test_a_calendar_edge_window_fails_as_a_validation_error(self):
+        """`astimezone` off the end of the representable calendar raises
+        OverflowError, which pydantic does NOT wrap — the raw exception used to
+        escape `model_validate` naming neither field nor cause."""
+        with pytest.raises(ValidationError, match="outside the representable calendar"):
+            ExperimentConfig.model_validate(
+                base_payload(
+                    start_ts="9999-12-31 20:00:00",
+                    horizon_ts="9999-12-31 23:00:00",
+                    timezone="America/New_York",
+                )
+            )
+
     def test_garbage_is_refused(self):
         with pytest.raises(ValidationError, match="is not an ISO date"):
             ExperimentConfig.model_validate(base_payload(start_ts="last tuesday"))
@@ -399,6 +424,46 @@ class TestWindowFields:
             base_payload(start_ts="2024-07-01 06:00:00", horizon_ts="2024-07-02 12:00:00")
         )
         assert sub_day.horizon_seconds() == 30 * 3600
+
+    @pytest.mark.parametrize(
+        ("label", "overrides"),
+        [
+            (
+                "daily starting ON the US spring-forward day",
+                {
+                    "start_ts": "2024-03-10",
+                    "horizon_ts": "2024-03-11",
+                    "timezone": "America/New_York",
+                },
+            ),
+            (
+                "daily starting ON the EU spring-forward day",
+                {"start_ts": "2024-03-31", "horizon_ts": "2024-04-01", "timezone": "Europe/Berlin"},
+            ),
+            (
+                "weekly spanning a spring-forward",
+                {
+                    "start_ts": "2024-03-08",
+                    "horizon_ts": "2024-03-15",
+                    "cadence": "7d",
+                    "timezone": "America/New_York",
+                },
+            ),
+        ],
+    )
+    def test_a_dst_shortened_window_still_admits_its_whole_day_cadence(self, label, overrides):
+        """`horizon_seconds()` is honest elapsed time, so a spring-forward
+        window is 23h — but the cadence gate must not read that as 'a day does
+        not fit in a day'. A whole-day step is measured in CALENDAR days, the
+        space the planner steps in. These configs parsed before m10 and their
+        grids did not move."""
+        ExperimentConfig.model_validate(base_payload(**overrides))
+
+    def test_a_cadence_that_genuinely_cannot_fire_is_still_refused(self):
+        with pytest.raises(ValidationError, match="longer than the experiment horizon"):
+            ExperimentConfig.model_validate(
+                base_payload(start_ts="2024-07-01", horizon_ts="2024-07-01 12:00:00")
+            )
 
     def test_horizon_seconds_absorbs_a_dst_transition(self):
         """A 5-day window over the spring-forward weekend is 5 days MINUS an

@@ -306,9 +306,7 @@ class IncrementalBackend:
         # renders [grid.start_ts, end_ts) — never sees.
         tail_start = max(last_midnight, grid.start_ts)
         if tail_start < end_ts:
-            tail = self._recompute.load_window(
-                metric, metric_sql, RenderWindow(tail_start, end_ts)
-            )
+            tail = self._recompute.load_window(metric, metric_sql, RenderWindow(tail_start, end_ts))
             for variant in tail.variants():
                 units = tail.units_by_variant[variant]
                 roles = tail.roles_by_variant[variant]

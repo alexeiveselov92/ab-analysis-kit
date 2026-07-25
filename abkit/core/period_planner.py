@@ -70,9 +70,7 @@ class GridInvariantError(Exception):
     """
 
 
-def _snap_forward(
-    point_at: Callable[[int], datetime], k: int, bound: datetime, what: str
-) -> int:
+def _snap_forward(point_at: Callable[[int], datetime], k: int, bound: datetime, what: str) -> int:
     """Smallest ``k`` with ``point_at(k) > bound``, from a closed-form estimate."""
     for _ in range(_MAX_SNAP_STEPS):
         if point_at(k) > bound:

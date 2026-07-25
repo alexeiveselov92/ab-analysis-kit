@@ -194,7 +194,7 @@ backend-specific incremental-aggregate DDL.
 
 | Table | Role |
 |---|---|
-| `_ab_experiments` | experiment catalog (name, dates, status, usage) |
+| `_ab_experiments` | experiment catalog (name, window, status, usage) |
 | `_ab_exposures` | OPTIONAL, copy-mode only (M8): the persisted per-unit assignment copy (exp, unit, variant, exposure_ts, stratum), created and appended-to ONLY under `assignment.cohort_copy.enabled` via the incremental watermark engine (a full rebuild is `--resync-cohort`, never a routine run). By default the table is never created — the cohort is read live from the assignment SQL on every invocation; the SRM gate always measures the live validated source |
 | `_ab_unit_state` | cumulative per-unit moments; ClickHouse agg-state seam (keyed per source-table+column-set+unit; idempotent per day). The scalability substrate |
 | `_ab_results` | **our clean BI contract** — one cumulative row per (exp, metric, pair, method, end_date). Designed from the decision logic, not the legacy schema |

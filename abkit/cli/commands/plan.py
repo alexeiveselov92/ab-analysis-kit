@@ -25,14 +25,14 @@ always-valid average sample number. No arrival data ⇒ runtime SKIPPED, never i
 from __future__ import annotations
 
 import math
-from datetime import datetime, time
+from datetime import date, datetime, time
 
 import click
 
 from abkit.cli._output import echo_done, echo_error, echo_tree
 from abkit.cli.commands._context import load_project_context
 from abkit.config import select_experiments
-from abkit.core.period_planner import GridLimitExceeded
+from abkit.core.period_planner import GridLimitExceeded, as_local_datetime
 from abkit.pipeline import comparison_alpha, effective_alphas
 from abkit.planning.sizing import (
     FRACTION,
@@ -557,7 +557,8 @@ def _emit_plan(experiment, project, alphas, power, looks, grid, rows_per_refresh
     cadence = _fmt_cadence(experiment)
     children.append(
         f"looks: {looks} planned · cadence {cadence} · horizon "
-        f"{_fmt_instant(grid.horizon_ts)} · ~{rows_per_refresh:,} _ab_results rows/full-refresh"
+        f"{_fmt_instant(experiment.horizon_ts)} · ~{rows_per_refresh:,} "
+        f"_ab_results rows/full-refresh"
     )
     if experiment.is_sub_day():
         children.append("  sub-day: each look ≤ one day of fact rows (day-grained state, §6.4)")
@@ -665,13 +666,17 @@ def _runtime_lines(rt) -> list[str]:
     return lines
 
 
-def _fmt_instant(ts: datetime) -> str:
-    """A grid edge for the terminal: date alone at midnight, else date + time.
+def _fmt_instant(value: date | datetime) -> str:
+    """A window edge for the terminal: date alone at midnight, else date + time.
 
-    Keeps the pre-m10 one-line output byte-identical for whole-day windows
-    while never silently hiding a sub-day horizon behind ``.date()``.
+    Fed the LOCAL config value, not ``grid.horizon_ts`` — the grid edge is
+    naive UTC, so a Moscow experiment configured ``horizon_ts: 2024-07-15``
+    would otherwise print an unlabelled ``2024-07-14 21:00:00``, which is
+    neither what was written nor a local time. Echoing the config keeps the
+    line readable and, at UTC, byte-identical to the pre-m10 output.
     """
-    return ts.date().isoformat() if ts.time() == time.min else ts.isoformat(sep=" ")
+    local = as_local_datetime(value)
+    return local.date().isoformat() if local.time() == time.min else local.isoformat(sep=" ")
 
 
 def _fmt_cadence(experiment) -> str:

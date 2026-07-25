@@ -72,9 +72,7 @@ def test_plan_look_count_matches_generate_grid(ran):
 
     selected, _ = select_experiments(Path("."), (EXP,))
     _, exp = selected[0]
-    looks = len(
-        exp.grid()
-    )
+    looks = len(exp.grid())
     result = runner.invoke(cli, ["plan", "--select", EXP, "--mde", "0.05"])
     assert result.exit_code == 0, result.output
     assert f"looks: {looks} planned" in result.output

@@ -51,8 +51,7 @@ def test_no_stale_window_keys_in_user_facing_surfaces():
             found += _offenders(path.read_text(), path)
     assert not found, (
         "`start_date:`/`end_date:` were renamed to `start_ts:`/`horizon_ts:` "
-        "and no longer validate — these snippets would fail if pasted:\n  "
-        + "\n  ".join(found)
+        "and no longer validate — these snippets would fail if pasted:\n  " + "\n  ".join(found)
     )
 
 

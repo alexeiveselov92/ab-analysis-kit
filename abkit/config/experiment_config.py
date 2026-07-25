@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from abkit.config.method_config import MethodConfig
 from abkit.core.interval import Interval
-from abkit.core.period_planner import Grid, resolve_instant
+from abkit.core.period_planner import Grid, as_local_datetime, resolve_instant
 from abkit.database.tables import MAX_EXPERIMENT_NAME_LENGTH, MAX_VARIANT_NAME_LENGTH
 from abkit.utils.json_utils import json_dumps_sorted
 
@@ -102,6 +102,16 @@ def parse_window_scalar(value: Any, field: str) -> date | datetime:
         raise ValueError(
             f"{field}: drop the UTC offset ({value!r}) — window timestamps are "
             "local wall-clock times interpreted in the experiment's `timezone`"
+        )
+    if parsed.microsecond:
+        # Nothing downstream can carry sub-second precision: the rendered SQL
+        # window formats to whole seconds, and `_ab_results.end_ts` is
+        # DateTime64(3) on every backend — so a microsecond cutoff would be
+        # stored rounded, never match the planned one, and re-plan forever.
+        raise ValueError(
+            f"{field}: drop the sub-second part ({value!r}) — window timestamps "
+            "are whole seconds (the cadence grammar is too, and cutoffs persist "
+            "at millisecond precision)"
         )
     return parsed
 
@@ -418,7 +428,8 @@ class ExperimentConfig(BaseModel):
     )
     timezone: str = Field(
         default="UTC",
-        description="Interprets date-typed fields & daily midnight snapping; storage is UTC",
+        description="Interprets bare-date window edges, an explicit "
+        "interval_anchor, and the DST-safe day lattice; storage is UTC",
     )
 
     assignment: AssignmentConfig = Field(...)
@@ -535,7 +546,17 @@ class ExperimentConfig(BaseModel):
         horizon raises ``TypeError`` in Python, and a mixed pair is legal
         config.
         """
-        if self.horizon_instant() <= self.start_instant():
+        try:
+            start, horizon = self.start_instant(), self.horizon_instant()
+        except (OverflowError, OSError) as exc:
+            # `astimezone` off the end of the representable calendar. pydantic
+            # only wraps ValueError/AssertionError, so without this the raw
+            # OverflowError escapes model_validate naming neither field.
+            raise ValueError(
+                f"start_ts ({self.start_ts}) / horizon_ts ({self.horizon_ts}) fall "
+                f"outside the representable calendar in timezone {self.timezone!r}"
+            ) from exc
+        if horizon <= start:
             raise ValueError(
                 f"horizon_ts ({self.horizon_ts}) is not after start_ts "
                 f"({self.start_ts}) — the horizon is the EXCLUSIVE right edge, "
@@ -548,7 +569,7 @@ class ExperimentConfig(BaseModel):
     def validate_cadence_schedule(self) -> ExperimentConfig:
         """Schedule segments: non-overlapping, strictly coarsening, increasing until."""
         if not isinstance(self.cadence, list):
-            if self.cadence_seconds_min() > self.horizon_seconds():
+            if not self.cadence_fits_horizon():
                 raise ValueError(
                     f"cadence ({self.cadence}) is longer than the experiment horizon "
                     f"({self.horizon_seconds()}s) — no cutoff would ever be produced"
@@ -587,7 +608,7 @@ class ExperimentConfig(BaseModel):
                     )
                 previous_until = until
             previous_every = every
-        if self.cadence_seconds_min() > self.horizon_seconds():
+        if not self.cadence_fits_horizon():
             raise ValueError("cadence schedule's densest segment is longer than the horizon")
         return self
 
@@ -688,6 +709,24 @@ class ExperimentConfig(BaseModel):
             limit=limit,
             interval_anchor=self.interval_anchor,
         )
+
+    def cadence_fits_horizon(self) -> bool:
+        """Can the densest cadence step produce a cutoff inside the window?
+
+        A whole-day step is measured in CALENDAR days — the space the planner
+        actually steps in — not in elapsed seconds. Across a spring-forward a
+        local day is 23h, and a seconds comparison would reject an ordinary
+        one-day daily experiment ("cadence 1d is longer than the 82800s
+        horizon") whose grid is byte-identical to what it always was. Sub-day
+        steps have no calendar component, so they compare in seconds.
+        """
+        step = self.cadence_seconds_min()
+        if step % DAY_SECONDS:
+            return step <= self.horizon_seconds()
+        span_days = (
+            as_local_datetime(self.horizon_ts).date() - as_local_datetime(self.start_ts).date()
+        ).days
+        return step // DAY_SECONDS <= span_days
 
     def horizon_seconds(self) -> int:
         """Length of the full experiment window: ``[start_ts, horizon_ts)``.

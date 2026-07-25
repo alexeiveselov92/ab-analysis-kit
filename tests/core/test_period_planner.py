@@ -164,6 +164,24 @@ class TestTimezones:
         # 73h after start_ts, beyond a naive seconds bound of 72h
         assert datetime(2024, 11, 4, 5, 0) in points
 
+    def test_a_date_line_skip_does_not_emit_a_zero_length_window(self):
+        """Samoa jumped from 2011-12-29 straight to 2011-12-31: local
+        2011-12-30 does not exist, so its "midnight" resolves to the same
+        instant as the 31st's.
+
+        The pre-m10 engine compared calendar-day OFFSETS, which run one ahead
+        of elapsed days after a line skip, and emitted a first cutoff equal to
+        `start_ts` — a look over an empty window. The forward snap works in
+        instant space and cannot: every cutoff is strictly after the start.
+        This is the one documented shape where the m10 grid deliberately
+        differs from its predecessor.
+        """
+        grid = generate_grid(date(2011, 12, 30), date(2012, 1, 6), DAILY, tz="Pacific/Apia")
+        points = [c.end_ts for c in grid.cutoffs]
+        assert grid.start_ts not in points
+        assert points[0] - grid.start_ts == timedelta(days=1)
+        assert points == sorted(set(points))
+
     def test_sub_day_segments_are_absolute_durations(self):
         """Dense points anchor at start_ts in absolute time (no local snapping)."""
         grid = generate_grid(

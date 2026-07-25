@@ -794,9 +794,7 @@ class TestClosedDays:
             assert (sd.window.end_ts - sd.window.start_ts) == timedelta(days=1)
         assert days[-1].window.end_ts < grid.horizon_ts
 
-    def test_extending_a_sub_day_horizon_does_not_inherit_a_truncated_day(
-        self, warehouse, tables
-    ):
+    def test_extending_a_sub_day_horizon_does_not_inherit_a_truncated_day(self, warehouse, tables):
         """The consequence, end to end: run with a sub-day horizon, then extend.
 
         The series key is unchanged by design (an end-invariant assignment SQL

@@ -17,6 +17,7 @@ detectkit users will assume the one-level model.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import timezone
 from pathlib import Path
 from typing import Protocol, TypeVar
 
@@ -307,10 +308,20 @@ def validate_experiment_level2(
     # lattice does not start at start_ts, so the FIRST window is shorter than
     # the cadence. Expected, never an error — but it must be said out loud,
     # because it looks like a dropped look in the readout.
-    if grid is not None and grid.cutoffs:
+    #
+    # Gated on the PHASE, not on elapsed seconds: a 23h spring-forward day
+    # makes an ordinary midnight-anchored daily first look "short" in seconds
+    # while being a perfectly whole local day, and blaming the anchor there
+    # would be a lie printed at every DST-crossing experiment.
+    if grid is not None and grid.cutoffs and grid.anchor_ts is not None:
+        zone = experiment.zone()
+        off_phase = (
+            grid.anchor_ts.replace(tzinfo=timezone.utc).astimezone(zone).time()
+            != grid.start_ts.replace(tzinfo=timezone.utc).astimezone(zone).time()
+        )
         first_step = experiment.cadence_segments()[0][0]
         first_window = (grid.cutoffs[0].end_ts - grid.start_ts).total_seconds()
-        if first_window < first_step:
+        if off_phase and first_window < first_step:
             report.warnings.append(
                 f"{where}: the first look covers {first_window:.0f}s of the "
                 f"{first_step}s cadence (interval_anchor: "
