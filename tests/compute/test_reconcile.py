@@ -61,15 +61,16 @@ def _reconcile(warehouse, tables, experiment, **kwargs):
     )
 
 
+#: the §7 matrix cells: one closed-form method per metric kind
+METRIC_CELLS = [
+    ("arpu", T_TEST),
+    ("conversion", {"name": "z-test", "params": {"test_type": "relative"}}),
+    ("ctr", {"name": "ratio-delta", "params": {"test_type": "relative"}}),
+]
+
+
 class TestCleanSeries:
-    @pytest.mark.parametrize(
-        "metric_name,method",
-        [
-            ("arpu", T_TEST),
-            ("conversion", {"name": "z-test", "params": {"test_type": "relative"}}),
-            ("ctr", {"name": "ratio-delta", "params": {"test_type": "relative"}}),
-        ],
-    )
+    @pytest.mark.parametrize("metric_name,method", METRIC_CELLS)
     def test_whole_series_reconciles(self, warehouse, tables, metric_name, method):
         experiment = make_experiment("exp_clean", metric_name, method)
         _run(warehouse, tables, experiment)
@@ -81,8 +82,9 @@ class TestCleanSeries:
         assert outcome.cutoffs_checked == 4  # the 4-day daily grid
         assert len(outcome.matched) == 4  # one pair per cutoff
 
-    def test_subday_series_reconciles(self, warehouse, tables):
-        payload = experiment_payload("exp_subday", "arpu", T_TEST)
+    @pytest.mark.parametrize("metric_name,method", METRIC_CELLS)
+    def test_subday_series_reconciles(self, warehouse, tables, metric_name, method):
+        payload = experiment_payload(f"exp_subday_{metric_name}", metric_name, method)
         payload["cadence"] = "18h"
         payload["data_lag"] = "1h"
         experiment = ExperimentConfig.model_validate(payload)
@@ -93,7 +95,8 @@ class TestCleanSeries:
         assert outcome.unverified == []
         assert outcome.cutoffs_checked >= 4
 
-    def test_multi_arm_series_reconciles(self):
+    @pytest.mark.parametrize("metric_name,method", METRIC_CELLS)
+    def test_multi_arm_series_reconciles(self, metric_name, method):
         """§7 asks for single- AND multi-arm: state rows are arm-agnostic, so
         the arm split happens at READ time — three arms means three pair
         comparisons per cutoff, each of which must reconcile."""
@@ -104,7 +107,7 @@ class TestCleanSeries:
             warehouse.cohort.append((f"c{i:03d}", "treat_b", START + timedelta(hours=1)))
         seed_all_events(warehouse)
         tables = InternalTablesManager(warehouse)
-        payload = experiment_payload("exp_3arm", "arpu", T_TEST)
+        payload = experiment_payload(f"exp_3arm_{metric_name}", metric_name, method)
         payload["assignment"]["variants"] = ["control", "treat_a", "treat_b"]
         payload["assignment"]["expected_split"] = {
             "control": 1 / 3,

@@ -22,7 +22,7 @@ The as-built condensation for contributors/assistants (detectkit-style):
 Design contracts for what is being *built next* stay in [docs/specs/](docs/specs/)
 (canonical for M2+ work — table below). Keep rules ↔ docs in sync per milestone.
 
-## Status: M1–M8 shipped — `0.3.0` release-ready (latest on PyPI: `0.2.0`); polish track M9–M17 in flight
+## Status: M1–M9 shipped — `0.4.0` release-ready (latest on PyPI: `0.3.0`); polish track M10–M17 in flight
 
 **Done — M1, the pure statistical core** (`abkit.stats`, importable standalone;
 see [ROADMAP.md](ROADMAP.md) for the deferred-cleanup list): data model with the
@@ -146,21 +146,47 @@ engine (grid-anchored closed-interval batches, watermark resume, `abk run
 copy-mode limitation). The cross-command parity e2e pins `_ab_results`
 identical across modes — **zero statistical numbers moved** (no
 `ALGORITHM_VERSION` bump). WP7 synced all three docs bodies (a code-grounded
-audit fixed 75 stale spots across 36 files) and cut `0.3.0`; the `v0.3.0`
+audit fixed 75 stale spots across 36 files) and cut `0.3.0`. **Released as
+`0.3.0`** — tagged and published to PyPI.
+
+**Done — M9, the additive compute engine + CUPED Tier-E → `0.4.0`** (the
+implementation record is
+[m9-implementation-plan.md](docs/specs/m9-implementation-plan.md) — done
+table, per-WP as-built notes, exit-gate log; PRs #53–#56, #58 + the WP6
+exit-gate PR): the O(D²) full-window rescan is gone for declared-additive
+closed-form metrics — a write-only **STATE stage** materializes per-(unit,
+day) moments into `_ab_unit_state` through the M8 cohort factory (WP3), the
+opt-in **`compute.incremental_reads`** path sums those closed days plus a
+live sub-day tail into the UNCHANGED `SufficientStats` pipeline with a
+fall-back-never-undercount gap check (WP4), `abk verify-incremental`
+reconciles both backends over the whole series at rel-1e-9 with a non-zero
+exit (WP5, plus `abk run --cost-report`, the `abk clean` state sweep and the
+executable perf gate: `N·D(D+1)/2` → `N·D` fact rows scanned, zero inside
+COMPUTE at daily cadence), and CUPED became **Tier E** in explore off four
+newly persisted covariate moments added by the additive `ensure_columns`
+migration primitive (WP1–WP2). **Day-additivity is an explicit metric
+declaration** (`state_additive: true`, default off): three review rounds each
+defeated a textual additivity check with a new SQL shape, so the text check
+is veto-only and `verify-incremental` is the empirical oracle — it caught the
+scaffolded `example_signup_cr` (`max()` + a literal trial count) inflating
+`size_1` 11×. `incremental_reads` stays **default off** with the flip
+criteria in [cumulative-intervals.md §4.1](docs/specs/cumulative-intervals.md).
+**Zero statistical numbers moved** (the flag on/off parity gate is the
+milestone's №1 assertion; no `ALGORITHM_VERSION` bump). The `v0.4.0`
 tag/publish is the maintainer's step.
 
-**Next — the polish track continues: M9–M17 → `0.4.0`…`0.12.0`
+**Next — the polish track continues: M10–M17 → `0.5.0`…`0.12.0`
 (track approved 2026-07-18).** The code-verified pain audit
 ([docs/research/2026-07-data-flow-audit/REPORT.md](docs/research/2026-07-data-flow-audit/REPORT.md))
-plus the entire hardening backlog, one minor release per milestone: M9
-additive engine + CUPED Tier-E → M10
+plus the entire hardening backlog, one minor release per milestone: M10
 timestamps + both schema breaks → M11 `abk dashboard` → M12 notifications →
 M13–M17 (versioned stats, multi-arm decisions, new methods, owned
 randomization, app integration — contours, design-session-first). The
 track section in [ROADMAP.md](ROADMAP.md) is the map; the as-designed contracts
-are [m9](docs/specs/m9-implementation-plan.md)–[m12](docs/specs/m12-implementation-plan.md)
-implementation plans ([m7](docs/specs/m7-implementation-plan.md) and
-[m8](docs/specs/m8-implementation-plan.md) are now implementation records).
+are [m10](docs/specs/m10-implementation-plan.md)–[m12](docs/specs/m12-implementation-plan.md)
+implementation plans ([m7](docs/specs/m7-implementation-plan.md),
+[m8](docs/specs/m8-implementation-plan.md) and
+[m9](docs/specs/m9-implementation-plan.md) are now implementation records).
 Discipline: one WP = one session = one PR; **M7–M12
 move no statistical number** (parity gates); M13/M15 go through full change
 control.

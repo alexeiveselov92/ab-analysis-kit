@@ -82,14 +82,11 @@ def compute_state_source_id(experiment: str, metric_name: str) -> str:
     return f"{composite[:_SOURCE_TABLE_MAX_LENGTH - 17]}#{digest}"
 
 
-#: quoted spans whose BYTES are data, not formatting: string literals and
-#: quoted identifiers. ``''``/``""``/```` `` ```` is the embedded quote.
-_QUOTED_SPAN = re.compile(r"'(?:[^']|'')*'|\"(?:[^\"]|\"\")*\"|`(?:[^`]|``)*`")
-#: comment spans — text that never executes, so whitespace in them is
-#: formatting like any other; scanned only so an apostrophe inside one
-#: ("-- don't sum") cannot be mistaken for the start of a string literal.
-_COMMENT_SPAN = re.compile(r"--[^\n]*|/\*.*?\*/", re.DOTALL)
-_SPAN = re.compile(f"{_COMMENT_SPAN.pattern}|{_QUOTED_SPAN.pattern}", re.DOTALL)
+#: opening delimiters of a span whose BYTES are data, not formatting
+_QUOTE_CHARS = "'\"`"
+#: a dollar-quoted body (``$$…$$``, ``$tag$…$tag$``) — PostgreSQL only, and a
+#: shape this scanner deliberately refuses to interpret (see ``_scan_spans``)
+_DOLLAR_TAG = re.compile(r"\$[A-Za-z_0-9]*\$")
 
 
 def _collapse(text: str) -> str:
@@ -109,6 +106,71 @@ def _collapse(text: str) -> str:
     return f"{lead}{core}{trail}"
 
 
+def _scan_spans(sql: str) -> list[tuple[int, int, bool]] | None:
+    """Tokenize into ``(start, end, is_data)`` spans, or ``None`` if unsure.
+
+    ``is_data`` marks a quoted span (string literal or quoted identifier):
+    its bytes are content, so whitespace inside it is significant. Comments
+    are returned with ``is_data=False`` — their whitespace is formatting like
+    any other — but they MUST be recognized, because an apostrophe inside one
+    (``-- don't sum``) would otherwise open a phantom literal and shift every
+    later boundary.
+
+    Returning ``None`` is the safety valve, and the whole design rests on it:
+    the two ways to be wrong are NOT symmetric. Treating data as formatting
+    silently reuses stale day state under changed semantics (the P1 this
+    function exists to prevent); treating formatting as data merely orphans a
+    series that is then re-materialized (a wasted render). So anything this
+    scanner cannot read unambiguously — a backslash inside a literal (an
+    escape on MySQL/ClickHouse, a plain character on standard-conforming
+    PostgreSQL), a dollar-quoted body, a ``#`` (a comment on MySQL and
+    ClickHouse, the XOR operator on PostgreSQL, the tail of a Jinja ``{#``),
+    an unterminated quote or block comment — makes the caller hash the RAW
+    text instead of guessing which halves are data.
+    """
+    spans: list[tuple[int, int, bool]] = []
+    i, n = 0, len(sql)
+    while i < n:
+        ch = sql[i]
+        if ch == "#":
+            return None
+        if ch == "$" and _DOLLAR_TAG.match(sql, i):
+            return None
+        if sql.startswith("--", i):
+            end = sql.find("\n", i)
+            end = n if end == -1 else end
+            spans.append((i, end, False))
+            i = end
+            continue
+        if sql.startswith("/*", i):
+            end = sql.find("*/", i + 2)
+            if end == -1:
+                return None
+            spans.append((i, end + 2, False))
+            i = end + 2
+            continue
+        if ch in _QUOTE_CHARS:
+            j = i + 1
+            while j < n:
+                if sql[j] == "\\":
+                    return None  # escape semantics are dialect-dependent
+                if sql[j] == ch:
+                    if j + 1 < n and sql[j + 1] == ch:  # '' — the embedded quote
+                        j += 2
+                        continue
+                    break
+                j += 1
+            else:
+                return None  # unterminated
+            if j >= n:
+                return None
+            spans.append((i, j + 1, True))
+            i = j + 1
+            continue
+        i += 1
+    return spans
+
+
 def normalize_sql_for_identity(sql: str) -> str:
     """Canonical form of a SQL body for identity hashing.
 
@@ -126,18 +188,20 @@ def normalize_sql_for_identity(sql: str) -> str:
       loop would not fire, and days materialized under the old filter would be
       summed under the new one (an R1 review finding at the m9 exit gate).
 
-    Comments are scanned as spans (and collapsed like code) for one reason:
-    an apostrophe inside a comment — ``-- don't sum these`` — would otherwise
-    open a phantom string literal and freeze the formatting of everything up
-    to the next quote.
+    When :func:`_scan_spans` cannot read the text unambiguously the raw body
+    is hashed verbatim: an unreadable query orphans its series on any edit
+    (cheap, self-healing) rather than risking a silent stale reuse.
     """
+    spans = _scan_spans(sql)
+    if spans is None:
+        return sql
     pieces: list[str] = []
     last = 0
-    for match in _SPAN.finditer(sql):
-        span = match.group(0)
-        pieces.append(_collapse(sql[last : match.start()]))
-        pieces.append(_collapse(span) if span.startswith(("--", "/*")) else span)
-        last = match.end()
+    for start, end, is_data in spans:
+        pieces.append(_collapse(sql[last:start]))
+        body = sql[start:end]
+        pieces.append(body if is_data else _collapse(body))
+        last = end
     pieces.append(_collapse(sql[last:]))
     return "".join(pieces).strip()
 

@@ -13,6 +13,64 @@ number change).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-25
+
+### Added
+- **M9 WP6 — the milestone exit gate.** The central promise is now
+  executable over the project `abk init` ships: `abk run` twice with
+  `compute.incremental_reads: true` plans nothing the second time and rewrites
+  not one byte; a `--full-refresh` through the same path reproduces every
+  number exactly; `abk verify-incremental` is green over the whole series with
+  **zero `unverified` cutoffs** (a green report that verified nothing is the
+  failure it exists to prevent) while the non-additive scaffolded metric is
+  skipped with a reason; day state materializes for the declared-additive
+  metric only, one row per (unit, day); `cuped-t-test` serves Tier E on every
+  knob but `covariate_lookback`; and **flipping the flag off reproduces every
+  persisted `_ab_results` number** — discrete columns exactly, continuous ones
+  at the rel-1e-9 tolerance (partial-day sums associate differently than one
+  full-window scan, so byte equality is the wrong assertion; the JSON payload
+  columns are parsed before comparing because a CUPED θ legitimately differs
+  in its last ULP).
+  The red path is proven too: a late event backfilled into an
+  already-materialized day (the documented WP4 limitation) makes
+  `abk verify-incremental` **exit non-zero** with `DIVERGED`, and
+  `abk run --full-refresh --from/--to` restores agreement. Against a real
+  ClickHouse the gate additionally migrates an **existing pre-M9 install**
+  (`_ab_results` created without the four covariate-moment columns) in place
+  through `ensure_columns`' real `ALTER TABLE … ADD COLUMN` and reconciles the
+  additive path against real SQL. Reconciliation coverage now spans all three
+  metric kinds, daily and sub-day cadence, and multi-arm experiments.
+
+### Fixed
+- **The state-series identity collapsed data, not just formatting (M9 WP6
+  round-1 review).** The metric-SQL and assignment-SQL identity hashes
+  normalized with a quoting-unaware `" ".join(sql.split())`, so
+  `WHERE campaign = 'Summer  Sale'` and `… 'Summer Sale'` — which select
+  different rows — hashed identically: editing the literal did not orphan the
+  materialized series, and the incremental read then summed two eras of one
+  metric while recompute re-rendered the window under the new SQL.
+  `normalize_sql_for_identity` now collapses whitespace everywhere except
+  inside quoted spans (string literals and quoted identifiers), which travel
+  byte for byte; comments are scanned as spans so an apostrophe in
+  `-- don't sum` cannot open a phantom literal. Reformatting still never
+  orphans a series. (Unreleased-only: state rows written by earlier builds of
+  this branch simply orphan and re-materialize; `abk clean` sweeps them.)
+- **PostgreSQL installs silently skipped the additive schema migration when
+  the schema name was not lower-case.** `table_exists`/`list_columns` compare
+  `information_schema` strings against the configured spelling, but schema and
+  table names are interpolated into DDL unquoted, so PostgreSQL stores
+  `abkitinternal` for `internal_schema: AbkitInternal`. Every lookup missed,
+  `ensure_columns` never ran, and the run failed later on a column mismatch.
+  Catalog lookups now go through a `_catalog_name` hook — identity by default,
+  lower-cased on PostgreSQL; MySQL keeps the configured case deliberately (it
+  does not fold, and on Linux database names are case-sensitive).
+- **A mid-run variant flip is no longer resolved silently.** When the tail
+  render's arm disagrees with the run's cohort snapshot for the same unit, the
+  live arm still wins, but the incremental backend now warns once per
+  (metric, kind) with the count and a sample unit and points at
+  `abk verify-incremental` — the disagreement means the two read paths sampled
+  the cohort at different instants, so their numbers may legitimately differ.
+
 ### Added
 - **M9 WP5 — `abk verify-incremental`, `abk run --cost-report`, and the
   state GC.** The reconciliation gate that makes turning
