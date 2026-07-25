@@ -345,9 +345,10 @@ path) to `_ab_results` from one source of truth. It is upserted once per run
 | `description` | `Nullable(String)` | Free-text description. |
 | `status` | `String` | `design` \| `running` \| `concluded` \| `archived`. |
 | `is_actual` | `Bool` | Whether this config is the current one. |
-| `start_date`, `end_date` | `Date` | Experiment window. |
+| `start_ts`, `horizon_ts` | `DateTime64(3)` | Experiment window, RESOLVED to naive UTC (`horizon_ts` exclusive) — the same frame as `_ab_results.start_ts`, so a join lines up; use `timezone` to read them back in local time. |
 | `unit_key` | `String` | Randomization unit key. |
 | `cadence` | `String` | Canonical JSON — scalar or schedule. |
+| `interval_anchor` | `String` | `midnight` \| `start` \| an ISO instant — where the cutoff lattice sits. Informational: a date and a midnight timestamp resolve alike but stringify differently. |
 | `data_lag_seconds` | `Int64` | Completeness watermark lag. |
 | `timezone` | `String` | Experiment timezone. |
 | `variants` | `String` | Canonical JSON array (config order). |

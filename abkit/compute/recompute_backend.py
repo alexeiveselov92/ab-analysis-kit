@@ -25,7 +25,7 @@ from zoneinfo import ZoneInfo
 from abkit.config.experiment_config import ComparisonConfig, ExperimentConfig
 from abkit.config.metric_config import MetricConfig
 from abkit.core.interval import Interval
-from abkit.core.period_planner import Cutoff, Grid, tz_midnight_utc
+from abkit.core.period_planner import Cutoff, Grid, local_date, tz_midnight_utc
 from abkit.database.manager import BaseDatabaseManager
 from abkit.loaders.metric_loader import (
     MetricLoadResult,
@@ -102,17 +102,24 @@ class RecomputeBackend:
     def _preperiod_window(self, lookback: str | int, grid: Grid) -> RenderWindow:
         """The fixed pre-period, WHOLE-DAY aligned in the experiment timezone.
 
-        ``[tz-midnight(start_date − lookback_days), start_ts)`` — day
-        arithmetic in the experiment tz (a UTC-seconds subtraction would
-        misalign local days across a DST transition inside the lookback;
-        statistics-changes.md §5 defines the lookback in whole days).
+        ``[tz-midnight(D − lookback_days), tz-midnight(D))`` where ``D`` is the
+        local calendar day the window starts on — day arithmetic in the
+        experiment tz (a UTC-seconds subtraction would misalign local days
+        across a DST transition inside the lookback; statistics-changes.md §5
+        defines the lookback in whole days).
+
+        Both edges come off ``grid.start_ts``, never off the raw config field:
+        with a sub-day ``start_ts`` (m10) the window still ends at the local
+        midnight that OPENS the start day, so the lookback stays exactly
+        ``lookback_days`` whole days instead of gaining a partial tail. At a
+        midnight start — every pre-m10 config — that midnight IS
+        ``grid.start_ts`` and the window is byte-identical to before.
         """
         lookback_days = Interval(lookback).seconds // 86400
         zone = ZoneInfo(self._experiment.timezone)
-        pre_start = tz_midnight_utc(
-            self._experiment.start_date - timedelta(days=lookback_days), zone
-        )
-        return RenderWindow(start_ts=pre_start, end_ts=grid.start_ts)
+        start_day = local_date(grid.start_ts, zone)
+        pre_start = tz_midnight_utc(start_day - timedelta(days=lookback_days), zone)
+        return RenderWindow(start_ts=pre_start, end_ts=tz_midnight_utc(start_day, zone))
 
     def render(self, metric_sql: str, window: RenderWindow) -> str:
         """The provenance copy of the executed SQL."""

@@ -110,8 +110,8 @@ const cockpitChart = stabChart({ w: 720, h: 200, effect: 4.2, ciEnd: 1.5, spread
 // ---- declarative config snippet (experiments/checkout_v2.yml) ----
 const declareLines = [
   '<span class="tk-k">name</span>: <span class="tk-s">checkout_v2</span>',
-  '<span class="tk-k">start_date</span>: <span class="tk-n">2026-01-05</span>      <span class="tk-c"># pinned window start</span>',
-  '<span class="tk-k">end_date</span>: <span class="tk-n">2026-01-26</span>        <span class="tk-c"># planner horizon</span>',
+  '<span class="tk-k">start_ts</span>: <span class="tk-n">2026-01-05</span>        <span class="tk-c"># pinned window start</span>',
+  '<span class="tk-k">horizon_ts</span>: <span class="tk-n">2026-01-27</span>      <span class="tk-c"># planner horizon (exclusive)</span>',
   '<span class="tk-k">unit_key</span>: <span class="tk-s">user_id</span>',
   '<span class="tk-k">cadence</span>: <span class="tk-s">1d</span>',
   '',

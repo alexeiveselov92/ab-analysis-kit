@@ -51,7 +51,8 @@ def _run_series(days: int, project: ProjectConfig) -> tuple[int, int]:
     seed_all_events(warehouse, days=days)
     tables = InternalTablesManager(warehouse)
     payload = experiment_payload(f"perf_{days}", "arpu", T_TEST)
-    payload["end_date"] = f"2024-07-{days:02d}"
+    # horizon_ts is EXCLUSIVE: a D-day window starting July 1 ends at July 1+D
+    payload["horizon_ts"] = f"2024-07-{days + 1:02d}"
     experiment = ExperimentConfig.model_validate(payload)
 
     outcome = run_experiment(experiment, METRICS, project, warehouse, tables, now_utc=NOW)

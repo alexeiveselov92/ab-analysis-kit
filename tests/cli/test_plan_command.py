@@ -74,7 +74,7 @@ def test_plan_look_count_matches_generate_grid(ran):
     selected, _ = select_experiments(Path("."), (EXP,))
     _, exp = selected[0]
     looks = len(
-        generate_grid(exp.start_date, exp.end_date, exp.cadence_segments(), tz=exp.timezone)
+        generate_grid(exp.start_ts, exp.horizon_ts, exp.cadence_segments(), tz=exp.timezone)
     )
     result = runner.invoke(cli, ["plan", "--select", EXP, "--mde", "0.05"])
     assert result.exit_code == 0, result.output
@@ -187,8 +187,8 @@ def _refuse_experiment() -> ExperimentConfig:
     return ExperimentConfig.model_validate(
         {
             "name": "refuse_exp",
-            "start_date": "2024-07-01",
-            "end_date": "2024-07-14",
+            "start_ts": "2024-07-01",
+            "horizon_ts": "2024-07-15",
             "unit_key": "user_id",
             "assignment": {
                 "query": "SELECT 1",
@@ -212,8 +212,8 @@ def test_plan_multi_arm_warns_sizing_is_first_pair_only(capsys):
     exp = ExperimentConfig.model_validate(
         {
             "name": "three_arm",
-            "start_date": "2024-07-01",
-            "end_date": "2024-07-14",
+            "start_ts": "2024-07-01",
+            "horizon_ts": "2024-07-15",
             "unit_key": "user_id",
             "assignment": {
                 "query": "SELECT 1",
@@ -228,7 +228,7 @@ def test_plan_multi_arm_warns_sizing_is_first_pair_only(capsys):
     plan = _plan_comparison(
         exp, exp.comparisons[0], alphas, 0.8, 0.05, {"prop": 0.1, "n": 10000}, tables=None
     )
-    grid = generate_grid(exp.start_date, exp.end_date, exp.cadence_segments(), tz=exp.timezone)
+    grid = generate_grid(exp.start_ts, exp.horizon_ts, exp.cadence_segments(), tz=exp.timezone)
     _emit_plan(exp, project, alphas, 0.8, len(grid), grid, 42, [plan])
     out = capsys.readouterr().out
     assert "3-arm experiment" in out
@@ -338,8 +338,8 @@ def test_build_runtime_asn_note_for_non_sequential_and_bootstrap():
     non_seq_exp = ExperimentConfig.model_validate(
         {
             "name": "e",
-            "start_date": "2024-07-01",
-            "end_date": "2024-07-14",
+            "start_ts": "2024-07-01",
+            "horizon_ts": "2024-07-15",
             "unit_key": "u",
             "assignment": {
                 "query": "SELECT 1",
@@ -378,8 +378,8 @@ def _seq_experiment(cohort_copy: bool = False) -> ExperimentConfig:
     return ExperimentConfig.model_validate(
         {
             "name": "e",
-            "start_date": "2024-07-01",
-            "end_date": "2024-07-14",
+            "start_ts": "2024-07-01",
+            "horizon_ts": "2024-07-15",
             "unit_key": "u",
             "assignment": assignment,
             "comparisons": [{"metric": "cr", "is_main_metric": True, "method": {"name": "z-test"}}],
@@ -483,7 +483,7 @@ def test_resolve_arrival_rate_direct_mode_snapshots_the_live_source():
     from abkit.cli.commands.plan import _resolve_arrival_rate
 
     exp = _seq_experiment()  # cohort_copy defaults to disabled
-    grid = generate_grid(exp.start_date, exp.end_date, exp.cadence_segments(), tz=exp.timezone)
+    grid = generate_grid(exp.start_ts, exp.horizon_ts, exp.cadence_segments(), tz=exp.timezone)
 
     def resolve(raw):
         # tables=None proves the persisted-table path is never touched

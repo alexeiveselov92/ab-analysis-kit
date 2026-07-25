@@ -23,8 +23,8 @@ source, and at least one main comparison:
 
 ```yaml
 name: pricing_test
-start_date: 2024-07-01
-end_date:   2024-07-14
+start_ts:   2024-07-01
+horizon_ts: 2024-07-15
 unit_key:   user_id
 assignment:
   query_file: sql/assignment.sql
@@ -56,13 +56,14 @@ status: running                  # design | running | concluded | archived (defa
 is_actual: true                  # catalog flag persisted to _ab_experiments (default: true)
 tags: [growth, onboarding]       # optional — selectable via --select tag:<tag>
 
-start_date: 2024-07-01           # required — PINNED left edge of every cumulative window
-end_date:   2024-07-14           # required — the horizon (also drives the power plan)
+start_ts:   2024-07-01           # required — PINNED left edge of every cumulative window
+horizon_ts: 2024-07-15           # required — the horizon, EXCLUSIVE (also drives the power plan)
 unit_key:   user_id              # required — randomization + default analysis unit
 
 cadence: 1d                      # cumulative cutoff step (default: "1d")
+interval_anchor: midnight        # where the cutoffs land (default: midnight)
 data_lag: 0                      # completeness watermark; REQUIRED when cadence < 1d
-timezone: UTC                    # interprets date fields & midnight snapping (default: UTC)
+timezone: UTC                    # interprets bare-date edges + the day lattice (default: UTC)
 
 assignment:                      # READ-ONLY exposure source — abkit never randomizes
   query_file: sql/assignment.sql # or inline `query:` — exactly one, never both
@@ -113,21 +114,26 @@ form above is the norm.
 - **`tags`** (optional list) — selectable on the CLI with `--select tag:<tag>`
   (e.g. `--select tag:growth`).
 
-## The cumulative window: `start_date`, `end_date`, cadence
+## The cumulative window: `start_ts`, `horizon_ts`, cadence
 
-The analysis window is **pinned-start, moving-end**. `start_date` never moves;
+The analysis window is **pinned-start, moving-end**. `start_ts` never moves;
 each cutoff advances the end through the horizon, producing the stabilization
 series — one point per cutoff, with the effect and CI computed over
-`[start_date .. cutoff]`.
+`[start_ts .. cutoff]`.
 
-- **`start_date`** / **`end_date`** (required `date` values) — the pinned left
-  edge and the horizon. `end_date` must not precede `start_date`. The horizon
-  drives the power plan and the sequential pre-horizon rule below.
+- **`start_ts`** / **`horizon_ts`** (required, a `date` **or** a `datetime`) —
+  the pinned left edge and the horizon. A bare date is shorthand for local
+  midnight of that day in `timezone`; a full timestamp
+  (`2024-07-01 14:30:00`) is that exact instant, with no midnight snap.
+  `horizon_ts` is **EXCLUSIVE**: the window is `[start_ts, horizon_ts)`, so an
+  experiment running July 1..14 inclusive sets `horizon_ts: 2024-07-15`. It
+  must be after `start_ts`, and it drives the power plan and the sequential
+  pre-horizon rule below.
 - **`unit_key`** (required) — the randomization unit and the default analysis
   unit. Each bound metric's own `unit_key` must match (or inherit) this.
-- **`timezone`** (default `UTC`) — a valid IANA zone; it interprets the
-  date-typed fields and daily midnight snapping. Storage and comparison are
-  always UTC.
+- **`timezone`** (default `UTC`) — a valid IANA zone; it interprets bare-date
+  edges, an explicit `interval_anchor`, and the DST-safe day lattice. Storage
+  and comparison are always UTC.
 
 ### `cadence`
 
@@ -150,6 +156,37 @@ cadence:
 
 A scalar and the equivalent single-segment schedule produce identical grids
 (cumulative-intervals §6).
+
+### `interval_anchor`
+
+`cadence` says how far apart the cutoffs are; `interval_anchor` says **where
+that lattice sits**. The rule is one sentence: cutoffs are
+`anchor + k × cadence`, kept strictly after `start_ts`.
+
+| value | meaning |
+|---|---|
+| `midnight` (the default when the key is absent) | local midnight of the day the window opens — whole calendar days, which is what daily BI rollups read |
+| `start` | count from the start instant: a 14:00 start gives 14:00 cutoffs |
+| an explicit timestamp | align the grid to an external cycle |
+
+The `abk init` scaffold writes `interval_anchor: midnight` out explicitly, so
+the choice is visible in the config rather than implicit.
+
+Two properties worth knowing:
+
+- **The anchor may precede `start_ts`.** That is what makes the explicit form
+  useful — e.g. 3-day windows that must close at 00:00 Moscow time on a UTC
+  warehouse, for an experiment that started mid-cycle. The forward snap makes
+  it well-defined, and the **first window is then legitimately partial** (a
+  config-lint note tells you so; it is not an error).
+- **`midnight` anchors to the experiment's own opening day**, not to a global
+  calendar cycle. Two experiments starting a day apart get interleaved 3-day
+  lattices under `cadence: 3d`. When the cycle must be shared across
+  experiments, name it with the explicit form.
+
+Day-or-coarser steps hold the anchor's **local wall-clock time** across a DST
+transition (a local day is 23 h or 25 h, never a fixed 86 400 s); sub-day steps
+advance in absolute duration, as they always have.
 
 ### `data_lag`
 

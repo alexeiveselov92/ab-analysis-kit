@@ -133,7 +133,7 @@ this; tell the user the true requirement is lower.
 
 ## Step 5 — Act on the result
 
-- **Underpowered at the horizon?** Extend `end_date`, raise traffic/allocation, pick a
+- **Underpowered at the horizon?** Extend `horizon_ts`, raise traffic/allocation, pick a
   lower-variance or CUPED method, or accept a larger detectable MDE. Re-plan.
 - **Comfortably powered?** The design is sound to launch. Remind the user that reading
   the daily series early is peeking — if they want to stop early, enable

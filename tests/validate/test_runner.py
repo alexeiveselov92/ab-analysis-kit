@@ -32,8 +32,8 @@ NOW_ISO = "2026-07-05T00:00:00"
 
 def _grid(experiment):
     return generate_grid(
-        experiment.start_date,
-        experiment.end_date,
+        experiment.start_ts,
+        experiment.horizon_ts,
         experiment.cadence_segments(),
         tz=experiment.timezone,
     )
@@ -43,8 +43,8 @@ def _two_tier_experiment() -> ExperimentConfig:
     return ExperimentConfig.model_validate(
         {
             "name": "twotier",
-            "start_date": "2024-07-01",
-            "end_date": "2024-07-04",
+            "start_ts": "2024-07-01",
+            "horizon_ts": "2024-07-05",
             "unit_key": "user_id",
             "alpha": 0.05,
             "correction": "bonferroni",
@@ -267,8 +267,8 @@ def test_bh_family_budget_anchors_to_member_level_not_the_composition():
     experiment = ExperimentConfig.model_validate(
         {
             "name": "bh_family",
-            "start_date": "2024-07-01",
-            "end_date": "2024-07-04",
+            "start_ts": "2024-07-01",
+            "horizon_ts": "2024-07-05",
             "unit_key": "user_id",
             "alpha": 0.05,
             "correction": "benjamini_hochberg",

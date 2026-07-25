@@ -317,8 +317,9 @@ two-process lock race) is deferred to a Docker-equipped environment.
   would clobber) + `column_set_id = compute_metric_state_id(role_map,
   whitespace-normalized SQL, cohort_config)` where `cohort_config` folds in
   the cohort-shaping experiment config (assignment-SQL hash, added_filters,
-  unit_key, variants, timezone, start_date; end_date only when the
-  assignment SQL references `ab_end_*`) — compose the key ONLY through
+  unit_key, variants, timezone, start_ts; horizon_ts only when the
+  assignment SQL references `ab_end_*`; `interval_anchor` deliberately
+  EXCLUDED — it moves cutoffs, never day boundaries) — compose the key ONLY through
   `pipeline/state.state_series_key()`. Any such edit orphans the series and
   the next run sweeps the stale ids. **Every failure path TRUNCATES the
   tail** (`delete_state_days_from`), preserving contiguity — every day

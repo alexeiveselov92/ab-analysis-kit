@@ -57,8 +57,8 @@ def _matrix_experiment() -> ExperimentConfig:
     return ExperimentConfig.model_validate(
         {
             "name": "aa_matrix",
-            "start_date": "2024-07-01",
-            "end_date": "2024-07-14",
+            "start_ts": "2024-07-01",
+            "horizon_ts": "2024-07-15",
             "unit_key": "user_id",
             "alpha": 0.05,
             "assignment": {
@@ -78,8 +78,8 @@ def _matrix_experiment() -> ExperimentConfig:
 def _run(warehouse, experiment):
     backend = RecomputeBackend(warehouse, experiment)
     grid = generate_grid(
-        experiment.start_date,
-        experiment.end_date,
+        experiment.start_ts,
+        experiment.horizon_ts,
         experiment.cadence_segments(),
         tz=experiment.timezone,
     )
@@ -259,8 +259,8 @@ class TestValidateMatrixExitGate:
             experiment = _matrix_experiment()
             backend = RecomputeBackend(warehouse, experiment)
             grid = generate_grid(
-                experiment.start_date,
-                experiment.end_date,
+                experiment.start_ts,
+                experiment.horizon_ts,
                 experiment.cadence_segments(),
                 tz=experiment.timezone,
             )

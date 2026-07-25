@@ -34,8 +34,8 @@ T_TEST_ID = None  # filled lazily from the config fixture
 def make_experiment(**overrides) -> ExperimentConfig:
     config = {
         "name": "readout_exp",
-        "start_date": "2026-01-01",
-        "end_date": "2026-01-14",  # 14-day horizon
+        "start_ts": "2026-01-01",
+        "horizon_ts": "2026-01-15",  # 14-day horizon
         "unit_key": "user_id",
         "assignment": {
             "query": "SELECT 1",
@@ -411,7 +411,7 @@ class TestStabilization:
         assert single_verdict(experiment, rows).verdict == "WIN"
 
     def test_too_few_informative_cutoffs_is_inconclusive(self):
-        experiment = make_experiment(end_date="2026-01-02")  # 2-day horizon
+        experiment = make_experiment(horizon_ts="2026-01-03")  # 2-day horizon
         rows = [
             make_row(experiment, day=1, is_horizon=False),
             make_row(experiment, day=2, is_horizon=True),
@@ -423,7 +423,7 @@ class TestStabilization:
     def test_coarse_cadence_widens_to_last_three_cutoffs(self):
         """Weekly-ish cutoffs: fewer than 3 rows inside 7 trailing days, but the
         window widens to the last 3 informative cutoffs (D5(a) floor)."""
-        experiment = make_experiment(end_date="2026-01-21")  # 21-day horizon
+        experiment = make_experiment(horizon_ts="2026-01-22")  # 21-day horizon
         rows = [
             make_row(experiment, day=7, is_horizon=False),
             make_row(experiment, day=14, is_horizon=False),
@@ -437,7 +437,7 @@ class TestStabilization:
 
 class TestWeeklyCycleCaveat:
     def test_short_horizon_win_carries_the_caveat(self):
-        experiment = make_experiment(end_date="2026-01-05")  # 5-day horizon
+        experiment = make_experiment(horizon_ts="2026-01-06")  # 5-day horizon
         rows = [make_row(experiment, day=d, is_horizon=(d == 5)) for d in range(1, 6)]
         verdict = single_verdict(experiment, rows)
         assert verdict.verdict == "WIN"
@@ -930,7 +930,7 @@ class TestGuardrailEdgeCases:
 class TestFlatCaveats:
     def test_flat_on_short_horizon_carries_the_weekly_caveat(self):
         experiment = make_experiment(
-            end_date="2026-01-05",
+            horizon_ts="2026-01-06",
             comparisons=[
                 {
                     "metric": "revenue",

@@ -56,8 +56,8 @@ def make_experiment(**overrides) -> ExperimentConfig:
     config = {
         "name": "report_exp",
         "description": "the readout fixture",
-        "start_date": "2026-01-01",
-        "end_date": "2026-01-14",  # horizon = 2026-01-15 00:00 (day 14)
+        "start_ts": "2026-01-01",
+        "horizon_ts": "2026-01-15",  # horizon = 2026-01-15 00:00 (day 14 covered)
         "unit_key": "user_id",
         "assignment": {
             "query": "SELECT 1",
@@ -855,10 +855,10 @@ class TestProvenanceAndWarnings:
 
 class TestLookCounter:
     def test_look_at_subday_cadence(self, tables):
-        experiment = make_experiment(end_date="2026-01-03", cadence="6h", data_lag=0)
+        experiment = make_experiment(horizon_ts="2026-01-04", cadence="6h", data_lag=0)
         grid = generate_grid(
-            experiment.start_date,
-            experiment.end_date,
+            experiment.start_ts,
+            experiment.horizon_ts,
             experiment.cadence_segments(),
             experiment.timezone,
         )

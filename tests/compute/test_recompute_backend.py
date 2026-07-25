@@ -23,6 +23,8 @@ derive from ``probe_has_stratum``; the mismatch case is its own test below.
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 import numpy as np
 import pytest
 from synthetic_ab import (
@@ -36,6 +38,7 @@ from synthetic_ab import (
 )
 
 from abkit.compute.recompute_backend import RecomputeBackend
+from abkit.config import ExperimentConfig
 from abkit.core.period_planner import generate_grid
 
 DIRECT_SQL = "SELECT user_id, variant, exposure_ts FROM assignments"
@@ -63,8 +66,8 @@ def _seeded() -> RecordingWarehouse:
 
 def _load_all(backend: RecomputeBackend, experiment, metric):
     grid = generate_grid(
-        experiment.start_date,
-        experiment.end_date,
+        experiment.start_ts,
+        experiment.horizon_ts,
         experiment.cadence_segments(),
         tz=experiment.timezone,
     )
@@ -138,6 +141,28 @@ def test_covariate_render_gets_the_same_cohort_source():
         assert "_abk_exposure_ts" not in q.split("WHERE experiment")[-1]
     # and the covariate actually attached
     assert all("covariate" in r.roles_by_variant[v] for r in loaded for v in r.variants())
+
+
+def test_the_cuped_preperiod_stays_whole_day_under_a_sub_day_start():
+    """statistics-changes.md §5 defines the lookback in WHOLE days. With a
+    14:30 start the window must still run midnight→midnight: reading the raw
+    config field would end it at 14:30 and quietly add a partial day."""
+    warehouse = _seeded()
+    experiment = make_experiment("exp_cuped_subday", "arpu", CUPED)
+    experiment = ExperimentConfig.model_validate(
+        {**experiment.model_dump(), "start_ts": datetime(2024, 7, 1, 14, 30)}
+    )
+    backend = RecomputeBackend(warehouse, experiment)
+    grid = generate_grid(
+        experiment.start_ts,
+        experiment.horizon_ts,
+        experiment.cadence_segments(),
+        tz=experiment.timezone,
+    )
+    window = backend._preperiod_window("7d", grid)
+    assert window.start_ts == datetime(2024, 6, 24)
+    assert window.end_ts == datetime(2024, 7, 1)  # NOT 14:30
+    assert (window.end_ts - window.start_ts) == timedelta(days=7)
 
 
 def _assert_loads_identical(a, b):

@@ -67,8 +67,8 @@ def tables(warehouse):
 
 def _grid(experiment: ExperimentConfig):
     return generate_grid(
-        experiment.start_date,
-        experiment.end_date,
+        experiment.start_ts,
+        experiment.horizon_ts,
         experiment.cadence_segments(),
         tz=experiment.timezone,
     )
@@ -142,6 +142,29 @@ class TestLoadParity:
                 what=f"{metric.name}@{cutoff.end_ts}",
             )
         assert warnings == []  # every cutoff served from state, no fallback
+
+    def test_sub_day_start_parity(self, warehouse, tables):
+        """m10 WP1: the reader compared `required_last >= experiment.start_date`
+        — a `date >= datetime` TypeError the moment a start carries a time, on
+        EVERY cutoff. It now asks the grid which local day opens the window."""
+        payload = experiment_payload("exp_subday_start", "arpu", T_TEST)
+        payload["start_ts"] = "2024-07-01 14:30:00"
+        experiment = ExperimentConfig.model_validate(payload)
+        run_pipeline(warehouse, tables, experiment)
+
+        grid = _grid(experiment)
+        comparison = experiment.comparisons[0]
+        sql = REVENUE.get_query_text(None)
+        recompute = RecomputeBackend(warehouse, experiment)
+        warnings: list[str] = []
+        incremental = _incremental(warehouse, tables, experiment, warnings)
+        for cutoff in grid.cutoffs:
+            _assert_load_parity(
+                incremental.load_cutoff(comparison, REVENUE, sql, grid, cutoff),
+                recompute.load_cutoff(comparison, REVENUE, sql, grid, cutoff),
+                what=f"subday@{cutoff.end_ts}",
+            )
+        assert warnings == []
 
     def test_cuped_covariate_attaches_identically(self, warehouse, tables):
         experiment = make_experiment("exp_cov", "arpu", CUPED)

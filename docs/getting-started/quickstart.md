@@ -63,8 +63,9 @@ somewhere other than the current directory with `--target-dir DIR`.
   `cuped-t-test` (variance-reduced against a pre-period covariate via the
   `covariate_lookback` method param — declarative-config §3).
 
-The dates are pinned in the past (`start_date: 2024-07-01`, `end_date:
-2024-07-14`, `cadence: 1d`), so a first run immediately computes the full
+The window is pinned in the past (`start_ts: 2024-07-01`, `horizon_ts:
+2024-07-15` — the horizon is the exclusive right edge, so this covers July
+1..14 — with `cadence: 1d`), so a first run immediately computes the full
 14-point cumulative stabilization series for both metrics.
 
 Each metric is one YAML file plus a SQL query that returns **one row per unit**

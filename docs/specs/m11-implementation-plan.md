@@ -225,7 +225,7 @@ changes); `tests/tuning/test_overview.py` (new).
    step 6's error path rather than indexing blind.
 5. Row shape (mirrors `_empty_row`'s full-shape-with-error-degrade
    discipline, `detektkit/detectkit/ui/overview.py:293-319`): `{name, dir,
-   file, tags, status, start_date, end_date, main_metric, locked (via
+   file, tags, status, start_ts, horizon_ts, main_metric, locked (via
    tables.check_lock(experiment.name, scope='pipeline',
    process_type='run') — the pipeline lock's real key is
    (scope='pipeline', process_type='run'): `DEFAULT_PROCESS_TYPE = "run"`
@@ -243,7 +243,7 @@ changes); `tests/tuning/test_overview.py` (new).
    `detektkit/detectkit/ui/overview.py:12-14,514-550`).
 7. `def build_overview_boot_entries(project_root, experiments) -> list[dict]`:
    the **metadata-only** list for `GET /` (name/dir/file/tags/status/
-   start_date/end_date/main_metric — **no** stats, **no** DB read), mirroring
+   start_ts/horizon_ts/main_metric — **no** stats, **no** DB read), mirroring
    `detektkit/detectkit/ui/server.py`'s `metric_entries()`.
 
 **Tests & gates:**

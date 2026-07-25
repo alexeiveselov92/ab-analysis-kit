@@ -25,13 +25,14 @@ always-valid average sample number. No arrival data ⇒ runtime SKIPPED, never i
 from __future__ import annotations
 
 import math
+from datetime import datetime, time
 
 import click
 
 from abkit.cli._output import echo_done, echo_error, echo_tree
 from abkit.cli.commands._context import load_project_context
 from abkit.config import select_experiments
-from abkit.core.period_planner import GridLimitExceeded, generate_grid
+from abkit.core.period_planner import GridLimitExceeded
 from abkit.pipeline import comparison_alpha, effective_alphas
 from abkit.planning.sizing import (
     FRACTION,
@@ -139,13 +140,7 @@ def _plan_one(
     # OOM-enumerating in this read-only command (plan skips the config-lint that would
     # otherwise catch it — M5 exit-gate round-1 finding).
     try:
-        grid = generate_grid(
-            experiment.start_date,
-            experiment.end_date,
-            experiment.cadence_segments(),
-            tz=experiment.timezone,
-            limit=project.limits.max_looks,
-        )
+        grid = experiment.grid(limit=project.limits.max_looks)
     except GridLimitExceeded as exc:
         raise click.ClickException(
             f"{experiment.name}: planned looks exceed max_looks="
@@ -562,7 +557,7 @@ def _emit_plan(experiment, project, alphas, power, looks, grid, rows_per_refresh
     cadence = _fmt_cadence(experiment)
     children.append(
         f"looks: {looks} planned · cadence {cadence} · horizon "
-        f"{grid.horizon_ts.date().isoformat()} · ~{rows_per_refresh:,} _ab_results rows/full-refresh"
+        f"{_fmt_instant(grid.horizon_ts)} · ~{rows_per_refresh:,} _ab_results rows/full-refresh"
     )
     if experiment.is_sub_day():
         children.append("  sub-day: each look ≤ one day of fact rows (day-grained state, §6.4)")
@@ -668,6 +663,15 @@ def _runtime_lines(rt) -> list[str]:
     elif rt.asn_note is not None:
         lines.append(f"  sequential ASN: n/a — {rt.asn_note}")
     return lines
+
+
+def _fmt_instant(ts: datetime) -> str:
+    """A grid edge for the terminal: date alone at midnight, else date + time.
+
+    Keeps the pre-m10 one-line output byte-identical for whole-day windows
+    while never silently hiding a sub-day horizon behind ``.date()``.
+    """
+    return ts.date().isoformat() if ts.time() == time.min else ts.isoformat(sep=" ")
 
 
 def _fmt_cadence(experiment) -> str:

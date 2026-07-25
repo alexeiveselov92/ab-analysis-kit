@@ -168,8 +168,8 @@ class TestStateMaterialization:
         rows = state_rows(warehouse)
         assert {r["day"] for r in rows} == set(DAYS)
         grid = generate_grid(
-            experiment.start_date,
-            experiment.end_date,
+            experiment.start_ts,
+            experiment.horizon_ts,
             experiment.cadence_segments(),
             tz=experiment.timezone,
         )
@@ -233,7 +233,7 @@ class TestStateIdentity:
         orphan state — unless the assignment SQL actually windows on the end."""
         base = make_experiment("exp_extend", "arpu", T_TEST)
         payload = experiment_payload("exp_extend", "arpu", T_TEST)
-        payload["end_date"] = "2024-07-14"
+        payload["horizon_ts"] = "2024-07-15"
         extended = ExperimentConfig.model_validate(payload)
         assert series_key(base, REVENUE) == series_key(extended, REVENUE)
 
@@ -243,7 +243,7 @@ class TestStateIdentity:
             "WHERE event_date <= '{{ ab_end_date }}'"
         )
         w_base = ExperimentConfig.model_validate(windowed)
-        windowed["end_date"] = "2024-07-14"
+        windowed["horizon_ts"] = "2024-07-15"
         w_extended = ExperimentConfig.model_validate(windowed)
         # an end-windowed cohort SQL renders differently after the extension
         assert series_key(w_base, REVENUE) != series_key(w_extended, REVENUE)
@@ -752,8 +752,8 @@ class TestClosedDays:
     def test_watermark_clamps_the_closed_days(self):
         experiment = make_experiment("exp_clamp", "arpu", T_TEST)
         grid = generate_grid(
-            experiment.start_date,
-            experiment.end_date,
+            experiment.start_ts,
+            experiment.horizon_ts,
             experiment.cadence_segments(),
             tz=experiment.timezone,
         )
@@ -766,11 +766,32 @@ class TestClosedDays:
         assert [sd.day for sd in days] == DAYS
         assert days[-1].window.end_ts == grid.horizon_ts
 
+    def test_a_sub_day_start_makes_the_first_day_partial_not_oversized(self):
+        """m10 WP1: day windows are clamped to the GRID at both ends. Seeding
+        the loop from the raw config field would render [midnight, midnight)
+        for the opening day — hours of pre-experiment facts summed into day
+        state that the full-window recompute never sees."""
+        payload = experiment_payload("exp_subday", "arpu", T_TEST)
+        payload["start_ts"] = "2024-07-01 14:30:00"
+        experiment = ExperimentConfig.model_validate(payload)
+        grid = generate_grid(
+            experiment.start_ts,
+            experiment.horizon_ts,
+            experiment.cadence_segments(),
+            tz=experiment.timezone,
+        )
+        days = closed_state_days(experiment, grid, NOW)
+        assert days[0].day == date(2024, 7, 1)
+        assert days[0].window.start_ts == datetime(2024, 7, 1, 14, 30)  # not midnight
+        assert days[0].window.end_ts == datetime(2024, 7, 2)
+        assert days[1].window.start_ts == datetime(2024, 7, 2)  # whole days after
+        assert days[-1].window.end_ts == grid.horizon_ts
+
     def test_before_first_close_yields_nothing(self):
         experiment = make_experiment("exp_none", "arpu", T_TEST)
         grid = generate_grid(
-            experiment.start_date,
-            experiment.end_date,
+            experiment.start_ts,
+            experiment.horizon_ts,
             experiment.cadence_segments(),
             tz=experiment.timezone,
         )

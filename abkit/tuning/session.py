@@ -32,7 +32,7 @@ from abkit.compute.recompute_backend import RecomputeBackend
 from abkit.config.experiment_config import ComparisonConfig, ExperimentConfig
 from abkit.config.metric_config import MetricConfig
 from abkit.config.project_config import ProjectConfig
-from abkit.core.period_planner import Cutoff, Grid, generate_grid
+from abkit.core.period_planner import Cutoff, Grid
 from abkit.database.internal_tables import InternalTablesManager
 from abkit.loaders.metric_loader import MetricLoadResult
 from abkit.pipeline.analyze import comparison_alpha, effective_alphas
@@ -131,13 +131,7 @@ def load_session(
     ``--no-serve`` static path and unit tests use it.
     """
     alphas = effective_alphas(experiment, project)
-    grid = generate_grid(
-        experiment.start_date,
-        experiment.end_date,
-        experiment.cadence_segments(),
-        tz=experiment.timezone,
-        limit=project.limits.max_looks,
-    )
+    grid = experiment.grid(limit=project.limits.max_looks)
 
     session = ExploreSession(
         experiment=experiment,

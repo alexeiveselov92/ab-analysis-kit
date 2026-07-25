@@ -28,8 +28,8 @@ from abkit.validate.scoring import score_cell
 
 def _grid(experiment):
     return generate_grid(
-        experiment.start_date,
-        experiment.end_date,
+        experiment.start_ts,
+        experiment.horizon_ts,
         experiment.cadence_segments(),
         tz=experiment.timezone,
     )

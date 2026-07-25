@@ -92,8 +92,11 @@ profile's `internal_database` / `internal_schema`, separate from the
   extra SQL). Sized on raw variance.
 - **cadence** — the spacing of cumulative cutoffs (`1d`, or a coarsening schedule
   `[{every: 1h, until: 48h}, {every: 1d}]`). Window start is PINNED; end moves.
-- **horizon** — the planned end (`end_date`); fixed-horizon CIs are only valid
-  here. `is_horizon` marks the row where a WIN/LOSE/FLAT may be called.
+- **interval_anchor** — WHERE that lattice sits: `midnight` (default — local
+  midnight of the opening day) | `start` | an explicit timestamp. Cutoffs are
+  `anchor + k*cadence`, kept after `start_ts`.
+- **horizon** — the planned end (`horizon_ts`, EXCLUSIVE); fixed-horizon CIs are
+  only valid here. `is_horizon` marks the row where a WIN/LOSE/FLAT may be called.
 - **data_lag** — the watermark: a cutoff is pending only once late data has
   landed (`end_ts ≤ now − data_lag`). Required when cadence < 1d.
 - **method_config_id** — hash of the method + its non-default **identity** params

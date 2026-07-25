@@ -271,7 +271,11 @@ class IncrementalBackend:
         role_moments = _ROLE_MOMENTS[metric.type]
 
         totals: dict[str, dict[str, float]] = {}
-        if required_last >= self._experiment.start_date:
+        # The first materialized day is the GRID's opening local day, never
+        # the raw config field: with a sub-day start_ts the field carries a
+        # time-of-day, and `date >= datetime` is a TypeError, not a comparison.
+        first_state_day = _local_date(grid.start_ts, self._zone)
+        if required_last >= first_state_day:
             key = self._series_key(metric, metric_sql)
             last_state = self._cached_last_state_day(key)
             if last_state is None or last_state < required_last:
@@ -293,7 +297,7 @@ class IncrementalBackend:
                 moments = cached[1]
             else:
                 moments = self._tables.per_unit_cumulative(
-                    key[0], key[1], self._experiment.start_date, required_last
+                    key[0], key[1], first_state_day, required_last
                 )
                 self._cumulative_cache[key] = (required_last, moments)
             for unit, unit_moments in moments.items():

@@ -104,13 +104,19 @@ and `abk clean` prune the strays. `seed` and `alpha` are identity-EXCLUDED.
 
 ## Step 6 — Window, cadence, data_lag, alpha
 
-- `start_date` (PINNED left edge of every cumulative window) and `end_date` (the
-  planned **horizon** the power plan targets). Use `unit_key` for the analysis
-  unit.
+- `start_ts` (PINNED left edge of every cumulative window) and `horizon_ts` (the
+  planned **horizon** the power plan targets). Both take a bare date — local
+  midnight of that day in `timezone` — or a full timestamp, which is the exact
+  instant. `horizon_ts` is **EXCLUSIVE**: an experiment running Aug 1..21
+  inclusive has `horizon_ts: 2024-08-22`. Use `unit_key` for the analysis unit.
 - `cadence:` — the cutoff step (`1d` default; or a dense-early schedule like
   `[{every: 1h, until: 48h}, {every: 1d}]`). **Cadence below `1d` REQUIRES
   `data_lag:`** (declare the ingestion SLA; use `data_lag: 0` only if data is
   truly complete in real time).
+- `interval_anchor:` — WHERE the cutoffs land: `midnight` (default when omitted —
+  local midnight of the opening day) | `start` (count from `start_ts`) | an
+  explicit timestamp to align to an external cycle (it may precede `start_ts`,
+  making the first window partial). Cutoffs are `anchor + k*cadence`.
 - `alpha:` / `correction:` — omit to inherit project defaults; `correction:
   bonferroni` gives the two-tier split, read-time BH is applied across a family.
 
@@ -140,10 +146,11 @@ result:
 name: checkout_button_color
 description: "Green vs blue primary CTA on checkout"
 status: running
-start_date: 2024-08-01      # PINNED window start
-end_date: 2024-08-21        # horizon
+start_ts: 2024-08-01        # PINNED window start (bare date = local midnight)
+horizon_ts: 2024-08-22      # horizon — EXCLUSIVE, so this covers Aug 1..21
 unit_key: user_id
 cadence: 1d
+interval_anchor: midnight   # midnight (default) | start | an explicit timestamp
 
 assignment:
   query_file: sql/checkout_button_color_assignment.sql
@@ -178,7 +185,8 @@ Fix every reported error before declaring done. Re-check:
 - [ ] Exactly ≥1 comparison sets `is_main_metric: true`; no main+guardrail clash.
 - [ ] Each method name is registered and its params instantiate (no quarantined
       branch, no unknown param).
-- [ ] `end_date >= start_date`; sub-day cadence has `data_lag`.
+- [ ] `horizon_ts > start_ts` (the horizon is exclusive); sub-day cadence has
+      `data_lag`.
 
 ## Step 9 — Run it, and what's next
 

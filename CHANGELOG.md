@@ -13,6 +13,86 @@ number change).
 
 ## [Unreleased]
 
+### Changed
+- **BREAKING — M10 WP1: an experiment's window is a pair of timestamps, and
+  the config keys say so.** `start_date` → **`start_ts`**, `end_date` →
+  **`horizon_ts`**, and both now accept a bare date **or** a full timestamp
+  (`2024-07-01 14:30:00`). There are no deprecated aliases: a config carrying
+  an old key fails validation with a message naming the new one. Two things
+  change with the rename, both deliberate:
+  - **A bare date is local midnight of THAT day, for both edges**, so
+    `horizon_ts` is the **EXCLUSIVE** right edge and the config value equals
+    `grid.horizon_ts` exactly — one vocabulary, no `+1 day` translation
+    anywhere. Port `end_date: 2024-07-14` as **`horizon_ts: 2024-07-15`**; the
+    rename error spells this out. An unchanged window keeps every persisted
+    `_ab_results` number identical (see below).
+  - **A sub-day start is no longer silently floored to midnight.** The old
+    planner ran every edge through `datetime.combine(..., time.min)`, which
+    accepts a `datetime` and drops its time — so the "grid steps are sub-day
+    but its anchors are not" contradiction was a silent truncation, not a
+    limitation.
+  Rejected loudly rather than coerced: an unquoted `start_ts: 20240101`
+  (pydantic would read it as a UNIX timestamp — 1970-08-23) and a UTC offset
+  (the experiment's `timezone` is the only source of truth).
+- **BREAKING — `_ab_experiments` window columns renamed and widened**:
+  `start_date`/`end_date` `Date` → `start_ts`/`horizon_ts` `DateTime64(3)`,
+  holding the **resolved** window in naive UTC — the same frame as
+  `_ab_results.start_ts`, so a BI join lines up instead of differing by the
+  timezone offset. A new `interval_anchor` `String` column records the knob
+  below. `ensure_tables()` is create-if-not-exists-only and `ensure_columns()`
+  is ADD-only, so a **type change is not auto-migrated**: existing installs
+  must `DROP TABLE <internal>._ab_experiments` and re-run `abk run` (the table
+  is informational — the pipeline never reads it back for a decision, so
+  nothing is lost but the catalog row, which the next run rewrites).
+- **Materialized day state re-keys once.** `_ab_unit_state`'s series identity
+  folds in the window fields by name, so this rename orphans every existing
+  series; the next `abk run` re-materializes it and `abk clean` sweeps the
+  stale ids. No statistical number moves — `abk verify-incremental` stays
+  green across the re-materialization.
+
+### Added
+- **M10 WP1 — `interval_anchor`: where the cutoff lattice sits.** `cadence`
+  says how far apart the cutoffs are; the new knob says where they land.
+  Cutoffs are **`anchor + k·cadence`, kept strictly after `start_ts`**, with
+  three forms: `midnight` (the default when the key is absent — local midnight
+  of the day the window opens, i.e. whole calendar days), `start` (count from
+  the start instant: a 14:00 start ⇒ 14:00 cutoffs), or an explicit timestamp
+  to align to an external cycle. The anchor **may precede `start_ts`** — the
+  forward snap is what makes that well-defined, and the first window is then
+  legitimately partial (config-lint says so as a note, never an error). The
+  `abk init` scaffold writes the default out explicitly with the alternatives
+  in a comment. Day-or-coarser steps hold the anchor's local wall-clock time
+  across DST; sub-day steps stay absolute-duration.
+- `ExperimentConfig.grid()` — the one factory composing window + cadence +
+  anchor, mirroring m8's `build_cohort_backend` contract. Nothing under
+  `abkit/` may call `generate_grid` directly; an AST gate
+  (`tests/core/test_grid_factory_is_the_only_entry.py`) enforces it, because
+  the alternative had already happened: the new knob reached none of the eight
+  hand-copied call sites.
+
+### Fixed
+- **Three M9 surfaces read the raw config field where they meant "the local
+  day the window opens"**, and would have broken the moment a start carried a
+  time: `IncrementalBackend` compared a `date` against it (a `TypeError` on
+  *every* cutoff under `compute.incremental_reads`) and passed it as a day key
+  into `_ab_unit_state`; the STATE stage seeded its day loop from it, carrying
+  a `datetime` into a `Date` column and into comparisons against
+  `get_last_state_day()`. All three now ask the grid. The STATE stage
+  additionally **clamps the opening day's render window to `grid.start_ts`**,
+  so a sub-day start cannot sum pre-experiment facts into day state.
+- The CUPED pre-period stays **whole-day** under a sub-day start
+  (`[midnight(D − lookback), midnight(D))`), instead of gaining a partial
+  trailing day; `statistics-changes.md` §5 defines the lookback in whole days.
+  Byte-identical at a midnight start, i.e. for every pre-m10 config.
+- `tz_midnight_utc` now **rejects a `datetime`** instead of silently dropping
+  its time-of-day — the mechanism behind the truncations above.
+
+No `ALGORITHM_VERSION` bump and no `statistics-changes.md` entry: this is a
+config/planner/schema change. The numeric gate is that an unchanged window
+produces unchanged numbers — the whole existing suite (2 209 tests, incl.
+every e2e byte-stability and cross-mode parity gate) passes with only the
+config keys and the ported horizon values edited.
+
 ## [0.4.0] - 2026-07-25
 
 ### Added

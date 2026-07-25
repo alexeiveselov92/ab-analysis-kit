@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
+from datetime import date, datetime
+
 import pytest
 from pydantic import ValidationError
 
 from abkit.config import ExperimentConfig
+from abkit.core.period_planner import generate_grid
 
 
 def base_payload(**overrides) -> dict:
     payload = {
         "name": "signup_test",
         "status": "running",
-        "start_date": "2024-07-01",
-        "end_date": "2024-07-28",
+        "start_ts": "2024-07-01",
+        "horizon_ts": "2024-07-29",
         "unit_key": "user_id",
         "assignment": {
             "query": "SELECT user_id, variant, exposure_ts FROM assignments",
@@ -328,10 +331,131 @@ class TestComparisons:
             ExperimentConfig.model_validate(base_payload(comparisons=[]))
 
 
+class TestWindowFields:
+    """m10 WP1/D1: the window edges are timestamps, and the old keys are gone."""
+
+    @pytest.mark.parametrize(
+        ("old", "new"),
+        [("start_date", "start_ts"), ("end_date", "horizon_ts")],
+    )
+    def test_the_renamed_keys_fail_by_name(self, old, new):
+        """pydantic's default extra="ignore" would drop the stale key and then
+        report a bare 'Field required' — which does not tell the reader that
+        the horizon VALUE moves too."""
+        payload = base_payload()
+        payload[old] = payload.pop({"start_date": "start_ts", "end_date": "horizon_ts"}[old])
+        with pytest.raises(ValidationError, match=f"`{old}` was renamed to `{new}`"):
+            ExperimentConfig.model_validate(payload)
+
+    def test_the_end_date_hint_spells_out_the_off_by_one(self):
+        payload = base_payload()
+        payload["end_date"] = payload.pop("horizon_ts")
+        with pytest.raises(ValidationError, match="EXCLUSIVE right edge"):
+            ExperimentConfig.model_validate(payload)
+
+    def test_a_bare_date_stays_a_date_and_a_timestamp_stays_a_datetime(self):
+        """Type-preserving on purpose: str() of the field reaches the m9 state
+        identity hash, so a re-parse that flipped the type would orphan every
+        materialized series."""
+        config = ExperimentConfig.model_validate(
+            base_payload(start_ts="2024-07-01", horizon_ts="2024-07-14 18:30:00")
+        )
+        assert type(config.start_ts) is date
+        assert type(config.horizon_ts) is datetime
+        assert config.horizon_ts == datetime(2024, 7, 14, 18, 30)
+
+    def test_python_objects_pass_through_unchanged(self):
+        config = ExperimentConfig.model_validate(
+            base_payload(start_ts=date(2024, 7, 1), horizon_ts=datetime(2024, 7, 14, 6, 0))
+        )
+        assert type(config.start_ts) is date
+        assert type(config.horizon_ts) is datetime
+
+    def test_an_unquoted_number_is_refused_not_read_as_a_unix_timestamp(self):
+        """`start_ts: 20240101` (no quotes, no dashes) is an int to YAML, and
+        pydantic's datetime member would happily read it as 1970-08-23."""
+        with pytest.raises(ValidationError, match="expected an ISO date or timestamp"):
+            ExperimentConfig.model_validate(base_payload(start_ts=20240101))
+
+    def test_a_utc_offset_is_refused(self):
+        with pytest.raises(ValidationError, match="drop the UTC offset"):
+            ExperimentConfig.model_validate(base_payload(start_ts="2024-07-01T10:00:00+03:00"))
+
+    def test_garbage_is_refused(self):
+        with pytest.raises(ValidationError, match="is not an ISO date"):
+            ExperimentConfig.model_validate(base_payload(start_ts="last tuesday"))
+
+    def test_instants_resolve_through_the_experiment_timezone(self):
+        config = ExperimentConfig.model_validate(
+            base_payload(start_ts="2024-07-01", horizon_ts="2024-07-15", timezone="Europe/Moscow")
+        )
+        assert config.start_instant() == datetime(2024, 6, 30, 21, 0)
+        assert config.horizon_instant() == datetime(2024, 7, 14, 21, 0)
+
+    def test_horizon_seconds_is_the_true_elapsed_window(self):
+        whole_days = ExperimentConfig.model_validate(base_payload(horizon_ts="2024-07-15"))
+        assert whole_days.horizon_seconds() == 14 * 86400
+
+        sub_day = ExperimentConfig.model_validate(
+            base_payload(start_ts="2024-07-01 06:00:00", horizon_ts="2024-07-02 12:00:00")
+        )
+        assert sub_day.horizon_seconds() == 30 * 3600
+
+    def test_horizon_seconds_absorbs_a_dst_transition(self):
+        """A 5-day window over the spring-forward weekend is 5 days MINUS an
+        hour — a day count would report 432000 and be wrong by 3600."""
+        config = ExperimentConfig.model_validate(
+            base_payload(
+                start_ts="2024-03-08", horizon_ts="2024-03-13", timezone="America/New_York"
+            )
+        )
+        assert config.horizon_seconds() == 5 * 86400 - 3600
+
+    def test_the_grid_horizon_is_exactly_the_configured_horizon(self):
+        """The rename's point: one vocabulary. `config.horizon_ts` resolved IS
+        `grid.horizon_ts` — no +1-day translation anywhere."""
+        config = ExperimentConfig.model_validate(base_payload())
+        grid = generate_grid(
+            config.start_ts, config.horizon_ts, config.cadence_segments(), tz=config.timezone
+        )
+        assert grid.start_ts == config.start_instant()
+        assert grid.horizon_ts == config.horizon_instant()
+
+
+class TestIntervalAnchorConfig:
+    def test_defaults_to_midnight(self):
+        assert ExperimentConfig.model_validate(base_payload()).interval_anchor == "midnight"
+
+    @pytest.mark.parametrize("keyword", ["midnight", "start"])
+    def test_keywords(self, keyword):
+        config = ExperimentConfig.model_validate(base_payload(interval_anchor=keyword))
+        assert config.interval_anchor == keyword
+
+    def test_an_explicit_timestamp_is_type_preserved(self):
+        config = ExperimentConfig.model_validate(
+            base_payload(interval_anchor="2024-06-30 21:00:00")
+        )
+        assert config.interval_anchor == datetime(2024, 6, 30, 21, 0)
+
+    @pytest.mark.parametrize("bad", ["noon", 20240101, "2024-13-01"])
+    def test_every_rejection_names_all_three_forms(self, bad):
+        """`interval_anchor: noon` must not read as 'not a timestamp' — the
+        message has to mention that two keywords exist."""
+        with pytest.raises(ValidationError, match="is not a valid anchor") as exc:
+            ExperimentConfig.model_validate(base_payload(interval_anchor=bad))
+        message = str(exc.value)
+        assert "'midnight'" in message and "'start'" in message and "timestamp" in message
+
+
 class TestDatesAndMisc:
-    def test_end_before_start(self):
-        with pytest.raises(ValidationError, match="before start_date"):
-            ExperimentConfig.model_validate(base_payload(end_date="2024-06-30"))
+    def test_horizon_equal_to_start_is_an_empty_window(self):
+        """The horizon is EXCLUSIVE, so equality is a zero-length experiment."""
+        with pytest.raises(ValidationError, match="is not after start_ts"):
+            ExperimentConfig.model_validate(base_payload(horizon_ts="2024-07-01"))
+
+    def test_horizon_before_start(self):
+        with pytest.raises(ValidationError, match="is not after start_ts"):
+            ExperimentConfig.model_validate(base_payload(horizon_ts="2024-06-30"))
 
     def test_bad_timezone(self):
         with pytest.raises(ValidationError, match="unknown timezone"):
@@ -346,10 +470,11 @@ class TestDatesAndMisc:
             ExperimentConfig.model_validate(base_payload(alpha=1.5))
 
     def test_from_yaml_file(self, tmp_path):
-        (tmp_path / "exp.yml").write_text("""
+        (tmp_path / "exp.yml").write_text(
+            """
 name: signup_test
-start_date: 2024-07-01
-end_date: 2024-07-28
+start_ts: 2024-07-01
+horizon_ts: 2024-07-29
 unit_key: user_id
 assignment:
   query: "SELECT user_id, variant, exposure_ts FROM a"
@@ -359,7 +484,8 @@ comparisons:
   - metric: signup_cr
     is_main_metric: true
     method: {name: z-test, params: {test_type: relative}}
-""")
+"""
+        )
         config = ExperimentConfig.from_yaml_file(tmp_path / "exp.yml")
         assert config.name == "signup_test"
         assert config.comparisons[0].method.name == "z-test"

@@ -31,8 +31,8 @@ NOW = datetime(2026, 7, 4, 12, 0, 0)
 EXPERIMENT_YAML = """\
 # precious top comment that must survive in the archive
 name: exp_apply
-start_date: 2024-07-01
-end_date: 2024-07-04
+start_ts: 2024-07-01
+horizon_ts: 2024-07-05
 unit_key: user_id
 assignment:
   query: SELECT user_id, variant, exposure_ts FROM assignments

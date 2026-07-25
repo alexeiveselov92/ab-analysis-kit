@@ -1,7 +1,7 @@
 # Sequential (always-valid) analysis
 
 abkit recomputes each experiment as a **cumulative series**: `[start .. start+1d]`,
-`[start .. start+2d]`, and so on to the horizon (`end_date`). Every cutoff produces
+`[start .. start+2d]`, and so on to the horizon (`horizon_ts`). Every cutoff produces
 a fresh effect, confidence interval, and p-value — the stabilization chart you see
 in [`abk explore`](explore.md).
 
@@ -46,8 +46,8 @@ Sequential mode is an experiment-level toggle in the experiment YAML
 
 ```yaml
 name: pricing_test
-start_date: 2024-07-01
-end_date:   2024-07-14
+start_ts:   2024-07-01
+horizon_ts: 2024-07-15
 unit_key:   user_id
 
 sequential:

@@ -18,13 +18,18 @@ status: running                  # design | running | concluded | archived (defa
 is_actual: true                  # catalog flag only (persisted to _ab_experiments); NOT read for selection (default true)
 tags: [growth, onboarding]       # optional — selectable via `--select tag:<t>` (e.g. tag:actual matches this list)
 
-start_date: 2024-07-01           # required — PINNED left edge of every cumulative window
-end_date:   2024-07-14           # required — planner horizon (also drives the power plan)
+start_ts:   2024-07-01           # required — PINNED left edge of every cumulative window
+                                 # (bare date = local midnight; a timestamp is exact)
+horizon_ts: 2024-07-15           # required — planner horizon, the EXCLUSIVE right edge
+                                 # (this covers July 1..14); also drives the power plan
 unit_key:   user_id              # required — randomization + default analysis unit
 
 cadence: 1d                      # cumulative cutoff step (default "1d"); see "Cadence" below
+interval_anchor: midnight        # WHERE the cutoffs land: midnight (default) | start |
+                                 # an explicit timestamp; see "Cadence" below
 data_lag: 0                      # completeness watermark; REQUIRED when cadence < 1d
-timezone: UTC                    # interprets date fields & midnight snapping; storage is UTC (default UTC)
+timezone: UTC                    # interprets bare-date edges, the `midnight` anchor and the
+                                 # day lattice; storage is UTC (default UTC)
 
 assignment:                      # READ-ONLY exposure source — abkit never randomizes
   query_file: sql/assignment.sql # or inline `query:` (exactly one, never both)
@@ -92,11 +97,16 @@ comparisons:                     # required — each binds one library metric to
 
 ## Cumulative window, cadence & data_lag
 
-- The analysis window is **pinned-start / moving-end**: `start_date` never moves;
+- The analysis window is **pinned-start / moving-end**: `start_ts` never moves;
   each cutoff advances the end through the horizon, producing the stabilization
-  series (one point per cutoff, effect + CI over `[start_date .. cutoff]`).
-- `end_date` is the **horizon**: the last daily cutoff covers this day, and it
-  drives the power plan and the sequential pre-horizon rule below.
+  series (one point per cutoff, effect + CI over `[start_ts .. cutoff]`).
+- Both edges are **timestamps**. A bare date is shorthand for local midnight of
+  that day in `timezone`, so `start_ts: 2024-07-01` reads exactly as before; a
+  full timestamp (`2024-07-01 14:30:00`) is that exact instant, with no snap.
+- `horizon_ts` is the **horizon** and it is EXCLUSIVE — the window is
+  `[start_ts, horizon_ts)`. An experiment running July 1..14 inclusive has
+  `horizon_ts: 2024-07-15`. It drives the power plan and the sequential
+  pre-horizon rule below.
 - `cadence` is the cutoff step. Either a **duration scalar** (`"1h"`, `"30m"`,
   `"1d"`, or integer seconds) or a **coarsening schedule** — a dense-early list
   that must be strictly coarsening with strictly increasing `until` bounds (only
@@ -108,6 +118,22 @@ comparisons:                     # required — each binds one library metric to
     - {every: 1d}                # daily thereafter
   ```
 
+- `interval_anchor` decides **where** the cutoff lattice sits (`cadence` decides
+  how far apart the points are). Cutoffs are `anchor + k*cadence`, kept strictly
+  after `start_ts`. Three forms:
+
+  | value | meaning |
+  |---|---|
+  | `midnight` (default when absent) | local midnight of the day the window opens — whole calendar days, what BI dashboards read |
+  | `start` | count from the start instant: a 14:00 start ⇒ 14:00 cutoffs |
+  | an explicit timestamp | align to an external cycle (e.g. 3-day windows at 00:00 MSK on a UTC warehouse) |
+
+  The anchor MAY precede `start_ts` — the forward snap is what makes that
+  well-defined, and the first window is then legitimately partial. Note
+  `midnight` anchors to the experiment's OWN opening day, not to a global
+  cycle: two experiments starting a day apart get interleaved 3-day lattices.
+  Use the explicit form when the cycle must be shared. Day-or-coarser steps hold
+  the anchor's local wall-clock time across DST; sub-day steps are absolute.
 - `data_lag` is the completeness watermark: a cutoff is analyzed only once
   `end_ts <= now() - data_lag`. **Required when cadence < 1d** (declare your
   ingestion SLA). At daily cadence the default `0` reproduces the legacy
@@ -166,8 +192,8 @@ series early and stopping ("peeking") inflates the false-positive rate. Therefor
 
 ```yaml
 name: pricing_test
-start_date: 2024-07-01
-end_date:   2024-07-14
+start_ts:   2024-07-01
+horizon_ts: 2024-07-15
 unit_key:   user_id
 assignment:
   query_file: sql/assignment.sql

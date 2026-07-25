@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from abkit.config import (
     ExperimentConfig,
     MetricConfig,
@@ -32,8 +34,8 @@ def make_metric(name="arpu", **overrides) -> MetricConfig:
 def make_experiment(**overrides) -> ExperimentConfig:
     payload = {
         "name": "exp1",
-        "start_date": "2024-07-01",
-        "end_date": "2024-07-28",
+        "start_ts": "2024-07-01",
+        "horizon_ts": "2024-07-29",
         "unit_key": "user_id",
         "assignment": {
             "query": ASSIGNMENT_QUERY,
@@ -256,6 +258,36 @@ class TestRenderSmoke:
         )
         report = run_l2(exp, [make_metric()])
         assert any("exposure_ts" in e for e in report.errors)
+
+    def test_an_off_phase_anchor_warns_that_the_first_look_is_short(self):
+        """The lattice does not start at start_ts, so the first window is
+        shorter than the cadence — expected, but it reads like a dropped look."""
+        exp = make_experiment(start_ts="2024-07-01 14:30:00")  # midnight anchor
+        report = run_l2(exp, [make_metric()])
+        assert not report.errors, report.errors
+        assert any("the first look covers" in w for w in report.warnings), report.warnings
+
+    def test_an_on_phase_anchor_stays_quiet(self):
+        report = run_l2(make_experiment(), [make_metric()])
+        assert not any("the first look covers" in w for w in report.warnings)
+
+    def test_the_anchor_reaches_the_grid_through_the_factory(self):
+        """End-to-end proof the knob is wired: the same window with a `start`
+        anchor and a sub-day start_ts must produce a DIFFERENT lattice."""
+        midnight = make_experiment(start_ts="2024-07-01 14:30:00")
+        anchored = make_experiment(start_ts="2024-07-01 14:30:00", interval_anchor="start")
+        assert midnight.grid().cutoffs[0].end_ts == datetime(2024, 7, 2, 0, 0)
+        assert anchored.grid().cutoffs[0].end_ts == datetime(2024, 7, 2, 14, 30)
+        assert anchored.grid().anchor_ts == datetime(2024, 7, 1, 14, 30)
+
+    def test_a_sub_day_start_still_lints(self):
+        """m10 WP1: the fixture window came from
+        `datetime.combine(experiment.start_date, time.min)`, which raises no
+        error on a datetime — it silently drops the time. It now resolves
+        through the same helper the grid uses."""
+        exp = make_experiment(start_ts="2024-07-01 14:30:00")
+        report = run_l2(exp, [make_metric()])
+        assert not report.errors, report.errors
 
     def test_metric_without_macro_fails_lint(self):
         metric = make_metric(query="SELECT variant, user_id, v FROM {{ data_database }}.t")
