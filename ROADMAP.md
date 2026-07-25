@@ -310,10 +310,19 @@ Zero statistical numbers moved (no `ALGORITHM_VERSION` bump; the flag-off/on
 parity gate is the milestone's №1 assertion).
 
 ### M10 — timestamps + schema cleanup + explore polish → `0.5.0` 📋
-Design contract: [m10-implementation-plan.md](docs/specs/m10-implementation-plan.md).
+Design contract: [m10-implementation-plan.md](docs/specs/m10-implementation-plan.md)
+— **read its §4 first: five decisions settled 2026-07-25, two of which
+overturn the WP bodies.** The window fields are **renamed**
+`start_date`/`end_date` → `start_ts`/`horizon_ts` (no aliases — a date-shaped
+name contradicts a flexible-interval system, and the legacy shape was to be
+rewritten, not inherited), and grid anchoring becomes the configurable
+`interval_anchor` (`midnight` — the absent-key behavior the scaffold writes
+out — | `start` | an explicit timestamp, e.g. 3-day windows at 00:00 MSK on a
+UTC warehouse), with one engine rule: cutoffs = anchor + k·interval, snapped
+forward to ≥ start.
 Experiment start/horizon become full timestamps (`date | datetime` union, no
-coercion; bare dates stay byte-identical — existing tests unmodified are the
-gate; WP1–2), **both track schema breaks land here in one recreate guide**
+coercion; the gate is numeric — an unchanged window persists unchanged
+`_ab_results` numbers; WP1–2), **both track schema breaks land here in one recreate guide**
 (drop `_ab_results` date columns + widen `_ab_experiments`; WP2–3), the
 explore lock decouples (`heavy_lock` only for reload/validate/apply;
 `/recompute` free + post-compute stale re-check; WP4), and bootstrap
