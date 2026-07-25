@@ -42,6 +42,7 @@ REVENUE = MetricConfig.model_validate(
         "name": "arpu",
         "type": "sample",
         "columns": {"variant": "variant", "value": "gross_usd"},
+        "state_additive": True,
         "query": _metric_sql("user_revenue", "sum(gross_usd) AS gross_usd"),
     }
 )
@@ -50,6 +51,7 @@ CONVERSION = MetricConfig.model_validate(
         "name": "conversion",
         "type": "fraction",
         "columns": {"variant": "variant", "count": "conversions", "nobs": "trials"},
+        "state_additive": True,
         "query": _metric_sql(
             "user_conversions", "sum(conversions) AS conversions, sum(trials) AS trials"
         ),
@@ -60,6 +62,7 @@ CTR = MetricConfig.model_validate(
         "name": "ctr",
         "type": "ratio",
         "columns": {"variant": "variant", "numerator": "clicks", "denominator": "views"},
+        "state_additive": True,
         "query": _metric_sql("user_engagement", "sum(clicks) AS clicks, sum(views) AS views"),
     }
 )
@@ -78,6 +81,9 @@ class SyntheticWarehouse(FakeDatabaseManager):
     def __init__(self, shuffled: bool = False):
         super().__init__()
         self.shuffled = shuffled
+        #: fact rows scanned per table — the m9 WP5 perf gate's measurement
+        self.scanned_by_table: dict[str, int] = {}
+        self._last_scanned = 0
         # (unit, variant, exposure_ts)
         self.cohort: list[tuple[str, str, datetime]] = []
         # table -> [(unit, variant, event_ts, {column: value})]
@@ -89,12 +95,27 @@ class SyntheticWarehouse(FakeDatabaseManager):
 
     def execute_query(self, query: str, params: dict[str, Any] | None = None):
         flat = " ".join(query.split())
+        # The short-circuit paths bypass the base manager, so they must record
+        # their own cost — otherwise the m9 WP5 counters (and the perf gate
+        # built on them) would see every fact scan as free.
         for table, events in self.events.items():
             if table in flat:
-                return self._aggregate(flat, events)
+                rows = self._aggregate(flat, events)
+                # SCANNED = the fact rows inside the rendered window (what a
+                # partition-pruned warehouse actually reads), not the
+                # aggregated rows handed back. This is the quantity the
+                # milestone's O(D²)→O(D) claim is about, so the fake reports
+                # it the way ClickHouse does.
+                self._record_query(len(rows), 0.0, scanned_rows=self._last_scanned)
+                self.scanned_by_table[table] = (
+                    self.scanned_by_table.get(table, 0) + self._last_scanned
+                )
+                return rows
         if "FROM assignments" in flat:
             raw = [{"user_id": u, "variant": v, "exposure_ts": ts} for u, v, ts in self.cohort]
-            return serve_assignment_pushdown(self._project, flat, raw)
+            served = serve_assignment_pushdown(self._project, flat, raw)
+            self._record_query(len(served), 0.0)
+            return served
         return super().execute_query(query, params)
 
     def _cohort_join_map(self, flat: str) -> dict[str, datetime]:
@@ -136,9 +157,11 @@ class SyntheticWarehouse(FakeDatabaseManager):
         exposure_filter = "exposure_ts" in flat.split("WHERE experiment")[-1]
         exposure_by_unit = self._cohort_join_map(flat)
         sums: dict[tuple[str, str], dict[str, float]] = {}
+        scanned = 0
         for unit, variant, ts, values in events:
             if not (w_start <= ts < w_end):
                 continue
+            scanned += 1  # inside the rendered window ⇒ a real scanned row
             if unit not in exposure_by_unit:
                 continue  # the cohort join
             if exposure_filter and ts < exposure_by_unit[unit]:
@@ -146,6 +169,7 @@ class SyntheticWarehouse(FakeDatabaseManager):
             acc = sums.setdefault((unit, variant), dict.fromkeys(values, 0.0))
             for column, value in values.items():
                 acc[column] += value
+        self._last_scanned = scanned
         rows = [
             {"variant": variant, "user_id": unit, **acc}
             for (unit, variant), acc in sorted(sums.items())

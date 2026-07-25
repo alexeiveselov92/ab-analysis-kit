@@ -125,6 +125,7 @@ def run_run(
     workers: int,
     report_path: str | None = None,
     resync_cohort: bool = False,
+    cost_report: bool = False,
 ) -> None:
     try:
         parsed_steps = PipelineStep.parse(steps)
@@ -239,6 +240,15 @@ def run_run(
                 ]
                 if PipelineStep.STATE in parsed_steps:
                     children.insert(1, f"state days: {outcome.state_days_materialized}")
+                if cost_report:
+                    # m9 WP5: the evidence for the incremental-reads
+                    # default-flip decision. Counters are always collected;
+                    # this flag only prints them.
+                    children.append("cost:")
+                    for stage in ("load", "state", "compute"):
+                        cost = outcome.stage_costs.get(stage)
+                        if cost is not None:
+                            children.append(f"  {stage}: {cost.describe()}")
                 srm_warnings = [w for w in outcome.warnings if "SRM" in w]
                 other_warnings = [w for w in outcome.warnings if "SRM" not in w]
                 echo_tree(outcome.experiment, children, warnings=other_warnings)

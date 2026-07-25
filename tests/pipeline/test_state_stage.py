@@ -431,6 +431,47 @@ class TestEligibility:
         experiment = make_experiment("exp_strat", "arpu", T_TEST)
         assert state_eligible_metrics(experiment, {"arpu": stratified}, None) == []
 
+    def test_the_declaration_is_required(self):
+        """The promise is opt-in: a metric that never declares state_additive
+        materializes nothing, however additive its SQL looks. abkit cannot read
+        additivity off SQL — three review rounds each found a new shape that
+        looks additive and is not — so the author declares it."""
+        undeclared = MetricConfig.model_validate(
+            {
+                "name": "arpu",
+                "type": "sample",
+                "columns": {"variant": "variant", "value": "gross_usd"},
+                "query": REVENUE.query,
+            }
+        )
+        assert undeclared.state_additive is False  # the default
+        experiment = make_experiment("exp_undeclared", "arpu", T_TEST)
+        assert state_eligible_metrics(experiment, {"arpu": undeclared}, None) == []
+
+        declared = undeclared.model_copy(update={"state_additive": True})
+        assert state_eligible_metrics(experiment, {"arpu": declared}, None)
+
+    def test_declaring_it_cannot_override_a_visibly_non_additive_projection(self):
+        """The textual filter is VETO-only: declaring the promise over
+        `max(...)` still refuses, so an author's mistake is caught cheaply."""
+        contradictory = MetricConfig.model_validate(
+            {
+                "name": "arpu",
+                "type": "sample",
+                "state_additive": True,
+                "columns": {"variant": "variant", "value": "gross_usd"},
+                "query": (
+                    "{% import 'abkit_assignment.jinja' as ab %}\n"
+                    "SELECT {{ ab.variant_col() }} AS variant, user_id, "
+                    "max(gross_usd) AS gross_usd "
+                    "FROM {{ data_database }}.t {{ ab.exposed_units() }} "
+                    "GROUP BY variant, user_id"
+                ),
+            }
+        )
+        experiment = make_experiment("exp_contradiction", "arpu", T_TEST)
+        assert state_eligible_metrics(experiment, {"arpu": contradictory}, None) == []
+
     def test_non_additive_role_projections_are_excluded(self):
         """A metric whose role columns are not additive across days must never
         materialize state: the reader SUMS days, so ``max(...)`` and a literal
@@ -464,6 +505,19 @@ class TestEligibility:
             ("uniq(gross_usd) AS gross_usd", False),
             ("any(gross_usd) AS gross_usd", False),
             ("1 AS gross_usd", False),
+            # R1 review vectors: the check must look at EVERY alias of the
+            # role column and at the WHOLE aliased expression, on SQL with
+            # comments and string literals stripped.
+            ("sum(gross_usd) / count(*) AS gross_usd", False),  # a ratio
+            ("sum(a) - sum(b) AS gross_usd", False),  # a difference
+            ("sum(DISTINCT gross_usd) AS gross_usd", False),  # not additive
+            ("count(DISTINCT gross_usd) AS gross_usd", False),
+            ("sum(gross_usd) OVER (PARTITION BY user_id) AS gross_usd", False),
+            ("max(gross_usd) AS gross_usd -- sum(gross_usd) AS gross_usd", False),
+            ("max(gross_usd) AS gross_usd, 'sum(g) AS gross_usd' AS note", False),
+            # R2: a multi-branch query binds later branches positionally,
+            # so an alias scan cannot see what they project at all.
+            ("sum(gross_usd) AS gross_usd FROM a UNION ALL SELECT variant, user_id, avg(x)", False),
         ],
     )
     def test_additive_aggregate_allowlist(self, projection, eligible):
@@ -471,6 +525,7 @@ class TestEligibility:
             {
                 "name": "arpu",
                 "type": "sample",
+                "state_additive": True,  # the matrix isolates the veto filter
                 "columns": {"variant": "variant", "value": "gross_usd"},
                 "query": (
                     "{% import 'abkit_assignment.jinja' as ab %}\n"
@@ -483,6 +538,52 @@ class TestEligibility:
         experiment = make_experiment("exp_allow", "arpu", T_TEST)
         chosen = state_eligible_metrics(experiment, {"arpu": metric}, None)
         assert bool(chosen) is eligible
+
+    def test_a_dead_cte_cannot_launder_a_non_additive_projection(self):
+        """R1 review: the earlier check asked 'does an additive projection
+        exist anywhere in the text?', which a leftover staging CTE — or an
+        ordinary two-level aggregation — satisfied while the FINAL projection
+        stayed non-additive. Every alias of the role column must be additive."""
+        laundered = MetricConfig.model_validate(
+            {
+                "name": "signup_cr",
+                "type": "fraction",
+                "columns": {"variant": "variant", "count": "signed_up", "nobs": "visits"},
+                "query": (
+                    "{% import 'abkit_assignment.jinja' as ab %}\n"
+                    "WITH staging AS (\n"
+                    "  SELECT user_id, sum(is_signup) AS signed_up, count(*) AS visits\n"
+                    "  FROM {{ data_database }}.raw GROUP BY user_id\n"
+                    ")\n"
+                    "SELECT {{ ab.variant_col() }} AS variant, user_id, "
+                    "max(is_signup) AS signed_up, 1 AS visits "
+                    "FROM {{ data_database }}.sessions {{ ab.exposed_units() }} "
+                    "GROUP BY variant, user_id"
+                ),
+            }
+        )
+        experiment = make_experiment("exp_laundered", "signup_cr", {"name": "z-test"})
+        assert state_eligible_metrics(experiment, {"signup_cr": laundered}, None) == []
+
+    def test_outer_reaggregation_of_an_inner_sum_is_excluded(self):
+        outer = MetricConfig.model_validate(
+            {
+                "name": "arpu",
+                "type": "sample",
+                "columns": {"variant": "variant", "value": "gross_usd"},
+                "query": (
+                    "{% import 'abkit_assignment.jinja' as ab %}\n"
+                    "SELECT {{ ab.variant_col() }} AS variant, user_id, "
+                    "max(gross_usd) AS gross_usd FROM ("
+                    "  SELECT user_id, session_id, sum(amount) AS gross_usd "
+                    "  FROM {{ data_database }}.t {{ ab.exposed_units() }} "
+                    "  GROUP BY user_id, session_id"
+                    ") GROUP BY variant, user_id"
+                ),
+            }
+        )
+        experiment = make_experiment("exp_outer", "arpu", T_TEST)
+        assert state_eligible_metrics(experiment, {"arpu": outer}, None) == []
 
     def test_explicit_covariate_metric_is_excluded(self):
         """R2 fix: a snapshot covariate is not day-additive — no state."""

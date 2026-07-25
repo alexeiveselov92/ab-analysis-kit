@@ -220,6 +220,26 @@ class _UnitStateMixin(_InternalTablesBase):
             for row in rows
         }
 
+    def list_state_sources(self) -> list[str]:
+        """Every ``source_table`` key present in ``_ab_unit_state``.
+
+        The wide net `abk clean` needs (m9 WP5): the per-run sweep in
+        ``pipeline/state.py`` only revisits the source keys THIS run touches,
+        so a series orphaned by a removed comparison, a renamed metric or a
+        deleted experiment would otherwise sit there forever — nothing else
+        enumerates the table (state rows are not experiment-keyed, so the
+        ``purge_experiment`` machinery cannot reach them either).
+        """
+        full_table_name = self._manager.get_full_table_name(TABLE_UNIT_STATE, use_internal=True)
+        rows = self._manager.execute_query(
+            f"SELECT DISTINCT source_table FROM {full_table_name}{self._manager.final_modifier}"
+        )
+        return sorted(row["source_table"] for row in rows)
+
+    def unit_state_table_exists(self) -> bool:
+        """True when ``_ab_unit_state`` exists — a never-run project has none."""
+        return self._manager.table_exists(TABLE_UNIT_STATE, schema=self._manager.internal_location)
+
     def list_state_column_sets(self, source_table: str) -> list[str]:
         """Distinct ``column_set_id`` series stored under one source key.
 

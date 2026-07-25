@@ -46,6 +46,9 @@ sql: |                           # inline SQL — or `query_file: sql/arpu.sql`
   {{ ab.exposed_units() }}
   GROUP BY variant, user_id
 aa_fpr_budget: 0.07              # optional — per-metric A/A false-positive budget
+state_additive: false            # optional — declare that every role column is a plain
+                                 # sum()/count() over the window, so per-day partials add
+                                 # up to the window total (see below)
 ```
 
 Provide **exactly one** of `sql:` (inline; `query:` is an accepted alias) or
@@ -251,6 +254,38 @@ SQL, keep the metric a plain additive `sum(...)`.
 Set an explicit `columns.covariate` **only** when you compute a different
 covariate yourself (e.g. a snapshot column in your SQL). An explicit covariate
 role takes precedence and skips the second render.
+
+## `state_additive` (optional)
+
+`state_additive: true` is your promise that this metric **splits by day**: every
+role column is a plain `sum()`/`count()` over the window, so the per-day partials
+add up to the whole-window total.
+
+It gates the incremental compute engine. With it set, the `state` pipeline step
+materializes this metric's per-(unit, day) moments into `_ab_unit_state`, and
+`compute.incremental_reads: true` may then serve cutoffs from those moments
+instead of re-scanning the fact window. Without it, the metric is always
+recomputed over the whole window — always correct, just not cheap.
+
+**Leave it off** for anything that does not split by day:
+
+| Projection | Why it is not additive |
+|---|---|
+| `max(converted) AS converted` | summing daily maxima counts active days, not the window max |
+| `1 AS visits` (a constant) | eleven daily renders sum to eleven, not one |
+| `avg(x) AS x` | a mean of means is not the mean |
+| `uniq(session_id)`, `count(DISTINCT …)` | daily distinct counts do not sum to the window's |
+| `sum(x) / count(*) AS rate` | a ratio of aggregates; use a `ratio` metric instead |
+
+abkit cannot read additivity off your SQL — a staging CTE, an outer
+re-aggregation, a `UNION` branch or an identity `sum()` over a renamed per-unit
+`max()` all look additive textually. It does refuse projections that visibly
+contradict the promise (a bare `max()`, `DISTINCT`, a window function, a
+multi-branch query), but that filter can only take eligibility away, never grant
+it. The empirical check is
+[`abk verify-incremental`](../reference/cli.md#abk-verify-incremental), which
+reconciles both read paths across the whole computed series — run it before
+turning `compute.incremental_reads` on.
 
 ## `aa_fpr_budget` (optional)
 

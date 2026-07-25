@@ -22,13 +22,22 @@ Eligibility (per metric, within one experiment):
   ``sum_cov`` rows would inflate by the unit's active-day count once
   summed. Additivity cannot be verified from config, so such metrics stay
   on full-window recompute;
-- **every summed role column comes from a recognisably additive aggregate**
-  (``sum``/``count``, optionally ``…If``). The same non-additivity hazard
-  applies to the ordinary roles, not just the covariate: the scaffolded
-  ``example_signup_cr`` projects ``max(signed_up)`` and a literal
-  ``1 AS visits``, both of which inflate when eleven daily renders are
-  summed. Recognition is a positive allowlist, so an unparseable or exotic
-  projection stays on recompute rather than becoming silently wrong.
+- **the metric DECLARES ``state_additive: true``** — the author's promise
+  that per-day partials add up to the window total. This is a declaration
+  because it cannot be read off the SQL: three review rounds each found a
+  new textual shape that looks additive and is not (a dead staging CTE, an
+  outer re-aggregation of an inner sum, a ``UNION`` branch that binds
+  positionally, an identity ``sum()`` over a renamed per-unit ``max()``).
+  The hazard is real — the scaffolded ``example_signup_cr`` projects
+  ``max(signed_up)`` and a literal ``1 AS visits``, both of which inflate
+  when eleven daily renders are summed;
+- **and the projections do not visibly contradict that promise**:
+  ``_role_projections_are_additive`` is a VETO-only sanity filter — every
+  ``AS <role column>`` must alias exactly one additive aggregate call, with
+  no ``DISTINCT``/``OVER``, and multi-branch SQL is refused outright. It can
+  only take eligibility away, never grant it, so its remaining blind spots
+  cost an unnoticed author mistake, not a silent corruption — and
+  ``abk verify-incremental`` is the empirical oracle that catches those.
 
 Contiguity invariant (the WP4 gap-detection contract): days advance strictly
 in order and a failed day TRUNCATES the series from that day before the run
@@ -168,18 +177,38 @@ def state_series_key(
     return source_id, series_id
 
 
-#: aggregates whose per-day results SUM to the whole-window result. The list is
-#: a positive allowlist on purpose: an unrecognised projection makes a metric
-#: INELIGIBLE (a missed optimisation), never eligible-and-wrong.
+#: aggregates whose per-day results SUM to the whole-window result. A positive
+#: allowlist on purpose: an unrecognised projection makes a metric INELIGIBLE
+#: (a missed optimisation), never eligible-and-wrong.
 _ADDITIVE_AGGREGATES = ("sum", "sumif", "count", "countif")
 
-#: ``<additive-aggregate>( … ) AS <role column>`` — one level of nesting so
-#: ``sum(if(x, 1, 0)) AS c`` still reads as additive.
-_ADDITIVE_PROJECTION = r"(?<![\w.])(?:{aggs})\s*\((?:[^()]|\([^()]*\))*\)\s+AS\s+{col}(?![\w])"
+#: an additive aggregate call and NOTHING else — anchored at both ends of the
+#: aliased expression, so ``sum(x)/count(*)`` (a per-unit ratio) is rejected
+#: even though it ends in an additive call. One level of paren nesting keeps
+#: ``sum(if(x, 1, 0))`` readable as additive.
+_ADDITIVE_CALL = r"(?:{aggs})\s*\((?:[^()]|\([^()]*\))*\)"
+
+#: aggregates are not additive over a DISTINCT set (a per-day distinct count
+#: does not sum to the window's), and a windowed aggregate is not a per-unit
+#: value at all.
+_NON_ADDITIVE_MODIFIERS = re.compile(r"\bdistinct\b|\bover\b", re.IGNORECASE)
+
+#: a multi-branch query binds later branches to the output columns POSITIONALLY
+#: — they need no alias at all, so an alias scan cannot see what they project
+#: (an R2 review finding). Refuse the whole shape rather than guess.
+_MULTI_BRANCH = re.compile(r"\bunion\b|\bintersect\b|\bexcept\b", re.IGNORECASE)
+
+#: ``--`` / ``/* */`` comments and single-quoted literals: text that looks like
+#: SQL but never executes. Stripped before any structural question is asked.
+_SQL_NOISE = re.compile(r"--[^\n]*|/\*.*?\*/|'(?:[^']|'')*'", re.DOTALL)
+
+
+def _strip_sql_noise(sql: str) -> str:
+    return _SQL_NOISE.sub(" ", sql)
 
 
 def _role_projections_are_additive(metric: MetricConfig, metric_sql: str) -> bool:
-    """Does every summed role column come from an additive aggregate?
+    """Is EVERY projection of every summed role column an additive aggregate?
 
     The STATE stage stores one row per (unit, DAY) and the reader SUMS those
     days, so a role column that is not additive across days is silently
@@ -189,20 +218,47 @@ def _role_projections_are_additive(metric: MetricConfig, metric_sql: str) -> boo
     eleven trials where the window has one (found by
     ``abk verify-incremental``, m9 WP5).
 
-    Additivity cannot be *proven* from config, so this asks the conservative
-    question instead — can we positively RECOGNISE an additive projection for
-    each role column? — and refuses everything else. The same reasoning WP3
-    already applied to the explicit covariate role, generalised to all of
-    them (the R2 lesson, widened).
+    Additivity cannot be *proven* from SQL text, so this asks the strictest
+    cheap question instead: after stripping comments and string literals,
+    **every** ``AS <role column>`` in the body must alias exactly one additive
+    aggregate call, with no ``DISTINCT`` and no ``OVER``. Requiring *every*
+    alias — not merely the existence of one — is what makes the check
+    unfoolable by a dead CTE, a staging subquery whose result an outer
+    ``max()`` re-aggregates, or a second projection of the same name (all
+    three were review findings against the earlier "does an additive
+    projection exist?" form of this check). A role column that is never aliased
+    at all is likewise refused: we cannot see what produces it.
+
+    It remains a NECESSARY, not sufficient, condition — SQL is not parsed
+    here, and the body is the pre-Jinja source. The authoritative additivity
+    oracle is ``abk verify-incremental`` (m9 WP5), which is precisely why
+    ``compute.incremental_reads`` defaults off and the flip criteria
+    (cumulative-intervals.md §4.1) demand clean reconciliation runs first.
     """
+    body = _strip_sql_noise(metric_sql)
+    if _MULTI_BRANCH.search(body):
+        return False
+    call = _ADDITIVE_CALL.format(aggs="|".join(_ADDITIVE_AGGREGATES))
     for role, column in metric.columns.role_map().items():
         if role in ("variant", "stratum"):
             continue
-        pattern = _ADDITIVE_PROJECTION.format(
-            aggs="|".join(_ADDITIVE_AGGREGATES), col=re.escape(column)
-        )
-        if not re.search(pattern, metric_sql, flags=re.IGNORECASE | re.DOTALL):
+        aliases = list(re.finditer(rf"(?<![\w.])AS\s+{re.escape(column)}(?![\w])", body, re.I))
+        if not aliases:
             return False
+        for alias in aliases:
+            expression = body[: alias.start()]
+            match = re.search(rf"{call}\s*$", expression, flags=re.IGNORECASE | re.DOTALL)
+            if match is None:
+                return False
+            # The aggregate must be the WHOLE aliased expression: anything
+            # before it other than a select-list/paren boundary means the
+            # alias names a compound expression (a ratio, a difference, a
+            # CASE) whose value is not the aggregate itself.
+            prefix = expression[: match.start()].rstrip()
+            if prefix and prefix[-1] not in ",(":
+                return False
+            if _NON_ADDITIVE_MODIFIERS.search(match.group(0)):
+                return False
     return True
 
 
@@ -217,7 +273,8 @@ def comparison_state_eligible(
     incremental reader, and vice versa, so both sides ask one function.
     """
     return (
-        not _needs_seed(comparison.method.name)
+        metric.state_additive
+        and not _needs_seed(comparison.method.name)
         and metric.columns.stratum is None
         and metric.columns.covariate is None
         and "ab_cov_" not in metric_sql
@@ -237,7 +294,14 @@ def state_eligible_metrics(
     """
     chosen: dict[str, tuple[MetricConfig, str]] = {}
     for comparison in experiment.comparisons:
-        metric = metrics_by_name[comparison.metric]
+        metric = metrics_by_name.get(comparison.metric)
+        if metric is None:
+            # A dangling metric reference. `abk run` cannot reach this (its
+            # config lint fails first), but `abk clean` walks the whole
+            # project WITHOUT that lint, and a half-finished rename must not
+            # crash housekeeping (an R1 review finding). A comparison whose
+            # metric is gone has no state to materialize either way.
+            continue
         metric_sql = metric.get_query_text(project_root)
         if not comparison_state_eligible(comparison, metric, metric_sql):
             continue

@@ -861,6 +861,96 @@ default-flip criteria doc), `docs/specs/cli-and-dx.md`,
 
 **Session estimate:** 2 sessions.
 
+> **As-built note (2026-07-25, the WP5 session).** Shipped as specified —
+> `abk verify-incremental` over the new `compute/reconcile.py`, per-stage
+> cost counters behind `abk run --cost-report` (§8(3)'s decided name), the
+> `abk clean` state sweep, and the §7 executable perf gate. Disclosed
+> decisions:
+> (1) **A fallback is reported as UNVERIFIED, never as a pass.** When the
+> incremental read falls back for a cutoff, both sides run the same code and
+> agree trivially; counting that as verification would make a green report
+> meaningless exactly when the state series is broken. The reader gained an
+> undeduped `on_fallback` hook for the per-cutoff resolution this needs
+> (the user-facing warning stays deduped).
+> (2) **One construction path for the reader** — `build_incremental_backend`
+> (in `compute/incremental_backend.py`) is now what BOTH the driver and the
+> reconciler call, so the command that certifies the incremental path
+> certifies the backend the pipeline actually runs. This mirrors m8's
+> `build_cohort_backend` discipline and removed the driver's inline
+> closures.
+> (3) **Cost counters live on the manager, honestly split**: `queries`,
+> `rows` (returned) and `seconds` are universal; `scanned_rows`/
+> `scanned_bytes` come from ClickHouse's per-query progress and carry a
+> `scan_stats` flag so PostgreSQL/MySQL print `n/a` instead of passing
+> rows-returned off as a scan count. Counters are always collected (they are
+> ~free); the flag only decides whether the CLI prints them.
+> (4) **The perf gate measures fact rows SCANNED, not wall-clock** — the
+> quantity the O(D²)→O(D) claim is about — with exact arithmetic:
+> `N·D(D+1)/2` for recompute vs `N·D` for the incremental path, and zero
+> fact scans inside COMPUTE at daily cadence.
+> (5) **The reconciler is lock-free**: unlike `abk validate` (which writes
+> `_ab_aa_runs`), it persists nothing, so it must not serialize behind a
+> nightly run.
+> (6) The `abk clean` state sweep is deliberately **selection-independent**:
+> state rows are keyed by `(source_table, column_set_id)`, so pruning under
+> a narrow `--select` could delete another experiment's live series.
+> **The milestone's most valuable finding came from this WP before it even
+> landed**: pointed at the scaffolded example, `verify-incremental`
+> immediately reported a real divergence and exposed the non-additive-role
+> P0 recorded as deviation (7) in WP4's note above.
+> **Adversarial review R1** (5 sonnet lenses — false-green, additivity,
+> clean-GC, counters, CLI — → 2 skeptics per finding with mandatory repro):
+> 12 raised → 12 confirmed, all fixed in-session. Five were one root:
+> **the deviation-(7) additivity check was a substring search over the whole
+> SQL text**, so a dead CTE, an ordinary two-level aggregation
+> (`max(s) AS s` outside `sum(x) AS s`), a comment, a string literal,
+> `count(DISTINCT …)` and `sum(x)/count(*)` all passed it — the check closed
+> the case it was written against, not the class. Rewritten to the strictest
+> cheap question: after stripping comments and literals, **every** `AS
+> <role column>` in the body must alias exactly one additive aggregate call
+> (nothing before it but a select-list or paren boundary, no `DISTINCT`, no
+> `OVER`), and a role column with no alias at all is refused. It stays a
+> NECESSARY, not sufficient, condition — which is why the flip criteria
+> (§4.1) demand clean `verify-incremental` runs as the authoritative oracle.
+> The other seven: computed cutoffs that the CURRENT grid no longer produces
+> were silently intersected away (a schedule edit could hide an unexamined
+> chunk of the series behind a green exit 0 — now reported as a skip naming
+> the stranded range); a pair demoted on BOTH sides compared as a match
+> without checking the demoted unit counts; `abk clean`'s state sweep raised
+> `KeyError` on a dangling metric reference (it walks the project without
+> `abk run`'s config lint, so a half-finished rename crashed housekeeping);
+> the sequential τ² anchor load was unattributed in `stage_costs`,
+> understating COMPUTE in `--cost-report`; and `verify-incremental`
+> constructed its manager OUTSIDE the per-experiment guard, so one bad
+> connection aborted the whole sweep. Regressions pin all of them,
+> including a 15-case additivity matrix carrying every review vector.
+> **Adversarial review R2** (rewritten-additivity, false-green and
+> fix-verification lenses → 2 skeptics each): the fix-verification lens
+> returned zero; 3 confirmed. Two fixed: a `UNION`/`INTERSECT`/`EXCEPT`
+> query binds later branches POSITIONALLY, so an alias scan cannot see what
+> they project (multi-branch metric SQL is now refused outright), and
+> `verify-incremental` could exit 0 having examined nothing (a `--metric`
+> that matches no comparison, a project with no eligible comparison) — it
+> now says so and exits non-zero. The third was **not patched, by
+> decision**: an identity `sum()` over a renamed non-additive intermediate
+> (`WITH raw AS (SELECT max(f) AS flag …) SELECT sum(flag) AS signed_up`)
+> is additive by every textual measure; only dataflow analysis over
+> grouping levels distinguishes it.
+> **§8 Q6 — DECIDED (2026-07-25, maintainer): additivity becomes an explicit
+> metric-level declaration.** Three review rounds each defeated the textual
+> check with a new SQL shape, which is the empirical case that text cannot
+> decide this. `MetricConfig.state_additive` (default **false**) is the
+> author's promise that per-day partials add up to the window total;
+> `comparison_state_eligible` requires it, `_role_projections_are_additive`
+> is demoted to a VETO-ONLY sanity filter (it can refuse a visibly
+> contradicting projection but never grant eligibility), and
+> `abk verify-incremental` stays the empirical oracle. Consequence, accepted:
+> the STATE stage now materializes nothing until a metric opts in — the
+> write cost is no longer paid by projects that never read it. The
+> scaffolded `example_arpu` (`sum(gross_usd)`) declares it; the scaffolded
+> `example_signup_cr` deliberately does not, with the reason inline in the
+> generated SQL.
+
 ---
 
 ## WP6 — Exit gate: e2e, twice-run idempotence, ≥2 adversarial review rounds, three-way docs sync
@@ -991,16 +1081,30 @@ a performance claim with no test does not hold.
    — `MetricConfig` has no declared `source_table` today and adding one is
    its own design question. **Needs explicit maintainer sign-off** on
    deferring true §5.3 sharing to a follow-up.
+   **DECIDED (2026-07-22, maintainer): no cross-metric sharing** — "metrics
+   are separate entities and wiring them into one cache is a hassle". The
+   v1 identity stays per-(experiment, metric); WP3 additionally scoped it by
+   experiment and cohort config (see its as-built note), which narrows §5.3
+   further and for the same reason: the day render is cohort-filtered.
 2. **Stratified metrics stay out of scope for the incremental engine in this
    milestone** (no stratum dimension in `_ab_unit_state`'s key, and adding
    one multiplies cardinality per §5.3's own concern) — confirm this is
    acceptable (stratified stays full-window recompute forever, or is a named
    follow-up milestone).
+   **DECIDED (2026-07-22, maintainer): not a real choice, so not a
+   deferral.** Stratification in abkit exists ONLY in the bootstrap family
+   (`STRATIFY_PARAM` is declared in `bootstrap.py`; no parametric method
+   takes strata), and bootstrap cannot be served additively at all — a
+   percentile CI needs the raw per-unit values, not moments. So "stratified
+   stays on recompute" is implied by "bootstrap stays on recompute" and
+   costs the incremental path nothing. This argument supersedes the plan's
+   weaker cardinality framing.
 3. **The `--profile` naming collision** (cumulative-intervals.md §4's
    proposed observability flag vs. the existing DB-connection `--profile` on
    every `abk` command) needs a naming decision before WP5 starts.
-   **Recommendation: `--cost-report`** (or `--explain`/`--diagnostics`) —
-   pick one before WP5, not during it.
+   **DECIDED (2026-07-22, maintainer): `--cost-report`.** `--profile` keeps
+   its one meaning (the DB-connection profile selector) on every command;
+   the new observability flag on `abk run` is `--cost-report`.
 4. **Should WP3's STATE write step run standalone via `--steps state` (like
    today's `--steps load,compute`), or always bundle with LOAD?** Affects
    the `PipelineStep` enum's public CLI surface. The plan leans toward
@@ -1022,10 +1126,15 @@ a performance claim with no test does not hold.
    default-flip" framing of WP5), with per-metric recorded as a named
    follow-up if profiling shows heterogeneous metric costs within one
    experiment.
+   **DECIDED (2026-07-22, maintainer): per-experiment**, as recommended.
+   Shipped in WP4 as `project.compute.incremental_reads` (the staged
+   default-flip surface WP5 needs) plus an experiment-level
+   `incremental_reads: bool | None` override that wins when set. Per-metric
+   granularity stays a named follow-up, unblocked by WP5's cost counters
+   if they show heterogeneous per-metric cost inside one experiment.
 
 Per the source plan's "Перед стартом" line: settle (3) and (5) before WP5
-starts and **(4) before WP3 starts** (WP3 step 7 is written conditional on
-it — settled above, `--steps state` shipped); (1) and (2) can be recorded
-as open decisions folded into the WP6 docs sync rather than blocking
-earlier WPs, since they narrow rather than change WP3/WP4's shipped
-behavior.
+starts and **(4) before WP3 starts** — all four are now DECIDED above, as
+are (1) and (2), so no open question blocks WP5 or WP6. §8 is closed; the
+WP6 docs sync carries the decisions into `cumulative-intervals.md` §5.3
+(the recorded scoping narrowing) rather than re-litigating them.

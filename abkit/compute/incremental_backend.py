@@ -70,9 +70,10 @@ from abkit.config.experiment_config import ComparisonConfig, ExperimentConfig
 from abkit.config.metric_config import MetricConfig
 from abkit.core.period_planner import Cutoff, Grid, tz_midnight_utc
 from abkit.database.internal_tables import InternalTablesManager
+from abkit.database.manager import BaseDatabaseManager
+from abkit.loaders.exposure_source import ExposureSnapshot, load_variant_map
 from abkit.loaders.metric_loader import MetricLoadResult
 from abkit.loaders.query_template import RenderWindow
-from abkit.pipeline.state import state_series_key
 
 #: metric type -> {role: moment column} — how per-unit cumulative moments
 #: reshape into the loader's role arrays (the inverse of state_loader's
@@ -89,6 +90,58 @@ _ROLE_MOMENTS: dict[str, dict[str, str]] = {
 def _local_date(ts: datetime, zone: ZoneInfo) -> date:
     """The experiment-timezone calendar date of a naive-UTC timestamp."""
     return ts.replace(tzinfo=timezone.utc).astimezone(zone).date()
+
+
+def build_incremental_backend(
+    manager: BaseDatabaseManager,
+    tables: InternalTablesManager,
+    experiment: ExperimentConfig,
+    recompute: RecomputeBackend,
+    snapshot: ExposureSnapshot | None,
+    grid: Grid,
+    project_root: Path | None = None,
+    on_warning: Callable[[str], None] | None = None,
+    on_fallback: Callable[[str, str, datetime], None] | None = None,
+) -> IncrementalBackend:
+    """THE one way to construct the incremental reader (m9 WP5).
+
+    Both readers — the driver's COMPUTE loop and `abk verify-incremental`'s
+    reconciliation — go through here, so the command that certifies the
+    incremental path certifies exactly the backend the pipeline runs (the
+    same "one switch" discipline m8's ``build_cohort_backend`` established
+    for cohort resolution). It wires the cohort map for the active mode:
+
+    - **copy mode**: the persisted ``_ab_exposures`` (what the renders join);
+      no refresh loader — the copy is this run's frozen cohort by design.
+    - **direct mode**: the FREE validated LOAD snapshot, plus the
+      refresh-on-miss re-read of the live source for a unit enrolled between
+      LOAD and the STATE render.
+    """
+    copy_enabled = experiment.assignment.cohort_copy.enabled
+
+    def _variant_map() -> dict[str, str]:
+        if copy_enabled:
+            return tables.get_exposure_variant_map(experiment.name)
+        if snapshot is None:  # pragma: no cover - a caller contract violation
+            raise ValueError(
+                "direct-mode incremental reads need the run's validated cohort "
+                "snapshot (build_cohort_backend(..., with_snapshot=True))"
+            )
+        return {str(unit): variant for unit, (variant, _, _) in snapshot.by_unit.items()}
+
+    def _refresh_variant_map() -> dict[str, str]:
+        return load_variant_map(manager, experiment, project_root, grid)
+
+    return IncrementalBackend(
+        tables,
+        recompute,
+        experiment,
+        variant_map_loader=_variant_map,
+        variant_map_refresh=None if copy_enabled else _refresh_variant_map,
+        project_root=project_root,
+        on_warning=on_warning,
+        on_fallback=on_fallback,
+    )
 
 
 class IncrementalBackend:
@@ -111,6 +164,7 @@ class IncrementalBackend:
         variant_map_refresh: Callable[[], dict[str, str]] | None = None,
         project_root: Path | None = None,
         on_warning: Callable[[str], None] | None = None,
+        on_fallback: Callable[[str, str, datetime], None] | None = None,
     ) -> None:
         self._tables = tables
         self._recompute = recompute
@@ -120,6 +174,11 @@ class IncrementalBackend:
         self._map_refreshed = False
         self._project_root = project_root
         self._on_warning = on_warning or (lambda _: None)
+        # Fires on EVERY fallback (metric, kind, cutoff end_ts) — undeduped,
+        # unlike the user-facing warning. `abk verify-incremental` (m9 WP5)
+        # needs per-cutoff resolution: a cutoff served by the fallback was
+        # NOT actually verified, and reporting it as "pass" would be a lie.
+        self._on_fallback = on_fallback or (lambda _m, _k, _t: None)
         self._zone = ZoneInfo(experiment.timezone)
         self._series_keys: dict[str, tuple[str, str]] = {}
         self._last_state_day: dict[tuple[str, str], date | None] = {}
@@ -146,6 +205,11 @@ class IncrementalBackend:
     # -- the incremental read ----------------------------------------------
 
     def _series_key(self, metric: MetricConfig, metric_sql: str) -> tuple[str, str]:
+        # Deferred like the loaders→compute edge (m8 precedent): the pipeline
+        # package imports this module, so a module-level `pipeline.state`
+        # import makes `abkit.compute.*` unimportable as an entry point.
+        from abkit.pipeline.state import state_series_key
+
         key = self._series_keys.get(metric.name)
         if key is None:
             key = state_series_key(self._experiment, metric, metric_sql, self._project_root)
@@ -188,6 +252,7 @@ class IncrementalBackend:
             f"{self._experiment.name}/{metric.name}: incremental read fell back "
             f"to full recompute — {reason}",
         )
+        self._on_fallback(metric.name, kind, cutoff.end_ts)
         return self._recompute.load_cutoff(comparison, metric, metric_sql, grid, cutoff)
 
     def load_cutoff(

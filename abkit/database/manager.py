@@ -17,13 +17,63 @@ Invariant (CLAUDE.md): the manager stays generic and ``table_name``-keyed;
 ``database/internal_tables/``, never here.
 """
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any
 
 import numpy as np
 
 from abkit.core.models import ColumnDefinition, TableModel
+
+
+@dataclass(frozen=True)
+class QueryCost:
+    """Cumulative warehouse cost of one manager's queries (m9 WP5).
+
+    The counters behind ``abk run --cost-report`` and the milestone's
+    executable perf gate. Deliberately split into what EVERY backend can
+    report honestly and what only some can:
+
+    - ``queries`` / ``rows`` / ``seconds`` — universal. ``rows`` is rows
+      **returned** to Python, not rows the engine scanned.
+    - ``scanned_rows`` / ``scanned_bytes`` — the engine's own read
+      accounting, available on ClickHouse (the driver's per-query progress).
+      ``scan_stats`` says whether they mean anything, so a report can print
+      "n/a" instead of a misleading 0 (the project's honest-refusal rule —
+      never label rows-returned as rows-scanned).
+    """
+
+    queries: int = 0
+    rows: int = 0
+    seconds: float = 0.0
+    scanned_rows: int = 0
+    scanned_bytes: int = 0
+    scan_stats: bool = False
+
+    def __sub__(self, earlier: QueryCost) -> QueryCost:
+        """The delta between two snapshots — one pipeline stage's cost."""
+        return QueryCost(
+            queries=self.queries - earlier.queries,
+            rows=self.rows - earlier.rows,
+            seconds=self.seconds - earlier.seconds,
+            scanned_rows=self.scanned_rows - earlier.scanned_rows,
+            scanned_bytes=self.scanned_bytes - earlier.scanned_bytes,
+            scan_stats=self.scan_stats or earlier.scan_stats,
+        )
+
+    def __add__(self, other: QueryCost) -> QueryCost:
+        """Fold two deltas together — a stage entered more than once."""
+        return QueryCost(
+            queries=self.queries + other.queries,
+            rows=self.rows + other.rows,
+            seconds=self.seconds + other.seconds,
+            scanned_rows=self.scanned_rows + other.scanned_rows,
+            scanned_bytes=self.scanned_bytes + other.scanned_bytes,
+            scan_stats=self.scan_stats or other.scan_stats,
+        )
 
 
 class BaseDatabaseManager(ABC):
@@ -42,6 +92,42 @@ class BaseDatabaseManager(ABC):
     3. Type conversion handled internally
     4. Connection pooling and error handling
     """
+
+    # ── cost accounting (m9 WP5) ─────────────────────────────────────────────
+    # Generic by construction: the base owns the accumulator, each concrete
+    # backend reports what it can measure. Nothing here knows an ``_ab_*``
+    # table (the manager invariant holds).
+
+    @property
+    def query_cost(self) -> QueryCost:
+        """This manager's cumulative query cost since the last reset."""
+        cost: QueryCost | None = getattr(self, "_query_cost", None)
+        if cost is None:
+            cost = QueryCost()
+            self._query_cost = cost
+        return cost
+
+    def reset_query_cost(self) -> None:
+        self._query_cost = QueryCost()
+
+    def _record_query(
+        self,
+        rows_returned: int,
+        seconds: float,
+        scanned_rows: int | None = None,
+        scanned_bytes: int | None = None,
+    ) -> None:
+        """Fold one executed query into the accumulator (backends call this)."""
+        current = self.query_cost
+        self._query_cost = replace(
+            current,
+            queries=current.queries + 1,
+            rows=current.rows + rows_returned,
+            seconds=current.seconds + seconds,
+            scanned_rows=current.scanned_rows + (scanned_rows or 0),
+            scanned_bytes=current.scanned_bytes + (scanned_bytes or 0),
+            scan_stats=current.scan_stats or scanned_rows is not None,
+        )
 
     @abstractmethod
     def execute_query(

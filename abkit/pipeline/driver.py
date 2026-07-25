@@ -19,8 +19,8 @@ The STATE stage (``_ab_unit_state`` materialization, m9 WP3) is the
 write-only half of cumulative-intervals.md §4's v1 strategy: after LOAD,
 every STATE-eligible metric's not-yet-materialized closed days are rendered
 through the SAME m8 cohort backend and replaced into ``_ab_unit_state``
-(``pipeline/state.py``). The read path stays recompute until WP4's
-``IncrementalBackend`` flips it.
+(``pipeline/state.py``); WP4's opt-in ``IncrementalBackend`` is the reader
+(``compute.incremental_reads``, default off).
 
 Concurrency (§5.7): experiments are independent series — ``run_experiments``
 fans them out on a thread pool, ONE manager per worker (DB-API connections
@@ -31,12 +31,14 @@ Generator-based RNG made the stats core process/thread-safe.
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
+from time import perf_counter
 
-from abkit.compute.incremental_backend import IncrementalBackend
+from abkit.compute.incremental_backend import IncrementalBackend, build_incremental_backend
 from abkit.compute.recompute_backend import RecomputeBackend
 from abkit.config.experiment_config import ExperimentConfig
 from abkit.config.metric_config import MetricConfig
@@ -46,9 +48,15 @@ from abkit.core.period_planner import backlog_seconds, generate_grid, pending_cu
 from abkit.database.internal_tables import InternalTablesManager
 from abkit.database.manager import BaseDatabaseManager
 from abkit.loaders.exposure_copy import copy_exposures_incremental
-from abkit.loaders.exposure_source import build_cohort_backend, load_variant_map
+from abkit.loaders.exposure_source import build_cohort_backend
 from abkit.loaders.query_template import RenderWindow
-from abkit.pipeline._types import STATUS_COMPLETED, STATUS_FAILED, PipelineStep, RunOutcome
+from abkit.pipeline._types import (
+    STATUS_COMPLETED,
+    STATUS_FAILED,
+    PipelineStep,
+    RunOutcome,
+    StageCost,
+)
 from abkit.pipeline.analyze import analyze_cutoff, comparison_alpha, effective_alphas
 from abkit.pipeline.enrich import rows_for_cutoff
 from abkit.pipeline.state import comparison_state_eligible, materialize_state
@@ -70,6 +78,31 @@ Logger = Callable[[str], None]
 
 def _noop_log(_: str) -> None:  # pragma: no cover - trivial
     return None
+
+
+@contextmanager
+def _stage_cost(outcome: RunOutcome, manager: BaseDatabaseManager, stage: str) -> Iterator[None]:
+    """Accumulate one stage's wall-time + warehouse cost into the outcome.
+
+    The m9 WP5 observability seam. Re-entering the same stage name ADDS to it
+    (COMPUTE is entered once per comparison), so the reported number is the
+    whole stage, not its last slice.
+    """
+    before = manager.query_cost
+    started = perf_counter()
+    try:
+        yield
+    finally:
+        elapsed = perf_counter() - started
+        delta = manager.query_cost - before
+        previous = outcome.stage_costs.get(stage)
+        if previous is None:
+            outcome.stage_costs[stage] = StageCost(seconds=elapsed, queries=delta)
+        else:
+            outcome.stage_costs[stage] = StageCost(
+                seconds=previous.seconds + elapsed,
+                queries=previous.queries + delta,
+            )
 
 
 def _sequential_tau2(
@@ -222,9 +255,10 @@ def run_experiment(
         # watermark/closed-interval engine), or full-reloads under
         # ``--resync-cohort`` (disaster recovery, §4 Q2).
         log(f"LOAD  {experiment.name}: loading exposures")
-        backend, snapshot = build_cohort_backend(
-            manager, experiment, project_root, grid, with_snapshot=True
-        )
+        with _stage_cost(outcome, manager, "load"):
+            backend, snapshot = build_cohort_backend(
+                manager, experiment, project_root, grid, with_snapshot=True
+            )
         assert snapshot is not None  # with_snapshot=True always renders one
         copy_enabled = experiment.assignment.cohort_copy.enabled
         if copy_enabled:
@@ -241,16 +275,17 @@ def run_experiment(
                     "persisted cohort (delete + incremental reload)"
                 )
                 tables.delete_exposures(experiment.name)
-            copy_result = copy_exposures_incremental(
-                manager,
-                tables,
-                experiment,
-                project_root,
-                grid,
-                now=now,
-                has_stratum=snapshot.has_stratum,
-                log=log,
-            )
+            with _stage_cost(outcome, manager, "load"):
+                copy_result = copy_exposures_incremental(
+                    manager,
+                    tables,
+                    experiment,
+                    project_root,
+                    grid,
+                    now=now,
+                    has_stratum=snapshot.has_stratum,
+                    log=log,
+                )
             # Freshness disclosure (m8 WP5 risk note): metrics join the
             # persisted copy, which only covers CLOSED, matured intervals
             # (the SRM counts below deliberately stay on the LIVE validated
@@ -334,9 +369,9 @@ def run_experiment(
             outcome.warnings.append(srm.describe())
 
         # ── STATE: per-(unit, day) moment materialization (m9 WP3) ───────────
-        # Write-only in this milestone (the read path stays recompute until
-        # WP4 flips it); runs through the SAME m8 factory backend as the
-        # compute loads below — never a hand-rolled cohort join (m9 §0.2).
+        # The write half of the incremental engine (WP4's IncrementalBackend
+        # is the opt-in reader); runs through the SAME m8 factory backend as
+        # the compute loads below — never a hand-rolled cohort join (§0.2).
         # Copy mode clamps day-close to the copy's coverage: the day render
         # joins the persisted copy, and a day materialized from a partial
         # cohort would freeze that way (unlike results, state days are never
@@ -344,18 +379,19 @@ def run_experiment(
         # just rebuilt.
         if PipelineStep.STATE in steps:
             state_watermark = min(watermark_ts, coverage) if copy_enabled else watermark_ts
-            state_outcome = materialize_state(
-                tables,
-                experiment,
-                metrics_by_name,
-                backend,
-                grid,
-                state_watermark,
-                project_root=project_root,
-                full_refresh_window=full_refresh_window,
-                force_rebuild=copy_enabled and resync_cohort,
-                log=log,
-            )
+            with _stage_cost(outcome, manager, "state"):
+                state_outcome = materialize_state(
+                    tables,
+                    experiment,
+                    metrics_by_name,
+                    backend,
+                    grid,
+                    state_watermark,
+                    project_root=project_root,
+                    full_refresh_window=full_refresh_window,
+                    force_rebuild=copy_enabled and resync_cohort,
+                    log=log,
+                )
             outcome.state_days_materialized = state_outcome.days_materialized
             outcome.warnings.extend(state_outcome.warnings)
 
@@ -394,27 +430,16 @@ def run_experiment(
             incremental_reads = False
         incremental_backend: IncrementalBackend | None = None
         if incremental_reads:
-            snap = snapshot
-
-            def _cohort_variant_map() -> dict[str, str]:
-                # Copy mode joins the persisted cohort (what the renders
-                # see); direct mode starts from this run's FREE validated
-                # LOAD snapshot — the refresh loader below covers the
-                # LOAD→STATE enrollment race without paying a routine second
-                # source query (the R1 cohort fix, re-shaped by R2).
-                if copy_enabled:
-                    return tables.get_exposure_variant_map(experiment.name)
-                return {str(unit): variant for unit, (variant, _, _) in snap.by_unit.items()}
-
-            def _cohort_variant_refresh() -> dict[str, str]:
-                return load_variant_map(manager, experiment, project_root, grid)
-
-            incremental_backend = IncrementalBackend(
+            # ONE construction path, shared with `abk verify-incremental`
+            # (m9 WP5): the command that certifies the incremental read must
+            # certify exactly the backend this loop runs.
+            incremental_backend = build_incremental_backend(
+                manager,
                 tables,
-                backend,
                 experiment,
-                variant_map_loader=_cohort_variant_map,
-                variant_map_refresh=None if copy_enabled else _cohort_variant_refresh,
+                backend,
+                snapshot,
+                grid,
                 project_root=project_root,
                 on_warning=outcome.warnings.append,
             )
@@ -455,17 +480,22 @@ def run_experiment(
             # load per sequential comparison per run (the accepted anytime price).
             sequential_tau2: dict[tuple[str, str], float] | None = None
             if seq_eligible and (pending or computed):
-                sequential_tau2 = _sequential_tau2(
-                    comp_backend,
-                    experiment,
-                    comparison,
-                    metric,
-                    metric_sql,
-                    grid,
-                    alphas,
-                    project,
-                    effective_alpha,
-                )
+                # Counted as COMPUTE: it is a real warehouse load on the
+                # compute path, and leaving it unattributed made --cost-report
+                # (and the perf gate built on it) understate the stage (an R1
+                # review finding).
+                with _stage_cost(outcome, manager, "compute"):
+                    sequential_tau2 = _sequential_tau2(
+                        comp_backend,
+                        experiment,
+                        comparison,
+                        metric,
+                        metric_sql,
+                        grid,
+                        alphas,
+                        project,
+                        effective_alpha,
+                    )
 
             # M5 WP3 (B4): the toggle self-invalidates. ``sequential.enabled`` is
             # (correctly) not in ``method_config_id``, so the anti-join would skip
@@ -527,7 +557,8 @@ def run_experiment(
             n_pending = len(pending)
             beat_every = max(1, n_pending // 20)
             for look_index, cutoff in enumerate(pending, start=1):
-                loaded = comp_backend.load_cutoff(comparison, metric, metric_sql, grid, cutoff)
+                with _stage_cost(outcome, manager, "compute"):
+                    loaded = comp_backend.load_cutoff(comparison, metric, metric_sql, grid, cutoff)
                 outcomes = analyze_cutoff(
                     experiment,
                     comparison,

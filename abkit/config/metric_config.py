@@ -101,6 +101,22 @@ class MetricConfig(BaseModel):
         description="Per-metric A/A false-positive budget (fraction in (0, 1]); "
         "overrides project statistics.aa_fpr_budget for this metric",
     )
+    # The author's assertion that this metric splits by day (m9 WP5). It is a
+    # DECLARATION, not something abkit can read off the SQL: three review
+    # rounds each found a new textual shape that looks additive and is not
+    # (a dead CTE, an outer re-aggregation, a UNION branch, an identity
+    # sum() over a renamed per-unit max()). abkit still refuses obviously
+    # non-additive projections, and `abk verify-incremental` is the empirical
+    # oracle — but the promise starts here.
+    state_additive: bool = Field(
+        default=False,
+        description="Declare that every role column is a plain SUM/COUNT over the "
+        "window, so per-day partials add up to the window total. Required before "
+        "this metric's per-day moments are materialized into _ab_unit_state (and "
+        "thus before compute.incremental_reads can serve it). Leave false for "
+        "max()/avg()/uniq()/DISTINCT metrics, constants, and ratios of aggregates — "
+        "they are correct only when recomputed over the whole window.",
+    )
 
     @field_validator("name")
     @classmethod

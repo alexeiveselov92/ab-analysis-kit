@@ -14,6 +14,40 @@ number change).
 ## [Unreleased]
 
 ### Added
+- **M9 WP5 — `abk verify-incremental`, `abk run --cost-report`, and the
+  state GC.** The reconciliation gate that makes turning
+  `compute.incremental_reads` on a data-driven decision: for every
+  already-computed cutoff of every state-eligible comparison,
+  `abk verify-incremental` loads the data through BOTH backends and diffs
+  the results field by field at rel-1e-9 (`--rel-tol` to tighten), reporting
+  per-cutoff and whole-series pass/fail and exiting non-zero on any
+  divergence. Whole-series by design — a drift that only accumulates over
+  many days cannot hide behind a green latest cutoff. Read-only and
+  lock-free (it persists nothing, so it never races a run), and deliberately
+  never part of `abk run`. **A fallback is not a pass**: a cutoff where the
+  incremental read fell back to recompute is reported as `unverified`, since
+  both sides then ran the same code and agreeing proves nothing. Both this
+  command and the driver build the reader through one
+  `build_incremental_backend` factory, so the command certifies exactly the
+  backend the pipeline runs.
+  `abk run --cost-report` prints per-stage warehouse cost — wall-time,
+  queries, rows returned, and rows *scanned* where the backend reports them
+  (ClickHouse does; PostgreSQL/MySQL print `n/a` rather than passing
+  rows-returned off as a scan count). The flag is `--cost-report`, never
+  `--profile`, which keeps its one meaning on every command.
+  `abk clean` gains a state sweep: `_ab_unit_state` series that no live
+  `(experiment, metric)` pair claims — a removed comparison, a renamed
+  metric, a deleted experiment, or a comparison that stopped being
+  state-eligible — are reported and (with `--execute`) dropped. It is
+  deliberately not narrowed by `--select`, since state rows are keyed by
+  `(source_table, column_set_id)`, not by experiment.
+  The milestone's **executable perf gate** ships with it: with N units over
+  D days the recompute path scans `N·D(D+1)/2` fact rows across the series
+  while the incremental path scans `N·D` and its COMPUTE stage touches the
+  fact table not at all — asserted with exact arithmetic, not wall-clock.
+  The concrete criteria for flipping the default are recorded in
+  `cumulative-intervals.md` §4.1. No `ALGORITHM_VERSION` bump; no
+  statistical number changed.
 - **M9 WP4 — `IncrementalBackend`: the opt-in additive read path.** With
   `compute.incremental_reads: true` (project-level; experiments override via
   their own `incremental_reads`; **default `false`** until the WP5
@@ -61,14 +95,19 @@ number change).
   sample/fraction/ratio metrics with no explicit `columns.covariate` role
   (a snapshot covariate is not additive across day renders — such metrics
   stay on full recompute), whose SQL does not reference `ab_cov_*`, and
-  **whose every summed role column comes from a recognisably additive
-  aggregate** (`sum`/`count`, optionally `…If`): the reader sums per-day
-  rows, so `max(...)` or a literal trial count inflates with the number of
-  active days — the scaffolded `example_signup_cr` (`max(signed_up)`,
-  `1 AS visits`) is exactly such a metric and now stays on full recompute.
-  Recognition is a positive allowlist, so an exotic or unparseable
-  projection is treated as non-additive (a missed optimisation, never a
-  wrong number). Bootstrap-only metrics never pay the write. The per-day render goes
+  **that declares `state_additive: true`** — the author's promise that every
+  role column is a plain `sum()`/`count()` over the window, so per-day
+  partials add up to the window total. The declaration is required because
+  additivity cannot be read off SQL: a staging CTE, an outer re-aggregation,
+  a `UNION` branch or an identity `sum()` over a renamed per-unit `max()`
+  all look additive textually. abkit still refuses projections that visibly
+  contradict the promise (a bare `max()`, a constant, `DISTINCT`, a window
+  function, multi-branch SQL) — a veto-only filter that can take eligibility
+  away but never grant it — and `abk verify-incremental` is the empirical
+  oracle. The hazard is not hypothetical: the scaffolded
+  `example_signup_cr` projects `max(signed_up)` and `1 AS visits`, and with
+  the old always-on eligibility its per-day rows summed to eleven trials
+  where the window has one. Bootstrap-only metrics never pay the write. The per-day render goes
   through the SAME M8 `build_cohort_backend` factory as every other cohort
   reader (never a hand-rolled `_ab_exposures` join — both cohort modes are
   parity-tested). The state series identity is

@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
+from abkit.database.manager import QueryCost
+
 
 class PipelineStep(str, Enum):
     """The selectable ``--steps`` stages (architecture.md §5)."""
@@ -58,3 +60,28 @@ class RunOutcome:
     #: (m9 WP3 — the write-only STATE stage; 0 when the stage did not run)
     state_days_materialized: int = 0
     warnings: list[str] = field(default_factory=list)
+    #: per-stage warehouse cost, keyed by stage name (m9 WP5 — the evidence
+    #: behind ``abk run --cost-report`` and the incremental-read default-flip
+    #: decision). Always collected (the counters are ~free); the flag only
+    #: decides whether the CLI PRINTS them.
+    stage_costs: dict[str, StageCost] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class StageCost:
+    """One pipeline stage's cost: wall-time plus the manager's query deltas."""
+
+    seconds: float
+    queries: QueryCost
+
+    def describe(self) -> str:
+        """One human line — honest about what each backend can measure."""
+        scans = (
+            f", {self.queries.scanned_rows:,} rows scanned"
+            if self.queries.scan_stats
+            else ", scans n/a"
+        )
+        return (
+            f"{self.seconds:.2f}s, {self.queries.queries} queries, "
+            f"{self.queries.rows:,} rows returned{scans}"
+        )
