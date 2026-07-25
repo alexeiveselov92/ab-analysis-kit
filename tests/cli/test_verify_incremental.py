@@ -64,14 +64,18 @@ class TestVerifyIncremental:
         assert result.exit_code == 0, result.output
         assert "cutoffs checked" in result.output
 
-    def test_drift_exits_non_zero(self, scaffolded):
-        """A tightened tolerance is the cheapest way to make the command
-        FAIL through its own public surface — it proves the exit path, the
-        red rendering and that the diff is really being evaluated (the
-        engine-level test covers a real backfill drift)."""
+    def test_extreme_tolerance_still_runs_the_diff(self, scaffolded):
+        """``--rel-tol 0`` must reach the comparison rather than crash on a
+        degenerate tolerance.
+
+        This is deliberately NOT the non-zero-exit gate: `rel_tol=0` passes on
+        bit-identical values, so `exit_code in (0, 1)` would accept either
+        outcome and could not fail. The command's **red path** (a real drift →
+        `DIVERGED` → exit 1 → healed by `--full-refresh`) is proven end to end
+        in `tests/e2e/test_incremental_run.py::TestDriftIsCaughtAndHealed`,
+        and at engine level in
+        `tests/compute/test_reconcile.py::TestDriftDetection`."""
         result = runner.invoke(cli, ["verify-incremental", "--select", EXP, "--rel-tol", "0"])
-        # rel_tol=0 still passes on bit-identical values, so this asserts the
-        # command runs clean rather than crashing on an extreme tolerance
         assert result.exit_code in (0, 1), result.output
         assert "cutoffs checked" in result.output
 

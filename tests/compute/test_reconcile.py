@@ -93,6 +93,40 @@ class TestCleanSeries:
         assert outcome.unverified == []
         assert outcome.cutoffs_checked >= 4
 
+    def test_multi_arm_series_reconciles(self):
+        """§7 asks for single- AND multi-arm: state rows are arm-agnostic, so
+        the arm split happens at READ time — three arms means three pair
+        comparisons per cutoff, each of which must reconcile."""
+        warehouse = SyntheticWarehouse()
+        for i in range(60):
+            warehouse.cohort.append((f"a{i:03d}", "control", START + timedelta(hours=1)))
+            warehouse.cohort.append((f"b{i:03d}", "treat_a", START + timedelta(hours=1)))
+            warehouse.cohort.append((f"c{i:03d}", "treat_b", START + timedelta(hours=1)))
+        seed_all_events(warehouse)
+        tables = InternalTablesManager(warehouse)
+        payload = experiment_payload("exp_3arm", "arpu", T_TEST)
+        payload["assignment"]["variants"] = ["control", "treat_a", "treat_b"]
+        payload["assignment"]["expected_split"] = {
+            "control": 1 / 3,
+            "treat_a": 1 / 3,
+            "treat_b": 1 / 3,
+        }
+        experiment = ExperimentConfig.model_validate(payload)
+        _run(warehouse, tables, experiment)
+
+        outcome = _reconcile(warehouse, tables, experiment)
+        assert outcome.ok
+        assert outcome.mismatches == []
+        assert outcome.unverified == []
+        assert outcome.cutoffs_checked == 4
+        # every pairwise comparison at every cutoff: C(3,2) × 4
+        assert len(outcome.matched) == 12
+        assert {(v.name_1, v.name_2) for v in outcome.matched} == {
+            ("control", "treat_a"),
+            ("control", "treat_b"),
+            ("treat_a", "treat_b"),
+        }
+
 
 class TestDriftDetection:
     def test_backfill_into_a_materialized_day_is_reported(self, warehouse, tables):
