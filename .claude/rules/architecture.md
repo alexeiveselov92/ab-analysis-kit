@@ -142,7 +142,13 @@ two-process lock race) is deferred to a Docker-equipped environment.
   the bounded Tier-S cache (`EXPLORE_CACHE_BUDGET`); over budget ⇒ honest
   suffstats-only degradation, never a partial cache. Recompute tiers: E exact
   suffstats, α-inversion (approx), S from the cache, R = warehouse reload via
-  `POST /reload` (its own manager, serialized).
+  `POST /reload` (its own manager, serialized). **Since m10 WP4 the
+  serialization is scoped:** `heavy_lock` covers `/reload`+`/validate`+`/apply`
+  only, `/recompute` runs concurrently, the Tier-S cache is reached ONLY
+  through `ExploreSession`'s `cache_lock`-guarded accessors (AST-gated), and
+  `/recompute` re-checks staleness AFTER computing. Warning capture in
+  `_compare`/`analyze`/A-A scoring goes through `utils/warn_scope` — never
+  `catch_warnings`, which is process-global.
 - **The client mirrors `analyze.effective_alphas`** over
   `payload["explore"]["experiment"]` (raw alpha/correction/counts baked by
   `tuning/payload.py`) — keep `explore.ts#effectiveAlpha` and that block in

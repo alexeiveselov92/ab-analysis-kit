@@ -89,6 +89,22 @@ number change).
   series; the next `abk run` re-materializes it and `abk clean` sweeps the
   stale ids. No statistical number moves — `abk verify-incremental` stays
   green across the re-materialization.
+- **M10 WP4: `abk explore` answers knob turns while a Reload or Auto-validate
+  is running.** One coarse lock used to serialize all four POST endpoints, so
+  an alpha slider drag queued behind a warehouse `/reload` or a
+  several-hundred-split Auto `/validate` — the cheapest possible request
+  waiting on the most expensive one. The lock is now scoped to what actually
+  needs it (`heavy_lock`: `/reload`, `/validate`, `/apply` — own DB managers,
+  the out-of-band `_ab_tasks` lock, the YAML archive/rewrite seam), and
+  `/recompute` runs concurrently against a session whose Tier-S cache carries
+  its own fine-grained lock. Two consequences worth knowing:
+  - **the accepted trade** is that two identical recomputes racing may both
+    run — wasted CPU, never a wrong number (every input is immutable or
+    read under the cache lock);
+  - **staleness is re-checked after the compute, not just before it.** A
+    request can now be superseded *while it computes*; it replies `409
+    {stale: true}` rather than overwriting the fresher answer already in the
+    rail. The two-tab `request_id` machinery is otherwise untouched.
 
 ### Added
 - **M10 WP1 — `interval_anchor`: where the cutoff lattice sits.** `cadence`
@@ -126,12 +142,27 @@ number change).
   Byte-identical at a midnight start, i.e. for every pre-m10 config.
 - `tz_midnight_utc` now **rejects a `datetime`** instead of silently dropping
   its time-of-day — the mechanism behind the truncations above.
+- **Warning capture is thread-scoped (M10 WP4).** `warnings.catch_warnings`
+  saves and restores *process-global* state, so overlapping scopes on two
+  threads interleave: a guard raised by one gets recorded against the other,
+  an "ignore" filter set by one silences the other, and — the worst shape —
+  exits in the wrong order leave a finished thread's recorder installed, after
+  which **every warning in the process disappears silently**. Unserializing
+  `/recompute` made all three reachable in `abk explore` (a `/recompute`
+  concurrent with Auto mode's A/A scoring, which suppresses that very
+  category), and `abk run` already fanned experiments out over a thread pool,
+  where a guard could be persisted against the wrong experiment's rows.
+  abkit's three warning scopes now route through `abkit/utils/warn_scope.py`:
+  one process-global recorder, per-thread frames, no per-call global writes.
+  Warning *routing* only — no number moves.
 
-No `ALGORITHM_VERSION` bump and no `statistics-changes.md` entry: this is a
-config/planner/schema change. The numeric gate is that an unchanged window
-produces unchanged numbers — the whole existing suite (2 209 tests, incl.
-every e2e byte-stability and cross-mode parity gate) passes with only the
-config keys and the ported horizon values edited.
+No `ALGORITHM_VERSION` bump and no `statistics-changes.md` entry anywhere in
+M10 so far: WP1/WP3 are config/planner/schema changes, WP4 is server
+concurrency and warning routing. The numeric gate for the window rename is
+that an unchanged window produces unchanged numbers — the whole existing suite
+(2 209 tests, incl. every e2e byte-stability and cross-mode parity gate)
+passes with only the config keys and the ported horizon values edited; WP4
+touches no statistical code path at all.
 
 ## [0.4.0] - 2026-07-25
 

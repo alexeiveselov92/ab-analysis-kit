@@ -42,14 +42,17 @@ The calibration lookup (D3) lives here as :func:`find_calibration` — keyed by
 ``(metric, method_config_id, alpha)`` against the as-built ``_ab_aa_runs``
 schema — one function ``abk validate`` (M4) reuses.
 
-Thread discipline: everything in this module reads the immutable session —
-no DB handles, safe under the WP6 request lock.
+Thread discipline (m10 WP4 — ``/recompute`` is no longer serialized): nothing
+in this module holds a DB handle, and every read of the mutable Tier-S cache
+goes through ``ExploreSession``'s locked accessors (never ``session.cache``
+directly). Warning capture goes through ``utils.warn_scope`` — the stdlib's
+``catch_warnings`` mutates process-global state and would cross-attribute (or
+permanently lose) warnings across concurrent handler threads.
 """
 
 from __future__ import annotations
 
 import math
-import warnings as _warnings
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -80,6 +83,7 @@ from abkit.stats.power import get_cuped_ttest_power, get_fraction_power, get_tte
 from abkit.stats.sequential import mixture_tau2, se_from_ci_length, to_always_valid
 from abkit.tuning.session import ComparisonSeries, ExploreSession
 from abkit.utils.json_utils import json_loads
+from abkit.utils.warn_scope import capture_warnings
 
 Tier = Literal["exact", "approx", "baseline"]
 
@@ -600,13 +604,16 @@ class RecomputeEngine:
                     },
                 }
             )
-        cached = self._session.cached_cutoffs(metric)
+        # ONE locked snapshot (m10 WP4): walking the cutoffs and re-reading each
+        # entry would iterate the dict a concurrent /reload is mutating.
+        entries = self._session.cached_entries(metric)
+        cached = [ts for ts, _ in entries]
         covariate_cutoffs = []
-        for ts in cached:
-            loaded = self._session.loaded(metric, ts)
-            if loaded is not None and loaded.roles_by_variant:
-                if all("covariate" in roles for roles in loaded.roles_by_variant.values()):
-                    covariate_cutoffs.append(ts)
+        for ts, loaded in entries:
+            if loaded.roles_by_variant and all(
+                "covariate" in roles for roles in loaded.roles_by_variant.values()
+            ):
+                covariate_cutoffs.append(ts)
         # M9 WP2: whether the CONFIGURED series' persisted rows carry the full
         # covariate moments (Tier-E reconstructable without any cache) — the
         # client's reload heuristic exempts a switch BACK to the configured
@@ -776,9 +783,11 @@ class RecomputeEngine:
             result, caught = _compare(reusable, *containers)
             return self._point_from_result(row, result, caught, tier="exact")
 
-        # Tier S — the session cache (from_samples), cached cutoffs only.
-        loaded = self._session.loaded(series.metric.name, row["end_ts"])
-        entry_lookback = self._session.cache_lookback.get((series.metric.name, row["end_ts"]))
+        # Tier S — the session cache (from_samples), cached cutoffs only. The
+        # entry and the lookback it was RENDERED with come out as one locked
+        # pair (m10 WP4): a concurrent /reload replaces them in sequence, and a
+        # torn read would gate a fresh entry on the previous lookback tag.
+        loaded, entry_lookback = self._session.cached_entry(series.metric.name, row["end_ts"])
         if loaded is not None and self._cache_serves(
             series,
             method_cls,
@@ -1129,9 +1138,13 @@ class RecomputeEngine:
 
 
 def _compare(method: BaseMethod, group_1: Any, group_2: Any) -> tuple[TestResult, list[str]]:
-    """``compare_pair`` with the analyze-stage warning capture (plan R7)."""
-    with _warnings.catch_warnings(record=True) as caught:
-        _warnings.simplefilter("always", AbkitStatsWarning)
+    """``compare_pair`` with the analyze-stage warning capture (plan R7).
+
+    The capture is THREAD-scoped (m10 WP4): concurrent ``/recompute`` handlers —
+    and a concurrent Auto-mode ``/validate``, whose A/A scoring suppresses this
+    very category — must not see, swallow or restore each other's capture.
+    """
+    with capture_warnings(AbkitStatsWarning) as caught:
         result = method.compare_pair(group_1, group_2)
     messages = [str(w.message) for w in caught if issubclass(w.category, AbkitStatsWarning)]
     return result, messages

@@ -599,6 +599,191 @@ class TestApplyGateClosure:
         assert explore.session.cache == {}  # no shadow cache grew back
 
 
+class TestLockDecoupling:
+    """m10 WP4: the coarse ``request_lock`` became ``heavy_lock`` around
+    ``/reload``, ``/validate`` and ``/apply`` ONLY, and ``/recompute`` runs
+    lock-free with a post-compute staleness re-check.
+
+    Every scenario forces the overlap with events and asserts the cheap reply
+    lands **while the heavy request is still frozen** — a proof that cannot
+    flake on timing, because a queued request could not have answered at all.
+    """
+
+    @staticmethod
+    def _freeze(monkeypatch, name: str, result=None):
+        """Freeze ``server.<name>`` mid-handler; returns ``(entered, release)``."""
+        from abkit.tuning import server as server_mod
+
+        entered, release = threading.Event(), threading.Event()
+        real = getattr(server_mod, name)
+
+        def frozen(*args, **kwargs):
+            entered.set()
+            assert release.wait(timeout=30), f"{name} was never released"
+            return result if result is not None else real(*args, **kwargs)
+
+        monkeypatch.setattr(server_mod, name, frozen)
+        return entered, release
+
+    @staticmethod
+    def _fire(url: str, payload: dict) -> tuple[threading.Thread, list]:
+        out: list = []
+        thread = threading.Thread(target=lambda: out.append(http(url, payload)), daemon=True)
+        thread.start()
+        return thread, out
+
+    def test_a_knob_turn_answers_while_a_reload_holds_the_heavy_lock(self, explore, monkeypatch):
+        entered, release = self._freeze(monkeypatch, "_run_reload")
+        thread, reload_out = self._fire(explore.endpoint("reload"), recompute_request())
+        try:
+            assert entered.wait(timeout=30)
+            assert explore.server.heavy_lock.locked()  # the reload owns it
+            status, reply = http(explore.endpoint("recompute"), recompute_request())
+            assert status == 200, reply
+            assert reply["pairs"][0]["points"]  # a real answer, not a stub
+        finally:
+            release.set()
+            thread.join(timeout=60)
+        assert reload_out and reload_out[0][0] == 200  # …and the reload still works
+
+    def test_a_knob_turn_answers_while_auto_validate_holds_the_heavy_lock(
+        self, explore, monkeypatch
+    ):
+        """The scenario that motivated the split: Auto mode runs hundreds of
+        placebo splits inside the handler; a knob turn used to wait it out."""
+        entered, release = self._freeze(
+            monkeypatch, "_run_validate", result={"recommended": {}, "log": []}
+        )
+        thread, validate_out = self._fire(explore.endpoint("validate"), {"request_id": 1})
+        try:
+            assert entered.wait(timeout=30)
+            assert explore.server.heavy_lock.locked()
+            status, reply = http(explore.endpoint("recompute"), recompute_request(request_id=2))
+            assert status == 200, reply
+            assert reply["pairs"][0]["points"]
+        finally:
+            release.set()
+            thread.join(timeout=60)
+        assert validate_out and validate_out[0][0] == 200
+
+    def test_the_heavy_paths_still_exclude_each_other(self, explore, monkeypatch):
+        """``heavy_lock``'s job is unchanged: a ``/validate`` must NOT start
+        while a ``/reload`` holds it (own DB managers, the ``_ab_tasks`` lock,
+        the YAML seam)."""
+        from abkit.tuning import server as server_mod
+
+        reload_entered, reload_release = self._freeze(monkeypatch, "_run_reload")
+        validate_entered = threading.Event()
+        real_validate = server_mod._run_validate
+
+        def watched_validate(*args, **kwargs):
+            validate_entered.set()
+            return real_validate(*args, **kwargs)
+
+        monkeypatch.setattr(server_mod, "_run_validate", watched_validate)
+
+        reload_thread, _ = self._fire(explore.endpoint("reload"), recompute_request())
+        assert reload_entered.wait(timeout=30)
+        validate_thread, validate_out = self._fire(explore.endpoint("validate"), {})
+        try:
+            # give the validate handler every chance to slip in
+            validate_thread.join(timeout=1.0)
+            assert not validate_entered.is_set(), "validate entered while reload held heavy_lock"
+            assert validate_thread.is_alive()
+        finally:
+            reload_release.set()
+            reload_thread.join(timeout=60)
+            validate_thread.join(timeout=120)
+        assert validate_entered.is_set()  # …and it ran once the lock was free
+        assert validate_out and validate_out[0][0] == 200
+
+    def test_a_recompute_superseded_mid_compute_409s_instead_of_replying(self, explore):
+        """The post-compute re-check. Without it, the slow request would reply
+        200 AFTER the newer one — overwriting the fresher answer in the rail."""
+
+        class _SlowOnMarkerAlpha:
+            """Engine proxy: freeze only the marked request's compute."""
+
+            MARKER = 0.011
+
+            def __init__(self, inner):
+                self._inner = inner
+                self.computing = threading.Event()
+                self.release = threading.Event()
+
+            def recompute(self, metric, knobs):
+                if knobs.alpha == self.MARKER:
+                    self.computing.set()
+                    assert self.release.wait(timeout=30)
+                return self._inner.recompute(metric, knobs)
+
+        proxy = _SlowOnMarkerAlpha(explore.engine)
+        explore.server.engine = proxy
+        try:
+            slow_thread, slow_out = self._fire(
+                explore.endpoint("recompute"),
+                recompute_request(alpha=_SlowOnMarkerAlpha.MARKER, request_id=100),
+            )
+            assert proxy.computing.wait(timeout=30)
+            # a newer knob turn lands (and answers) while 100 is still computing
+            status, fresh = http(explore.endpoint("recompute"), recompute_request(request_id=101))
+            assert status == 200 and fresh["request_id"] == 101
+            proxy.release.set()
+            slow_thread.join(timeout=60)
+            assert not slow_thread.is_alive()
+        finally:
+            explore.server.engine = explore.engine
+        status, body = slow_out[0]
+        assert status == 409, body
+        assert body["stale"] is True and body["request_id"] == 100
+
+    def test_lock_free_recomputes_keep_the_cache_consistent_under_a_reload(self, explore):
+        """A REAL ``/reload`` racing 20 Tier-S bootstrap knob turns over the same
+        cutoffs: every reply is a result or a clean stale-409 (never a 400/500),
+        and the cache's three fields still agree afterwards."""
+        from abkit.tuning.session import loaded_value_count
+
+        boot = {"name": "bootstrap", "params": {"test_type": "relative", "n_samples": 40}}
+        replies: list[tuple[int, object]] = []
+        reload_out: list[tuple[int, object]] = []
+
+        threads = [
+            threading.Thread(
+                target=lambda: reload_out.append(
+                    http(explore.endpoint("reload"), recompute_request())
+                )
+            )
+        ]
+        threads += [
+            threading.Thread(
+                target=lambda: replies.append(
+                    http(explore.endpoint("recompute"), recompute_request(method=boot))
+                )
+            )
+            for _ in range(20)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=120)
+        assert not any(t.is_alive() for t in threads)
+
+        assert reload_out and reload_out[0][0] == 200
+        assert len(replies) == 20
+        for status, body in replies:
+            assert status in (200, 409), body
+            if status == 200:
+                assert body["pairs"][0]["points"]
+            else:
+                assert body["stale"] is True
+
+        session = explore.session
+        assert set(session.cache) == set(session.cache_lookback)
+        assert session.cached_value_count() == sum(
+            loaded_value_count(entry) for entry in session.cache.values()
+        )
+
+
 class TestServeExplore:
     def test_ctrl_c_racing_the_post_apply_shutdown_keeps_applied(self, tmp_path, monkeypatch):
         """(milestone-review) A KeyboardInterrupt landing in the post-Apply

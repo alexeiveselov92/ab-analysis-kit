@@ -112,7 +112,7 @@ def build_explore_payload(
             "non_main_count": sum(1 for c in experiment.comparisons if not c.is_main_metric),
         },
         "cache": {
-            "values": session.cache_values,
+            "values": session.cached_value_count(),
             "disabled_reason": session.cache_disabled_reason,
         },
         "warnings": list(session.warnings),

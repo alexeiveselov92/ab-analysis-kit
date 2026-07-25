@@ -15,7 +15,6 @@ writes NULLed test columns with ``insufficient_data=1``).
 
 from __future__ import annotations
 
-import warnings as _warnings
 from dataclasses import dataclass
 from datetime import datetime
 from itertools import combinations
@@ -38,6 +37,7 @@ from abkit.stats import (
     two_tier_alphas,
 )
 from abkit.stats.sequential import to_always_valid
+from abkit.utils.warn_scope import capture_warnings
 
 
 class AnalyzeError(Exception):
@@ -196,8 +196,11 @@ def analyze_cutoff(
         else:
             method = reusable
 
-        with _warnings.catch_warnings(record=True) as caught:
-            _warnings.simplefilter("always", AbkitStatsWarning)
+        # THREAD-scoped capture (m10 WP4): `abk run` fans experiments out over
+        # a ThreadPoolExecutor, and the stdlib's catch_warnings saves/restores
+        # PROCESS-global state — overlapping scopes cross-attribute warnings
+        # between experiments and can leave a dead recorder installed.
+        with capture_warnings(AbkitStatsWarning) as caught:
             result = method.compare_pair(group_1, group_2)
         pair_warnings = [
             str(w.message) for w in caught if issubclass(w.category, AbkitStatsWarning)

@@ -8,10 +8,25 @@ produced; no rows ⇒ the caller shows the friendly "run ``abk run`` first"
 noop (WP8).
 
 Thread discipline (WP4): the load pass runs on the main thread with one
-manager **before** serving; after :func:`load_session` returns, the session is
-immutable in-memory state — per-knob recompute (``recompute.py``) touches no
+manager **before** serving; per-knob recompute (``recompute.py``) touches no
 DB. Tier-R reloads create their own manager inside the serialized handler
 (WP6), never through this module.
+
+Once serving, the session is read-mostly but NOT immutable, and since m10 WP4
+``POST /recompute`` is no longer serialized against ``/reload``, so the two
+mutable surfaces have explicit disciplines:
+
+* **the Tier-S cache** (``cache``/``cache_lookback``/``cache_values``) is
+  guarded by :attr:`ExploreSession.cache_lock`, and every access — read or
+  write — goes through the accessor methods below. A Tier-S read must see a
+  consistent (entry, lookback-it-was-rendered-with) PAIR, and a scan must not
+  iterate a dict ``/reload`` is mutating; the accessors are the only place
+  that discipline lives (``tests/tuning/test_session_cache_lock.py`` is the
+  gate).
+* **``aa_rows``** is deliberately lock-free: Auto mode (``/validate``)
+  replaces the WHOLE list object, which is atomic under the GIL, and readers
+  only ever read it. Never "fix" that into an in-place ``append``/``clear``
+  without adding a lock.
 
 Cache budget: the latest persisted cutoff of every comparison is loaded
 first; older cutoffs fill newest-first while the total stays under
@@ -24,6 +39,7 @@ with that reason — never a silent partial cache the UI would misread as
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -83,7 +99,12 @@ class ComparisonSeries:
 
 @dataclass
 class ExploreSession:
-    """Immutable in-memory state one explore serve runs against."""
+    """The in-memory state one explore serve runs against.
+
+    Read-mostly, not immutable: see the module docstring's thread discipline —
+    the Tier-S cache is lock-guarded behind the accessors below, ``aa_rows`` is
+    replaced wholesale by Auto mode.
+    """
 
     experiment: ExperimentConfig
     project: ProjectConfig
@@ -99,6 +120,11 @@ class ExploreSession:
     cache_values: int = 0
     cache_disabled_reason: str | None = None
     warnings: list[str] = field(default_factory=list)
+    #: m10 WP4: the fine-grained lock over the three cache fields above — held
+    #: only across the dict access itself, NEVER across warehouse I/O or the
+    #: resample math, so a cheap Tier-S read is not queued behind a Reload's
+    #: slow render. Not part of the session's value identity.
+    cache_lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
     def series(self, metric: str) -> ComparisonSeries:
         try:
@@ -109,11 +135,83 @@ class ExploreSession:
                 f"'{self.experiment.name}' (have: {sorted(self.series_by_metric)})"
             ) from None
 
+    # -- the Tier-S cache: these accessors are the ONLY sanctioned access -----
+    #
+    # Every one of them takes ``cache_lock`` itself, so no caller can forget it
+    # and none of them may be called with the lock already held (a plain
+    # ``threading.Lock`` is not reentrant).
+
     def loaded(self, metric: str, end_ts: datetime) -> MetricLoadResult | None:
-        return self.cache.get((metric, end_ts))
+        with self.cache_lock:
+            return self.cache.get((metric, end_ts))
+
+    def cached_entry(
+        self, metric: str, end_ts: datetime
+    ) -> tuple[MetricLoadResult | None, str | int | None]:
+        """The cached entry AND the ``covariate_lookback`` it was rendered with.
+
+        Read as one pair under the lock: the Tier-S gate compares the two, and a
+        concurrent ``/reload`` replaces them one after the other — reading them
+        separately could pair a fresh entry with the previous lookback tag (or
+        the reverse) and serve a cutoff the gate would have refused.
+        """
+        key = (metric, end_ts)
+        with self.cache_lock:
+            return self.cache.get(key), self.cache_lookback.get(key)
 
     def cached_cutoffs(self, metric: str) -> list[datetime]:
-        return sorted(ts for (m, ts) in self.cache if m == metric)
+        with self.cache_lock:
+            return sorted(ts for (m, ts) in self.cache if m == metric)
+
+    def cached_entries(self, metric: str) -> list[tuple[datetime, MetricLoadResult]]:
+        """Every cached ``(end_ts, entry)`` for one metric, ascending — a snapshot.
+
+        A scan that walked ``cached_cutoffs()`` and then re-read each entry could
+        iterate the dict while ``/reload`` mutates it ("dictionary changed size
+        during iteration"); one locked snapshot cannot.
+        """
+        with self.cache_lock:
+            items = [(ts, entry) for (m, ts), entry in self.cache.items() if m == metric]
+        return sorted(items, key=lambda item: item[0])
+
+    def install_cutoff(
+        self,
+        metric: str,
+        end_ts: datetime,
+        loaded: MetricLoadResult,
+        lookback: str | int | None,
+    ) -> None:
+        """Replace one cutoff's (entry, lookback) pair + the budget counter.
+
+        The ONE writer of the cache while the server is up (``/reload``). The
+        warehouse render that produced ``loaded`` happens OUTSIDE the lock by
+        design — holding it across a slow read would re-serialize exactly what
+        m10 WP4 unserialized.
+        """
+        key = (metric, end_ts)
+        with self.cache_lock:
+            previous = self.cache.get(key)
+            if previous is not None:
+                self.cache_values -= loaded_value_count(previous)
+            self.cache[key] = loaded
+            self.cache_lookback[key] = lookback
+            self.cache_values += loaded_value_count(loaded)
+
+    def cached_value_count(self) -> int:
+        """The Tier-S budget counter — read under the lock like everything else."""
+        with self.cache_lock:
+            return self.cache_values
+
+    def disable_cache(self, reason: str) -> None:
+        """Drop the whole cache and degrade to suffstats-only, honestly.
+
+        Never a partial cache: the UI would misread it as "bootstrap is live".
+        """
+        with self.cache_lock:
+            self.cache.clear()
+            self.cache_lookback.clear()
+            self.cache_values = 0
+        self.cache_disabled_reason = reason
 
 
 def load_session(
@@ -183,15 +281,18 @@ def load_session(
         older_loads.extend((name, ts) for ts in series.cutoffs[:-1])
     older_loads.sort(key=lambda item: item[1], reverse=True)
 
-    def _load_one(metric_name: str, end_ts: datetime) -> int:
+    # This pass is single-threaded and pre-serve (nothing is answering requests
+    # yet), so reading ``cache_values`` between installs needs no lock — the
+    # installs themselves still go through the one writer.
+    def _load_one(metric_name: str, end_ts: datetime) -> None:
         series = session.series_by_metric[metric_name]
         loaded = loader(series.comparison, series.metric, grid, Cutoff(end_ts=end_ts))
-        session.cache[(metric_name, end_ts)] = loaded
-        session.cache_lookback[(metric_name, end_ts)] = series.comparison.method.covariate_lookback
-        return loaded_value_count(loaded)
+        session.install_cutoff(
+            metric_name, end_ts, loaded, series.comparison.method.covariate_lookback
+        )
 
     for metric_name, end_ts in latest_loads:
-        session.cache_values += _load_one(metric_name, end_ts)
+        _load_one(metric_name, end_ts)
         log(f"CACHE {experiment.name}/{metric_name}: latest cutoff {end_ts}")
         if session.cache_values > budget:
             break  # degrading anyway — bound the transient peak too
@@ -199,15 +300,14 @@ def load_session(
     if session.cache_values > budget:
         # Even the latest cutoffs bust the budget: degrade honestly to
         # suffstats-only — a partial cache would misreport bootstrap as live.
-        session.cache.clear()
-        session.cache_lookback.clear()
-        session.cache_disabled_reason = (
+        # (The reason quotes the peak, so build it BEFORE the counter resets.)
+        reason = (
             f"session cache over budget: the latest cutoffs alone hold "
             f"{session.cache_values} values (> {budget}) — suffstats-only "
             "session (Tier-S knobs disabled; raise the budget or reduce arms)"
         )
-        session.cache_values = 0
-        session.warnings.append(session.cache_disabled_reason)
+        session.disable_cache(reason)
+        session.warnings.append(reason)
         return session
 
     for metric_name, end_ts in older_loads:
@@ -220,8 +320,8 @@ def load_session(
                 f"older cutoffs before {end_ts} stay suffstats-only"
             )
             break
-        session.cache[(metric_name, end_ts)] = loaded
-        session.cache_lookback[(metric_name, end_ts)] = series.comparison.method.covariate_lookback
-        session.cache_values += count
+        session.install_cutoff(
+            metric_name, end_ts, loaded, series.comparison.method.covariate_lookback
+        )
 
     return session
