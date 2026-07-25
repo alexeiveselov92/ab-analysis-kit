@@ -486,6 +486,62 @@ class TestDriverRouting:
         )
 
 
+class TestVariantDriftDisclosure:
+    """m9 WP6 R1 (adjudicated SPLIT): an already-exposed unit changing arm
+    between this run's cohort snapshot and the tail render is out of contract
+    (the assignment source is an append-shaped log deduped by
+    ``MIN(exposure_ts)``), but it must not be resolved SILENTLY — the two read
+    paths would then sample the cohort at different instants."""
+
+    def test_disagreement_between_tail_and_snapshot_warns(self, warehouse, tables):
+        experiment = make_experiment("exp_drift_arm", "arpu", T_TEST)
+        warnings: list[str] = []
+        backend = _incremental(warehouse, tables, experiment, warnings)
+        backend._variant_map = {"u1": "control", "u2": "control"}
+
+        loaded = backend._reshape(
+            REVENUE,
+            totals={"u1": {"value": 1.0}, "u2": {"value": 2.0}},
+            tail_variant={"u1": "treatment"},  # u1 flipped since the snapshot
+        )
+        assert len(warnings) == 1
+        assert "changed variant mid-run" in warnings[0]
+        assert "u1" in warnings[0]
+        # the LIVE render's arm wins — never the stale snapshot
+        assert list(loaded.units_by_variant["treatment"]) == ["u1"]
+        assert list(loaded.units_by_variant["control"]) == ["u2"]
+
+    def test_a_refresh_cannot_mask_the_drift(self, warehouse, tables):
+        """R2 review finding: the refresh REPLACES the snapshot, so without a
+        diff at refresh time one legitimate mid-run enrollee would silence
+        every other unit's flip — the refreshed map simply agrees with the
+        tail."""
+        experiment = make_experiment("exp_drift_masked", "arpu", T_TEST)
+        warnings: list[str] = []
+        backend = _incremental(warehouse, tables, experiment, warnings)
+        backend._variant_map = {"u1": "control"}
+        # the live source: u1 flipped, and a new unit enrolled (which is what
+        # trips the refresh in the first place)
+        backend._variant_map_refresh = lambda: {"u1": "treatment", "late": "control"}
+
+        backend._reshape(
+            REVENUE,
+            totals={"u1": {"value": 1.0}, "late": {"value": 2.0}},
+            tail_variant={},  # daily cadence: no tail render at all
+        )
+        assert len(warnings) == 1
+        assert "changed variant mid-run" in warnings[0]
+        assert "u1" in warnings[0]
+
+    def test_agreeing_maps_stay_quiet(self, warehouse, tables):
+        experiment = make_experiment("exp_drift_none", "arpu", T_TEST)
+        warnings: list[str] = []
+        backend = _incremental(warehouse, tables, experiment, warnings)
+        backend._variant_map = {"u1": "control"}
+        backend._reshape(REVENUE, totals={"u1": {"value": 1.0}}, tail_variant={"u1": "control"})
+        assert warnings == []
+
+
 class TestR1ReviewFixes:
     """Regressions for the round-1 adversarial findings."""
 

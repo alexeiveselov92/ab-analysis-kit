@@ -343,3 +343,47 @@ It is still recorded here (never change a number silently, even at the
 assembly layer): bootstrap rows persisted **before** the sort may differ from
 re-computed ones on backends that happened to return a different physical
 order. Closed-form methods are order-invariant and unaffected.
+
+## 9. The M9 additive read path — schema and assembly, not statistics (no version bump)
+
+**Decision (2026-07, m9-implementation-plan.md §0.1, delivered WP1–WP6):** M9
+adds a second *route to the same inputs* — the STATE stage materializes
+per-(unit, day) moments into `_ab_unit_state` and, with the opt-in
+`compute.incremental_reads: true`, `IncrementalBackend` sums those closed days
+(plus a live sub-day tail) instead of re-scanning the whole cumulative window.
+Nothing downstream of the loader changes: the per-unit totals feed the SAME
+`MetricLoadResult → build_container → SufficientStats → method` path. **No
+`ALGORITHM_VERSION` moved in the milestone** (grep-checkable in the diff), and
+the golden suite pins the baseline untouched.
+
+It is recorded here for the same reason §8 is — the assembly layer can move a
+number even when no formula does:
+
+- **The parity tolerance is relative 1e-9, never byte equality.** Summing
+  eleven per-day partial sums and scanning the eleven days in one pass are
+  mathematically identical and floating-point *different* (they associate the
+  additions differently); the observed gap on the scaffolded example is ~1 ULP
+  (e.g. a CUPED `θ` of `0.9078684646492412` vs `…13`). Demanding byte equality
+  across the two paths would be demanding a property IEEE-754 does not offer —
+  the same lesson M7 recorded for GEMM blocking. Discrete outputs (unit counts,
+  sizes, `reject`, warnings, identity hashes) stay **exact** in both paths, and
+  the gates assert them exactly.
+- **Which numbers a re-read can legitimately move:** none, within that
+  tolerance — with one documented exception inherited from the day-state
+  contract. An event backfilled into an already-materialized day *later than
+  `data_lag`* is frozen in that day's moments, so the incremental path keeps
+  reporting the pre-backfill number while recompute would pick it up.
+  `data_lag` is the declared SLA (cumulative-intervals §6.2); `abk
+  verify-incremental` is the detector (whole-series, rel-1e-9, non-zero exit)
+  and `abk run --full-refresh --from/--to` is the recovery.
+- **Bootstrap and stratified comparisons never take the additive path** —
+  seeded resampling needs the per-unit arrays and Hamilton apportionment needs
+  the strata, so those comparisons stay on full recompute regardless of the
+  flag. A method's byte-stable seed contract (`derive_seed` from row identity)
+  is therefore untouched.
+- **Eligibility is a metric-author declaration** (`state_additive: true`), not
+  an inference from SQL text: per-day partials add up to the window total only
+  if every projected role column is a day-additive aggregate, and that cannot
+  be read off the query (m9 WP5 — three review rounds each defeated a textual
+  check with a new shape). The text check that remains is veto-only, and
+  `verify-incremental` is the empirical oracle.

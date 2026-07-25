@@ -1,8 +1,8 @@
 # abkit architecture — as built
 
 > The contributor/assistant condensation of the system **as it exists in code**.
-> Reflects: **M1–M8 shipped** (`__version__ = 0.3.0`, release-ready — the
-> `v0.3.0` tag/publish is the maintainer's step; latest on PyPI is `0.2.0`;
+> Reflects: **M1–M9 shipped** (`__version__ = 0.4.0`, release-ready — the
+> `v0.4.0` tag/publish is the maintainer's step; latest on PyPI is `0.3.0`;
 > M3's WP9 testcontainers hardening deferred to a Docker-equipped
 > environment).
 > Design contracts for what is being *built next* (1.x hardening) live in
@@ -284,7 +284,7 @@ two-process lock race) is deferred to a Docker-equipped environment.
   the baked explore payload identical across modes (`watermark_ts` is the one
   legitimately differing column) — zero statistical numbers moved in M8.
 
-### M9 facts an assistant must know (milestone in flight)
+### M9 facts an assistant must know (shipped: WP1–WP6)
 
 - **WP1 (shipped):** `_ab_results` carries the 4 persisted CUPED covariate
   moments (`cov_std_1/2`, `corr_coef_1/2`, nullable) + the
@@ -378,6 +378,36 @@ two-process lock race) is deferred to a Docker-equipped environment.
   rows scanned exactly: `N·D(D+1)/2` recompute vs `N·D` incremental, zero
   inside COMPUTE at daily cadence. Default-flip criteria:
   [cumulative-intervals.md §4.1](../../docs/specs/cumulative-intervals.md).
+- **WP6 (shipped): the exit gate.** `tests/e2e/test_incremental_run.py`
+  drives the whole cycle through the CLI over the scaffolded project:
+  twice-run byte-stability (and a `--full-refresh` that reproduces every
+  number exactly), whole-series `verify-incremental` with **zero
+  `unverified` cutoffs**, day state for the declared-additive metric only
+  (one row per (unit, day)), CUPED Tier E on every knob but the lookback,
+  a real drift → `DIVERGED` → non-zero exit → `--full-refresh` heals, and
+  **the milestone's №1 assertion**: flag on vs flag off persists the same
+  `_ab_results` — discrete columns exactly, continuous at rel-1e-9, with
+  JSON payload columns PARSED before comparison (a CUPED θ differs in its
+  last ULP; comparing the serialized strings would demand a property
+  IEEE-754 does not offer). The ClickHouse leg
+  (`tests/e2e/test_first_run_clickhouse.py`, Docker-gated) migrates a real
+  **pre-M9 `_ab_results`** in place and reconciles the additive path
+  against real SQL — the two claims the in-memory fake cannot settle.
+- **Identity normalization (WP6 R1 fix):** compose state identity ONLY
+  through `state_series_key()`, and hash SQL ONLY through
+  `normalize_sql_for_identity()` — whitespace is formatting OUTSIDE quoted
+  spans and DATA inside them (`'Summer  Sale'` ≠ `'Summer Sale'`), and
+  comments are scanned as spans so an apostrophe in `-- don't sum` cannot
+  open a phantom literal. A blanket `" ".join(sql.split())` let a semantic
+  literal edit reuse stale day state — reproduced as a real divergence at
+  the exit gate.
+- **Catalog lookups are dialect-folded (WP6 R1 fix):** `table_exists` /
+  `list_columns` compare `information_schema` STRINGS, while schema/table
+  names reach the DDL unquoted — so PostgreSQL stores them lower-cased.
+  Both go through `_catalog_name` (identity by default, `.lower()` on
+  PostgreSQL; MySQL keeps the case deliberately). Without it a
+  mixed-case `internal_schema` made every lookup miss, so `ensure_columns`
+  never ran and an existing install silently skipped the M9 migration.
 
 ## The stats core (`abkit.stats`) — the implemented system
 
@@ -492,24 +522,36 @@ byte-identical; see "M7 vectorization facts" above for the working contracts.
 
 **M8 shipped** (the record is
 [m8-implementation-plan.md](../../docs/specs/m8-implementation-plan.md); PRs
-#46–#51 + the WP7 docs-sync/release PR; release-ready as `0.3.0` — the
-`v0.3.0` tag/publish is the maintainer's step): the no-copy
+#46–#51 + the WP7 docs-sync/release PR; **released as `0.3.0`** — tagged and
+published to PyPI): the no-copy
 assignment default + the opt-in incremental `assignment.cohort_copy` engine +
 `abk run --resync-cohort` + the both-mode e2e legs + the three-way docs sync —
 see "M8 cohort facts" above for the working contracts. **Zero statistical
 numbers moved** (cross-mode parity gates; no `ALGORITHM_VERSION` bump).
 
-**Next — the polish track continues: M9–M17 → `0.4.0`…`0.12.0`** (track
+**M9 shipped** (the record is
+[m9-implementation-plan.md](../../docs/specs/m9-implementation-plan.md); PRs
+#53–#56 + #58 + this exit-gate PR; release-ready as `0.4.0` — the `v0.4.0`
+tag/publish is the maintainer's step): the additive compute engine + CUPED
+Tier-E — see "M9 facts an assistant must know" above for the working
+contracts. **Zero statistical numbers moved** (the flag on/off parity gate;
+no `ALGORITHM_VERSION` bump). `compute.incremental_reads` ships **default
+off** with the flip criteria in
+[cumulative-intervals.md §4.1](../../docs/specs/cumulative-intervals.md).
+
+**Next — the polish track continues: M10–M17 → `0.5.0`…`0.12.0`** (track
 approved 2026-07-18; it absorbs the whole "Post-baseline hardening" backlog —
 see the track section in [ROADMAP.md](../../ROADMAP.md) and the as-designed
 contracts
-[m9](../../docs/specs/m9-implementation-plan.md)…[m12](../../docs/specs/m12-implementation-plan.md)
-([m7](../../docs/specs/m7-implementation-plan.md) and
-[m8](../../docs/specs/m8-implementation-plan.md) are now implementation
+[m10](../../docs/specs/m10-implementation-plan.md)…[m12](../../docs/specs/m12-implementation-plan.md)
+([m7](../../docs/specs/m7-implementation-plan.md),
+[m8](../../docs/specs/m8-implementation-plan.md) and
+[m9](../../docs/specs/m9-implementation-plan.md) are now implementation
 records); M13–M17 are contours, each opens with a design session). One WP = one session =
 one PR; **M7–M12 move no statistical number** (parity gates + empty
-`ALGORITHM_VERSION` grep); M13/M15 use full change control. The M8→M9 contract:
-STATE/tail-scan SQL builds ONLY through M8's `build_cohort_backend` factory.
+`ALGORITHM_VERSION` grep); M13/M15 use full change control. The M8→M9 contract
+(honored, and binding for M10+): STATE/tail-scan SQL builds ONLY through M8's
+`build_cohort_backend` factory.
 Read before coding:
 
 - The M5 as-built + the math → [m5-implementation-plan.md](../../docs/specs/m5-implementation-plan.md),

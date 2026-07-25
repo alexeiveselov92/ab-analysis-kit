@@ -87,6 +87,14 @@ general rule.
   lifetime, late/backfill events, stratum-membership changes, covariate updates,
   reproducible seeds — so it is premature before the win is proven.
 
+**Status after M9: v1 is delivered end to end (§4.1); v2 is still deferred,
+but its named gate now exists.** `abk verify-incremental` shipped in M9 WP5 —
+whole-series, rel-1e-9, read-only, non-zero exit on divergence — and it
+reconciles the *warehouse-side* additive reader that v1 specifies. No Python
+delta store, array cache or quantile sketch was built (bootstrap comparisons
+never leave the recompute path). A future v2 inherits the same gate, and the
+default-flip criteria below are the evidence bar it would also have to clear.
+
 `abk run --cost-report` emits rows-scanned / bytes-read / wall-time per stage so
 the trigger is **data-driven**, not guessed. (The flag is `--cost-report`, not
 `--profile`: every `abk` command already uses `--profile` for the DB-connection
@@ -155,9 +163,41 @@ needs.
    materialization guard. Invariant test: running the state stage twice for one day
    leaves aggregates unchanged. (This corruption is silent in v1 and only surfaces
    when v2 flips the read path — fix it now.)
+
+   **As built (M9 WP3): replace-not-sum, per day.** `_ab_unit_state` is
+   keyed `(source_table, column_set_id, unit_id, day)` with a version column,
+   and the writer's only entry point is `replace_day_state` — a day is
+   deleted and re-inserted as a unit, so re-running the STATE stage over an
+   already-materialized day is a no-op on the aggregates (pinned by
+   `tests/pipeline/test_state_stage.py` and by the WP6 twice-run e2e leg).
+   Contiguity is the second half of the guarantee: every failure path
+   TRUNCATES the tail (`delete_state_days_from`), so every day `≤
+   get_last_state_day()` is materialized and later days are *absent*, never
+   stale — which is exactly what makes the reader's gap check able to fall
+   back instead of silently under-summing.
 3. **`_ab_unit_state` cardinality.** Key per **(source-table, column-set, unit)**,
    not `(exp, metric, unit)`, so co-located metrics sharing a fact source share
    one set of per-unit moments (avoids ×M storage/writes).
+
+   **As built (M9 WP3) — deliberately narrowed for v1, and this is a
+   decision, not an under-delivery.** The key shape is exactly the one this
+   must-fix asks for, but `source_table` is scoped to
+   `"{experiment}/{metric}"` (`compute_state_source_id`) and `column_set_id`
+   folds in the cohort-shaping experiment config (assignment-SQL hash, added
+   filters, unit key, variants, timezone, start date — and end date only when
+   the assignment SQL references `ab_end_*`) alongside the role map and the
+   whitespace-normalized SQL. Reason: the day render is **cohort-filtered**
+   (it goes through the M8 `build_cohort_backend` factory, so the rows are
+   already restricted to that experiment's exposed units) — two experiments
+   over the same fact table therefore produce *different* per-unit moments,
+   and sharing one series between them would clobber, not save. Cross-metric
+   sharing is likewise off: the moments are per role-column projection. The
+   ×M storage saving this must-fix wanted is thus explicitly traded for
+   correctness under the M8 no-copy cohort default; a future v2 that renders
+   uncohorted state could widen the scope, and would have to re-derive the
+   join at read time to do it. Compose the key ONLY through
+   `pipeline/state.state_series_key()` — any change to what it hashes orphans
+   the prior series, and `abk clean` sweeps the orphans.
 4. **Correctness under async merge.** All correctness-sensitive reads (cumulative
    read, planner anti-join, BI datasource) must use `-Merge`/`FINAL`/`argMax` dedup
    so partial pre-merge state is never read.

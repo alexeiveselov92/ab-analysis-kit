@@ -1,14 +1,17 @@
 # M9 Implementation Plan — additive compute engine + CUPED Tier-E
 
-> **Status: as-designed contract for M9 (track approved 2026-07-18), NOT yet
-> implemented.** Targets release `0.4.0`. This is the contract the M9
-> implementation sessions execute WP by WP; it becomes the implementation
-> record (as-built table + adversarial-review log) at the exit gate, the
+> **Implementation record — M9 shipped in full (WP1–WP6), 2026-07-21/25;
+> version bumped to `0.4.0`, release-ready pending the maintainer's `v0.4.0`
+> tag/publish step.** Written 2026-07-18 as the as-designed contract for M9
+> (polish track M7–M17, approved by the maintainer 2026-07-18 — see
+> [ROADMAP.md](../../ROADMAP.md) "The polish track"), in the shape of
 > [m4](m4-implementation-plan.md)/[m5](m5-implementation-plan.md)/
-> [m6](m6-implementation-plan.md)-implementation-plan.md pattern. Nothing in
-> this document describes code that exists yet — every WP is written in
-> contract/future tense ("WP2 adds…", "the gate asserts…"); do not read it as
-> an as-built record.
+> [m6](m6-implementation-plan.md)-implementation-plan.md; amended in place at
+> the WP6 exit gate into this record (the m4–m8 pattern). The WP bodies below
+> keep the original future-tense contract wording ("WP2 adds…") as the
+> designed baseline; the **"done" table** below, the **per-WP as-built
+> notes**, and the **exit-gate record** appended to §7 are the authoritative
+> as-built account.
 >
 > Governing specs: [cumulative-intervals.md §4–6](cumulative-intervals.md)
 > (the STATE/incremental contract this milestone finally wires),
@@ -22,6 +25,29 @@
 > change). Source plan: `~/.claude/plans/report-md-replicated-truffle.md` M9
 > section; detailed WP breakdown: `~/.claude/plans/abkit-v2-details/design_additive.json`;
 > code-verified facts: `~/.claude/plans/abkit-v2-details/verify_additive.json`.
+
+## Status — all work packages shipped (the "done" table)
+
+| WP | Landed as | Load-bearing as-built delta (details in the per-WP notes) |
+|---|---|---|
+| WP1 — persisted CUPED moments + `ensure_columns` | PR #53 | the project's first post-release schema change: 4 nullable columns + an additive-only ALTER primitive that never drops; NOT-NULL-without-default additions are refused |
+| WP2 — CUPED becomes Tier E in explore | PR #54 | every knob reconstructs exactly except `covariate_lookback` (unconditionally Tier R); pre-migration rows keep the α-inversion fallback — the "byte-for-byte" REPORT claim stays refuted, the gate is rel-1e-9 |
+| WP3 — the write-only STATE stage | PR #55 | series identity is scoped per `{experiment}/{metric}` + cohort config (the render is cohort-filtered — §5.3's sharing ideal deliberately narrowed); every failure path TRUNCATES the tail, so contiguity — not freshness — is what the reader's gap check can rely on |
+| WP4 — `IncrementalBackend`, the opt-in read path | PR #56 | cross-path parity is rel-1e-9, never byte (summation order differs by design); `--full-refresh`/`--resync-cohort` without the `state` step disable incremental reads for that run; arm split is snapshot-first with ONE refresh-on-miss |
+| WP5 — `abk verify-incremental` + cost + state GC | PR #58 | **additivity became an explicit `state_additive: true` declaration** after three review rounds each defeated a textual check with a new SQL shape; the text check is now veto-only and the command is the empirical oracle — it caught the scaffolded `example_signup_cr` inflating `size_1` 11× |
+| WP6 — the exit gate + docs sync + the `0.4.0` cut | this PR | the flag-off/flag-on gate compares JSON payload columns PARSED (a CUPED θ differs in its last ULP); the review found the state identity was collapsing whitespace *inside* string literals — a semantic edit that did not orphan its series |
+
+**Zero statistical numbers moved anywhere in the milestone** — no
+`ALGORITHM_VERSION` bump in any PR, no new `statistics-changes.md` deviation
+(§9 there records the schema-and-assembly framing), `abkit.stats` purity
+intact, golden suite untouched. The milestone's №1 assertion — flipping
+`compute.incremental_reads` changes no persisted `_ab_results` number — is
+pinned at three levels: backend load parity
+(`tests/compute/test_incremental_backend.py`), driver persistence
+(`TestDriverRouting::test_flag_on_off_persist_matching_rows`) and the CLI
+e2e (`tests/e2e/test_incremental_run.py::TestFlagOffChangesNoNumber`).
+Every WP PR carried its own adversarial review (1–3 rounds each, findings
+fixed in-PR before merge); the milestone-level exit gate is recorded in §7.
 
 ## 0. Scope, posture & decisions
 

@@ -1,15 +1,20 @@
 """Unit-state mixin: ``_ab_unit_state`` operations (the scalability seam).
 
-v1 is a THIN materialization — the compute read path stays recompute — but the
-two invariants that would be silent corruption by the time v2 flips the read
-path are enforced NOW (cumulative-intervals.md §5.2/§5.3):
+The two invariants that would be silent corruption once the read path flips
+(m9 WP4's opt-in ``compute.incremental_reads``) — cumulative-intervals.md
+§5.2/§5.3:
 
 1. **Idempotent per (source, column-set, day)**: replace-not-sum. Writing a
    day twice leaves aggregates unchanged (the twice-run invariant test).
-2. **Cardinality key** ``(source_table, column_set_id, unit_id, day)`` — NOT
-   per (experiment, metric) — so co-located metrics sharing a fact source
-   share one set of per-unit moments. State rows are deliberately
-   experiment-independent: the exposure join happens at read time.
+2. **Cardinality key** ``(source_table, column_set_id, unit_id, day)``, one
+   row per unit per day — never one row per cumulative window.
+
+``source_table`` is NOT a warehouse table name: v1 scopes it per
+``"{experiment}/{metric}"`` (:func:`compute_state_source_id`), because the
+day render is cohort-filtered, so two experiments over one fact table produce
+DIFFERENT per-unit moments and sharing a series between them would clobber
+rather than save. §5.3's co-located-metric sharing is therefore a deliberate
+v1 non-goal, recorded as a decision in cumulative-intervals.md §5.3.
 
 The state stage advances only at day close (§6.4); sub-day cutoffs read
 closed-day state plus a current-day fact tail.
@@ -18,6 +23,7 @@ closed-day state plus a current-day fact tail.
 from __future__ import annotations
 
 import hashlib
+import re
 from datetime import date
 from typing import Any
 
@@ -76,6 +82,130 @@ def compute_state_source_id(experiment: str, metric_name: str) -> str:
     return f"{composite[:_SOURCE_TABLE_MAX_LENGTH - 17]}#{digest}"
 
 
+#: opening delimiters of a span whose BYTES are data, not formatting
+_QUOTE_CHARS = "'\"`"
+#: a dollar-quoted body (``$$…$$``, ``$tag$…$tag$``) — PostgreSQL only, and a
+#: shape this scanner deliberately refuses to interpret (see ``_scan_spans``)
+_DOLLAR_TAG = re.compile(r"\$[A-Za-z_0-9]*\$")
+
+
+def _collapse(text: str) -> str:
+    """Whitespace-collapse one fragment, preserving that separation existed.
+
+    A fragment that had leading/trailing whitespace keeps exactly one space
+    there, so ``'a' 'b'`` (two literals) can never normalize onto ``'a''b'``
+    (one literal containing a quote).
+    """
+    if not text:
+        return ""
+    core = " ".join(text.split())
+    if not core:
+        return " "
+    lead = " " if text[:1].isspace() else ""
+    trail = " " if text[-1:].isspace() else ""
+    return f"{lead}{core}{trail}"
+
+
+def _scan_spans(sql: str) -> list[tuple[int, int, bool]] | None:
+    """Tokenize into ``(start, end, is_data)`` spans, or ``None`` if unsure.
+
+    ``is_data`` marks a quoted span (string literal or quoted identifier):
+    its bytes are content, so whitespace inside it is significant. Comments
+    are returned with ``is_data=False`` — their whitespace is formatting like
+    any other — but they MUST be recognized, because an apostrophe inside one
+    (``-- don't sum``) would otherwise open a phantom literal and shift every
+    later boundary.
+
+    Returning ``None`` is the safety valve, and the whole design rests on it:
+    the two ways to be wrong are NOT symmetric. Treating data as formatting
+    silently reuses stale day state under changed semantics (the P1 this
+    function exists to prevent); treating formatting as data merely orphans a
+    series that is then re-materialized (a wasted render). So anything this
+    scanner cannot read unambiguously — a backslash inside a literal (an
+    escape on MySQL/ClickHouse, a plain character on standard-conforming
+    PostgreSQL), a dollar-quoted body, a ``#`` (a comment on MySQL and
+    ClickHouse, the XOR operator on PostgreSQL, the tail of a Jinja ``{#``),
+    an unterminated quote or block comment — makes the caller hash the RAW
+    text instead of guessing which halves are data.
+    """
+    spans: list[tuple[int, int, bool]] = []
+    i, n = 0, len(sql)
+    while i < n:
+        ch = sql[i]
+        if ch == "#":
+            return None
+        if ch == "$" and _DOLLAR_TAG.match(sql, i):
+            return None
+        if sql.startswith("--", i):
+            end = sql.find("\n", i)
+            end = n if end == -1 else end
+            spans.append((i, end, False))
+            i = end
+            continue
+        if sql.startswith("/*", i):
+            end = sql.find("*/", i + 2)
+            if end == -1:
+                return None
+            spans.append((i, end + 2, False))
+            i = end + 2
+            continue
+        if ch in _QUOTE_CHARS:
+            j = i + 1
+            while j < n:
+                if sql[j] == "\\":
+                    return None  # escape semantics are dialect-dependent
+                if sql[j] == ch:
+                    if j + 1 < n and sql[j + 1] == ch:  # '' — the embedded quote
+                        j += 2
+                        continue
+                    break
+                j += 1
+            else:
+                return None  # unterminated
+            if j >= n:
+                return None
+            spans.append((i, j + 1, True))
+            i = j + 1
+            continue
+        i += 1
+    return spans
+
+
+def normalize_sql_for_identity(sql: str) -> str:
+    """Canonical form of a SQL body for identity hashing.
+
+    Whitespace is collapsed everywhere EXCEPT inside quoted spans (string
+    literals and quoted identifiers), which are carried through byte for
+    byte. Both halves are load-bearing:
+
+    - collapsing outside them is what keeps a pure reformat (indentation,
+      line breaks, a rewrapped comment) from orphaning a materialized state
+      series;
+    - preserving them is what keeps a semantic edit from being INVISIBLE.
+      ``WHERE campaign = 'Summer  Sale'`` and ``… 'Summer Sale'`` select
+      different rows, yet a blanket ``" ".join(sql.split())`` maps them to the
+      same string — the series id would not move, the stale-series supersede
+      loop would not fire, and days materialized under the old filter would be
+      summed under the new one (an R1 review finding at the m9 exit gate).
+
+    When :func:`_scan_spans` cannot read the text unambiguously the raw body
+    is hashed verbatim: an unreadable query orphans its series on any edit
+    (cheap, self-healing) rather than risking a silent stale reuse.
+    """
+    spans = _scan_spans(sql)
+    if spans is None:
+        return sql
+    pieces: list[str] = []
+    last = 0
+    for start, end, is_data in spans:
+        pieces.append(_collapse(sql[last:start]))
+        body = sql[start:end]
+        pieces.append(body if is_data else _collapse(body))
+        last = end
+    pieces.append(_collapse(sql[last:]))
+    return "".join(pieces).strip()
+
+
 def compute_metric_state_id(
     column_roles: dict[str, str],
     metric_sql: str,
@@ -86,8 +216,9 @@ def compute_metric_state_id(
     The m9 WP3 metric-hash invalidation: editing the SQL body (not just the
     column roles) must orphan stale day state — metrics have no
     ``method_config_id`` analogue, so this hash introduces that mechanism.
-    The SQL text is whitespace-normalized first, so reformatting alone never
-    orphans a series.
+    The SQL text goes through :func:`normalize_sql_for_identity` first, so
+    reformatting alone never orphans a series while an edit inside a string
+    literal always does.
 
     ``cohort_config`` folds the cohort-shaping experiment config into the
     identity (an R1 review fix): the day render joins the experiment's
@@ -97,7 +228,7 @@ def compute_metric_state_id(
     a merged series would otherwise mix two cohort definitions across days,
     an inconsistency the full-window recompute path can never have.
     """
-    normalized = " ".join(metric_sql.split())
+    normalized = normalize_sql_for_identity(metric_sql)
     sql_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
     payload = json_dumps_sorted(
         {

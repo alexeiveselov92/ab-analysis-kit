@@ -22,6 +22,7 @@ from abkit.database.internal_tables import (
     compute_column_set_id,
     compute_metric_state_id,
     compute_state_source_id,
+    normalize_sql_for_identity,
 )
 from abkit.database.internal_tables._results import RESULT_COLUMNS
 from abkit.database.tables import TABLE_RESULTS, TABLE_TASKS, get_results_table_model
@@ -496,6 +497,47 @@ class TestUnitState:
         with_b = compute_metric_state_id(roles, "SELECT 1", cohort_config=cohort_b)
         assert with_a != with_b
         assert with_a == compute_metric_state_id(roles, "SELECT 1", cohort_config=dict(cohort_a))
+
+    def test_identity_normalization_separates_formatting_from_data(self):
+        """m9 WP6 (an R1 exit-gate finding): whitespace is FORMATTING outside a
+        quoted span and DATA inside one — and an apostrophe in a comment must
+        not be read as the start of a literal."""
+        pairs = [
+            # (differs only in formatting → same identity?, a, b)
+            (True, "-- don't  sum\nSELECT   x FROM t", "-- don't sum\nSELECT x   FROM  t"),
+            (True, "/* a\n   b */ SELECT x", "/* a b */ SELECT   x"),
+            (True, "SELECT   x\n\nFROM t", "SELECT x FROM t"),
+            (
+                True,
+                "SELECT x FROM t WHERE a = 'x' AND b = 'y'",
+                "SELECT  x FROM t\n WHERE a = 'x' AND b = 'y'",
+            ),
+            (False, "SELECT x WHERE c = 'A  B'", "SELECT x WHERE c = 'A B'"),
+            (False, "SELECT 'a' 'b'", "SELECT 'a''b'"),
+            (False, 'SELECT "a  b" FROM t', 'SELECT "a b" FROM t'),
+            (False, "SELECT x -- note\n", "SELECT x -- other note\n"),
+        ]
+        for same, a, b in pairs:
+            assert (normalize_sql_for_identity(a) == normalize_sql_for_identity(b)) is same, (a, b)
+
+    def test_unreadable_sql_is_hashed_raw_not_guessed(self):
+        """m9 WP6 R2: the two ways to be wrong are not symmetric. A shape the
+        scanner cannot read unambiguously — a backslash escape (an escape on
+        MySQL/ClickHouse, a plain character on standard-conforming
+        PostgreSQL), a dollar-quoted body, a `#` (comment on MySQL/ClickHouse,
+        XOR on PostgreSQL), an unterminated quote or block comment — must
+        fall back to hashing the RAW text, so a whitespace edit anywhere in it
+        orphans the series instead of silently reusing it."""
+        ambiguous = [
+            ("SELECT x WHERE c = 'It\\'s  a' AND y", "SELECT x WHERE c = 'It\\'s a' AND y"),
+            ("SELECT $$a  b$$ FROM t", "SELECT $$a b$$ FROM t"),
+            ("# don't\nSELECT c = 'A  B'", "# don't\nSELECT c = 'A B'"),
+            ("SELECT 'unterminated  ", "SELECT 'unterminated "),
+            ("SELECT /* unterminated  ", "SELECT /* unterminated "),
+        ]
+        for a, b in ambiguous:
+            assert normalize_sql_for_identity(a) == a, a  # raw, not normalized
+            assert normalize_sql_for_identity(a) != normalize_sql_for_identity(b), a
 
     def test_state_source_id_stays_inside_the_column_budget(self):
         assert compute_state_source_id("exp", "arpu") == "exp/arpu"

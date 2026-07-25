@@ -282,18 +282,32 @@ depends on), the incremental copier + `abk run --resync-cohort` (WP5),
 both-mode e2e incl. the growing-source increment (WP6) — PRs #46–#51 — and
 the 3-way docs sync + `0.3.0` cut (WP7). Zero statistical numbers moved.
 
-### M9 — additive compute engine + CUPED Tier-E → `0.4.0` 📋
-Design contract: [m9-implementation-plan.md](docs/specs/m9-implementation-plan.md).
+### M9 — additive compute engine + CUPED Tier-E → `0.4.0` ✅
+Implementation record:
+[m9-implementation-plan.md](docs/specs/m9-implementation-plan.md).
 Kills the O(D²) full-window rescan for closed forms by finally wiring the
 STATE stage + `_ab_unit_state` (cumulative-intervals §4–6: warehouse-side
 day-bucketed increments, sub-day = state + tail-scan through the M8 factory —
 the blocker contract), and makes CUPED instant in explore: +4 covariate
-columns via additive `ensure_columns` (WP1), CUPED → Tier-E with rel-1e-9
-reconstruction — the "byte-for-byte" REPORT claim is refuted, the gate is
-rel-1e-9 (WP2), the STATE stage (WP3), the opt-in `IncrementalBackend` with
-gap→Recompute fallback, never silent undercount (WP4), `abk
-verify-incremental` + cost observability + state GC (WP5), and the exit gate —
-the flag on/off changes no number (WP6). Bootstrap stays full-window forever.
+columns via additive `ensure_columns` (WP1 — PR #53), CUPED → Tier-E with
+rel-1e-9 reconstruction — the "byte-for-byte" REPORT claim is refuted, the
+gate is rel-1e-9 (WP2 — PR #54), the STATE stage (WP3 — PR #55), the opt-in
+`IncrementalBackend` with gap→Recompute fallback, never silent undercount
+(WP4 — PR #56), `abk verify-incremental` + cost observability + state GC + the
+executable perf gate (WP5 — PR #58), and the exit gate — the flag on/off
+changes no number (WP6). Bootstrap stays full-window forever.
+**The load-bearing as-built delta:** day-additivity became an **explicit
+metric declaration** (`state_additive: true`, default off) after three review
+rounds each defeated a textual additivity check with a new SQL shape; the text
+check survives as a veto-only filter and `abk verify-incremental` is the
+empirical oracle — which caught the scaffolded `example_signup_cr`
+(`max()` + a literal trial count) inflating `size_1` 11×. `incremental_reads`
+ships **default off** with the flip criteria recorded in
+[cumulative-intervals.md §4.1](docs/specs/cumulative-intervals.md).
+Measured: recompute scans `N·D(D+1)/2` fact rows across a D-day series,
+the additive path `N·D` — and zero inside COMPUTE at daily cadence.
+Zero statistical numbers moved (no `ALGORITHM_VERSION` bump; the flag-off/on
+parity gate is the milestone's №1 assertion).
 
 ### M10 — timestamps + schema cleanup + explore polish → `0.5.0` 📋
 Design contract: [m10-implementation-plan.md](docs/specs/m10-implementation-plan.md).
