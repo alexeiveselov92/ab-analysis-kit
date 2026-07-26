@@ -18,6 +18,7 @@ hold, and both are pinned here so they cannot regress into "it looked fine":
 from __future__ import annotations
 
 import ast
+import itertools
 import sys
 import threading
 from datetime import datetime, timedelta
@@ -28,10 +29,12 @@ import numpy as np
 from abkit.loaders.metric_loader import MetricLoadResult
 from abkit.stats.bootstrap import ResampleOutcome
 from abkit.tuning.session import (
+    BOOT_MEMO_ENTRY_OVERHEAD,
     BootMemoEntry,
     BootMemoKey,
     ExploreSession,
     loaded_value_count,
+    memo_slot_charge,
 )
 
 CUTOFF = datetime(2024, 1, 8)
@@ -373,31 +376,45 @@ class TestBootMemo:
         assert session.memoized_resample(_key(other, 1, "arpu")) is not None
 
     def test_the_budget_evicts_oldest_first_and_stays_exact(self):
+        slot = 10 + BOOT_MEMO_ENTRY_OVERHEAD
         session = _session()
-        session.boot_memo_budget = 25
+        session.boot_memo_budget = 2 * slot + 5
         for day in range(10):
             session.memoize_resample(_key(CUTOFF + timedelta(days=day)), _memo(10))
-            assert session.memoized_value_count() <= 25
-        assert session.memoized_count() == 2  # 10 + 10 fits, the third evicts the first
-        assert session.memoized_value_count() == 20
+            assert session.memoized_value_count() <= session.boot_memo_budget
+        assert session.memoized_count() == 2  # two slots fit, the third evicts the first
+        assert session.memoized_value_count() == 2 * slot
         assert session.memoized_resample(_key(CUTOFF)) is None  # the oldest is gone
         assert session.memoized_resample(_key(CUTOFF + timedelta(days=9))) is not None
+        assert session.memo_eviction_count() == 8  # …and the evictions are counted
 
     def test_an_entry_larger_than_the_whole_budget_is_refused_not_stored(self):
         """Storing it would evict every neighbour AND still bust the cap."""
         session = _session()
-        session.boot_memo_budget = 25
+        session.boot_memo_budget = 10 + BOOT_MEMO_ENTRY_OVERHEAD
         session.memoize_resample(_key(CUTOFF), _memo(10))
-        assert session.memoize_resample(_key(CUTOFF + timedelta(days=1)), _memo(26)) is False
+        assert session.memoize_resample(_key(CUTOFF + timedelta(days=1)), _memo(11)) is False
         assert session.memoized_count() == 1
-        assert session.memoized_value_count() == 10
+        assert session.memoized_value_count() == 10 + BOOT_MEMO_ENTRY_OVERHEAD
+
+    def test_the_slot_overhead_bounds_a_flood_of_tiny_entries(self):
+        """A value-only budget bounds the payload and nothing else: one-replicate
+        entries would let a client mint millions of slots "inside" the budget
+        (review round 1 measured ~773 B of fixed cost each). The slot charge is
+        what makes the cap a real memory bound."""
+        session = _session()
+        session.boot_memo_budget = 10 * (1 + BOOT_MEMO_ENTRY_OVERHEAD)
+        for day in range(500):
+            session.memoize_resample(_key(CUTOFF + timedelta(days=day)), _memo(1))
+        assert session.memoized_count() == 10  # not 500
+        assert session.memoized_value_count() <= session.boot_memo_budget
 
     def test_reinserting_the_same_key_does_not_double_count_the_budget(self):
         session = _session()
         for _ in range(5):
             session.memoize_resample(_key(CUTOFF), _memo(10))
         assert session.memoized_count() == 1
-        assert session.memoized_value_count() == 10
+        assert session.memoized_value_count() == 10 + BOOT_MEMO_ENTRY_OVERHEAD
 
     def test_disable_cache_clears_the_memo_too(self):
         session = _session()
@@ -413,8 +430,16 @@ class TestBootMemo:
 
     def test_concurrent_memoizes_keep_the_budget_counter_exact(self):
         """``boot_memo_values`` is a read-modify-write pair like ``cache_values``
-        — unlocked, two threads lose one another's update. The switch interval
-        has to be tiny for the interleaving to be reliable (round-2 lesson)."""
+        — unlocked, two threads lose one another's update.
+
+        The keys are SHARED across the threads on purpose (review round 1): with
+        a key per thread ``previous`` is always None and the whole update is
+        ``+= entry.values`` — bytecode with no CALL and no backward jump, which
+        CPython never preempts, so the first version of this test passed 0/60
+        with the lock removed. Sharing 16 keys puts the ``pop(...)`` call inside
+        the window (the shape the WP4 original has), and the mutation is then
+        caught 12/12.
+        """
         session = _session()
         session.boot_memo_budget = 10_000_000
         previous = sys.getswitchinterval()
@@ -422,9 +447,9 @@ class TestBootMemo:
         try:
 
             def churn(worker: int) -> None:
-                for i in range(2000):
+                for i in range(4000):
                     session.memoize_resample(
-                        _key(CUTOFF + timedelta(seconds=worker * 10_000 + i)), _memo(3)
+                        _key(CUTOFF + timedelta(seconds=(worker + i) % 16)), _memo(3)
                     )
 
             threads = [threading.Thread(target=churn, args=(w,)) for w in range(4)]
@@ -435,38 +460,65 @@ class TestBootMemo:
             assert not any(thread.is_alive() for thread in threads)
         finally:
             sys.setswitchinterval(previous)
-        assert session.memoized_count() == 8000
-        assert session.memoized_value_count() == 24_000
+        assert session.memoized_count() == 16
+        assert session.memoized_value_count() == sum(
+            memo_slot_charge(entry) for entry in session.boot_memo.values()
+        )
 
     def test_a_purge_racing_the_readers_never_hangs_or_miscounts(self):
         """``install_cutoff`` purges the memo AFTER releasing ``cache_lock``, so
         the two locks are never nested — a reader hammering both accessors while
-        a writer installs must neither deadlock nor corrupt the counter."""
+        a writer installs must neither deadlock, crash, nor corrupt the counter.
+
+        Two things make the mutation (a purge without ``boot_memo_lock``) reliably
+        detectable, both learned the hard way in review round 1: the purge has to
+        SCAN a long dict — hence 4 000 pre-filled entries under a cutoff it never
+        touches — and the interpreter has to preempt inside that scan, which at
+        the default 5 ms switch interval it never does. Unlocked, the scan then
+        raises "OrderedDict mutated during iteration" out of the /reload handler.
+        """
         session = _session()
+        session.boot_memo_budget = 10_000_000
+        # a long tail the purge must walk past on every install (different cutoff
+        # ⇒ never dropped, so the scan stays long)
+        other = CUTOFF + timedelta(days=99)
+        for i in range(4000):
+            session.memoize_resample(_key(other, generation=i), _memo(1))
+
         stop = threading.Event()
         failures: list[BaseException] = []
+        # Each insert uses a FRESH generation so the purged cutoff's slice GROWS
+        # between purges (with one recycled key the memo never held more than one
+        # entry for it and the mutation was caught 3/20 instead of every run).
+        generations = itertools.count(1)
 
         def reader() -> None:
             try:
                 while not stop.is_set():
                     session.cached_entry("arpu", CUTOFF)
-                    session.memoize_resample(_key(CUTOFF, generation=1), _memo(4))
-                    session.memoized_resample(_key(CUTOFF, generation=1))
+                    generation = next(generations)
+                    session.memoize_resample(_key(CUTOFF, generation=generation), _memo(4))
+                    session.memoized_resample(_key(CUTOFF, generation=generation))
             except BaseException as exc:  # pragma: no cover - the failure path
                 failures.append(exc)
 
+        previous = sys.getswitchinterval()
+        sys.setswitchinterval(1e-6)
         readers = [threading.Thread(target=reader, daemon=True) for _ in range(4)]
-        for thread in readers:
-            thread.start()
-        for _ in range(200):
-            session.install_cutoff("arpu", CUTOFF, _entry(3), None)
-        stop.set()
-        for thread in readers:
-            thread.join(timeout=20)
+        try:
+            for thread in readers:
+                thread.start()
+            for _ in range(200):
+                session.install_cutoff("arpu", CUTOFF, _entry(3), None)
+            stop.set()
+            for thread in readers:
+                thread.join(timeout=20)
+        finally:
+            sys.setswitchinterval(previous)
         assert not any(thread.is_alive() for thread in readers), "deadlock"
         assert not failures, failures
         assert session.memoized_value_count() == sum(
-            entry.values for entry in session.boot_memo.values()
+            memo_slot_charge(entry) for entry in session.boot_memo.values()
         )
 
 
@@ -557,3 +609,63 @@ def test_the_gate_does_not_flag_the_accessors():
         "    return a, srv.session.cached_cutoffs('m')\n"
     )
     assert _guarded_accesses(ast.parse(allowed)) == []
+
+
+# -- the m10 WP5 structural gates ---------------------------------------------
+
+
+def test_boot_memo_keys_are_composed_only_by_the_session_factory():
+    """``BootMemoKey`` has seven fields and every missing one is a silent wrong
+    number (another metric's, another arm pair's, another seed's replicates), so
+    it is built in ONE place — ``ExploreSession.boot_memo_key``. The m9
+    ``state_series_key()`` precedent, and the m10 WP1 grid-factory one: a
+    composition copied to a second call site is a composition that will be
+    copied with a field dropped."""
+    offenders: list[str] = []
+    for path in sorted(PACKAGE.rglob("*.py")):
+        if path == DEFINITION:
+            continue
+        tree = ast.parse(path.read_text(), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                if node.func.id == "BootMemoKey":
+                    offenders.append(f"{path.relative_to(PACKAGE.parent)}:{node.lineno}")
+            elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                if node.func.attr == "BootMemoKey":
+                    offenders.append(f"{path.relative_to(PACKAGE.parent)}:{node.lineno}")
+    assert (
+        not offenders
+    ), "compose a memo key ONLY through ExploreSession.boot_memo_key():\n  " + "\n  ".join(
+        offenders
+    )
+
+
+def test_the_memo_lock_is_never_taken_inside_the_cache_lock():
+    """The two locks are independent, not ordered — the purge runs AFTER
+    ``install_cutoff``'s ``cache_lock`` section returns. That is a stronger
+    property than a documented acquisition order (there is nothing to get
+    wrong), and it is only true as long as nothing reaches the memo from inside
+    a ``cache_lock`` block; this walks the AST and says so."""
+    tree = ast.parse(DEFINITION.read_text(), filename=str(DEFINITION))
+    offenders: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.With):
+            continue
+        holds_cache_lock = any(
+            isinstance(item.context_expr, ast.Attribute) and item.context_expr.attr == "cache_lock"
+            for item in node.items
+        )
+        if not holds_cache_lock:
+            continue
+        for inner in ast.walk(node):
+            name = None
+            if isinstance(inner, ast.Attribute):
+                name = inner.attr
+            elif isinstance(inner, ast.Name):
+                name = inner.id
+            if name and (name.startswith("boot_memo") or name.startswith("drop_memoized")):
+                offenders.append(f"session.py:{inner.lineno} ({name}) inside a cache_lock block")
+    assert not offenders, (
+        "cache_lock and boot_memo_lock must never nest — move the memo work "
+        "after the cache_lock section:\n  " + "\n  ".join(offenders)
+    )

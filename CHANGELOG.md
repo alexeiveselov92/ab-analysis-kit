@@ -128,7 +128,11 @@ number change).
   4 cutoffs, a six-turn drag went **6.01 s → 1.01 s** — the first answer is
   unchanged, each turn after it **1.00 s → 0.002 s**. Bounded by a
   value-counted budget (≈16 MB of replicates) with oldest-first eviction, and
-  dropped for a cutoff whenever `/reload` re-renders it. **The numbers do not
+  dropped for a cutoff whenever `/reload` re-renders it. The budget charges
+  each slot a fixed overhead beyond its replicates (a value-only cap bounds the
+  payload, not the number of slots), and when a knob state's series does not fit
+  — where an oldest-first policy degrades to no reuse at all — the reply says so
+  instead of silently losing the speedup. **The numbers do not
   move**: the memoized outcome enters the same finalize step it would have,
   which is pinned per method class (`from_samples` == `_resample` +
   `_finalize`, bit for bit) and per engine path (five alphas against the same

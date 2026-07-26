@@ -222,6 +222,18 @@ canonical design JSON's own step-by-step content (not replacing it):
   `boot_memo_lock`, never the reverse), and the "5 alphas → 1 resample"
   instrumentation test as the engagement proof (not just a numbers-match
   parity test, which alone wouldn't prove memoization actually fired).
+  > **[Amended by WP5's as-built — this paragraph's key is WRONG; do not copy
+  > it.]** As shipped the key is
+  > `BootMemoKey(metric, name_1, name_2, end_ts, generation, method, canonical
+  > resolved params)`, composed ONLY through `ExploreSession.boot_memo_key()`.
+  > `method_config_id` is a hash of the method name plus its non-default
+  > IDENTITY params, so `(method_config_id, end_ts)` collides across metrics,
+  > across the arm pairs of a multi-arm experiment, and across the
+  > identity-EXCLUDED `seed` (which IS the draw) — each collision a wrong
+  > number, each pinned by a test that goes red under this paragraph's key.
+  > And the lock order is not a rule but an absence: the memo purge runs
+  > AFTER `install_cutoff` releases `cache_lock`, so the two locks are never
+  > nested (an AST gate keeps it that way). See §WP5's as-built notes.
 
 ---
 
@@ -922,9 +934,15 @@ with a superseded answer.
 >   2. **across arm pairs** — a multi-arm experiment computes
 >      `(control, treatment)` and `(control, treatment2)` at the same cutoff
 >      under one identity;
->   3. **across `seed` / `max_block_bytes`** — both are identity-EXCLUDED by
->      design (baseline fact #3), yet the per-row derived seed *is* the draw and
->      the block size is free to change it.
+>   3. **across `seed`** — identity-EXCLUDED by design (baseline fact #3), yet
+>      the per-row derived seed IS the draw. (`max_block_bytes` is also
+>      identity-excluded and also carried, but as belt-and-braces only: it is
+>      block-invariant by the engine's contract — measured byte-identical across
+>      five block sizes on both engines — so carrying it costs at most a missed
+>      hit, and a missed hit costs a resample where a wrong hit would cost a
+>      wrong number. Same for `pvalue_kind`, which `_finalize` reads. Narrowing
+>      the key to the draw-affecting params behind a declarative `ParamSpec`
+>      flag is a **named follow-up**, not a fix.)
 >   As built the key is a `BootMemoKey` NamedTuple — `(metric, name_1, name_2,
 >   end_ts, generation, method, canonical resolved params)` — i.e. everything
 >   the draw is a function of, minus alpha. All three collisions are pinned by
@@ -1653,3 +1671,69 @@ one Auto `/validate`) produced 0 5xx, 0 hung threads and a post-storm reply
 differing only in the `calibration` block the Auto run populated; the poll
 costs 0.744 µs per call (+32 µs on an 18-row recompute); superseded requests
 compute exactly one point (`1,1,1,1,1` against a winner's 8).
+
+### WP5 round 1 (`35323f4`…`dc0ba98`) — 6 lenses, 19 findings, 8 survived a skeptic
+
+Six lenses (numbers-moved, concurrency, key completeness, warnings/side
+effects/memory, can-the-new-gates-fail, contract & blast radius), each in its
+own worktree and required to RUN its scenario, then one skeptic per finding
+tasked with refuting it (default REFUTED; "does it also happen on `main`?" as an
+explicit question). 19 raised, 8 confirmed. **No finding touched a number** —
+the numbers lens independently re-derived the milestone's headline claim (4 131
+main-vs-WP5 results across all 6 classes and 8 data shapes, byte-identical at
+`float.hex()`, including warnings, diagnostics and every refusal's exception
+text), and the key lens failed to construct a single collision.
+
+| # | Defect | Severity | Fix |
+|---|---|---|---|
+| 1 | **The counter-exactness gate could not fail.** With `boot_memo_lock` stripped from `memoize_resample` the test passed **0 of 60** runs: its threads used a key each, so `previous` was always `None` and the whole update was `+= entry.values` — bytecode with no CALL and no backward jump, which CPython never preempts, at any switch interval. The WP4 original it was copied from shares 4 keys, which is exactly why its window contains a call and it catches its mutation 20/20. | high (a gate that cannot fail) | 16 SHARED keys, so the `pop(...)` call sits inside the window: the mutation is now caught **6/6** (the skeptic's independent variant: 12/12). |
+| 2 | **The purge hammer could not fail either** (3/20): its readers recycled ONE key, so the memo never held more than one entry and an unlocked `drop_memoized_cutoff` never scanned a mutating dict. | high (same) | 4 000 pre-filled entries under an untouched cutoff (so every purge walks a long dict), fresh generations per insert, and a 1 µs switch interval: **6/6**, raising the real `RuntimeError: OrderedDict mutated during iteration` that would be a 500 on `/reload`. |
+| 3 | **The resample's own result warnings were pinned by nothing.** `BootMemoEntry.caught` (the `AbkitStatsWarning` channel) was pinned; `ResampleOutcome.warnings` → `_finalize`'s list → `TestResult.warnings` was not — the test compared three memoized answers only to each other, so dropping the whole channel stayed green across all 657 tuning+stats tests. | silent-loss (gate) | the fixture now checks against an INDEPENDENT `compare_pair` over the same containers and the same derived seed. Mutation (`list(outcome.warnings)` → `[]`): red. |
+| 4 | **The headline parity gate compared the memo path against itself.** `boot_memo_budget = 0` disables the CACHE, not the code path — both sides still ran `_memoized_compare` → `_resample_captured`/`_finalize_captured`. | contract (gate) | the oracle now clears `supports_resample_memo`, which routes the baseline down the verbatim `_compare` → `compare_pair` → `from_samples` path the pipeline itself uses. Both parity gates (5-alpha and the knob matrix) use it; the budget-0 refusal path keeps its own test. |
+| 5 | **A value-only budget bounds the payload, not the memory.** Each slot costs ~773 B beyond its replicates (the key's canonical params JSON dominates), so a client sweeping distinct `n_samples` values could hold millions of 1-replicate entries "inside" a 16 MB budget and retain more than a gigabyte. | perf/resource | every add and subtract goes through one `memo_slot_charge()` = replicates + `BOOT_MEMO_ENTRY_OVERHEAD` (128 values ≈ 1 KiB). Writing it in two places first made the counter drift — the session's own concurrency gates caught that within the minute. |
+| 6 | **A lying capability flag died with a bare `AttributeError`** deep inside the engine. `supports_resample_memo` is advertised on `BaseMethod`, but the protocol it promises only existed on the bootstrap base — a downstream plugin had no signature to implement and no message telling it what was missing (the M7 lying-`supports_vectorized` lesson, unlearned). | contract | `BaseMethod._resample` now mirrors `from_suffstats_array`: a documented default raising `NotImplementedError` that names the flag; `BaseBootstrapMethod`'s abstract override delegates to it, so a runtime-patched-away implementation fails the same way. Pinned through both the stats core and the engine. |
+| 7 | **The as-built justified keying on `max_block_bytes` with a false claim** ("the block size is free to change the draw"). It is block-invariant by the engine's contract — measured byte-identical across five block sizes on both engines. | contract (docs) | the bullet now separates `seed` (genuinely the draw) from the belt-and-braces params, and records the `ParamSpec`-flag narrowing as a named follow-up. |
+| 8 | Three test files were not black-clean, so `pre-commit run --all-files` rewrote them — the "black churn in `tests/`" pain the project has already recorded twice. | style | formatted with the pinned black. |
+
+**Fixed beyond the confirmed set** (both filed as nits by their skeptics, both
+cheap and both matching an established precedent the project has already paid
+for twice):
+
+- `BootMemoKey` is composed ONLY through `ExploreSession.boot_memo_key()`, with
+  an AST gate — the m9 `state_series_key()` and m10 WP1 grid-factory discipline
+  (a composition copied to a second call site is one that will be copied with a
+  field dropped, and every dropped field here is a wrong number).
+- The "the two locks are never nested" claim is now a **test**: an AST walk over
+  `session.py` refuses any `boot_memo*`/`drop_memoized*` reference inside a
+  `with self.cache_lock:` body. Both gates go red on their mutation.
+- The FIFO budget's silent cliff (once the working set exceeds the budget, an
+  oldest-first policy yields NO reuse at all) is now **disclosed**: `recompute()`
+  compares the session's eviction counter around the pass and appends a warning
+  naming the budget — the same honesty the Tier-S cache owes when it degrades.
+  (The skeptic downgraded the CPU half to PRE_EXISTING: thrashing costs what
+  `main` already cost, never more.)
+
+**Verified clean, with the evidence:**
+
+- **No number moves, established independently of the repo's own tests**: 4 131
+  main-vs-WP5 comparisons across the 6 classes × 8 data shapes byte-identical;
+  my own 64-cell knob-matrix fuzz (3 families × stat × pvalue_kind × test_type ×
+  4 alphas, 256 points) memo-on vs memo-off identical; `git diff main..HEAD --
+  tests/golden` empty; zero `ALGORITHM_VERSION` changes.
+- **No collision exists in the shipped key.** Three independent search
+  strategies failed to construct one; the data axis is closed by construction
+  (one writer, `cached_entry()` returns the entry and its generation in one
+  critical section, and `MetricLoadResult` is never mutated after installation).
+- **The generation scheme is sound under concurrency**: no interleaving serves a
+  stale resample — the counter is written by one function, never reset (a
+  `disable_cache` deliberately leaves it monotone), and a production-shaped
+  hammer (4 recompute threads + 400 installs) shows 0 exceptions and 0 drift on
+  the shipped code against 30 `RuntimeError`s + 258 drift with the lock removed.
+- **Warnings cannot cross-attribute**: `warn_scope` frames are per-thread and a
+  replayed warning always belongs to the same logical comparison the key names
+  (8-thread × 2-metric tagged run).
+- Deliberately NOT changed: the memo key still carries `pvalue_kind` and
+  `max_block_bytes` (correct, merely wider than necessary — the narrowing is a
+  named follow-up, and a missed hit costs a resample while a wrong hit would
+  cost a wrong number); `contributing.md` step 4b keeps its general wording,
+  scoped by the sentence naming the bootstrap family as today's only adopter.

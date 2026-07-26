@@ -14,6 +14,7 @@ calibration lookup states. The warehouse harness lives in
 
 from __future__ import annotations
 
+import contextlib
 import json
 from datetime import datetime, timedelta
 
@@ -45,6 +46,7 @@ from abkit.stats import (
     UnknownMethodError,
     get_method_class,
 )
+from abkit.stats.bootstrap import BootstrapTest
 from abkit.tuning import (
     KnobState,
     RecomputeEngine,
@@ -1157,6 +1159,24 @@ def _scaled_entry(loaded, factor: float, variant: str = "treatment"):
 
 ALPHAS = (0.01, 0.02, 0.05, 0.1, 0.2)
 
+
+@contextlib.contextmanager
+def _memo_disabled(method_name: str):
+    """Run the engine down its verbatim ``_compare`` path for one method.
+
+    The dispatcher gates on ``supports_resample_memo``, so clearing the flag is
+    what makes the baseline a genuinely DIFFERENT code path (``compare_pair`` ->
+    ``from_samples``) instead of the same memo code over an empty cache.
+    """
+    method_cls = get_method_class(method_name)
+    original = method_cls.supports_resample_memo
+    method_cls.supports_resample_memo = False  # type: ignore[misc]
+    try:
+        yield
+    finally:
+        method_cls.supports_resample_memo = original  # type: ignore[misc]
+
+
 #: A SECOND sample-typed metric over a different fact table — the fixture the
 #: cross-metric collision gate needs (both metrics must be bootstrap-eligible,
 #: i.e. type "sample", with genuinely different per-unit data).
@@ -1215,24 +1235,36 @@ class TestBootstrapMemo:
     def test_five_alphas_reproduce_the_unmemoized_numbers_exactly(
         self, warehouse, tables, monkeypatch
     ):
-        """The parity gate: memo on vs memo off, byte for byte, at five alphas."""
+        """The parity gate: the memo path vs the verbatim ``compare_pair`` path,
+        byte for byte, at five alphas."""
         experiment = make_experiment("exp_memo_parity", "arpu", BOOTSTRAP)
         run_pipeline(warehouse, tables, experiment)
 
-        # boot_memo_budget=0 refuses every entry — the same engine with the
-        # memo provably inert (not a different code path)
+        # The baseline must be a DIFFERENT code path, not the same one with an
+        # empty cache (review round 1): monkeypatching the capability flag off
+        # sends the engine down the verbatim `_compare` -> `compare_pair` ->
+        # `from_samples` route the pipeline itself uses. `boot_memo_budget = 0`
+        # is also exercised below, but as the refusal path, not as the oracle.
         plain = build_engine(warehouse, tables, experiment)
-        plain._session.boot_memo_budget = 0
+        monkeypatch.setattr(BootstrapTest, "supports_resample_memo", False)
         memoized = build_engine(warehouse, tables, experiment)
+
+        expected_by_alpha = {}
+        for alpha in ALPHAS:
+            knobs = KnobState("bootstrap", BOOTSTRAP["params"], alpha=alpha)
+            expected_by_alpha[alpha] = [
+                _point_numbers(p) for p in plain.recompute("arpu", knobs).pairs[0].points
+            ]
+        assert plain._session.memoized_count() == 0  # the baseline never memoized
+        monkeypatch.undo()  # the memo path is back on for `memoized`
 
         for alpha in ALPHAS:
             knobs = KnobState("bootstrap", BOOTSTRAP["params"], alpha=alpha)
-            expected = plain.recompute("arpu", knobs).pairs[0].points
             actual = memoized.recompute("arpu", knobs).pairs[0].points
             assert len(actual) == 4
-            for want, got in zip(expected, actual, strict=True):
-                assert _point_numbers(want) == _point_numbers(got), f"alpha={alpha}"
-        assert plain._session.memoized_count() == 0  # the baseline stayed un-memoized
+            for want, got in zip(expected_by_alpha[alpha], actual, strict=True):
+                assert want == _point_numbers(got), f"alpha={alpha}"
+        assert memoized._session.memoized_count() == 4
 
     def test_the_memo_matches_the_unmemoized_engine_across_the_whole_knob_matrix(
         self, warehouse, tables
@@ -1253,7 +1285,6 @@ class TestBootstrapMemo:
         experiment = make_experiment("exp_memo_matrix", "arpu", configured)
         run_pipeline(warehouse, tables, experiment)
         plain = build_engine(warehouse, tables, experiment)
-        plain._session.boot_memo_budget = 0
         memoized = build_engine(warehouse, tables, experiment)
 
         compared = 0
@@ -1272,16 +1303,22 @@ class TestBootstrapMemo:
                 params["stat"] = stat
             for alpha in (0.3, 0.05, 0.011, 0.2):
                 knobs = KnobState(method, params, alpha=alpha)
-                expected = plain.recompute("arpu", knobs).pairs[0].points
+                # the oracle runs with the capability OFF — the verbatim
+                # compare_pair path, not the same memo code over an empty cache
+                with _memo_disabled(method):
+                    expected = [
+                        _point_numbers(p) for p in plain.recompute("arpu", knobs).pairs[0].points
+                    ]
                 actual = memoized.recompute("arpu", knobs).pairs[0].points
                 assert len(actual) == len(expected)
                 for want, got in zip(expected, actual, strict=True):
-                    assert _point_numbers(want) == _point_numbers(got), (
-                        f"{method}/{stat}/{kind}/{test_type}@{alpha}"
-                    )
+                    assert want == _point_numbers(
+                        got
+                    ), f"{method}/{stat}/{kind}/{test_type}@{alpha}"
                 compared += len(actual)
         assert compared >= 200, f"the matrix must not be vacuous (compared {compared} points)"
         assert plain._session.memoized_count() == 0
+        assert memoized._session.memoized_count() > 0
 
     def test_the_resample_runs_once_per_cutoff_across_five_alphas(
         self, warehouse, tables, monkeypatch
@@ -1325,7 +1362,9 @@ class TestBootstrapMemo:
         session = engine._session
         knobs = KnobState("bootstrap", BOOTSTRAP["params"], alpha=0.05)
 
-        before = {p.end_ts: _point_numbers(p) for p in engine.recompute("arpu", knobs).pairs[0].points}
+        before = {
+            p.end_ts: _point_numbers(p) for p in engine.recompute("arpu", knobs).pairs[0].points
+        }
         reloaded_ts = sorted(before)[1]
         loaded, lookback, generation = session.cached_entry("arpu", reloaded_ts)
         session.install_cutoff("arpu", reloaded_ts, _scaled_entry(loaded, 3.0), lookback)
@@ -1333,7 +1372,9 @@ class TestBootstrapMemo:
         assert session.memoized_count() == 3  # that cutoff's entry was dropped
 
         calls = _resample_spy(monkeypatch)
-        after = {p.end_ts: _point_numbers(p) for p in engine.recompute("arpu", knobs).pairs[0].points}
+        after = {
+            p.end_ts: _point_numbers(p) for p in engine.recompute("arpu", knobs).pairs[0].points
+        }
         assert len(calls) == 1, "only the reloaded cutoff resamples again"
         assert after[reloaded_ts] != before[reloaded_ts]
         for end_ts, numbers in before.items():
@@ -1363,7 +1404,9 @@ class TestBootstrapMemo:
         knobs = KnobState("bootstrap", BOOTSTRAP["params"], alpha=0.05)
 
         # (1) the reader's read — replayed by warming the memo for real
-        before = {p.end_ts: _point_numbers(p) for p in engine.recompute("arpu", knobs).pairs[0].points}
+        before = {
+            p.end_ts: _point_numbers(p) for p in engine.recompute("arpu", knobs).pairs[0].points
+        }
         target = sorted(session.cached_cutoffs("arpu"))[2]
         stale_key = next(key for key in session.boot_memo if key.end_ts == target)
         loaded, lookback, generation = session.cached_entry("arpu", target)
@@ -1434,9 +1477,7 @@ class TestBootstrapMemo:
                 assert point.left_bound == row["left_bound"]
                 assert point.right_bound == row["right_bound"]
 
-    def test_an_identity_excluded_param_still_splits_the_key(
-        self, warehouse, tables, monkeypatch
-    ):
+    def test_an_identity_excluded_param_still_splits_the_key(self, warehouse, tables, monkeypatch):
         """``max_block_bytes`` and ``seed`` are identity-EXCLUDED, so
         ``method_config_id`` cannot tell two such knob states apart — but both
         reach the draw. The key carries the RESOLVED params for that reason."""
@@ -1448,9 +1489,7 @@ class TestBootstrapMemo:
         engine.recompute("arpu", KnobState("bootstrap", BOOTSTRAP["params"], alpha=0.05))
         engine.recompute(
             "arpu",
-            KnobState(
-                "bootstrap", {**BOOTSTRAP["params"], "max_block_bytes": 4096}, alpha=0.05
-            ),
+            KnobState("bootstrap", {**BOOTSTRAP["params"], "max_block_bytes": 4096}, alpha=0.05),
         )
         assert len(calls) == 8, "a different max_block_bytes is a different draw, not a hit"
 
@@ -1488,6 +1527,48 @@ class TestBootstrapMemo:
             assert "resample says hello" in point.warnings
         assert [p.warnings for p in first] == [p.warnings for p in second]
 
+    def test_a_lying_capability_flag_fails_with_a_named_error(self, warehouse, tables, monkeypatch):
+        """A method that declares ``supports_resample_memo`` without the split
+        must fail SAYING so — not with a bare ``AttributeError`` or a ``None``
+        outcome from inside the engine (the M7 lying-``supports_vectorized``
+        lesson). Deleting the override leaves ``__abstractmethods__`` already
+        computed, so this is exactly the shape a downstream plugin can ship.
+        """
+        from abkit.stats import create_method
+        from abkit.stats.bootstrap import BootstrapTest
+
+        # (a) the stats-core contract: the named refusal, for any method
+        with pytest.raises(NotImplementedError, match="supports_resample_memo"):
+            create_method("t-test")._resample(object(), object())
+
+        # (b) through the engine, on a class that declares the flag and lost
+        #     its implementation
+        experiment = make_experiment("exp_memo_liar", "arpu", BOOTSTRAP)
+        run_pipeline(warehouse, tables, experiment)
+        engine = build_engine(warehouse, tables, experiment)
+        monkeypatch.delattr(BootstrapTest, "_resample")
+        with pytest.raises(NotImplementedError, match="supports_resample_memo"):
+            engine.recompute("arpu", KnobState("bootstrap", BOOTSTRAP["params"], alpha=0.05))
+
+    def test_the_memo_says_so_when_the_budget_is_smaller_than_the_series(self, warehouse, tables):
+        """An oldest-first budget on a whole-series scan degrades to NO reuse at
+        all (every entry is evicted before its next turn). That must not be
+        silent — the reply carries the same kind of honest warning the Tier-S
+        cache gives when it degrades."""
+        experiment = make_experiment("exp_memo_thrash", "arpu", BOOTSTRAP)
+        run_pipeline(warehouse, tables, experiment)
+        engine = build_engine(warehouse, tables, experiment)
+        # room for one entry, not for the series' four
+        engine._session.boot_memo_budget = BOOTSTRAP["params"]["n_samples"] + 130
+
+        result = engine.recompute("arpu", KnobState("bootstrap", BOOTSTRAP["params"], alpha=0.05))
+        assert any("resample memo is smaller" in w for w in result.warnings)
+        assert engine._session.memo_eviction_count() > 0
+        # …and a session with room says nothing
+        roomy = build_engine(warehouse, tables, experiment)
+        quiet = roomy.recompute("arpu", KnobState("bootstrap", BOOTSTRAP["params"], alpha=0.05))
+        assert not any("resample memo is smaller" in w for w in quiet.warnings)
+
     def test_the_memoized_replicates_are_frozen_read_only(self, warehouse, tables):
         """One outcome is handed to a ``_finalize`` per alpha. An in-place write
         in some future ``_finalize`` would silently corrupt every later reuse —
@@ -1504,9 +1585,19 @@ class TestBootstrapMemo:
 
     def test_a_hit_replays_the_resample_warnings_without_growing_them(self, warehouse, tables):
         """Warnings are user-visible on the point. The resample's own warnings
-        must be replayed on a hit (they are not re-emitted), and ``_finalize``'s
-        appended H5 warning must not accumulate across reuses."""
+        (``ResampleOutcome.warnings`` -> ``_finalize``'s list -> the result) must
+        appear on a HIT too, and ``_finalize``'s appended H5 warning must not
+        accumulate across reuses.
+
+        The reference is an INDEPENDENT ``compare_pair`` over the same containers
+        and the same derived seed — three memo answers compared only to each
+        other would have stayed green with the whole channel dropped (review
+        round 1).
+        """
         import numpy as np
+
+        from abkit.pipeline.analyze import build_container
+        from abkit.stats import create_method, derive_seed
 
         experiment = make_experiment("exp_memo_warn", "arpu", BOOTSTRAP)
         run_pipeline(warehouse, tables, experiment)
@@ -1523,11 +1614,32 @@ class TestBootstrapMemo:
         )
         session.install_cutoff("arpu", target, zeroed, lookback)
 
-        knobs = KnobState("bootstrap", BOOTSTRAP["params"], alpha=0.05)
-        first = {p.end_ts: p for p in engine.recompute("arpu", knobs).pairs[0].points}[target]
-        second = {p.end_ts: p for p in engine.recompute("arpu", knobs).pairs[0].points}[target]
-        third = {p.end_ts: p for p in engine.recompute("arpu", knobs).pairs[0].points}[target]
+        # the independent oracle: the stats core, called the way the pipeline does
+        reference = create_method(
+            "bootstrap",
+            alpha=0.05,
+            params={
+                **BOOTSTRAP["params"],
+                "seed": derive_seed(
+                    experiment.name,
+                    "arpu",
+                    "control",
+                    "treatment",
+                    target,
+                    BOOTSTRAP["params"]["n_samples"],
+                ),
+            },
+        ).compare_pair(
+            build_container("sample", "control", zeroed),
+            build_container("sample", "treatment", zeroed),
+        )
+        assert reference.warnings, "the fixture must actually warn or it proves nothing"
 
-        assert first.warnings, "the fixture must actually warn or it proves nothing"
-        assert first.warnings == second.warnings == third.warnings
-        assert _point_numbers(first) == _point_numbers(second) == _point_numbers(third)
+        knobs = KnobState("bootstrap", BOOTSTRAP["params"], alpha=0.05)
+        answers = [
+            {p.end_ts: p for p in engine.recompute("arpu", knobs).pairs[0].points}[target]
+            for _ in range(3)
+        ]
+        for answer in answers:  # miss, hit, hit — all three carry the same set
+            assert answer.warnings == reference.warnings
+            assert _point_numbers(answer) == _point_numbers(answers[0])

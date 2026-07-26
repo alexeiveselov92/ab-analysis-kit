@@ -1113,9 +1113,9 @@ class TestBootstrapMemoThroughTheServer:
             self._grow_the_warehouse(explore)
             status, reloaded = http(explore.endpoint("reload"), request)
             assert status == 200
-            assert self._numbers(reloaded) != self._numbers(first), (
-                "the fixture must actually move the numbers or the gate is vacuous"
-            )
+            assert self._numbers(reloaded) != self._numbers(
+                first
+            ), "the fixture must actually move the numbers or the gate is vacuous"
 
             status, after = http(explore.endpoint("recompute"), request)
             assert status == 200
@@ -1179,8 +1179,9 @@ class TestBootstrapMemoThroughTheServer:
                     p["end_ts"]: (p["effect"], p["value_2"]) for p in reply["pairs"][0]["points"]
                 }
                 for point in reloaded["pairs"][0]["points"]:
-                    assert fresh[point["end_ts"]] == (point["effect"], point["value_2"]), (
-                        f"alpha={alpha} answered pre-reload numbers"
-                    )
+                    assert fresh[point["end_ts"]] == (
+                        point["effect"],
+                        point["value_2"],
+                    ), f"alpha={alpha} answered pre-reload numbers"
         finally:
             explore.stop()

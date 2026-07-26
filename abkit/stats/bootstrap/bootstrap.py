@@ -115,7 +115,14 @@ class BaseBootstrapMethod(BaseMethod):
         everything each subclass used to inline before its ``_finalize`` call.
         Alpha enters only in :meth:`_finalize` (the percentile CI and the
         ``reject`` verdict), which is why one outcome can serve several alphas.
+
+        Abstract, but with the base class's named refusal as its body: ABC
+        enforcement covers a subclass that never defines it, and this covers
+        every other way the method can go missing (a runtime patch, a class
+        assembled outside the normal path) with a message that says what is
+        wrong instead of an ``AttributeError`` or a silent ``None``.
         """
+        return super()._resample(sample_1, sample_2)  # type: ignore[no-any-return]
 
     def from_samples(self, sample_1: Sample, sample_2: Sample) -> TestResult:
         """``_resample`` then ``_finalize`` — the composition every subclass had.

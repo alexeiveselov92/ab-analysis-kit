@@ -93,7 +93,7 @@ from abkit.stats.power import get_cuped_ttest_power, get_fraction_power, get_tte
 from abkit.stats.samples import RatioSample, Sample
 from abkit.stats.sequential import mixture_tau2, se_from_ci_length, to_always_valid
 from abkit.tuning.session import BootMemoEntry, BootMemoKey, ComparisonSeries, ExploreSession
-from abkit.utils.json_utils import json_dumps_sorted, json_loads
+from abkit.utils.json_utils import json_loads
 from abkit.utils.warn_scope import capture_warnings
 
 Tier = Literal["exact", "approx", "baseline"]
@@ -750,6 +750,7 @@ class RecomputeEngine:
                 ):
                     av_pairs.add(pair)
 
+        evictions_before = session.memo_eviction_count()
         seq_reload_needed = False
         pairs: list[PairRecompute] = []
         for (name_1, name_2), rows in pair_rows.items():
@@ -788,6 +789,18 @@ class RecomputeEngine:
         )
         if session.cache_disabled_reason is not None:
             engine_warnings.append(session.cache_disabled_reason)
+        if session.memo_eviction_count() > evictions_before:
+            # The memo is smaller than what this knob state needs, so the next
+            # alpha turn will re-resample instead of reusing (an oldest-first
+            # budget on a whole-series scan degrades to no reuse at all). Say so
+            # rather than let the speedup vanish silently — the same honesty the
+            # Tier-S cache owes when it degrades.
+            engine_warnings.append(
+                "the bootstrap resample memo is smaller than this knob state's series "
+                f"(EXPLORE_BOOT_MEMO_BUDGET={session.boot_memo_budget} values): alpha "
+                "changes will re-resample instead of reusing — lower n_samples or raise "
+                "the budget"
+            )
 
         return RecomputeResult(
             metric=metric,
@@ -867,14 +880,15 @@ class RecomputeEngine:
                     method,
                     group_1,
                     group_2,
-                    BootMemoKey(
-                        metric=series.metric.name,
-                        name_1=row["name_1"],
-                        name_2=row["name_2"],
-                        end_ts=row["end_ts"],
-                        generation=generation,
-                        method=method.name,
-                        params=json_dumps_sorted(method.params),
+                    # composed ONLY here, through the session's factory (the m9
+                    # state_series_key discipline — an AST gate enforces it)
+                    self._session.boot_memo_key(
+                        series.metric.name,
+                        row["name_1"],
+                        row["name_2"],
+                        row["end_ts"],
+                        generation,
+                        method,
                     ),
                 )
             else:

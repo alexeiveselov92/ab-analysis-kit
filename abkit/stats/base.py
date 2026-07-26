@@ -444,6 +444,29 @@ class BaseMethod(ABC):
             "(supports_vectorized=False); use the scalar from_suffstats path"
         )
 
+    def _resample(self, sample_1: Any, sample_2: Any) -> Any:
+        """The alpha-INDEPENDENT half of ``from_samples`` (m10 WP5).
+
+        Optional capability, gated by :attr:`supports_resample_memo` and
+        mirroring :meth:`from_suffstats_array`'s shape: draw whatever the
+        comparison's expensive step produces and return it, so a caller may run
+        the cheap alpha-dependent half (``_finalize``) several times over ONE
+        draw — this is how ``abk explore`` answers an alpha drag over a
+        bootstrap series without redrawing.
+
+        The concrete contract lives in the family base that composes the two
+        halves (today only
+        :class:`~abkit.stats.bootstrap.bootstrap.BaseBootstrapMethod`, which
+        returns a :class:`~abkit.stats.bootstrap.bootstrap.ResampleOutcome` and
+        owns the matching ``_finalize``). Declaring the flag without both halves
+        is a plugin bug, and this default says so instead of failing with a bare
+        ``AttributeError`` deep inside a caller.
+        """
+        raise NotImplementedError(
+            f"{self.name}: declares supports_resample_memo but implements no "
+            "_resample/_finalize split (see BaseBootstrapMethod for the contract)"
+        )
+
     # --- shared result assembly ----------------------------------------------
     def _result_from_normal_test(
         self,

@@ -59,7 +59,9 @@ from abkit.core.period_planner import Cutoff, Grid
 from abkit.database.internal_tables import InternalTablesManager
 from abkit.loaders.metric_loader import MetricLoadResult
 from abkit.pipeline.analyze import comparison_alpha, effective_alphas
+from abkit.stats.base import BaseMethod
 from abkit.stats.bootstrap import ResampleOutcome
+from abkit.utils.json_utils import json_dumps_sorted
 
 #: Tier-S cache budget in stored numeric values (role-array floats across
 #: variants and cutoffs; ≈160 MB of float64) — m3-implementation-plan.md WP4.
@@ -70,6 +72,15 @@ EXPLORE_CACHE_BUDGET = 20_000_000
 #: a live knob, so one entry is anywhere from a few hundred to a few million
 #: replicates and an entry cap could not bound the memory at all.
 EXPLORE_BOOT_MEMO_BUDGET = 2_000_000
+
+#: What one memo SLOT costs beyond its replicates, in value-equivalents
+#: (review round 1 measured ~773 B — the key's canonical params JSON, the two
+#: NamedTuples and the ndarray header — so 128 float64 is a rounded-up 1 KiB).
+#: Charged per entry because a value-only budget bounds the payload and nothing
+#: else: a client sweeping distinct ``n_samples`` values mints entries whose
+#: fixed cost dwarfs their replicates, and millions of 1-value entries would sit
+#: "inside" a 16 MB budget while retaining more than a gigabyte.
+BOOT_MEMO_ENTRY_OVERHEAD = 128
 
 #: One (comparison, cutoff) load — ``RecomputeBackend.load_cutoff`` bound to
 #: its metric SQL (see :func:`backend_cutoff_loader`); tests may stub it.
@@ -96,6 +107,17 @@ def loaded_value_count(loaded: MetricLoadResult) -> int:
     return sum(arr.size for roles in loaded.roles_by_variant.values() for arr in roles.values())
 
 
+def memo_slot_charge(entry: BootMemoEntry) -> int:
+    """What one memo entry costs the budget: replicates + the slot overhead.
+
+    THE one accounting rule — every add and every subtract goes through it.
+    (The first version charged the overhead only on insert; the purge then
+    under-subtracted and the counter drifted upward, which the session's own
+    concurrency gates caught immediately.)
+    """
+    return entry.values + BOOT_MEMO_ENTRY_OVERHEAD
+
+
 class BootMemoKey(NamedTuple):
     """What a memoized bootstrap resample is a function of (m10 WP5).
 
@@ -115,8 +137,17 @@ class BootMemoKey(NamedTuple):
       m10 WP4's review demonstrated) then costs a discarded resample instead of
       a stale hit.
     * ``method`` / ``params`` — the resolved parameter set of the constructed
-      method, canonically serialized. Not ``method_config_id``: ``seed`` and
-      ``max_block_bytes`` are identity-EXCLUDED yet both reach the draw.
+      method, canonically serialized. Not ``method_config_id``, for two
+      different reasons: ``seed`` is identity-EXCLUDED (baseline fact #3) and IS
+      the draw, so an id-keyed memo would serve one seed's replicates for
+      another; and two methods can share a byte-identical param set (``bootstrap``
+      and ``post-normed-bootstrap`` do), so the method name has to be its own
+      field. ``max_block_bytes`` rides along as belt-and-braces: it is
+      block-invariant by the engine's contract (measured byte-identical across
+      five block sizes on both engines), so carrying it only ever costs a
+      missed hit — and a missed hit costs a resample, while a wrong hit would
+      cost a wrong number. Narrowing the key to the draw-affecting params (a
+      declarative ``ParamSpec`` flag) is a named follow-up, not a fix.
     """
 
     metric: str
@@ -193,6 +224,10 @@ class ExploreSession:
     boot_memo: OrderedDict[BootMemoKey, BootMemoEntry] = field(default_factory=OrderedDict)
     boot_memo_values: int = 0
     boot_memo_budget: int = EXPLORE_BOOT_MEMO_BUDGET
+    #: How many entries the budget has evicted this session — the honest signal
+    #: that the memo is smaller than the working set being explored, surfaced as
+    #: an engine warning by ``recompute()`` (never a silent 0 % hit rate).
+    boot_memo_evictions: int = 0
     #: Guards the three ``boot_memo*`` fields. NEVER taken while ``cache_lock``
     #: is held (see the module docstring) — the two are independent, not ordered.
     boot_memo_lock: threading.Lock = field(
@@ -316,6 +351,37 @@ class ExploreSession:
     # this class touches ``boot_memo``. The lock is NEVER held across the
     # resample itself — only across the dict access.
 
+    def boot_memo_key(
+        self,
+        metric: str,
+        name_1: str,
+        name_2: str,
+        end_ts: datetime,
+        generation: int,
+        method: BaseMethod,
+    ) -> BootMemoKey:
+        """THE one composer of a memo key — never build :class:`BootMemoKey` by
+        hand (an AST gate in ``tests/tuning/test_session_cache_lock.py`` enforces
+        it).
+
+        The m9 ``state_series_key()`` precedent, for the same reason: a key
+        assembled at a second call site is a key that will be assembled with one
+        field missing, and every missing field here is a silent wrong number
+        (a resample served for another metric, another arm pair, another seed).
+        ``method.params`` is the RESOLVED parameter set, so ``seed`` and
+        ``max_block_bytes`` — both identity-EXCLUDED, so invisible to
+        ``method_config_id`` — travel with it.
+        """
+        return BootMemoKey(
+            metric=metric,
+            name_1=name_1,
+            name_2=name_2,
+            end_ts=end_ts,
+            generation=generation,
+            method=method.name,
+            params=json_dumps_sorted(method.params),
+        )
+
     def memoized_resample(self, key: BootMemoKey) -> BootMemoEntry | None:
         """The memoized outcome for this exact key, or ``None``."""
         with self.boot_memo_lock:
@@ -329,18 +395,26 @@ class ExploreSession:
         and still bust the cap; a huge ``n_samples`` then simply resamples every
         time, which is correct and bounded (the m3 cache's "never a partial
         state the UI would misread" principle, applied to memory instead).
+
+        Each entry is charged its replicates PLUS
+        :data:`BOOT_MEMO_ENTRY_OVERHEAD`: a value-only budget bounds the payload
+        but not the slots, and a client sweeping distinct ``n_samples`` values
+        can mint millions of tiny entries whose keys and containers dwarf their
+        replicates (review round 1 measured ~773 B of fixed cost per entry).
         """
-        if entry.values > self.boot_memo_budget:
+        charge = memo_slot_charge(entry)
+        if charge > self.boot_memo_budget:
             return False
         with self.boot_memo_lock:
             previous = self.boot_memo.pop(key, None)
             if previous is not None:
-                self.boot_memo_values -= previous.values
+                self.boot_memo_values -= memo_slot_charge(previous)
             self.boot_memo[key] = entry
-            self.boot_memo_values += entry.values
+            self.boot_memo_values += charge
             while self.boot_memo_values > self.boot_memo_budget and len(self.boot_memo) > 1:
                 _, evicted = self.boot_memo.popitem(last=False)
-                self.boot_memo_values -= evicted.values
+                self.boot_memo_values -= memo_slot_charge(evicted)
+                self.boot_memo_evictions += 1
         return True
 
     def drop_memoized_cutoff(self, metric: str, end_ts: datetime) -> None:
@@ -352,7 +426,7 @@ class ExploreSession:
         with self.boot_memo_lock:
             stale = [key for key in self.boot_memo if key.metric == metric and key.end_ts == end_ts]
             for key in stale:
-                self.boot_memo_values -= self.boot_memo.pop(key).values
+                self.boot_memo_values -= memo_slot_charge(self.boot_memo.pop(key))
 
     def memoized_count(self) -> int:
         """How many resamples are memoized — the instrumentation seam."""
@@ -363,6 +437,12 @@ class ExploreSession:
         """The memo budget counter — read under the lock like everything else."""
         with self.boot_memo_lock:
             return self.boot_memo_values
+
+    def memo_eviction_count(self) -> int:
+        """Evictions so far — ``recompute()`` reads it around a pass to tell the
+        user the memo is too small for what they are exploring."""
+        with self.boot_memo_lock:
+            return self.boot_memo_evictions
 
 
 def load_session(

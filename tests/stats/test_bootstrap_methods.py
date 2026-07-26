@@ -479,9 +479,9 @@ def test_the_resample_memo_capability_roster_is_exactly_the_bootstrap_family() -
     for name in declared:
         method_cls = get_method_class(name)
         assert "_resample" in dir(method_cls)
-        assert getattr(method_cls._resample, "__isabstractmethod__", False) is False, (
-            f"{name} declares supports_resample_memo but never overrides the abstract _resample"
-        )
+        assert (
+            getattr(method_cls._resample, "__isabstractmethod__", False) is False
+        ), f"{name} declares supports_resample_memo but never overrides the abstract _resample"
         # from_samples must be the base template, not a subclass override that
         # would bypass _resample entirely (and thus the memo)
         assert method_cls.from_samples is BaseBootstrapMethod.from_samples, (
