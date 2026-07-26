@@ -1350,8 +1350,12 @@ cross-check the coverage map in [ROADMAP.md](../../ROADMAP.md) (REPORT
 >    real operator hits on this release's breaking change was the one whose
 >    remedy was buried (the M7 WP6 lesson repeating: a message the user must
 >    read has to be echoed as a CLI line). Fixed in the driver and in
->    `abk unlock`, which had the same hole; `abk validate` and `abk clean`
->    already echoed it.
+>    `abk unlock`, which had the same hole. All six surfaces were then audited
+>    against a fabricated pre-m10 catalog: `run`, `unlock`, `validate` and
+>    `clean` each exit 1 with the remedy on the terminal and no traceback
+>    (`validate`/`clean` already did); `verify-incremental` and `abk explore`
+>    are read-only, never call `ensure_tables()`, and correctly do not fail on
+>    it. Auto mode's `/validate` already returns the message as a 400 body.
 >
 > **What the four legs assert** (§3's items, in order):
 >
