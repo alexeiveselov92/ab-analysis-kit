@@ -1786,3 +1786,17 @@ at all):
   472 evictions; no lock cycle exists; `boot_data` is a fresh allocation in both
   engines (never a view into a block buffer), so the budget's `values` is an
   honest memory measure.
+
+**A CI-only failure, and what it was allowed to say.** The first run of the
+round-2 tree lost exactly one reply out of twenty in WP4's
+`test_lock_free_recomputes_keep_the_cache_consistent_under_a_reload`
+(`assert 19 == 20`). The count was all the test could say: its `http()` helper
+converted HTTP errors into `(status, body)` but let a TRANSPORT error escape,
+so inside a thread it vanished into a stack trace and the reply simply never
+arrived. The helper now returns `(0, "transport: …")` and the existing
+per-reply assertion names the cause the next time. Sized with it: the server's
+accept queue (socketserver's default backlog of 5 — right while one lock
+serialized every POST, tight now that a knob drag arrives as a burst of
+concurrent connections) is now 64. Disclosed as a hardening, not a proven fix:
+a local probe could not reproduce a drop at either backlog size, the failure
+has not recurred, and the comment in `server.py` says exactly that.
