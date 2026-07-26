@@ -207,10 +207,12 @@ cutoff, cache generation, method, resolved params), alpha excluded, measured
 6.01 s → 1.01 s over six turns (WP5). **Zero statistical numbers moved** (no
 `ALGORITHM_VERSION` bump; the exit gate's golden was captured from the
 pre-M10 code itself). One derived number legitimately did:
-`horizon_seconds()` is true elapsed time, so a DST-crossing window differs by
-±1h from the old nominal day count — it now agrees with its own grid, and no
-persisted column derives from it. The `v0.5.0` tag/publish is the
-maintainer's step.
+`horizon_seconds()` is true elapsed time rather than a nominal day count, so it
+differs from the old value by exactly the window's UTC-offset change — ±30 min,
+±1h, ±2h or ±24h depending on the zone, and it fires for a permanent zone shift
+with no DST involved. It now agrees with its own grid (which pre-m10 it
+contradicted), and no persisted column derives from it. The `v0.5.0`
+tag/publish is the maintainer's step.
 
 **Next — the polish track continues: M11–M17 → `0.6.0`…`0.12.0`
 (track approved 2026-07-18).** The code-verified pain audit

@@ -3,12 +3,16 @@
 
 Four legs, in the order the gate states them:
 
-1. **The regression gate.** Every window shape the pre-m10 planner supported
+1. **The regression gate.** Each of the ``WINDOW_CASES`` shapes below
    reproduces its grid, its cutoffs and every derived number
    (``window_seconds``, ``elapsed_days``, ``weekly_cycle_pct``,
    ``look_days``/``horizon_days``, the CUPED pre-period) **byte-identically**
-   against a golden captured from the pre-m10 code itself — plus the ONE
-   derived number that legitimately moved, pinned in both directions.
+   against a golden captured from the pre-m10 code itself — plus the two
+   numbers that legitimately moved, each pinned in both directions. Not a claim
+   of exhaustiveness over everything the planner supports: ``limit``/max_looks
+   and the per-branch enumeration edges stay pinned by
+   ``tests/core/test_period_planner.py``, whose assertions are themselves
+   byte-unchanged since ``f85371d``.
 2. **A timestamped start.** A new fixture starting at ``09:00`` local anchors
    at that instant with no midnight snap, drives cutoffs INSIDE the opening
    local day (the shape that hid two silent-wrong-number defects from WP1's
@@ -49,7 +53,6 @@ from test_first_run import EXPOSURE_TS, SeedMirrorWarehouse
 import abkit.config.profile as profile_mod
 from abkit.cli.main import cli
 from abkit.config import ExperimentConfig
-from abkit.core.period_planner import as_local_datetime
 
 runner = CliRunner()
 
@@ -108,6 +111,34 @@ WINDOW_CASES = [
     ("moscow_permanent_shift_2014", "2014-10-20", "2014-11-02", "1d", "Europe/Moscow"),
     # a zone whose offset is not a whole hour, with no change inside the window
     ("kathmandu_45min_offset", "2024-07-01", "2024-07-08", "1d", "Asia/Kathmandu"),
+    # a WHOLE-DAY `until` across a DST fall-back: the day-lattice's day-space
+    # segment-bound comparison exists solely for this shape, and no other case
+    # here reaches it (a `raise` probe inside that branch left the whole module
+    # green — round 1's finding 13)
+    (
+        "whole_day_until_across_dst",
+        "2024-10-30",
+        "2024-11-08",
+        [{"every": "1d", "until": "5d"}, {"every": "2d"}],
+        "America/New_York",
+    ),
+    # three segments, so a MIDDLE segment has both bounds
+    (
+        "three_segment_schedule",
+        "2024-07-01",
+        "2024-07-20",
+        [{"every": "1h", "until": "12h"}, {"every": "6h", "until": "3d"}, {"every": "1d"}],
+        "UTC",
+    ),
+    # sub-day segments spanning a transition (absolute-duration stepping, where
+    # the day lattice would have snapped)
+    (
+        "sub_day_across_dst",
+        "2024-11-02",
+        "2024-11-05",
+        [{"every": "6h", "until": "2d"}, {"every": "12h"}],
+        "America/New_York",
+    ),
 ]
 
 #: the CUPED lookbacks whose whole-day pre-period window is captured
@@ -236,7 +267,7 @@ class TestWindowGoldenAgainstPreM10:
         # below by never being compared
         golden = json.loads(GOLDEN_PATH.read_text(encoding="utf-8"))
         assert set(golden) == {case[0] for case in WINDOW_CASES}
-        assert len(golden) == len(WINDOW_CASES) == 19
+        assert len(golden) == len(WINDOW_CASES) == 22
 
     def test_every_window_reproduces_its_pre_m10_grid_and_derived_numbers(self):
         golden = json.loads(GOLDEN_PATH.read_text(encoding="utf-8"))
@@ -265,6 +296,10 @@ class TestWindowGoldenAgainstPreM10:
         on both sides). A waiver list would have had to grow for each; this
         cannot.
         """
+        # imported HERE, not at module scope: `capture_window_surface()` must
+        # stay runnable at `f85371d`, where this m10 helper does not exist
+        from abkit.core.period_planner import as_local_datetime
+
         golden = json.loads(GOLDEN_PATH.read_text(encoding="utf-8"))
         captured = capture_window_surface()
         moved = []
@@ -300,7 +335,7 @@ class TestWindowGoldenAgainstPreM10:
 
         # the law is only worth asserting if cases actually exercise it, in
         # every magnitude the wrong "±1h across DST" story missed
-        assert len(moved) == 7, moved
+        assert len(moved) == 9, moved
         assert {
             "daily_dst_fall_back",  # +1h, DST
             "half_hour_dst_lord_howe",  # -30min, DST
@@ -723,6 +758,25 @@ class TestSchemaBreak:
         assert "DROP TABLE abkit_internal._ab_experiments" in result.output
         assert "CHANGELOG" in result.output
         # a clean error line, not a stack trace escaping the command
+        assert result.exception is None or isinstance(result.exception, SystemExit)
+
+    def test_the_worker_pool_path_names_the_remedy_too(self, tmp_path, monkeypatch):
+        """`run_experiments` has a SECOND `ensure_tables()` — the pool-bootstrap
+        DDL serializer — reached only with `--workers N>1` over 2+ experiments.
+        Guarding just the per-experiment call left that path tracebacking, which
+        is how review round 1 found it: no test drove it.
+        """
+        warehouse, path = _sub_day_project(tmp_path, monkeypatch)
+        second = yaml.safe_load(path.read_text(encoding="utf-8"))
+        second["name"] = "second_experiment"
+        (path.parent / "second_experiment.yml").write_text(
+            yaml.safe_dump(second, sort_keys=False), encoding="utf-8"
+        )
+        warehouse.create_table("abkit_internal._ab_experiments", _stale_experiments_model())
+
+        result = runner.invoke(cli, ["run", "--workers", "2"])
+        assert result.exit_code == 1
+        assert "drop and recreate" in result.output.lower()
         assert result.exception is None or isinstance(result.exception, SystemExit)
 
     def test_unlock_also_names_the_remedy_rather_than_tracebacking(self, tmp_path, monkeypatch):

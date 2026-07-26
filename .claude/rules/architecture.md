@@ -459,17 +459,26 @@ two-process lock race) is deferred to a Docker-equipped environment.
 - **An experiment's window is a pair of INSTANTS, and the config keys say so.**
   `start_date`/`end_date` are **gone**, renamed `start_ts`/`horizon_ts` with no
   aliases (D1) — an old key fails validation with a message naming the new one.
-  Each accepts a bare date **or** a full timestamp (`2024-07-01 14:30:00`), the
-  union is type-PRESERVING (`date | datetime`, discriminated with
-  `type(x) is date` — `isinstance` is always True for a `datetime`), and a raw
-  int/float is REJECTED rather than read as a Unix timestamp
-  (`start_ts: 20240101` unquoted would be 1970-08-23).
+  Each accepts a bare date **or** a full timestamp (`2024-07-01 14:30:00`) and
+  the union is type-PRESERVING (`date | datetime`) — which matters because
+  `str(field)` reaches the m9 state-identity hash, so a re-parse that flipped
+  the type would orphan every materialized series. Discrimination always tests
+  `isinstance(value, datetime)` FIRST, because `datetime` subclasses `date` and
+  the `date` branch would otherwise swallow both. A raw int/float is REJECTED
+  rather than read as a Unix timestamp (`start_ts: 20240101` unquoted would be
+  1970-08-23).
 - **A bare date is local midnight of THAT day for BOTH edges (D6)**, so
   `horizon_ts` is the **EXCLUSIVE** right edge and the config value equals
   `grid.horizon_ts` exactly — one vocabulary, no `+1 day` translation anywhere.
   Porting a pre-m10 config shifts the horizon by one day
   (`end_date: 2024-07-14` → `horizon_ts: 2024-07-15`); every other number stays
-  byte-identical (pinned by the exit-gate golden captured at `f85371d`).
+  byte-identical (pinned by the exit-gate golden captured at `f85371d` over 22
+  window shapes) **with two disclosed exceptions**: `horizon_seconds()` (below)
+  and — for a `start_ts` on a local calendar day that never existed, of which
+  tzdata holds 7 historical instances (Kwajalein 1993, Enderbury/Kanton/
+  Kiritimati 1994, Apia/Fakaofo 2011) — the pre-m10 series' ZERO-LENGTH opening
+  look, which the m10 planner drops because it keeps cutoffs strictly after the
+  start.
 - **`interval_anchor` decides WHERE the cutoff lattice sits** (D2): `midnight`
   (the default the scaffold writes out — local midnight of the opening day,
   i.e. whole calendar days, the pre-m10 rule), `start` (count from the start
@@ -487,23 +496,34 @@ two-process lock race) is deferred to a Docker-equipped environment.
   because the new knob reached NONE of the eight hand-copied call sites; one of
   them passed `timezone` positionally as the 4th argument, so any parameter
   inserted before `tz` would have silently re-bound it.
-- **`horizon_seconds()` is true elapsed time**, not a nominal day count, so a
-  DST-crossing window is legitimately 23h/25h off a day multiple — it now
-  agrees with `grid.horizon_ts − grid.start_ts`, which it contradicted
-  pre-m10. Consumers: config-lint's cadence gate and the readout's pre-horizon
-  rationale line. No persisted column derives from it.
+- **`horizon_seconds()` is true elapsed time**, not a nominal day count, so it
+  now agrees with `grid.horizon_ts − grid.start_ts`, which it contradicted
+  pre-m10. The law, measured against the pre-m10 code across 19 window shapes:
+  it differs from the old value by exactly **the UTC-offset change between the
+  window's local edges**, and by nothing anywhere else. Not "±1h across DST" —
+  that is wrong in both halves: the delta is −30 min in Australia/Lord_Howe, −2h
+  in Antarctica/Troll, −24h across Pacific/Apia's 2011 line jump, and +1h with
+  **no DST on either side** (Moscow's 2014 permanent +4→+3 shift). Consumers:
+  config-lint's cadence gate — where a sub-day cadence sitting between the two
+  lengths can flip accept↔reject — and the readout's pre-horizon rationale line.
+  No persisted column derives from it.
 - **A sub-day start never sums pre-experiment facts:** the STATE stage clamps
   the opening day's render window to `grid.start_ts`, and the CUPED pre-period
   stays WHOLE-DAY (`[midnight(D − lookback), midnight(D))`) instead of gaining
   a partial trailing day. `tz_midnight_utc` now REJECTS a `datetime` rather
-  than silently dropping its time — that silent drop was the mechanism behind
-  three M9 surfaces breaking on a timestamped start.
+  than silently dropping its time — but credit it with only the ONE M9 surface
+  that actually reached it, the STATE stage's day-loop seed. The other two
+  failed LOUDLY: `IncrementalBackend` compared a `date` against a `datetime`,
+  which raises `TypeError` on every cutoff.
 - **Both breaking schema changes of the whole track ship in `0.5.0`, with one
   recreate instruction** (§0.3): `_ab_results.start_date`/`end_date` are
   **dropped** — group BI by `end_ts`, and derive the calendar day a look covers
   as `end_ts − 1µs` read in the EXPERIMENT timezone (both corrections matter:
-  `end_ts` is exclusive AND stored in UTC; the recipe is test-pinned per
-  dialect in `docs/reference/internal-tables.md`) — and the
+  `end_ts` is exclusive AND stored in UTC — `TestTimezoneDates` transcribes the
+  recipe to Python and gates each correction separately against a real Moscow
+  and a real New York run; the three dialect SQL forms in
+  `docs/reference/internal-tables.md` are documentation, executed by no test) —
+  and the
   `_ab_experiments` window is renamed + widened to `DateTime64(3)` holding the
   **RESOLVED** window in naive UTC (the same frame as `_ab_results.start_ts`,
   so a BI join lines up), plus an `interval_anchor` `String` column.
@@ -680,8 +700,12 @@ records); M13–M17 are contours, each opens with a design session). One WP = on
 one PR; **M7–M12 move no statistical number** (parity gates + empty
 `ALGORITHM_VERSION` grep); M13/M15 use full change control. Two binding
 inter-milestone contracts: the M8→M9 one (honored — STATE/tail-scan SQL builds
-ONLY through `build_cohort_backend`), and M10's — the planner is reached ONLY
-through `ExperimentConfig.grid()`, and both are AST-gated.
+ONLY through `build_cohort_backend`) and M10's (the planner is reached ONLY
+through `ExperimentConfig.grid()`). Only the second is AST-gated
+(`tests/core/test_grid_factory_is_the_only_entry.py`); the cohort-factory
+contract is still honor-system, which is exactly the shape that let a
+decorative knob reach none of eight call sites — a gate for it is a named
+follow-up.
 Read before coding:
 
 - The M5 as-built + the math → [m5-implementation-plan.md](../../docs/specs/m5-implementation-plan.md),

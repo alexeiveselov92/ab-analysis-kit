@@ -339,7 +339,7 @@ WP5 = PR #64). Zero statistical numbers moved.
 `end_date: 2024-07-14` becomes `horizon_ts: 2024-07-15` — one vocabulary, no
 `+1 day` translation anywhere. WP1's own review found §0.2's call-site register
 ~60% accurate and its central claim false: six further sites needed changes,
-four of them in M9 code (`IncrementalBackend` compared a `date` against the
+three of them in M9 code (`IncrementalBackend` compared a `date` against the
 config field — a `TypeError` on *every* cutoff under `incremental_reads`), and
 the new knob reached none of the eight hand-copied `generate_grid` calls until
 `ExperimentConfig.grid()` became the one factory (AST-gated, m8's
@@ -355,9 +355,13 @@ resample that lost a race to `/reload` is unreachable rather than stale. The
 exit gate (`tests/e2e/test_sub_day_anchors_and_explore.py`) pins a golden
 captured from the pre-m10 code across 11 window shapes, and found the one
 derived number that DID move — `horizon_seconds()` is now true elapsed time, so
-a DST-crossing window differs by ±1h, which makes it agree with its own grid
-for the first time — plus a breaking-change remedy that escaped as an uncaught
-traceback instead of `abk run`'s error line.
+it differs from the old nominal day count by exactly the window's UTC-offset
+change (±30 min to ±24h by zone, and for a permanent shift with no DST at all),
+which makes it agree with its own grid for the first time — plus a
+breaking-change remedy that escaped as an uncaught traceback instead of
+`abk run`'s error line, a `--workers N>1` path that still buried it, and an
+incremental cohort copy that dropped every unit exposed before a sub-day
+start.
 
 ### M11 — `abk dashboard` (the flagship overview UI) → `0.6.0` 📋
 Design contract: [m11-implementation-plan.md](docs/specs/m11-implementation-plan.md).

@@ -100,8 +100,11 @@ number change).
   its own fine-grained lock. Three consequences worth knowing:
   - **the accepted trade** is that two recomputes racing may both run —
     wasted CPU and, for bootstrap knobs, one resample block of memory each;
-    never a wrong number (every input is immutable or read under the cache
-    lock);
+    never a wrong number for the inputs each used (every input is immutable or
+    read under the cache lock). One caveat, reproduced by the exit-gate review:
+    a `/reload` installing cutoffs under a running pass makes one reply mix two
+    renders of the same series, all points still labelled `exact` — the reply is
+    not yet the unit of consistency, and making it one is a named follow-up;
   - **staleness is re-checked after the compute, not just before it.** A
     request can now be superseded *while it computes*; it replies `409
     {stale: true}` rather than overwriting the fresher answer already in the
@@ -208,22 +211,27 @@ number change).
   `abk unlock` had the same hole (`abk validate` and `abk clean` already
   echoed it).
 - **`horizon_seconds()` is the true elapsed window length**, measured between
-  the two resolved instants, where it used to be `(end − start).days + 1`
-  whole days. A window containing a DST transition is therefore 23h or 25h off
-  a day multiple — which is what its own grid always said: pre-0.5.0 an
-  October-to-November New York experiment reported `horizon_days` 12.04 beside
-  a `horizon_seconds` of exactly 12 days. The two now agree. It is read by
-  config-lint's cadence gate and the readout's pre-horizon rationale line; no
-  persisted column derives from it, and no window without a transition inside
-  it changes at all.
+  the two resolved instants, where it used to be `(end − start).days + 1` whole
+  days. It now agrees with its own grid, which it used to contradict: pre-0.5.0
+  an October-to-November New York experiment reported `horizon_days` 12.04
+  beside a `horizon_seconds` of exactly 12 days. The change is exactly **the
+  UTC-offset difference between the window's local edges** — so ±1h across an
+  ordinary DST transition, ±30 min in Australia/Lord_Howe, ±2h in
+  Antarctica/Troll, ±24h across a date-line jump, and it also fires where there
+  is no DST at all (a permanent zone shift, e.g. Moscow's 2014 +4→+3). A window
+  whose offset does not change is unaffected. Two consumers: the readout's
+  pre-horizon rationale line, and config-lint's cadence gate — where a
+  sub-day cadence sitting between the old and new lengths can flip accept↔reject,
+  so a config that parsed on 0.4.0 may now be rejected (or vice versa) if a
+  transition falls inside its window. No persisted column derives from it.
 
 No `ALGORITHM_VERSION` bump and no `statistics-changes.md` entry anywhere in
 M10: WP1/WP3 are config/planner/schema changes, WP4 is server concurrency and
 warning routing, and WP5 is a structural refactor plus a cache. The numeric
 gate for the window rename is that an unchanged window produces unchanged
-numbers, and it is executable at two levels: the whole suite (2 366 tests,
-incl. every e2e byte-stability and cross-mode parity gate) passes with only the
-config keys and the ported horizon values edited, and
+numbers, and it is executable at two levels: every e2e byte-stability and
+cross-mode parity gate in the suite still passes, with the only edits to those
+tests being the renamed config keys and the ported horizon values, and
 `tests/e2e/test_sub_day_anchors_and_explore.py` compares grids, cutoffs and
 every derived number across 11 window shapes against a golden **captured from
 the pre-M10 code itself** — byte-identical but for the `horizon_seconds()`

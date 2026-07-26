@@ -47,7 +47,12 @@ Lock model (m10 WP4 — three locks, each with one job):
   ``RecomputeSuperseded``) and the handler re-checks after computing too.
 
 The accepted trade (D5): under a race two identical recomputes may both run —
-wasted CPU, never a wrong number (every input is immutable or lock-read).
+wasted CPU, never a wrong number for the inputs each used (every input is
+immutable or lock-read). One caveat the exit-gate review reproduced: a
+``/reload`` installing cutoffs under a running pass makes ONE reply mix two
+renders of the series (all points still labelled ``exact``), so the reply is not
+yet the unit of consistency — see D5's amendment in
+``docs/specs/m10-implementation-plan.md``.
 """
 
 from __future__ import annotations
