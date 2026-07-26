@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import ast
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -718,19 +719,26 @@ class TestShutdown:
         assert mgr.list_snapshots() == []
 
     @requires_procfs
-    def test_a_refused_child_deaf_to_sigterm_is_killed_AND_reaped(self, tmp_path, monkeypatch):
-        """No pump thread runs on that path, so nothing else would reap it."""
+    def test_a_refused_child_leaves_nothing_behind(self, tmp_path, monkeypatch):
+        """End of the closed path: no survivor, and no zombie either.
+
+        The SIGTERM here almost always wins the race against the child's own
+        interpreter startup, so this exercises the terminate branch, not the
+        escalation — measured, not assumed. The kill branch is what
+        ``TestTerminateAndReap`` covers, and it is the one with no pump thread
+        behind it to reap what it kills.
+        """
         monkeypatch.setattr(jobs_module, "_STOP_GRACE_SECONDS", 0.3)
         mgr = JobManager()
         mgr.shutdown()
         before = _own_child_pids()
         with pytest.raises(JobManagerClosed):
-            _spawn(mgr, STUBBORN_SLEEPER, tmp_path=tmp_path)
+            _spawn(mgr, SLEEPER, tmp_path=tmp_path)
         # Gone means gone: a killed-but-unreaped child is still a child here,
         # so this fails on a zombie exactly as it would on a survivor.
         _await(
             lambda: not (_own_child_pids() - before),
-            what="the refused child to be killed AND reaped",
+            what="the refused child to be signalled and reaped",
         )
 
     def test_the_grace_budget_is_shared_across_jobs_rather_than_multiplied(
@@ -757,6 +765,47 @@ class TestShutdown:
         ), f"shutdown took {elapsed:.2f}s — the budget is per-job, not shared"
         for job in jobs:
             _await(lambda job=job: job.proc.poll() is not None, what=f"{job.label} to die")
+
+
+class TestTerminateAndReap:
+    """The escalation helper on its own — the only caller without a pump thread."""
+
+    @requires_procfs
+    def test_a_child_that_must_be_killed_is_also_reaped(self, tmp_path, monkeypatch):
+        """A zombie is not "terminated": nothing else on that path ever waits.
+
+        The child confirms its SIGTERM handler is installed BEFORE the signal
+        is sent — otherwise the terminate wins the interpreter-startup race and
+        the kill branch, which is the whole subject here, never runs.
+        """
+        monkeypatch.setattr(jobs_module, "_STOP_GRACE_SECONDS", 0.3)
+        proc = subprocess.Popen(
+            [
+                sys.executable,
+                "-u",
+                "-c",
+                "import signal, time\n"
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+                "print('ready', flush=True)\n"
+                "time.sleep(300)\n",
+            ],
+            cwd=tmp_path,
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            assert proc.stdout is not None
+            assert proc.stdout.readline().strip() == "ready"
+            assert proc.pid in _own_child_pids()
+            jobs_module._terminate_and_reap(proc)
+            _await(
+                lambda: proc.pid not in _own_child_pids(),
+                what="the SIGTERM-deaf child to be killed and reaped",
+            )
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
 
 
 class TestModuleContract:
