@@ -3,15 +3,16 @@
 A pure-stdlib server bound to ``127.0.0.1`` with a one-shot token: GET serves
 ONE pre-rendered page (unauthenticated, any path — the token gates only the
 POSTs); ``POST /recompute`` answers knob changes from the in-memory session
-(repeatable, advisory, lock-serialized, **stale-dropping** — a ``threading``
-lock alone cannot cancel an in-flight bootstrap, so the handler drops
-outdated ``request_id``s BEFORE and AFTER acquiring the compute lock);
+(repeatable, advisory, **concurrent** since m10 WP4, **stale-dropping** — a
+superseded request is dropped at the admission door, between points while it
+computes, and again before it replies);
 ``POST /reload`` executes the confirmed Tier-R actions (its OWN manager
-inside the serialized handler — DB-API connections are not thread-safe) and
+inside the ``heavy_lock``-serialized handler — DB-API connections are not
+thread-safe) and
 streams a run-log through ``server.echo`` (``/recompute`` stays silent — per-
 knob terminal streaming is spam); ``POST /validate`` is Auto mode (M4 WP6) —
 a reduced-N server-side ``abk validate`` (its OWN manager + the out-of-band
-``'validate'`` ``_ab_tasks`` lock, ``request_lock``-serialized, request_id
+``'validate'`` ``_ab_tasks`` lock, ``heavy_lock``-serialized, request_id
 stale-dropping) that refreshes ``session.aa_rows`` in place so the live D3
 chip greens without an explore restart, and returns the recommended knob state
 per metric for the client to re-seed from; ``POST /apply`` is the only terminal
@@ -23,6 +24,30 @@ spawned daemon thread. An invalid config returns 400 and KEEPS serving.
 
 No pipeline lock is taken: explore writes only YAML, and every read is the
 FINAL-deduped ``load_results`` path (seam map §6).
+
+Lock model (m10 WP4 — three locks, each with one job):
+
+* ``heavy_lock`` guards ``/reload``, ``/validate`` and ``/apply`` against each
+  other, unchanged: they own per-request DB managers, an out-of-band
+  ``_ab_tasks`` lock and the YAML archive/rewrite seam. ``/recompute`` no
+  longer takes it — a cheap Tier α/E/S knob turn is not queued behind a
+  warehouse Reload or a several-hundred-split Auto-validate.
+* ``session.cache_lock`` (``tuning/session.py``) guards the Tier-S cache
+  ``/reload`` mutates and ``/recompute`` reads — held across the dict access
+  only, never across warehouse I/O or the resample math.
+* ``compute_slots`` (a ``BoundedSemaphore``) bounds how many ``/recompute``
+  computes run at once and is where a request superseded *while waiting* is
+  dropped without computing anything. It is admission control, not a queue
+  behind the heavy paths: a cheap knob turn still overtakes a running
+  bootstrap, but N simultaneous resample blocks cannot pile up.
+* ``_id_lock`` + ``check_stale``/``is_stale`` are the untouched request-id
+  staleness machinery (the two-tab 409). They are NOT a compute lock: with
+  ``/recompute`` unserialized a request can now go stale *during* its own
+  compute, so the engine polls staleness between points (raising
+  ``RecomputeSuperseded``) and the handler re-checks after computing too.
+
+The accepted trade (D5): under a race two identical recomputes may both run —
+wasted CPU, never a wrong number (every input is immutable or lock-read).
 """
 
 from __future__ import annotations
@@ -49,6 +74,7 @@ from abkit.tuning.recompute import (
     KnobState,
     RecomputeEngine,
     RecomputeResult,
+    RecomputeSuperseded,
     find_calibration,
     resolve_fpr_budget,
 )
@@ -58,6 +84,13 @@ if TYPE_CHECKING:
     from abkit.config.metric_config import MetricConfig
     from abkit.database.internal_tables import InternalTablesManager
     from abkit.database.manager import BaseDatabaseManager
+
+#: How many ``/recompute`` computes may run at once (m10 WP4, review round 2).
+#: Not a queue behind the heavy paths — those are `heavy_lock`'s business — but
+#: a bound on simultaneous resample blocks, and a door at which a request that
+#: has already been superseded is dropped before it computes anything. 2 keeps
+#: a cheap knob turn overtaking one running bootstrap.
+RECOMPUTE_SLOTS = 2
 
 _MAX_BODY = 5_000_000  # generous cap on the posted knob/config payload
 _MAX_DRAIN = 32_000_000  # how much of an oversized body to drain before the 413
@@ -112,9 +145,16 @@ class _ExploreServer(ThreadingHTTPServer):
         # not thread-safe; the session-load manager belongs to the CLI thread).
         self.manager_factory: Callable[[], BaseDatabaseManager] | None = None
         self.metric_sql_by_name: dict[str, str] | None = None
-        # One compute at a time (two tabs / queued knob drags stay safe)…
-        self.request_lock = threading.Lock()
-        # …and the server-side stale-drop: outdated request ids never compute.
+        # The HEAVY paths only — /reload, /validate, /apply — stay mutually
+        # exclusive (own DB managers, the _ab_tasks lock, the YAML seam).
+        # /recompute deliberately does NOT take this (m10 WP4): the Tier-S
+        # cache it reads has its own fine-grained lock on the session.
+        self.heavy_lock = threading.Lock()
+        # Admission control for the now-unserialized /recompute (round 2):
+        # bounds simultaneous computes, and drops requests superseded while
+        # they wait. Replaceable per-server so tests can pin the bound.
+        self.compute_slots = threading.BoundedSemaphore(RECOMPUTE_SLOTS)
+        # …and the server-side stale-drop: outdated request ids never reply.
         self._id_lock = threading.Lock()
         self.latest_request_id: int = 0
 
@@ -129,8 +169,14 @@ class _ExploreServer(ThreadingHTTPServer):
             return False
 
     def is_stale(self, request_id: int | None) -> bool:
-        """Re-check after acquiring the compute lock (a newer id may have
-        arrived while this request waited on it)."""
+        """Re-check before replying: a newer id may have arrived meanwhile.
+
+        For the heavy paths that is "while this request waited on
+        ``heavy_lock``"; for ``/recompute``, which no longer waits on anything
+        (m10 WP4), it is "while this request was computing" — the reason the
+        re-check had to move AFTER the compute rather than after a lock
+        acquisition.
+        """
         if request_id is None:
             return False
         with self._id_lock:
@@ -238,15 +284,51 @@ class _Handler(BaseHTTPRequestHandler):
         if srv.check_stale(request_id):
             self._reply_json({"stale": True, "request_id": request_id}, code=409)
             return
-        with srv.request_lock:
+        # Not the heavy lock (m10 WP4): the engine reads the immutable series
+        # and the cache through the session's own locked accessors, so
+        # concurrent recomputes cannot corrupt each other — at worst two
+        # identical ones both run (D5's accepted trade: wasted CPU, never a
+        # wrong number).
+        #
+        # The coarse lock did carry two things that had to be replaced rather
+        # than dropped, both restored here without reintroducing a queue behind
+        # /reload or /validate:
+        #   1. it CANCELLED superseded work — its post-lock re-check killed
+        #      every queued request a newer knob turn had outranked, so a
+        #      knob-drag burst cost one compute. The engine now polls the same
+        #      staleness predicate BETWEEN POINTS (round 1 measured the
+        #      alternative: a 6-turn drag went 0.80 s → 3.40 s at 8.7× CPU);
+        #   2. it BOUNDED how many computes ran at once. Polling cannot: a
+        #      one-cutoff series (a young experiment, or a weekly cadence) has
+        #      no "between points", and every superseded bootstrap holds its
+        #      own resample block — round 2 measured 5 simultaneous computes
+        #      and 3.2× peak RSS. Hence a small admission semaphore, with the
+        #      staleness re-checked AT THE DOOR so a request superseded while
+        #      waiting costs nothing at all. RECOMPUTE_SLOTS > 1 keeps the
+        #      milestone's point: a cheap Tier-E turn still overtakes a running
+        #      bootstrap instead of queuing behind it.
+        with srv.compute_slots:
             if srv.is_stale(request_id):
                 self._reply_json({"stale": True, "request_id": request_id}, code=409)
                 return
             try:
-                result = srv.engine.recompute(metric, knobs)
+                result = srv.engine.recompute(
+                    metric, knobs, should_stop=lambda: srv.is_stale(request_id)
+                )
+            except RecomputeSuperseded:
+                self._reply_json({"stale": True, "request_id": request_id}, code=409)
+                return
             except Exception as exc:
                 self._reply_error(400, f"recompute failed: {exc}")
                 return
+        # POST-compute staleness: the pre-check alone was sufficient only while
+        # the lock queued computes. Unserialized, a newer request_id can land
+        # while this one computes — replying then would overwrite the fresher
+        # answer in the client's rail with a superseded one. (The poll above
+        # catches most of these earlier; this is the guarantee.)
+        if srv.is_stale(request_id):
+            self._reply_json({"stale": True, "request_id": request_id}, code=409)
+            return
         self._reply_json(_result_json(result, request_id))
 
     def _handle_reload(self, srv: _ExploreServer, body: bytes) -> None:
@@ -270,7 +352,7 @@ class _Handler(BaseHTTPRequestHandler):
         if srv.check_stale(request_id):
             self._reply_json({"stale": True, "request_id": request_id}, code=409)
             return
-        with srv.request_lock:
+        with srv.heavy_lock:
             if srv.is_stale(request_id):
                 self._reply_json({"stale": True, "request_id": request_id}, code=409)
                 return
@@ -286,7 +368,7 @@ class _Handler(BaseHTTPRequestHandler):
         """Auto mode (WP6, D11): a reduced-N server-side ``abk validate`` that
         refreshes the live session's calibration in place, then answers with the
         recommended knob state per metric so the client re-seeds + re-renders the
-        chip. Serialized under the request lock (its own manager, its own
+        chip. Serialized under ``heavy_lock`` (its own manager, its own
         ``'validate'`` lock), stale-dropping like ``/recompute`` and ``/reload``.
         The Apply gate is unchanged — Auto only populates rows."""
         if (
@@ -309,7 +391,7 @@ class _Handler(BaseHTTPRequestHandler):
         if srv.check_stale(request_id):
             self._reply_json({"stale": True, "request_id": request_id}, code=409)
             return
-        with srv.request_lock:
+        with srv.heavy_lock:
             if srv.is_stale(request_id):
                 self._reply_json({"stale": True, "request_id": request_id}, code=409)
                 return
@@ -325,7 +407,7 @@ class _Handler(BaseHTTPRequestHandler):
     def _handle_apply(self, srv: _ExploreServer, body: bytes) -> None:
         """The only terminal action: gate → WP5 seam → reply → self-shutdown.
 
-        Serialized under the request lock: two tabs' Applies must not race the
+        Serialized under ``heavy_lock``: two tabs' Applies must not race the
         archive/rewrite seam or the shared CLI-thread DB manager, and a second
         Apply after a successful one is refused (the server is already going
         down). Every request-shaped failure is a clean 400/409 — a handler
@@ -342,7 +424,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._reply_error(400, f"invalid apply request: {exc}")
             return
 
-        with srv.request_lock:
+        with srv.heavy_lock:
             if srv.applied is not None:
                 self._reply_error(409, "already applied — the server is shutting down")
                 return
@@ -554,9 +636,12 @@ def _uncalibrated_keys(
 def _run_reload(srv: _ExploreServer, metric: str, knobs: KnobState) -> RecomputeResult:
     """Re-render the metric's cached cutoffs under the requested method.
 
-    Runs inside the request lock with its OWN manager (created and closed
-    here). Cache entries — and the lookback they were rendered with — are
-    replaced in place; the engine then answers from the refreshed session.
+    Runs inside ``heavy_lock`` with its OWN manager (created and closed here).
+    Cache entries — and the lookback they were rendered with — are replaced
+    through ``session.install_cutoff``, which pairs them under
+    ``cache_lock``; the slow warehouse render deliberately stays OUTSIDE that
+    lock, so a concurrent Tier-S ``/recompute`` waits for a dict write, never
+    for a query. The engine then answers from the refreshed session.
     """
     from abkit.loaders.exposure_source import build_cohort_backend
 
@@ -581,8 +666,6 @@ def _run_reload(srv: _ExploreServer, metric: str, knobs: KnobState) -> Recompute
     if not cutoffs:
         raise ValueError(f"metric '{metric}' has no computed cutoffs to reload")
 
-    from abkit.tuning.session import loaded_value_count
-
     experiment = session.experiment.name
     srv.echo(
         f"RELOAD {experiment}/{metric}: {len(cutoffs)} cutoff(s) under "
@@ -600,12 +683,7 @@ def _run_reload(srv: _ExploreServer, metric: str, knobs: KnobState) -> Recompute
             loaded = backend.load_cutoff(
                 comparison, series.metric, sql_by_name[metric], session.grid, Cutoff(end_ts=end_ts)
             )
-            previous = session.cache.get((metric, end_ts))
-            if previous is not None:
-                session.cache_values -= loaded_value_count(previous)
-            session.cache[(metric, end_ts)] = loaded
-            session.cache_lookback[(metric, end_ts)] = method_config.covariate_lookback
-            session.cache_values += loaded_value_count(loaded)
+            session.install_cutoff(metric, end_ts, loaded, method_config.covariate_lookback)
             srv.echo(f"LOAD  {experiment}/{metric}: cutoff {end_ts} reloaded")
     finally:
         manager.close()
@@ -627,7 +705,7 @@ def _run_validate(srv: _ExploreServer) -> dict[str, Any]:
     hundred placebo splits, persist the ``_ab_aa_runs`` rows, refresh the live
     ``session.aa_rows`` snapshot in place (D11 — the chip greens without a
     restart), and return the recommended knob state + refreshed calibration per
-    metric. Runs inside the request lock with its OWN manager and its OWN
+    metric. Runs inside ``heavy_lock`` with its OWN manager and its OWN
     out-of-band ``'validate'`` lock (never the run pipeline's lock, D5)."""
     from abkit.database.internal_tables import InternalTablesManager
     from abkit.loaders.exposure_source import build_cohort_backend

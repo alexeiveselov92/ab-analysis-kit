@@ -22,6 +22,7 @@ from abkit.tuning.recompute import (
     PairRecompute,
     RecomputeEngine,
     RecomputeResult,
+    RecomputeSuperseded,
     find_calibration,
     resolve_fpr_budget,
 )
@@ -46,6 +47,7 @@ __all__ = [
     "PairRecompute",
     "RecomputeEngine",
     "RecomputeResult",
+    "RecomputeSuperseded",
     "TunedComparison",
     "apply_tuned_config",
     "backend_cutoff_loader",

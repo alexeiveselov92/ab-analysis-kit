@@ -53,7 +53,6 @@ from __future__ import annotations
 
 import functools
 import math
-import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, TypeVar, cast
@@ -70,6 +69,7 @@ from abkit.stats.sequential.confidence_sequence import (
     se_from_ci_length_array,
     sequentialize_array,
 )
+from abkit.utils.warn_scope import suppress_warnings
 from abkit.validate._types import ValidateError
 from abkit.validate.inject import (
     inject_multiplicative,
@@ -111,8 +111,10 @@ def suppress_resample_warnings(fn: _F) -> _F:
 
     @functools.wraps(fn)
     def _wrapper(*args: Any, **kwargs: Any) -> Any:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", AbkitStatsWarning)
+        # THREAD-scoped (m10 WP4): an "ignore" FILTER is process-global, so
+        # Auto mode's in-handler validate would silence the warnings a
+        # concurrent /recompute is capturing for its own reply.
+        with suppress_warnings(AbkitStatsWarning):
             return fn(*args, **kwargs)
 
     return cast(_F, _wrapper)
