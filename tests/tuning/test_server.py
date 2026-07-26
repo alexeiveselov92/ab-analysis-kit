@@ -46,7 +46,13 @@ CUPED = {"name": "cuped-t-test", "params": {"test_type": "relative", "covariate_
 
 
 def http(url: str, payload: dict | None = None, raw: bytes | None = None):
-    """One request; returns ``(status, parsed-or-text)`` without raising."""
+    """One request; returns ``(status, parsed-or-text)`` without raising.
+
+    A transport failure (connection refused/reset — e.g. a listen backlog too
+    small for a burst) is returned as ``(0, "transport: …")`` rather than raised:
+    inside a thread it would otherwise vanish into a stack trace and leave the
+    caller asserting on a reply COUNT, with no clue why one is missing.
+    """
     data = raw if raw is not None else (json.dumps(payload).encode() if payload else b"{}")
     request = urllib.request.Request(url, data=data, method="POST")
     try:
@@ -59,6 +65,8 @@ def http(url: str, payload: dict | None = None, raw: bytes | None = None):
             return exc.code, json.loads(body)
         except ValueError:
             return exc.code, body
+    except (urllib.error.URLError, OSError) as exc:  # refused/reset/timed out
+        return 0, f"transport: {exc!r}"
 
 
 def http_get(url: str):
@@ -565,14 +573,13 @@ class TestApplyGateClosure:
             explore.endpoint("apply"), {**TestApply.APPLY, "confirm_uncalibrated": True}
         )
         assert status == 200
-        # the server may already be down; a second Apply must never double-write
-        try:
-            status_two, detail = http(
-                explore.endpoint("apply"), {**TestApply.APPLY, "confirm_uncalibrated": True}
-            )
-            assert status_two in (409, 400)
-        except OSError:
-            pass  # connection refused after shutdown — equally safe
+        # the server may already be down; a second Apply must never double-write.
+        # status 0 is the helper's transport sentinel (connection refused after
+        # shutdown) — equally safe, and no longer an exception to swallow.
+        status_two, _ = http(
+            explore.endpoint("apply"), {**TestApply.APPLY, "confirm_uncalibrated": True}
+        )
+        assert status_two in (409, 400, 0)
         history = list((explore.path.parent / ".history").rglob("*.yml"))
         assert len(history) == 1  # exactly ONE archive: no racing double Apply
 
