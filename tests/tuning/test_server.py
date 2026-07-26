@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -820,6 +821,60 @@ class TestLockDecoupling:
         assert points[marker] == 1
         assert points[0.05] == 4
 
+    def test_a_request_superseded_while_waiting_for_a_slot_computes_nothing(self, explore):
+        """Admission control (review round 2). Cancellation polls BETWEEN
+        points, so it cannot help a one-cutoff series — a young experiment, or
+        any coarse cadence — where six knob turns still cost six full computes.
+        The bounded semaphore is where that request dies: superseded at the
+        door, zero points computed, and simultaneous resample blocks bounded.
+        """
+        import threading as _threading
+
+        from abkit.tuning.recompute import RecomputeEngine
+
+        explore.server.compute_slots = _threading.BoundedSemaphore(1)  # pin the bound
+        real_point = RecomputeEngine._compute_point
+        points: dict[float, int] = {}
+        holding, release = threading.Event(), threading.Event()
+
+        def counting(self, *args, **kwargs):
+            knobs = args[4]
+            points[knobs.alpha] = points.get(knobs.alpha, 0) + 1
+            if knobs.alpha == 0.011 and points[knobs.alpha] == 1:
+                holding.set()
+                assert release.wait(timeout=30)
+            return real_point(self, *args, **kwargs)
+
+        try:
+            RecomputeEngine._compute_point = counting  # type: ignore[method-assign]
+            holder, holder_out = self._fire(
+                explore.endpoint("recompute"), recompute_request(alpha=0.011, request_id=300)
+            )
+            assert holding.wait(timeout=30)  # request 300 owns the only slot
+
+            waiting, waiting_out = self._fire(
+                explore.endpoint("recompute"), recompute_request(alpha=0.022, request_id=301)
+            )
+            # …301 is now queued at the door; 302 supersedes it before it starts
+            newest, newest_out = self._fire(
+                explore.endpoint("recompute"), recompute_request(alpha=0.033, request_id=302)
+            )
+            deadline = time.monotonic() + 30
+            while explore.server.latest_request_id < 302 and time.monotonic() < deadline:
+                time.sleep(0.01)  # the server must have SEEN 302 before anyone runs
+            assert explore.server.latest_request_id == 302
+            release.set()
+            for thread in (holder, waiting, newest):
+                thread.join(timeout=60)
+                assert not thread.is_alive()
+        finally:
+            RecomputeEngine._compute_point = real_point  # type: ignore[method-assign]
+
+        assert waiting_out[0][0] == 409 and waiting_out[0][1]["stale"] is True
+        assert 0.022 not in points, "a request superseded at the door must compute nothing"
+        assert newest_out[0][0] == 200 and points[0.033] == 4
+        assert holder_out[0][0] == 409  # superseded mid-compute, as before
+
     def test_lock_free_recomputes_keep_the_cache_consistent_under_a_reload(self, explore):
         """A REAL ``/reload`` racing 20 Tier-S bootstrap knob turns over the same
         cutoffs: every reply is a result or a clean stale-409 (never a 400/500),
@@ -865,6 +920,52 @@ class TestLockDecoupling:
         assert session.cached_value_count() == sum(
             loaded_value_count(entry) for entry in session.cache.values()
         )
+
+
+def test_every_cancellable_recompute_catches_the_cancellation():
+    """m10 WP4 review round 2: ``should_stop`` is a two-part contract.
+
+    Pass the predicate without catching ``RecomputeSuperseded`` and a
+    cancellation becomes a user-facing error — ``/reload``'s call site sits
+    under ``except Exception -> 400``, so the next caller that copies the
+    pattern renders "reload failed: …" in the client's status bar. One call
+    site is a convention; an AST walk is a contract (the m10 WP1 lesson).
+    """
+    import ast
+    from pathlib import Path
+
+    package = Path(__file__).resolve().parents[2] / "abkit"
+    offenders: list[str] = []
+    for path in sorted(package.rglob("*.py")):
+        tree = ast.parse(path.read_text(), filename=str(path))
+        parents: dict[ast.AST, ast.AST] = {}
+        for node in ast.walk(tree):
+            for child in ast.iter_child_nodes(node):
+                parents[child] = node
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if not any(kw.arg == "should_stop" for kw in node.keywords):
+                continue
+            guarded, walker = False, parents.get(node)
+            while walker is not None:
+                if isinstance(walker, ast.Try) and any(
+                    isinstance(handler.type, ast.Name)
+                    and handler.type.id == "RecomputeSuperseded"
+                    or isinstance(handler.type, ast.Attribute)
+                    and handler.type.attr == "RecomputeSuperseded"
+                    for handler in walker.handlers
+                ):
+                    guarded = True
+                    break
+                walker = parents.get(walker)
+            if not guarded:
+                offenders.append(f"{path.relative_to(package.parent)}:{node.lineno}")
+    assert not offenders, (
+        "a recompute given should_stop can raise RecomputeSuperseded — catch it "
+        "and reply 409, never let it fall into a generic error handler:\n  "
+        + "\n  ".join(offenders)
+    )
 
 
 class TestServeExplore:

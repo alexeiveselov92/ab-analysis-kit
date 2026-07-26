@@ -75,6 +75,11 @@ _delegate: Any = None
 #: what ``showwarning`` was handed back to at the last uninstall — the value a
 #: zombie router is evicted in favour of (see :func:`_evict_zombie_router`).
 _last_handling: Any = None
+#: categories whose "always" filter this nest has already installed. The filter
+#: goes in ONCE per nest (review round 2): ``filterwarnings`` is a remove-then-
+#: insert on a process-global list, and a peer's warning landing in that gap is
+#: matched by the default rules and lost from a live capture.
+_filtered: set[type[Warning]] = set()
 
 
 def _fallback_show(
@@ -98,20 +103,41 @@ def _fallback_show(
         stream.write(warnings.formatwarning(message, category, filename, lineno, line))
 
 
-def _evict_zombie_router() -> None:
-    """Hand ``showwarning`` back if it is an UNOWNED router.
+def _evict_zombie_router_locked() -> None:
+    """Hand ``showwarning`` back if it is a router. Caller holds ``_install_lock``.
 
     A foreign ``catch_warnings`` window that opens after the router is installed
     and closes after the last scope leaves restores ``_route`` behind our back
     (the stdlib restores the value it snapshotted, not the one we handed over).
-    Nobody owns it then: ``_depth`` is 0. Put the last handling we displaced back
-    in its place, so warnings resume reaching the application's own handler
-    instead of the module default. (Review round 1.)
+    Put the last handling we displaced back in its place, so warnings resume
+    reaching the application's own handler instead of the module default.
+    (Review round 1.)
     """
-    if warnings.showwarning is not _route or _depth != 0:
+    if warnings.showwarning is not _route:
         return
     recovered = _last_handling or getattr(warnings, "_showwarning_orig", None)
     warnings.showwarning = recovered if recovered is not None else _fallback_show
+
+
+def _evict_zombie_router() -> None:
+    """The lock-free entry: evict only if the router is provably UNOWNED.
+
+    Called from ``_route``, i.e. from inside ``warnings.warn`` on an arbitrary
+    thread, so it must never block and must never fight an install in progress:
+    it takes ``_install_lock`` non-blockingly and simply skips when someone else
+    holds it (eviction is a repair, not a correctness requirement — ``_route``'s
+    live fallback already prevents both recursion and loss). Round 2 found the
+    unguarded version evicting a router another thread was still installing.
+    """
+    if warnings.showwarning is not _route or _depth != 0:
+        return
+    if not _install_lock.acquire(blocking=False):
+        return
+    try:
+        if _depth == 0:
+            _evict_zombie_router_locked()
+    finally:
+        _install_lock.release()
 
 
 def _current_handling() -> Any:
@@ -199,8 +225,9 @@ def _install() -> None:
     """Take over ``showwarning`` for the whole nest. Caller holds ``_install_lock``."""
     global _guard, _delegate
     # BEFORE the guard snapshots the global state — otherwise a zombie router
-    # would be snapshotted as the thing to restore, and outlive us again.
-    _evict_zombie_router()
+    # would be snapshotted as the thing to restore, and outlive us again. The
+    # caller holds the lock and owns the nest, so no depth check here.
+    _evict_zombie_router_locked()
     # ONE catch_warnings for the whole nest: it snapshots the filter list and
     # showwarning here and restores both when the LAST scope leaves, so no
     # individual scope ever writes global state a peer thread owns.
@@ -222,10 +249,19 @@ def _uninstall() -> None:
     global _guard, _delegate, _last_handling
     guard, _guard = _guard, None
     if guard is not None:
+        # The guard snapshotted THREE things; two are ours to take back and one
+        # is not. ``_showwarnmsg_impl`` is a hook this module never writes, so
+        # restoring the value it had at install time can resurrect a recorder
+        # that has since died — the dead-recorder leak, one hook below the one
+        # round 1 fixed. Keep whatever is live now. (Review round 2.)
+        live_impl = getattr(warnings, "_showwarnmsg_impl", None)
         guard.__exit__(None, None, None)  # restores the filter list AND showwarning
+        if live_impl is not None and getattr(warnings, "_showwarnmsg_impl", None) is not live_impl:
+            setattr(warnings, "_showwarnmsg_impl", live_impl)  # noqa: B010 — private hook
     if warnings.showwarning is not _route:
         _last_handling = warnings.showwarning
     _delegate = None
+    _filtered.clear()  # the guard just dropped every filter we added
 
 
 @contextmanager
@@ -237,20 +273,32 @@ def _scope(frame: _Frame) -> Iterator[_Frame]:
         raise TypeError(f"category must be a Warning subclass, got {frame.category!r}")
     with _install_lock:
         installed_here = _depth == 0
-        if installed_here:
-            _install()
+        # Claim the nest BEFORE the router becomes visible (review round 2): a
+        # peer thread's warning landing between "showwarning = _route" and
+        # "_depth += 1" used to reach _route with depth 0, read the router as
+        # unowned, and evict the install we were still making — the whole nest
+        # then captured nothing.
+        _depth += 1
         try:
-            # "always" so the per-module registry cannot dedupe repeats BEFORE
-            # they reach the recorder — routing decides what happens to a
-            # warning, never a filter (an "ignore" filter would silence a
-            # concurrent thread too).
-            warnings.filterwarnings("always", category=frame.category)
+            if installed_here:
+                _install()
+            if frame.category not in _filtered:
+                # "always" so the per-module registry cannot dedupe repeats
+                # BEFORE they reach the recorder — routing decides what happens
+                # to a warning, never a filter (an "ignore" filter would silence
+                # a concurrent thread too). ONCE per nest per category: CPython
+                # implements filterwarnings as remove-then-insert, and a peer's
+                # warning landing in that gap is filtered by the DEFAULT rules
+                # and lost from a live capture (review round 2 measured ~1 000
+                # losses per 200 000 warnings with peers merely entering scopes).
+                warnings.filterwarnings("always", category=frame.category)
+                _filtered.add(frame.category)
         except BaseException:
             # the install is all-or-nothing: never leave an unowned router behind
+            _depth -= 1
             if installed_here:
                 _uninstall()
             raise
-        _depth += 1
     stack = _thread_stack()
     stack.append(frame)
     try:

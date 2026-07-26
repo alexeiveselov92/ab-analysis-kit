@@ -523,3 +523,104 @@ def test_the_teardown_window_never_drops_a_frameless_warning():
             scope_mod.warnings.catch_warnings = original_guard  # type: ignore[assignment]
     assert observed == ["ran"]
     assert delivered == ["mid-teardown"]
+
+
+class TestRoundTwoHardening:
+    """Round 2 attacked round 1's fixes and found three more holes."""
+
+    def test_the_nest_is_claimed_before_the_router_becomes_visible(self):
+        """``_depth`` must already be non-zero when ``showwarning = _route``
+        lands, or a peer thread's warning reaches the router, reads it as
+        unowned, and evicts an install still in progress — the whole nest then
+        captures nothing (round 2 measured ~0.5% of scope entries)."""
+        import abkit.utils.warn_scope as scope_mod
+
+        depths: list[int] = []
+
+        class _RecordingGuard(warnings.catch_warnings):
+            def __enter__(self):  # type: ignore[no-untyped-def]
+                depths.append(scope_mod._depth)
+                return super().__enter__()
+
+        saved = scope_mod.warnings.catch_warnings
+        scope_mod.warnings.catch_warnings = _RecordingGuard  # type: ignore[assignment]
+        try:
+            with capture_warnings(Alpha):
+                pass
+        finally:
+            scope_mod.warnings.catch_warnings = saved  # type: ignore[assignment]
+        assert depths and depths[0] >= 1, "the router is published before the nest is claimed"
+
+    def test_eviction_never_fights_a_concurrent_install(self):
+        """``_route``'s eviction runs on an arbitrary thread inside
+        ``warnings.warn``: it must take the install lock non-blockingly and
+        skip when someone holds it, never block and never evict a router being
+        installed."""
+        import abkit.utils.warn_scope as scope_mod
+
+        delivered: list[str] = []
+        saved_show = warnings.showwarning
+        with _ambient_sink(delivered):
+            warnings.showwarning = scope_mod._route  # a zombie: depth 0, no delegate
+            scope_mod._install_lock.acquire()  # …and an "install in progress"
+            try:
+                done = threading.Event()
+
+                def peer() -> None:
+                    warnings.warn("while the lock is held", Alpha, stacklevel=1)
+                    done.set()
+
+                thread = threading.Thread(target=peer, daemon=True)
+                thread.start()
+                assert done.wait(timeout=5), "the eviction blocked on the install lock"
+                assert warnings.showwarning is scope_mod._route  # not evicted mid-install
+            finally:
+                scope_mod._install_lock.release()
+                warnings.showwarning = saved_show
+        # delivered, not dropped and not recursed — the router's live fallback
+        assert delivered == ["while the lock is held"]
+
+    def test_the_always_filter_is_installed_once_per_nest(self):
+        """``filterwarnings`` is a remove-then-insert on a process-global list;
+        doing it on every scope entry deletes the filter from under a peer's
+        live capture for a moment, and its warning is then lost to the default
+        rules (round 2: ~1 000 losses per 200 000)."""
+        calls: list[type[Warning]] = []
+        real = warnings.filterwarnings
+
+        def counting(action, message="", category=Warning, module="", lineno=0, append=False):  # type: ignore[no-untyped-def]
+            calls.append(category)
+            return real(action, message, category, module, lineno, append)
+
+        import abkit.utils.warn_scope as scope_mod
+
+        scope_mod.warnings.filterwarnings = counting  # type: ignore[assignment]
+        try:
+            with capture_warnings(Alpha):
+                with capture_warnings(Alpha):
+                    with suppress_warnings(Alpha):
+                        pass
+                with suppress_warnings(Beta):
+                    pass
+        finally:
+            scope_mod.warnings.filterwarnings = real  # type: ignore[assignment]
+        assert calls == [Alpha, Beta], f"one filterwarnings per category per nest, got {calls}"
+        assert scope_mod._filtered == set()  # …and the nest cleared its record
+
+    def test_a_foreign_recorder_that_dies_inside_the_nest_is_not_resurrected(self):
+        """The nest guard snapshots ``_showwarnmsg_impl`` too — a hook this
+        module never writes. Restoring the snapshot can reinstall a recorder
+        that has since closed, which is the dead-recorder leak one hook below
+        the one round 1 fixed."""
+        delivered: list[str] = []
+        with _ambient_sink(delivered):
+            foreign = warnings.catch_warnings(record=True)
+            foreign_log = foreign.__enter__()  # opens BEFORE our nest…
+            with capture_warnings(Alpha):
+                # …and DIES inside it: our guard snapshotted `foreign` as the
+                # process recorder, so restoring that snapshot would hand every
+                # later warning to a list nobody reads.
+                foreign.__exit__(None, None, None)
+            warnings.warn("raised after every context closed", Alpha, stacklevel=1)
+        assert delivered == ["raised after every context closed"]
+        assert [str(w.message) for w in foreign_log] == []

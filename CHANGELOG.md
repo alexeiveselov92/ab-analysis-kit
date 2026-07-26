@@ -113,7 +113,11 @@ number change).
     instead of 0.80 s, at 8.7× the CPU. The engine therefore polls the same
     staleness predicate between points and abandons a superseded recompute
     within one point (1.04 s / 1.14 CPU-s on the same drag) — the queue is
-    gone, the cancellation is not.
+    gone, the cancellation is not. Polling alone cannot help a series with a
+    single cutoff (a young experiment, a weekly cadence) and does not bound
+    how many resample blocks exist at once, so a small admission semaphore
+    (2 slots) fronts the compute and drops a request superseded *while it
+    waits* before it computes anything.
 
 ### Added
 - **M10 WP1 — `interval_anchor`: where the cutoff lattice sits.** `cadence`
@@ -162,8 +166,9 @@ number change).
   category), and `abk run` already fanned experiments out over a thread pool,
   where a guard could be persisted against the wrong experiment's rows.
   abkit's three warning scopes now route through `abkit/utils/warn_scope.py`:
-  one process-global recorder, per-thread frames, no per-call global writes.
-  Warning *routing* only — no number moves.
+  one process-global recorder installed by the outermost scope, per-thread
+  frames, and one `"always"` filter per nest per category — no per-call writes
+  to the global filter list. Warning *routing* only — no number moves.
 
 No `ALGORITHM_VERSION` bump and no `statistics-changes.md` entry anywhere in
 M10 so far: WP1/WP3 are config/planner/schema changes, WP4 is server

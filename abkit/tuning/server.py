@@ -3,9 +3,9 @@
 A pure-stdlib server bound to ``127.0.0.1`` with a one-shot token: GET serves
 ONE pre-rendered page (unauthenticated, any path — the token gates only the
 POSTs); ``POST /recompute`` answers knob changes from the in-memory session
-(repeatable, advisory, **concurrent** since m10 WP4, **stale-dropping** — no
-lock can cancel an in-flight bootstrap, so the handler drops outdated
-``request_id``s BEFORE and AFTER its compute);
+(repeatable, advisory, **concurrent** since m10 WP4, **stale-dropping** — a
+superseded request is dropped at the admission door, between points while it
+computes, and again before it replies);
 ``POST /reload`` executes the confirmed Tier-R actions (its OWN manager
 inside the ``heavy_lock``-serialized handler — DB-API connections are not
 thread-safe) and
@@ -35,10 +35,16 @@ Lock model (m10 WP4 — three locks, each with one job):
 * ``session.cache_lock`` (``tuning/session.py``) guards the Tier-S cache
   ``/reload`` mutates and ``/recompute`` reads — held across the dict access
   only, never across warehouse I/O or the resample math.
+* ``compute_slots`` (a ``BoundedSemaphore``) bounds how many ``/recompute``
+  computes run at once and is where a request superseded *while waiting* is
+  dropped without computing anything. It is admission control, not a queue
+  behind the heavy paths: a cheap knob turn still overtakes a running
+  bootstrap, but N simultaneous resample blocks cannot pile up.
 * ``_id_lock`` + ``check_stale``/``is_stale`` are the untouched request-id
   staleness machinery (the two-tab 409). They are NOT a compute lock: with
   ``/recompute`` unserialized a request can now go stale *during* its own
-  compute, so the handler re-checks AFTER computing as well as before.
+  compute, so the engine polls staleness between points (raising
+  ``RecomputeSuperseded``) and the handler re-checks after computing too.
 
 The accepted trade (D5): under a race two identical recomputes may both run —
 wasted CPU, never a wrong number (every input is immutable or lock-read).
@@ -78,6 +84,13 @@ if TYPE_CHECKING:
     from abkit.config.metric_config import MetricConfig
     from abkit.database.internal_tables import InternalTablesManager
     from abkit.database.manager import BaseDatabaseManager
+
+#: How many ``/recompute`` computes may run at once (m10 WP4, review round 2).
+#: Not a queue behind the heavy paths — those are `heavy_lock`'s business — but
+#: a bound on simultaneous resample blocks, and a door at which a request that
+#: has already been superseded is dropped before it computes anything. 2 keeps
+#: a cheap knob turn overtaking one running bootstrap.
+RECOMPUTE_SLOTS = 2
 
 _MAX_BODY = 5_000_000  # generous cap on the posted knob/config payload
 _MAX_DRAIN = 32_000_000  # how much of an oversized body to drain before the 413
@@ -137,6 +150,10 @@ class _ExploreServer(ThreadingHTTPServer):
         # /recompute deliberately does NOT take this (m10 WP4): the Tier-S
         # cache it reads has its own fine-grained lock on the session.
         self.heavy_lock = threading.Lock()
+        # Admission control for the now-unserialized /recompute (round 2):
+        # bounds simultaneous computes, and drops requests superseded while
+        # they wait. Replaceable per-server so tests can pin the bound.
+        self.compute_slots = threading.BoundedSemaphore(RECOMPUTE_SLOTS)
         # …and the server-side stale-drop: outdated request ids never reply.
         self._id_lock = threading.Lock()
         self.latest_request_id: int = 0
@@ -267,27 +284,43 @@ class _Handler(BaseHTTPRequestHandler):
         if srv.check_stale(request_id):
             self._reply_json({"stale": True, "request_id": request_id}, code=409)
             return
-        # No lock (m10 WP4): the engine reads the immutable series and the
-        # cache through the session's own locked accessors, so concurrent
-        # recomputes cannot corrupt each other — at worst two identical ones
-        # both run (D5's accepted trade: wasted CPU, never a wrong number).
+        # Not the heavy lock (m10 WP4): the engine reads the immutable series
+        # and the cache through the session's own locked accessors, so
+        # concurrent recomputes cannot corrupt each other — at worst two
+        # identical ones both run (D5's accepted trade: wasted CPU, never a
+        # wrong number).
         #
-        # The lock did carry one thing that had to be replaced rather than
-        # dropped: it CANCELLED superseded work. Its post-lock re-check killed
-        # every queued request a newer knob turn had outranked, so a knob-drag
-        # burst cost one compute. The engine now polls the same staleness
-        # predicate between points (review round 1 measured the alternative: a
-        # 6-turn drag went from 0.80 s to 3.40 s at 8.7× the CPU).
-        try:
-            result = srv.engine.recompute(
-                metric, knobs, should_stop=lambda: srv.is_stale(request_id)
-            )
-        except RecomputeSuperseded:
-            self._reply_json({"stale": True, "request_id": request_id}, code=409)
-            return
-        except Exception as exc:
-            self._reply_error(400, f"recompute failed: {exc}")
-            return
+        # The coarse lock did carry two things that had to be replaced rather
+        # than dropped, both restored here without reintroducing a queue behind
+        # /reload or /validate:
+        #   1. it CANCELLED superseded work — its post-lock re-check killed
+        #      every queued request a newer knob turn had outranked, so a
+        #      knob-drag burst cost one compute. The engine now polls the same
+        #      staleness predicate BETWEEN POINTS (round 1 measured the
+        #      alternative: a 6-turn drag went 0.80 s → 3.40 s at 8.7× CPU);
+        #   2. it BOUNDED how many computes ran at once. Polling cannot: a
+        #      one-cutoff series (a young experiment, or a weekly cadence) has
+        #      no "between points", and every superseded bootstrap holds its
+        #      own resample block — round 2 measured 5 simultaneous computes
+        #      and 3.2× peak RSS. Hence a small admission semaphore, with the
+        #      staleness re-checked AT THE DOOR so a request superseded while
+        #      waiting costs nothing at all. RECOMPUTE_SLOTS > 1 keeps the
+        #      milestone's point: a cheap Tier-E turn still overtakes a running
+        #      bootstrap instead of queuing behind it.
+        with srv.compute_slots:
+            if srv.is_stale(request_id):
+                self._reply_json({"stale": True, "request_id": request_id}, code=409)
+                return
+            try:
+                result = srv.engine.recompute(
+                    metric, knobs, should_stop=lambda: srv.is_stale(request_id)
+                )
+            except RecomputeSuperseded:
+                self._reply_json({"stale": True, "request_id": request_id}, code=409)
+                return
+            except Exception as exc:
+                self._reply_error(400, f"recompute failed: {exc}")
+                return
         # POST-compute staleness: the pre-check alone was sufficient only while
         # the lock queued computes. Unserialized, a newer request_id can land
         # while this one computes — replying then would overwrite the fresher

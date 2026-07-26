@@ -241,7 +241,11 @@ class TestPairAtomicity:
                     entries = session.cached_entries("arpu")
                     assert [ts for ts, _ in entries] == sorted(ts for ts, _ in entries)
                     assert len(entries) == 2000
-                    assert session.cached_cutoffs("arpu") == [ts for ts, _ in entries]
+                    # ``cached_cutoffs`` iterates the same dict and needs its own
+                    # exposure: sampled once per pass it only caught an unlocked
+                    # accessor 1 run in 5 (review round 2).
+                    for _ in range(3):
+                        assert len(session.cached_cutoffs("arpu")) == 2000
             except BaseException as exc:  # noqa: BLE001 — re-raised below
                 failures.append(exc)
 
@@ -255,6 +259,48 @@ class TestPairAtomicity:
         assert not reader.is_alive()
         if failures:
             raise failures[0]
+
+    def test_cached_cutoffs_holds_the_lock_across_its_whole_iteration(self):
+        """The sibling scan needs its own gate, deterministically.
+
+        The hammer above catches an unlocked ``cached_entries`` every run but an
+        unlocked ``cached_cutoffs`` only ~2 in 5 (review round 2). Here the dict
+        itself starts a writer at the first key: with the lock the writer blocks
+        and the iteration completes, without it the install lands mid-iteration
+        and CPython raises "dictionary changed size during iteration".
+        """
+        session = _session()
+        for i in range(50):
+            session.install_cutoff("arpu", CUTOFF + timedelta(seconds=i), _entry(2), "7d")
+
+        installed = threading.Event()
+
+        def write() -> None:
+            session.install_cutoff("arpu", CUTOFF + timedelta(days=99), _entry(2), "7d")
+            installed.set()
+
+        class _WriterAtFirstKey(dict):
+            def __iter__(self):  # type: ignore[no-untyped-def]
+                keys = super().__iter__()
+                started = False
+                while True:
+                    try:
+                        key = next(keys)
+                    except StopIteration:
+                        return
+                    if not started:
+                        started = True
+                        threading.Thread(target=write, daemon=True).start()
+                        # locked ⇒ the writer is stuck on cache_lock and this
+                        # times out; unlocked ⇒ it installs right here
+                        installed.wait(timeout=0.5)
+                    yield key
+
+        session.cache = _WriterAtFirstKey(session.cache)  # type: ignore[assignment]
+        cutoffs = session.cached_cutoffs("arpu")  # must not raise
+        assert len(cutoffs) == 50
+        assert installed.wait(timeout=10)  # …and the writer lands afterwards
+        assert len(session.cached_cutoffs("arpu")) == 51
 
     def test_disable_cache_clears_all_three_fields_together(self):
         session = _session()

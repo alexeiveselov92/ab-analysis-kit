@@ -747,7 +747,9 @@ class RecomputeEngine:
                 if should_stop is not None and should_stop():
                     # a newer knob state is already being answered — stop
                     # burning CPU on a reply nobody will adopt
-                    raise RecomputeSuperseded(metric)
+                    raise RecomputeSuperseded(
+                        f"recompute of '{metric}' was superseded by a newer request"
+                    )
                 point = self._compute_point(
                     series, row, method_cls, probe.params, knobs, reusable, identity_changed
                 )

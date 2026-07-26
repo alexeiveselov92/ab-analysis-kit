@@ -1507,7 +1507,7 @@ mutation-checked (revert it and a named test goes red).
 | 2 | **`_route` could delegate to itself.** A foreign `catch_warnings()` that opens after the router is installed and closes after the last scope leaves restores `_route` behind the module's back; the next scope adopted it as its own delegate — every warning silently dropped, then `RecursionError` **raised out of `warnings.warn`**, i.e. out of a live compute. Not theoretical: instrumenting a real `abk run` + `abk validate` caught **pandas entering `catch_warnings()` 15 times inside abkit capture scopes**. | crash + silent loss | never adopt the router as its own delegate; resolve the handling live instead of dropping; evict an unowned router (`_depth == 0`) back to the last handling it displaced. |
 | 3 | The install was not atomic: an exception between `guard.__enter__()` and `_depth += 1` (e.g. `capture_warnings("not a class")`) orphaned the router permanently — which then became defect 2. | medium | validate the category before touching any global, and roll the install back on any `BaseException`. |
 | 4 | Teardown cleared `_delegate` **before** un-installing, so a frameless thread's warning inside that window reached a router with nothing to hand it to. | low | restore first, clear after. |
-| 5 | **Four of the primitive's own tests — and BOTH "production call site" tests — passed with the primitive reverted to the stdlib.** They drove LIFO-nested interleavings, which `catch_warnings` handles correctly; `validate/scoring`'s suppression had no failing coverage at all and `pipeline/analyze` had no test. | high (a gate that cannot fail) | the interleavings now overlap (capture open first, the peer warns inside it); hazard 3 asserts DELIVERY through an ambient sink installed **before** the interleave; and an AST gate bans `catch_warnings`/`simplefilter`/`filterwarnings`/`showwarning =` anywhere in `abkit/` outside `warn_scope.py` — covering all three call sites and every future one. 10 of 18 now fail against the stdlib. |
+| 5 | **Four of the primitive's own tests — and BOTH "production call site" tests — passed with the primitive reverted to the stdlib.** They drove LIFO-nested interleavings, which `catch_warnings` handles correctly; `validate/scoring`'s suppression had no failing coverage at all and `pipeline/analyze` had no test. | high (a gate that cannot fail) | the interleavings now overlap (capture open first, the peer warns inside it); hazard 3 asserts DELIVERY through an ambient sink installed **before** the interleave; and an AST gate bans `catch_warnings`/`simplefilter`/`filterwarnings`/`showwarning =` anywhere in `abkit/` outside `warn_scope.py` — covering all three call sites and every future one. 15 of 23 now fail against the stdlib. |
 | 6 | Three of the four cache-lock tests passed with `cache_lock` removed: the scan installer recycled 27 keys so the dict stopped resizing, and 4×60 installs at the default 5 ms switch interval never interleaved the read-modify-write. | medium (same) | growing keys + 2 000 pre-filled entries; `sys.setswitchinterval(1e-6)` + 3 000 installs; plus a new test that instruments the lock itself to prove `cached_entry` reads the pair in ONE critical section (a two-locked-reads implementation now returns a torn pair and fails). |
 | 7 | `/apply`'s `heavy_lock` was untested — dropping it left the whole tuning+CLI suite green, though the one-shot `srv.applied` check and the YAML archive/rewrite seam both live inside it. | low | the third pairing added to `TestLockDecoupling`. |
 | 8 | Three docstrings still said "the request lock" after the rename — the exact conflation §0.4(e)'s risk note warns about, in the file M11 is scheduled to clone. | low | renamed to `heavy_lock`. |
@@ -1527,7 +1527,9 @@ mutation-checked (revert it and a named test goes red).
   capture/suppress/nested scopes with injected exceptions — 0 hangs, 0
   cross-thread mixups, every global restored. `warnings.filters` does **not**
   grow with scope count (500 sequential / 200 deep / 2 000 concurrent scopes:
-  5 → 6 entries).
+  5 → 6 entries). Note what that stress did NOT cover, and round 2 did: every
+  thread was inside a scope, so it never exercised a **frameless** warner
+  racing an install — the shape of round 2's defect 1.
 - The routing cost is real but small: +0.68 µs per suppressed warning; on a
   realistic A/A cell firing the CUPED guard on every arm (1 500 units × 10
   looks × 400 iterations = 8 002 warnings) `main` 0.69 s vs 0.72 s, identical
@@ -1557,3 +1559,34 @@ the debounce timer on the Tier-R edit that raises the Reload bar, and while
 that bar is up every knob turn still reads `needsReload` and dispatches
 nothing. The delta is real for a raw HTTP client only. `web/src/**` is
 therefore untouched, exactly as the WP predicted.
+
+### WP4 round 2 — the fixes attacked in turn
+
+Three lenses over the round-1 fix delta only (the paired skeptics were lost to
+a session limit, so every finding below was instead reproduced and
+mutation-checked by hand before it was fixed). Round 1 hardened the warning
+primitive; round 2 showed the hardening had opened two new holes of its own —
+the standing lesson that a concurrency fix needs its own adversarial pass.
+
+| # | Defect | Severity | Fix |
+|---|---|---|---|
+| 1 | **Round 1's zombie eviction evicted LIVE routers.** `_scope` published `showwarning = _route` before `_depth += 1`, so a frameless warning on any other thread reached `_route`, read depth 0 as "unowned", and un-installed the router the installing thread was still setting up — that whole nest then captured **nothing**. 0.4–0.5 % of scope entries under a hammer; 217/30 000 through the real production call sites; **0 on the pre-round-1 module**, so it was a regression introduced by the fix. | silent loss | claim the nest (`_depth += 1`) BEFORE the router is visible, roll it back on failure, and make the lock-free evictor take `_install_lock` **non-blockingly** and skip when someone holds it (`_install` uses the `_locked` variant it already owns). |
+| 2 | **Every scope entry rewrote the process-global filter list.** `filterwarnings` is a remove-then-insert; a peer's warning landing in that gap is matched by the DEFAULT rules and lost from a live capture. 223–1 074 losses per 200 000 with peers merely entering scopes; 21 610–27 420 with peers calling `filterwarnings` directly. Falsified the module's own "no per-call global writes". | silent loss | install "always" ONCE per nest per category (`_filtered`, guarded by `_install_lock`, cleared when the nest's guard restores the list). |
+| 3 | **The nest guard resurrected a dead recorder.** `catch_warnings` also snapshots the private `_showwarnmsg_impl` — a hook this module never writes — so a foreign `catch_warnings(record=True)` that opened before our nest and died inside it was reinstalled by our exit: the dead-recorder leak, one hook below the one round 1 fixed. | silent loss | keep the LIVE impl across the guard's exit instead of the snapshot. |
+| 4 | **Cancellation was only half of what the old lock did.** It restored the CPU/latency half but not the bound on simultaneous work (5 concurrent resample blocks vs main's 1, 3.2× peak RSS), and it is a **no-op on a one-cutoff series** — a young experiment or a weekly cadence — where six knob turns still cost six full computes (2.0 s vs main's 0.48 s). | perf/resource | a `BoundedSemaphore(RECOMPUTE_SLOTS=2)` admission door with the staleness re-checked on acquire: a request superseded while waiting computes nothing at all, and simultaneous blocks are bounded — without ever waiting on `/reload`/`/validate`. |
+| 5 | Two round-1 fixes had no test that could fail, and the AST gate missed seven working spellings of what it bans (`import warnings as w`, `from warnings import catch_warnings as cw`, `filters[:] = …`, `filters.insert`, `filters += …`, a rebound member, an annotated assignment). | high (gates that cannot fail) | the gate now resolves import aliases and flags bare references, `filters` mutations and `_showwarnmsg_impl`/`_filters_mutated`; its evasion suite grew from 6 to 14 shapes. Each round-2 fix has a mutation-checked test (nest-claim, non-blocking evictor, one-filter-per-nest, live-impl, the admission door). |
+| 6 | `cached_cutoffs`'s lock — the contract's fifth call site — was caught only 1–2 runs in 5 when removed. | medium (same) | a deterministic gate: the cache dict starts a writer at the first key, so an unlocked accessor raises "dictionary changed size during iteration" **5/5**. |
+| 7 | `RecomputeSuperseded` was unexported, carried the metric name as its whole message, and nothing forced the next `should_stop` caller to catch it — `/reload`'s call site would render it as "reload failed: arpu" in the client's status bar. | low | exported, self-describing message, and an AST gate asserting every call passing `should_stop=` is inside a `try` that names the exception. |
+
+**Verified clean in round 2, with the evidence:** the scripted-session dump is
+byte-identical across `main`, `708b8a5` and `b6da191` (22 603 bytes, one
+sha256); the only two `.recompute(` call sites in `abkit/` are the handler and
+`_run_reload`, and no id-less request can ever be cancelled (`check_stale`/
+`is_stale` short-circuit on `None`); cancelling mid-compute strands nothing —
+`series.rows`, the cached cutoffs/entries, `aa_rows`, the value count and the
+next full reply are all identical to the pre-cancellation run; a 25 s
+randomized storm (8 client threads × 4 metrics × 6 methods, periodic `/reload`,
+one Auto `/validate`) produced 0 5xx, 0 hung threads and a post-storm reply
+differing only in the `calibration` block the Auto run populated; the poll
+costs 0.744 µs per call (+32 µs on an 18-row recompute); superseded requests
+compute exactly one point (`1,1,1,1,1` against a winner's 8).
