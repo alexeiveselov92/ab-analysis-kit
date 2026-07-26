@@ -149,6 +149,21 @@ two-process lock race) is deferred to a Docker-equipped environment.
   `/recompute` re-checks staleness AFTER computing. Warning capture in
   `_compare`/`analyze`/A-A scoring goes through `utils/warn_scope` — never
   `catch_warnings`, which is process-global.
+- **Tier-S bootstrap draws are memoized (m10 WP5).** Every bootstrap method
+  splits into `_resample` (the replicates — alpha-free) and `_finalize` (CI +
+  verdict at ONE alpha); the base class composes `from_samples` from the two
+  and `supports_resample_memo` declares the capability (the M7
+  `supports_vectorized` pattern — the engine falls back to the verbatim
+  `_compare` otherwise). The engine memoizes the outcome on the session under
+  `BootMemoKey(metric, name_1, name_2, end_ts, generation, method, resolved
+  params)` — **compose it nowhere else**; dropping any field collides across
+  metrics, across arm pairs, or across the identity-EXCLUDED `seed`/
+  `max_block_bytes`, and alpha is absent on purpose. `generation` is
+  `install_cutoff`'s per-cutoff counter, returned by `cached_entry()` in the
+  same critical section as the entry, so a resample that lost the race to a
+  `/reload` is unreachable rather than stale. `boot_memo` is reached only
+  through the session's `boot_memo_lock` accessors (same AST gate as the
+  cache), and the two locks are never nested.
 - **The client mirrors `analyze.effective_alphas`** over
   `payload["explore"]["experiment"]` (raw alpha/correction/counts baked by
   `tuning/payload.py`) — keep `explore.ts#effectiveAlpha` and that block in

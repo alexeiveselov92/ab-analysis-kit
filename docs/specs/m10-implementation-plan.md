@@ -907,7 +907,70 @@ with a superseded answer.
 
 ---
 
-### WP5 — Explore: memoize bootstrap resampling across alpha-only changes
+### WP5 — Explore: memoize bootstrap resampling across alpha-only changes ✅ SHIPPED (`35323f4`)
+
+> **As-built notes (what the session found beyond the contract):**
+>
+> - **The prescribed key `(method_config_id, end_ts)` is not enough — it
+>   collides three ways, each of them a wrong number.** `method_config_id` is
+>   a hash of the method name plus its non-default IDENTITY params, so it
+>   carries neither *which data* was resampled nor two params that reach the
+>   draw:
+>   1. **across metrics** — one session serves every comparison, so two
+>      sample-typed metrics under the same method and cutoff share a key while
+>      resampling completely different arrays;
+>   2. **across arm pairs** — a multi-arm experiment computes
+>      `(control, treatment)` and `(control, treatment2)` at the same cutoff
+>      under one identity;
+>   3. **across `seed` / `max_block_bytes`** — both are identity-EXCLUDED by
+>      design (baseline fact #3), yet the per-row derived seed *is* the draw and
+>      the block size is free to change it.
+>   As built the key is a `BootMemoKey` NamedTuple — `(metric, name_1, name_2,
+>   end_ts, generation, method, canonical resolved params)` — i.e. everything
+>   the draw is a function of, minus alpha. All three collisions are pinned by
+>   tests that go red under the contract's key
+>   (`tests/tuning/test_recompute.py::TestBootstrapMemo`).
+> - **The step-6 amendment's `cache_epoch` is per CUTOFF, and it is in the
+>   KEY, not a check at insert time.** `install_cutoff` bumps
+>   `cache_generation[(metric, end_ts)]` and `cached_entry()` returns it inside
+>   the SAME critical section as the entry and the lookback tag (the WP4 triple,
+>   now widened). A resample memoized against generation *n* is therefore
+>   unreachable after a reload rather than merely purged — the interleaving WP4's
+>   review demonstrated costs a discarded resample, never a stale hit. One
+>   consequence is better than the contract asked for: since correctness no
+>   longer needs the purge, the purge is housekeeping and runs AFTER
+>   `install_cutoff` releases `cache_lock`, so `cache_lock` and `boot_memo_lock`
+>   are **never nested** and §0.4(f)'s lock-ordering rule has nothing to order.
+> - **The split returns a `ResampleOutcome` NamedTuple, not the prescribed
+>   3-tuple.** `_finalize` already accepted the caller's `value_1`/`value_2`
+>   (the M7 WP1 A4 hoist), and four of the six classes pass them; a 3-tuple
+>   would have silently dropped that optimization and made the memo recompute
+>   `stat_point` per alpha. `warnings` is a TUPLE for a reason the contract
+>   could not have known: `_finalize` APPENDS its H5 warning to the list it is
+>   handed and stores that same list on the `TestResult`, so a shared mutable
+>   list would have grown one duplicate warning per alpha (pinned).
+> - **Warnings have two channels and both had to be replayed.** Besides the
+>   result's own `warnings` list, `_compare` captures `AbkitStatsWarning`s
+>   raised DURING the call. A hit never re-runs the resample, so its captured
+>   messages are stored in the memo entry and re-attached ahead of the finalize
+>   step's — the same order one capture around the whole `from_samples` produced.
+> - **The capability is declared, not sniffed** (`supports_resample_memo`,
+>   mirroring M7's `supports_vectorized`): the engine dispatches on the flag and
+>   falls back to the verbatim `_compare` for anything else — including a pair
+>   shape `compare_pair` would have routed to `from_suffstats`. A registry
+>   roster gate keeps the flag, the `_resample` override and the inherited
+>   template `from_samples` in step, so a future plugin cannot half-adopt it.
+> - **Measured** (4 000 units × 10 000 replicates × 4 cutoffs, six alpha turns):
+>   6.01 s → 1.01 s total; per turn 1.00 s → **0.002 s** after the first. At a
+>   modest 1 000 units × 2 000 replicates the warm drag is 20× faster. The
+>   budget is counted in replicate VALUES (≈16 MB), not entries — `n_samples`
+>   is a live knob, so an entry cap bounds nothing; an entry bigger than the
+>   whole budget is refused rather than admitted-then-thrashing.
+> - **File-list deviations:** the bootstrap method tests live in
+>   `tests/stats/test_bootstrap_methods.py` (there is no `tests/stats/bootstrap/`
+>   package), and the session-level memo discipline is pinned in
+>   `tests/tuning/test_session_cache_lock.py` beside the cache it shares a
+>   lifecycle with.
 
 **Goal.** Split every `BaseBootstrapMethod` subclass's `from_samples`
 (`bootstrap.py`, `paired_bootstrap.py`, `post_normed_bootstrap.py`,
