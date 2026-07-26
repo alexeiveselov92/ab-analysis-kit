@@ -41,7 +41,7 @@ from __future__ import annotations
 
 import json
 import math
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -977,5 +977,7 @@ class TestCockpitUnderLoad:
         assert len(points) == 11
         # ms-epoch ints on the wire; the opening look closes at 12:00, not 00:00
         opening = min(points, key=lambda p: p["end_ts"])
-        opened = datetime.fromtimestamp(opening["end_ts"] / 1000, tz=UTC).replace(tzinfo=None)
+        opened = datetime.fromtimestamp(opening["end_ts"] / 1000, tz=timezone.utc).replace(
+            tzinfo=None
+        )
         assert opened == datetime(2024, 7, 1, 12, 0)

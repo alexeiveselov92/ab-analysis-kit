@@ -2156,6 +2156,18 @@ Ordinary `MergeTree` with no version column and abkit's own reader uses no FINAL
 and the tzdata claim in the round-1 record was re-derived by enumerating every
 zone over 1970–2036 rather than trusted (3 dates, 7 zone entries with aliases).
 
+**Round 3 was CI.** The first push failed `Test (Python 3.10)` in 48 s while
+every other job — including the Docker-gated ClickHouse leg, the one thing no
+local run could check — passed. The cause was `from datetime import UTC` in the
+new e2e module: `datetime.UTC` landed in **3.11**, and the project supports 3.10
+(`requires-python`). A local interpreter at 3.12 cannot catch that class of
+defect at all, and neither round of review did: both read the file on a 3.12
+machine. Replaced with `timezone.utc`, and the new files were swept for the rest
+of the 3.11+ surface (`ExceptionGroup`, `tomllib`, `itertools.batched`,
+`typing.Self`, `StrEnum`) — none present. The general lesson for a repo whose
+floor is 3.10: a new import of a stdlib name is a version claim, and only the
+matrix can check it.
+
 **Final state:** 2 369 passed, 6 skipped; mypy 111 = `main`'s baseline;
 `ALGORITHM_VERSION` grep over the diff empty; `tests/golden` untouched;
 `__version__ = 0.5.0` matching the CHANGELOG heading, with `0.4.0` the latest on
