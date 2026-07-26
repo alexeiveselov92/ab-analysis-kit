@@ -26,7 +26,7 @@ from abkit.stats import (
     create_method,
     get_method_class,
 )
-from abkit.stats.bootstrap import BaseBootstrapMethod
+from abkit.stats.bootstrap import BaseBootstrapMethod, ResampleOutcome
 from abkit.stats.exceptions import MethodParamError
 from abkit.stats.registry import available_methods
 
@@ -337,3 +337,167 @@ def test_custom_registered_stat_end_to_end() -> None:
             create_method("bootstrap", params={"stat": "p99"})
     finally:
         STAT_FUNCS.pop("p90-test", None)
+
+
+# --- the m10 WP5 template-method split ------------------------------------------------
+#
+# ``from_samples`` is now ``_resample`` (draw the replicates — alpha-free) then
+# ``_finalize`` (percentile CI + verdict at ONE alpha). These are the class-level
+# gates that the split changed nothing and that one outcome may legitimately be
+# reused across alphas — the property the explore memo (tuning/recompute.py)
+# rests on. The golden suite (tests/golden/test_golden_bootstrap.py) is the
+# other half of the proof: it runs unmodified through the new composition.
+
+
+def _snapshot(result: object) -> tuple:
+    """Every comparable field of a ``TestResult``, floats compared BIT-exactly."""
+    from dataclasses import fields as dataclass_fields
+
+    exact = []
+    for spec in sorted(dataclass_fields(result), key=lambda f: f.name):  # type: ignore[arg-type]
+        if spec.name == "effect_distribution":
+            continue
+        value = getattr(result, spec.name)
+        if isinstance(value, float):
+            # float.hex distinguishes what to_dict() flattens to None (nan/inf)
+            exact.append((spec.name, value.hex() if math.isfinite(value) else repr(value)))
+        elif isinstance(value, dict):
+            exact.append((spec.name, tuple(sorted((k, repr(v)) for k, v in value.items()))))
+        elif isinstance(value, list):
+            exact.append((spec.name, tuple(value)))
+        else:
+            exact.append((spec.name, repr(value)))
+    distribution = getattr(result, "effect_distribution", None)
+    dist = None if distribution is None else (repr(distribution.mean()), repr(distribution.std()))
+    return tuple(exact), dist
+
+
+def _pair_for(name: str) -> tuple[Sample, Sample]:
+    """A pair every bootstrap method accepts (paired methods need equal sizes)."""
+    return _samples(seed=11, n=120, shift=0.3)
+
+
+@pytest.mark.parametrize("name", ALL_BOOTSTRAP_METHODS)
+def test_from_samples_is_exactly_resample_then_finalize(name: str) -> None:
+    """The composition the base class performs == the two halves by hand."""
+    control, treatment = _pair_for(name)
+    params = dict(SAFE_PARAMS[name], n_samples=64, seed=17)
+
+    composed = create_method(name, alpha=0.05, params=params).from_samples(control, treatment)
+
+    manual_method = create_method(name, alpha=0.05, params=params)
+    outcome = manual_method._resample(control, treatment)
+    manual = manual_method._finalize(
+        control,
+        treatment,
+        outcome.boot_data,
+        outcome.effect,
+        list(outcome.warnings),
+        value_1=outcome.value_1,
+        value_2=outcome.value_2,
+    )
+    assert _snapshot(composed) == _snapshot(manual)
+
+
+@pytest.mark.parametrize("name", ALL_BOOTSTRAP_METHODS)
+def test_one_outcome_finalized_at_another_alpha_equals_a_full_run_there(name: str) -> None:
+    """THE memo premise: the replicates do not depend on alpha.
+
+    An outcome drawn by a method bound to α=0.05, finalized by a method bound to
+    α=0.01, must equal a full ``from_samples`` at α=0.01 — field for field, bit
+    for bit. If this ever stops holding, the explore memo is serving numbers
+    nobody else would produce and must be deleted, not tolerated.
+    """
+    control, treatment = _pair_for(name)
+    params = dict(SAFE_PARAMS[name], n_samples=64, seed=17)
+
+    outcome = create_method(name, alpha=0.05, params=params)._resample(control, treatment)
+    reused = create_method(name, alpha=0.01, params=params)._finalize(
+        control,
+        treatment,
+        outcome.boot_data,
+        outcome.effect,
+        list(outcome.warnings),
+        value_1=outcome.value_1,
+        value_2=outcome.value_2,
+    )
+    fresh = create_method(name, alpha=0.01, params=params).from_samples(control, treatment)
+    assert _snapshot(reused) == _snapshot(fresh)
+    # …and alpha really did move the CI (otherwise the test proves nothing)
+    at_005 = create_method(name, alpha=0.05, params=params).from_samples(control, treatment)
+    assert (reused.left_bound, reused.right_bound) != (at_005.left_bound, at_005.right_bound)
+
+
+@pytest.mark.parametrize("name", ALL_BOOTSTRAP_METHODS)
+def test_finalize_never_mutates_the_outcome_it_is_given(name: str) -> None:
+    """Reuse is only safe if ``_finalize`` is a pure reader of the outcome.
+
+    It APPENDS its H5 warning to the warnings list it is handed, so the outcome
+    carries a tuple and every caller copies; the replicates must come back
+    untouched byte for byte, three finalizes later.
+    """
+    control, treatment = _pair_for(name)
+    params = dict(SAFE_PARAMS[name], n_samples=64, seed=17)
+    method = create_method(name, alpha=0.05, params=params)
+    outcome = method._resample(control, treatment)
+    before = outcome.boot_data.copy()
+
+    results = [
+        method._finalize(
+            control,
+            treatment,
+            outcome.boot_data,
+            outcome.effect,
+            list(outcome.warnings),
+            value_1=outcome.value_1,
+            value_2=outcome.value_2,
+        )
+        for _ in range(3)
+    ]
+    assert np.array_equal(outcome.boot_data, before, equal_nan=True)
+    assert isinstance(outcome.warnings, tuple)
+    assert _snapshot(results[0]) == _snapshot(results[1]) == _snapshot(results[2])
+    # the H5/H9 warnings a method emits are the SAME set every time, never grown
+    assert results[0].warnings == results[2].warnings
+
+
+def test_the_resample_memo_capability_roster_is_exactly_the_bootstrap_family() -> None:
+    """``supports_resample_memo`` is a contract, not a decoration (the M7
+    ``supports_vectorized`` precedent): whoever declares it must implement the
+    split, and whoever implements it must declare it — otherwise the explore
+    engine either crashes on a missing ``_resample`` or silently forfeits the
+    memo."""
+    declared, family = set(), set(ALL_BOOTSTRAP_METHODS)
+    for name in available_methods():
+        method_cls = get_method_class(name)
+        if method_cls.supports_resample_memo:
+            declared.add(name)
+    assert declared == family, (
+        "supports_resample_memo must be exactly the _resample/_finalize family: "
+        f"declared-but-not-family {declared - family}, family-but-undeclared {family - declared}"
+    )
+    for name in declared:
+        method_cls = get_method_class(name)
+        assert "_resample" in dir(method_cls)
+        assert getattr(method_cls._resample, "__isabstractmethod__", False) is False, (
+            f"{name} declares supports_resample_memo but never overrides the abstract _resample"
+        )
+        # from_samples must be the base template, not a subclass override that
+        # would bypass _resample entirely (and thus the memo)
+        assert method_cls.from_samples is BaseBootstrapMethod.from_samples, (
+            f"{name} overrides from_samples — the memo path would call _resample "
+            "and get different numbers than compare_pair"
+        )
+
+
+@pytest.mark.parametrize("name", ALL_BOOTSTRAP_METHODS)
+def test_resample_returns_the_outcome_shape_the_memo_stores(name: str) -> None:
+    control, treatment = _pair_for(name)
+    outcome = create_method(name, params=dict(SAFE_PARAMS[name], n_samples=32, seed=5))._resample(
+        control, treatment
+    )
+    assert isinstance(outcome, ResampleOutcome)
+    assert outcome.boot_data.shape == (32,)
+    assert isinstance(outcome.effect, float)
+    assert isinstance(outcome.warnings, tuple)
+    assert all(isinstance(w, str) for w in outcome.warnings)

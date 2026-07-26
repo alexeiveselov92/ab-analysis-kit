@@ -25,11 +25,10 @@ from __future__ import annotations
 import numpy as np
 
 from abkit.stats.base import require_pair_type
-from abkit.stats.bootstrap.bootstrap import BaseBootstrapMethod
+from abkit.stats.bootstrap.bootstrap import BaseBootstrapMethod, ResampleOutcome
 from abkit.stats.bootstrap.engine import bootstrap_statistics
 from abkit.stats.exceptions import QuarantinedMethodError
 from abkit.stats.registry import register
-from abkit.stats.result import TestResult
 from abkit.stats.samples import Sample
 
 
@@ -52,7 +51,7 @@ class PairedPostNormedBootstrapTest(BaseBootstrapMethod):
                 "ratio metrics"
             )
 
-    def from_samples(self, sample_1: Sample, sample_2: Sample) -> TestResult:
+    def _resample(self, sample_1: Sample, sample_2: Sample) -> ResampleOutcome:
         require_pair_type(self.name, sample_1, sample_2, Sample)
         self._require_covariates(sample_1, sample_2)  # legacy quirk: required, unused
         self._validate_paired(sample_1, sample_2)
@@ -78,4 +77,4 @@ class PairedPostNormedBootstrapTest(BaseBootstrapMethod):
             "(documented H9 exception) — prefer 'post-normed-bootstrap' or 'ratio-delta' "
             "for ratio metrics"
         ]
-        return self._finalize(sample_1, sample_2, boot_data, effect, result_warnings)
+        return ResampleOutcome(boot_data, effect, tuple(result_warnings))

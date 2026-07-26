@@ -5,6 +5,7 @@ from abkit.stats.bootstrap.bootstrap import (
     BOOTSTRAP_PARAM_SPECS,
     BaseBootstrapMethod,
     BootstrapTest,
+    ResampleOutcome,
 )
 from abkit.stats.bootstrap.ci import (
     PVALUE_KIND_PARAM,
@@ -48,6 +49,7 @@ __all__ = [
     "PairedPostNormedBootstrapTest",
     "PoissonBootstrapTest",
     "PostNormedBootstrapTest",
+    "ResampleOutcome",
     "ResamplePlan",
     "STAT_FUNCS",
     "apply_stat",

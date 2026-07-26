@@ -327,6 +327,13 @@ class BaseMethod(ABC):
     #: the scalar ``from_suffstats`` fallback — a method without a batch kernel
     #: is never special-cased, only iterated (m7-implementation-plan.md §WP2).
     supports_vectorized: ClassVar[bool] = False
+    #: Splits ``from_samples`` into a costly ``_resample`` step and a cheap
+    #: alpha-dependent ``_finalize`` step, so a caller may reuse one resample
+    #: across several alphas (the explore Tier-S memo, m10 WP5). Opt-in like
+    #: :attr:`supports_vectorized`: the False default keeps every method fully
+    #: functional through the whole-``compare_pair`` path — a method without the
+    #: split is never special-cased, only recomputed.
+    supports_resample_memo: ClassVar[bool] = False
 
     def __init__(self, alpha: float = 0.05, **params: Any) -> None:
         if not 0.0 < alpha < 1.0:
