@@ -18,10 +18,12 @@ the DASH-1 review reproduced in the donor's own shape):
   pipeline gate (concurrent cockpits on *different* experiments are safe)
   while being deduped per experiment, because two cockpits on the *same*
   experiment race the same Apply-rewrites-YAML hazard. The vocabulary lives in
-  :data:`JOB_KINDS` / :data:`PIPELINE_KINDS` and both spawn entry points
-  **validate against it**: the donor took any string, so a typo'd kind would
-  silently become "not a pipeline job" and skip the gate it was meant to
-  respect.
+  :data:`JOB_KINDS` / :data:`PIPELINE_KINDS`, and the gate asks whether a kind
+  is IN the pipeline set where the donor asked whether it was ``!= "tune"``.
+  That flip is why both spawn entry points **validate against the vocabulary**:
+  under the donor's blacklist an unknown kind erred toward being gated, under a
+  whitelist it would silently escape the gate instead — so the set and the
+  validation are one mechanism, not a constant plus a nicety.
 * **``Job.experiment`` replaces the donor's ``Job.metric``.** abkit's whole
   dashboard grain is the experiment (every button is experiment-scoped), so
   the dedup key is a purpose-built field rather than an overloaded one. Unlike
@@ -52,8 +54,14 @@ the DASH-1 review reproduced in the donor's own shape):
   landing in that window flips an already-successful run to ``stopped`` even
   though its ``terminate()`` hit an exited process and did nothing. Status now
   reads ``stopped`` only when a stop was requested **and** the exit was not a
-  clean one — a job that ignored SIGTERM and finished its work reports
-  ``done``, which is what actually happened.
+  clean one. The rule cannot separate that race from a job that caught SIGTERM
+  and chose to exit 0 — nothing observable distinguishes them — so it prefers
+  the report that cannot be a lie about success: both read ``done``. No abkit
+  verb installs a SIGTERM handler today; if one ever does and the distinction
+  starts to matter, it has to come from the job's own cooperation.
+  :meth:`JobManager.shutdown` marks the jobs it kills as stop-requested for the
+  same reason — a teardown is deliberate, so those read ``stopped``, not
+  ``failed`` (the donor left them indistinguishable from a crash).
 """
 
 from __future__ import annotations
@@ -102,6 +110,11 @@ def _terminate_and_reap(proc: subprocess.Popen[str]) -> None:
 
     Never blocks the caller: a request handler asking for a stop must not wait
     out :data:`_STOP_GRACE_SECONDS` before replying.
+
+    The kill branch reaps too. Where a pump thread exists it would do that
+    anyway, but the rejected-spawn path in :meth:`JobManager.spawn` has no
+    pump — and without the second wait the killed child stays a zombie for as
+    long as the dashboard lives.
     """
     try:
         proc.terminate()
@@ -114,6 +127,7 @@ def _terminate_and_reap(proc: subprocess.Popen[str]) -> None:
         except subprocess.TimeoutExpired:
             try:
                 proc.kill()
+                proc.wait()  # SIGKILL is not deniable; this returns promptly
             except Exception:
                 pass
 
@@ -216,7 +230,10 @@ class JobManager:
         :meth:`running_job_for`'s dedup alike, which is precisely the silent
         divergence the vocabulary constant exists to prevent. Raises
         :class:`JobManagerClosed` once :meth:`shutdown` has run — the child is
-        killed before the raise, never left behind.
+        killed and reaped before the raise, never left behind. ``Popen``'s own
+        errors pass through untouched (``FileNotFoundError`` for a missing
+        executable, ``NotADirectoryError``/``FileNotFoundError`` for a bad
+        *cwd*): they happen before the job exists, so nothing is registered.
         """
         if kind not in JOB_KINDS:
             raise ValueError(f"unknown job kind {kind!r} (expected one of {sorted(JOB_KINDS)})")
@@ -278,18 +295,23 @@ class JobManager:
             job.url = url
 
     def snapshot(self, job: Job, offset: int = 0) -> dict[str, Any]:
-        """``{id, kind, label, experiment, status, returncode, url, next_offset, lines}``.
+        """One job's poll reply, lines included.
 
         ``offset`` / ``next_offset`` are ABSOLUTE line indices over the job's
         whole lifetime (``dropped + buffered``), not indices into the current
         buffer — otherwise a job more verbose than :data:`_MAX_LINES` would pin
         the poller's offset at the buffer length and the stream would go silent
-        forever. Lines that already fell off the front are simply gone
-        (``truncated=True``), matching a live terminal's scrollback.
+        forever. Lines that already fell off the front are simply gone,
+        matching a live terminal's scrollback — and ``dropped``/``truncated``
+        say so on the wire, so a log drawer can render "earlier output was
+        discarded" instead of inferring it from a hole between ``offset`` and
+        ``len(lines)``. (:meth:`list_snapshots` carries neither: it is the
+        chip summary, and it has no lines to be missing from.)
         """
         with job.lock:
             lines = list(job.lines)
             dropped = job.dropped
+            truncated = job.truncated
             status = job.status
             returncode = job.returncode
             url = job.url
@@ -304,6 +326,8 @@ class JobManager:
             "returncode": returncode,
             "url": url,
             "next_offset": total,
+            "dropped": dropped,
+            "truncated": truncated,
             "lines": lines[start - dropped :],
         }
 
@@ -354,6 +378,9 @@ class JobManager:
         *experiment* is optional here (a run may span a whole selection) but
         pass it whenever the job targets exactly one, so the registry can label
         the job from a field instead of a formatted string.
+
+        Propagates :class:`JobManagerClosed` from :meth:`spawn` on a shut-down
+        registry — ``None`` means "busy, try later", which a teardown is not.
         """
         if kind not in PIPELINE_KINDS:
             raise ValueError(
@@ -465,6 +492,10 @@ class JobManager:
             with job.lock:
                 if job.status != "running":
                     continue
+                # A teardown is as deliberate as a Stop click: without this the
+                # pump would read the SIGTERM returncode as a crash and report
+                # "failed" for every job the dashboard itself killed.
+                job.stop_requested = True
             try:
                 job.proc.terminate()
             except Exception:

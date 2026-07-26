@@ -28,10 +28,14 @@ number change).
   absolute line indices, so a job chattier than the 5000-line buffer cap before
   it prints the awaited line is still matched instead of failing at its
   timeout; a spawn racing `shutdown()` now refuses (`JobManagerClosed`) and
-  kills the child it just created, instead of leaving a subprocess the
-  teardown's registry snapshot will never reap; and a job that exits cleanly is
-  reported `done` even if a Stop was requested, since "stopped" was otherwise
-  reported for runs that had already succeeded.
+  kills **and reaps** the child it just created, instead of leaving a
+  subprocess the teardown's registry snapshot will never touch; the job status
+  vocabulary is honest on both termination paths (a clean exit reports `done`
+  even if a Stop was requested — "stopped" was otherwise reported for runs that
+  had already succeeded — and a job the teardown kills reports `stopped` rather
+  than being indistinguishable from a crash); and a poll reply carries
+  `dropped`/`truncated`, so a log view can say that earlier output was
+  discarded instead of inferring it from a hole in the offsets.
 
 ## [0.5.0] - 2026-07-26
 

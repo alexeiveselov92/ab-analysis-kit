@@ -3,11 +3,18 @@
 Real subprocesses throughout (``sys.executable -c ...``), never a fake Popen —
 the module's whole job is process lifecycle, and a stubbed process proves
 nothing about SIGTERM/grace/SIGKILL or about the pump thread. What is pinned:
-the absolute-offset poll math past the line cap, the one-at-a-time pipeline
-gate under a real thread race, the abkit kind vocabulary (``explore`` outside
-the gate, deduped per experiment, an unknown kind refused rather than
-silently ungated), stop/shutdown reaching a process that ignores SIGTERM, and
-``wait_for_line`` staying sighted after the line buffer saturates.
+the absolute-offset poll math past the line cap (and the reply admitting what
+it dropped), the one-at-a-time pipeline gate under a real thread race, the
+abkit kind vocabulary (``explore`` outside the gate, deduped per experiment,
+an unknown kind refused rather than silently ungated), eviction walking past a
+running head, stop/shutdown reaching a process that ignores SIGTERM and
+labelling the outcome honestly, a spawn racing shutdown leaving neither a
+survivor nor a zombie, and ``wait_for_line`` staying sighted after the line
+buffer saturates.
+
+Two laws are read rather than run — the closed-latch's atomicity and the gate
+reading its vocabulary — because the window is too narrow to time and the
+vocabulary is a source property. Those are AST gates in ``TestModuleContract``.
 """
 
 from __future__ import annotations
@@ -96,6 +103,30 @@ def _live_sleeper_pids(cwd: Path) -> list[int]:
     return alive
 
 
+def _own_child_pids() -> set[int]:
+    """Direct children of this process — **zombies included**.
+
+    ``_live_sleeper_pids`` cannot see those: a reaped-pending child has no
+    readable ``cwd`` link. Parentage comes from ``/proc/<pid>/stat``, whose
+    ``comm`` field may itself contain spaces and parentheses, so the scan
+    starts after the last ``)``.
+    """
+    me = os.getpid()
+    pids: set[int] = set()
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            stat = (entry / "stat").read_text()
+            fields = stat[stat.rindex(")") + 1 :].split()
+            ppid = int(fields[1])
+        except (OSError, ValueError, IndexError):
+            continue
+        if ppid == me:
+            pids.add(int(entry.name))
+    return pids
+
+
 requires_procfs = pytest.mark.skipif(
     not Path("/proc").is_dir(), reason="leaked-child detection reads Linux /proc"
 )
@@ -149,6 +180,25 @@ class TestSpawnAndPump:
             _spawn(manager, "pass", kind="validate", tmp_path=tmp_path)
         assert manager.list_snapshots() == []
 
+    def test_a_popen_failure_propagates_and_registers_nothing(self, manager, tmp_path):
+        with pytest.raises(OSError):
+            manager.spawn(
+                "run",
+                "run (missing binary)",
+                [str(tmp_path / "no-such-executable")],
+                cwd=tmp_path,
+                env=dict(os.environ),
+            )
+        with pytest.raises(OSError):
+            manager.spawn(
+                "run",
+                "run (missing cwd)",
+                [sys.executable, "-c", "pass"],
+                cwd=tmp_path / "no-such-dir",
+                env=dict(os.environ),
+            )
+        assert manager.list_snapshots() == []  # the job never came into being
+
     def test_cwd_is_the_spawn_directory(self, manager, tmp_path):
         job = _spawn(manager, "import os; print(os.getcwd(), flush=True)", tmp_path=tmp_path)
         _await_status(manager, job, expected={"done"})
@@ -198,6 +248,21 @@ class TestSnapshotOffsetMath:
         snap = manager.snapshot(job, offset=total + 10**6)
         assert snap["lines"] == []
         assert snap["next_offset"] == total
+
+    def test_the_reply_says_out_loud_that_lines_were_discarded(self, manager, chatty):
+        """A drawer must not have to infer a gap from arithmetic it was never told."""
+        job, total = chatty
+        snap = manager.snapshot(job, offset=0)
+        assert snap["truncated"] is True
+        assert snap["dropped"] == total - jobs_module._MAX_LINES
+        assert snap["next_offset"] - 0 > len(snap["lines"])  # the hole it explains
+
+    def test_an_untruncated_job_says_so_too(self, manager, tmp_path):
+        job = _spawn(manager, "print('only line', flush=True)", tmp_path=tmp_path)
+        _await_status(manager, job, expected={"done"})
+        snap = manager.snapshot(job)
+        assert snap["truncated"] is False
+        assert snap["dropped"] == 0
 
     def test_polling_from_next_offset_never_repeats_a_line(self, manager, tmp_path):
         job = _spawn(
@@ -622,6 +687,50 @@ class TestShutdown:
             lambda: not _live_sleeper_pids(tmp_path),
             timeout=30.0,
             what="every raced child to be reaped",
+        )
+
+    def test_a_job_the_teardown_killed_reports_stopped_not_failed(self, tmp_path):
+        """The status vocabulary has to mean the same thing on both paths.
+
+        Round 1 made "stopped" the honest label for a deliberate termination;
+        shutdown() kills jobs just as deliberately as stop() does, and the
+        donor left those indistinguishable from a crash.
+        """
+        mgr = JobManager()
+        job = _spawn(mgr, SLEEPER, tmp_path=tmp_path)
+        mgr.shutdown()
+        assert _await_status(mgr, job, expected={"stopped", "failed", "done"}) == "stopped"
+        assert mgr.snapshot(job)["returncode"] not in (0, None)
+
+    def test_spawn_pipeline_refuses_a_shut_down_registry_rather_than_reporting_busy(self, tmp_path):
+        """``None`` means "a job is running"; a teardown is a different answer."""
+        mgr = JobManager()
+        mgr.shutdown()
+        with pytest.raises(JobManagerClosed):
+            mgr.spawn_pipeline(
+                "run",
+                "run --select exp_a",
+                [sys.executable, "-c", SLEEPER],
+                cwd=tmp_path,
+                env=dict(os.environ),
+            )
+        # The gate is released, not wedged: a fresh manager still works.
+        assert mgr.list_snapshots() == []
+
+    @requires_procfs
+    def test_a_refused_child_deaf_to_sigterm_is_killed_AND_reaped(self, tmp_path, monkeypatch):
+        """No pump thread runs on that path, so nothing else would reap it."""
+        monkeypatch.setattr(jobs_module, "_STOP_GRACE_SECONDS", 0.3)
+        mgr = JobManager()
+        mgr.shutdown()
+        before = _own_child_pids()
+        with pytest.raises(JobManagerClosed):
+            _spawn(mgr, STUBBORN_SLEEPER, tmp_path=tmp_path)
+        # Gone means gone: a killed-but-unreaped child is still a child here,
+        # so this fails on a zombie exactly as it would on a survivor.
+        _await(
+            lambda: not (_own_child_pids() - before),
+            what="the refused child to be killed AND reaped",
         )
 
     def test_the_grace_budget_is_shared_across_jobs_rather_than_multiplied(
