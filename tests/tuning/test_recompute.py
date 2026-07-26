@@ -1405,6 +1405,54 @@ class TestBootstrapMemo:
         )
         assert len(calls) == 8, "a different max_block_bytes is a different draw, not a hit"
 
+    def test_a_hit_replays_a_warning_the_resample_itself_emitted(
+        self, warehouse, tables, monkeypatch
+    ):
+        """``AbkitStatsWarning``s raised INSIDE the resample reach the point via
+        the engine's capture. A hit never re-runs the resample, so the memo has
+        to carry those messages — otherwise the same knob state warns on the
+        first request and goes quiet on every later one."""
+        import warnings as py_warnings
+
+        from abkit.stats import AbkitStatsWarning
+        from abkit.stats.bootstrap import BootstrapTest
+
+        experiment = make_experiment("exp_memo_caught", "arpu", BOOTSTRAP)
+        run_pipeline(warehouse, tables, experiment)
+        engine = build_engine(warehouse, tables, experiment)
+
+        original = BootstrapTest._resample
+        emitted: list[int] = []
+
+        def warning_resample(self, sample_1, sample_2):
+            emitted.append(1)
+            py_warnings.warn("resample says hello", AbkitStatsWarning, stacklevel=2)
+            return original(self, sample_1, sample_2)
+
+        monkeypatch.setattr(BootstrapTest, "_resample", warning_resample)
+        knobs = KnobState("bootstrap", BOOTSTRAP["params"], alpha=0.05)
+        first = engine.recompute("arpu", knobs).pairs[0].points
+        second = engine.recompute("arpu", knobs).pairs[0].points
+
+        assert len(emitted) == 4, "the second request must not re-run the resample"
+        for point in (*first, *second):
+            assert "resample says hello" in point.warnings
+        assert [p.warnings for p in first] == [p.warnings for p in second]
+
+    def test_the_memoized_replicates_are_frozen_read_only(self, warehouse, tables):
+        """One outcome is handed to a ``_finalize`` per alpha. An in-place write
+        in some future ``_finalize`` would silently corrupt every later reuse —
+        the array is read-only so it would raise instead."""
+        experiment = make_experiment("exp_memo_frozen", "arpu", BOOTSTRAP)
+        run_pipeline(warehouse, tables, experiment)
+        engine = build_engine(warehouse, tables, experiment)
+        engine.recompute("arpu", KnobState("bootstrap", BOOTSTRAP["params"], alpha=0.05))
+
+        entries = list(engine._session.boot_memo.values())
+        assert entries
+        for entry in entries:
+            assert entry.outcome.boot_data.flags.writeable is False
+
     def test_a_hit_replays_the_resample_warnings_without_growing_them(self, warehouse, tables):
         """Warnings are user-visible on the point. The resample's own warnings
         must be replayed on a hit (they are not re-emitted), and ``_finalize``'s
