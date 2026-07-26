@@ -247,9 +247,20 @@ class BaseDatabaseManager(ABC):
 
         Diffs ``table_model``'s declared columns against the live table's
         columns and emits ``ALTER TABLE ... ADD COLUMN`` for anything missing.
-        Never drops, renames, or retypes a column — a column present in the
-        live table but absent from the model is left untouched (loud failures
-        stay with the insert path's column-mismatch checks). Idempotent: on a
+        Never drops, renames, or retypes a column, and the diff runs in ONE
+        direction only: a column present in the live table but absent from the
+        model is left untouched and **not reported here**.
+
+        That reverse direction is backend-asymmetric, and the difference
+        matters on a release that drops a column (m10 WP3 dropped
+        ``_ab_results.start_date``/``end_date``): PostgreSQL and MySQL declare
+        such a column ``NOT NULL``, so the omitting INSERT errors loudly and an
+        operator who skipped the recreate step cannot miss it — while
+        **ClickHouse fills an omitted column with its type default**, so a
+        stale table keeps accepting writes and silently stamps ``1970-01-01``.
+        The CHANGELOG's recreate note says so explicitly for that reason;
+        surfacing stale live columns as a warning from here is a named
+        follow-up, not a claim this method makes today. Idempotent: on a
         second call the diff is empty and no DDL is emitted.
 
         Additive columns must be nullable or carry a default: adding a
@@ -276,9 +287,9 @@ class BaseDatabaseManager(ABC):
         if not live:
             # Empty listing = table missing OR an unreadable catalog. Both
             # no-op DELIBERATELY: creation is create_table's job, and a
-            # misread catalog must trigger no DDL at all — the insert path's
-            # column-mismatch check stays the loud failure, an ALTER storm
-            # against a table we cannot see would be the dangerous reaction.
+            # misread catalog must trigger no DDL at all — an ALTER storm
+            # against a table we cannot see would be the dangerous reaction,
+            # and the insert path still fails loudly on the SQL backends.
             return []
         missing = [col for col in table_model.columns if col.name not in live]
         for col in missing:

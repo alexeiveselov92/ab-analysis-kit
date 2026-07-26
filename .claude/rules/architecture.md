@@ -1,13 +1,13 @@
 # abkit architecture — as built
 
 > The contributor/assistant condensation of the system **as it exists in code**.
-> Reflects: **M1–M9 shipped** (`__version__ = 0.4.0`, release-ready — the
-> `v0.4.0` tag/publish is the maintainer's step; latest on PyPI is `0.3.0`;
+> Reflects: **M1–M10 shipped** (`__version__ = 0.5.0`, release-ready — the
+> `v0.5.0` tag/publish is the maintainer's step; latest on PyPI is `0.4.0`;
 > M3's WP9 testcontainers hardening deferred to a Docker-equipped
 > environment).
-> Design contracts for what is being *built next* (1.x hardening) live in
-> [docs/specs/](../../docs/specs/) + [ROADMAP.md](../../ROADMAP.md); this file must
-> never claim unbuilt code exists.
+> Design contracts for what is being *built next* (the M11–M17 polish track)
+> live in [docs/specs/](../../docs/specs/) + [ROADMAP.md](../../ROADMAP.md);
+> this file must never claim unbuilt code exists.
 > Keep in sync with `docs/` and the packaged `init-claude` payload
 > (`abkit/cli/assets/claude/`) on every release.
 
@@ -37,7 +37,10 @@ abkit/
                          #   ✅ M5: plan (read-only pre-launch power/sizing)
   core/                  # ✅ M2: interval (N{s,m,h,d,w}), models (TableModel +
                          #   version_column LWW), period_planner (THE grid — one
-                         #   enumeration for validator gates AND the anti-join)
+                         #   enumeration for validator gates AND the anti-join);
+                         #   ✅ M10 WP1: date|datetime anchors + interval_anchor
+                         #   (cutoffs = anchor + k·cadence, kept after start_ts);
+                         #   reachable ONLY via ExperimentConfig.grid() (AST gate)
   config/                # ✅ M2: project/profile/experiment/metric/method models,
                          #   validator L1+L2 (§8 matrix), discovery/selector
   database/              # ✅ M2: generic CH/PG/MySQL managers + try_acquire_lock
@@ -80,12 +83,16 @@ abkit/
                          #   the `abk plan` engine; read-only, refuses ratio/bootstrap
   stats/                 # ✅ M1: the pure numpy core (details below);
                          #   ✅ M7: supports_vectorized + from_suffstats_array
-                         #   (5-method roster) + effects._libm_pow batch kernels
+                         #   (5-method roster) + effects._libm_pow batch kernels;
+                         #   ✅ M10 WP5: the bootstrap _resample/_finalize split
+                         #   + supports_resample_memo (6 classes; pure refactor)
     sequential/          # ✅ M5: the always-valid confidence sequence
                          #   (confidence_sequence, mixture τ², apply.to_always_valid;
                          #   ✅ M7: *_array siblings)
   utils/                 # stdlib-only: json_utils (canonical hash path),
-                         #   datetime_utils (naive-UTC), env_interpolation
+                         #   datetime_utils (naive-UTC), env_interpolation;
+                         #   ✅ M10 WP4: warn_scope (thread-scoped warning
+                         #   capture — catch_warnings is process-global)
 web/                     # ✅ M3: the dev-only TS toolchain (never wheel-shipped)
   src/shared/            #   chart.ts (canvas primitives + TOKEN_FALLBACKS —
                          #   THE brand-token layer), payload.ts (lockstep types)
@@ -104,6 +111,14 @@ tests/
                          # ✅ M7: stats/test_vectorized_parity.py + test_normal_path_golden.py,
                          #   validate/test_vector_{resample,parity,perf}.py,
                          #   validate/test_family_vector_parity.py (exact-only)
+                         # ✅ M10: core/test_grid_factory_is_the_only_entry.py,
+                         #   core/test_period_planner.py::TestIntervalAnchor,
+                         #   database/test_tables_contract.py (the _ab_experiments
+                         #   catalog contract), tuning/test_session_cache_lock.py,
+                         #   docs/test_no_stale_window_keys.py, and the exit gate
+                         #   e2e/test_sub_day_anchors_and_explore.py (+ its
+                         #   fixtures/window_golden_pre_m10.json, captured from
+                         #   the pre-M10 code — regenerate ONLY from f85371d)
   _helpers/fake_db.py    # in-memory manager with SQL-backend semantics
   _helpers/synthetic_ab.py  # SyntheticWarehouse (3 metric kinds, shuffle mode,
                          #   seed_null_events — the exact-null A/A fixture)
@@ -436,6 +451,98 @@ two-process lock race) is deferred to a Docker-equipped environment.
   mixed-case `internal_schema` made every lookup miss, so `ensure_columns`
   never ran and an existing install silently skipped the M9 migration.
 
+### M10 facts an assistant must know (shipped: WP1–WP5)
+
+*(The WP4 lock-split and WP5 memo contracts live with the cockpit they change
+— see the M3 explore facts above. What follows is the window/schema half.)*
+
+- **An experiment's window is a pair of INSTANTS, and the config keys say so.**
+  `start_date`/`end_date` are **gone**, renamed `start_ts`/`horizon_ts` with no
+  aliases (D1) — an old key fails validation with a message naming the new one.
+  Each accepts a bare date **or** a full timestamp (`2024-07-01 14:30:00`) and
+  the union is type-PRESERVING (`date | datetime`) — which matters because
+  `str(field)` reaches the m9 state-identity hash, so a re-parse that flipped
+  the type would orphan every materialized series. Discrimination always tests
+  `isinstance(value, datetime)` FIRST, because `datetime` subclasses `date` and
+  the `date` branch would otherwise swallow both. A raw int/float is REJECTED
+  rather than read as a Unix timestamp (`start_ts: 20240101` unquoted would be
+  1970-08-23).
+- **A bare date is local midnight of THAT day for BOTH edges (D6)**, so
+  `horizon_ts` is the **EXCLUSIVE** right edge and the config value equals
+  `grid.horizon_ts` exactly — one vocabulary, no `+1 day` translation anywhere.
+  Porting a pre-m10 config shifts the horizon by one day
+  (`end_date: 2024-07-14` → `horizon_ts: 2024-07-15`); every other number stays
+  byte-identical (pinned by the exit-gate golden captured at `f85371d` over 22
+  window shapes) **with two disclosed exceptions**: `horizon_seconds()` (below)
+  and — for a `start_ts` on a local calendar day that never existed, which
+  tzdata puts on exactly 3 dates between 1970 and 2036 (1993-08-21 Kwajalein,
+  1994-12-31 Enderbury/Kanton/Kiritimati, 2011-12-30 Apia/Fakaofo; 7 zone
+  entries counting aliases, all historical) — the pre-m10 series' ZERO-LENGTH
+  opening look, which the m10 planner drops because it keeps cutoffs strictly
+  after the start.
+- **`interval_anchor` decides WHERE the cutoff lattice sits** (D2): `midnight`
+  (the default the scaffold writes out — local midnight of the opening day,
+  i.e. whole calendar days, the pre-m10 rule), `start` (count from the start
+  instant), or an explicit local instant that MAY precede the start (the first
+  window is then legitimately partial — config-lint notes it, never errors).
+  One engine rule: **cutoffs = `anchor + k·cadence`, kept strictly after the
+  segment's left edge**. Day-or-coarser steps hold the anchor's local
+  wall-clock time across DST; sub-day steps stay absolute-duration. A
+  whole-day `until` bound is compared in DAY space only while the anchor shares
+  `start_ts`'s wall clock — off-phase it reads as elapsed seconds.
+- **`ExperimentConfig.grid()` is THE factory** — nothing under `abkit/` may
+  call `generate_grid` directly (AST gate:
+  `tests/core/test_grid_factory_is_the_only_entry.py`). This is m8's
+  `build_cohort_backend` discipline applied to the planner, and it exists
+  because the new knob reached NONE of the eight hand-copied call sites; one of
+  them passed `timezone` positionally as the 4th argument, so any parameter
+  inserted before `tz` would have silently re-bound it.
+- **`horizon_seconds()` is true elapsed time**, not a nominal day count, so it
+  now agrees with `grid.horizon_ts − grid.start_ts`, which it contradicted
+  pre-m10. The law, measured against the pre-m10 code across 19 window shapes:
+  it differs from the old value by exactly **the UTC-offset change between the
+  window's local edges**, and by nothing anywhere else. Not "±1h across DST" —
+  that is wrong in both halves: the delta is −30 min in Australia/Lord_Howe, −2h
+  in Antarctica/Troll, −24h across Pacific/Apia's 2011 line jump, and +1h with
+  **no DST on either side** (Moscow's 2014 permanent +4→+3 shift). Consumers:
+  config-lint's cadence gate — where a sub-day cadence sitting between the two
+  lengths can flip accept↔reject — and the readout's pre-horizon rationale line.
+  No persisted column derives from it.
+- **A sub-day start never sums pre-experiment facts:** the STATE stage clamps
+  the opening day's render window to `grid.start_ts`, and the CUPED pre-period
+  stays WHOLE-DAY (`[midnight(D − lookback), midnight(D))`) instead of gaining
+  a partial trailing day. `tz_midnight_utc` now REJECTS a `datetime` rather
+  than silently dropping its time — but credit it with only the ONE M9 surface
+  that actually reached it, the STATE stage's day-loop seed. The other two
+  failed LOUDLY: `IncrementalBackend` compared a `date` against a `datetime`,
+  which raises `TypeError` on every cutoff.
+- **Both breaking schema changes of the whole track ship in `0.5.0`, with one
+  recreate instruction** (§0.3): `_ab_results.start_date`/`end_date` are
+  **dropped** — group BI by `end_ts`, and derive the calendar day a look covers
+  as `end_ts − 1µs` read in the EXPERIMENT timezone (both corrections matter:
+  `end_ts` is exclusive AND stored in UTC — `TestTimezoneDates` transcribes the
+  recipe to Python and gates each correction separately against a real Moscow
+  and a real New York run; the three dialect SQL forms in
+  `docs/reference/internal-tables.md` are documentation, executed by no test) —
+  and the
+  `_ab_experiments` window is renamed + widened to `DateTime64(3)` holding the
+  **RESOLVED** window in naive UTC (the same frame as `_ab_results.start_ts`,
+  so a BI join lines up), plus an `interval_anchor` `String` column.
+- **A type change is not auto-migratable, and the refusal is the upgrade
+  path.** `ensure_columns` is ADD-only, so a pre-m10 `_ab_experiments` makes
+  `ensure_tables()` raise a `ValueError` naming `DROP TABLE …` + the CHANGELOG.
+  That failure now reaches the terminal as a CLI error line in **both**
+  `abk run` and `abk unlock` (it used to escape the driver's handler as a
+  traceback). Upgrading `_ab_results` is backend-asymmetric: PG/MySQL declare
+  the dropped columns `DATE NOT NULL` so an omitting INSERT errors loudly,
+  while **ClickHouse fills them with the type default and silently stamps
+  `1970-01-01`** — the one silent path, which is why the recreate note is
+  explicit about it.
+- `interval_anchor` is deliberately **NOT** folded into the m9 state identity
+  (it moves cutoffs, never day boundaries); the window fields ARE, so the
+  rename orphans every existing `_ab_unit_state` series once — the next run
+  re-materializes and `abk clean` sweeps the stale ids.
+
 ## The stats core (`abkit.stats`) — the implemented system
 
 **Purity invariant (hard):** numpy/scipy/statsmodels + stdlib only; never
@@ -505,7 +612,7 @@ identity param orphans the prior results series.
 - Stratification uses Hamilton apportionment; Poisson bootstrap is mean-only
   (guarded); zero denominators → NaN + warning (H5), never an exception.
 
-## M5 + M6 + M7 as built (specs are canonical)
+## M5–M10 as built (specs are canonical)
 
 **M5 shipped** (the implementation record is
 [m5-implementation-plan.md](../../docs/specs/m5-implementation-plan.md)): the always-valid
@@ -558,27 +665,48 @@ numbers moved** (cross-mode parity gates; no `ALGORITHM_VERSION` bump).
 
 **M9 shipped** (the record is
 [m9-implementation-plan.md](../../docs/specs/m9-implementation-plan.md); PRs
-#53–#56 + #58 + this exit-gate PR; release-ready as `0.4.0` — the `v0.4.0`
-tag/publish is the maintainer's step): the additive compute engine + CUPED
+#53–#56 + #58 + the WP6 exit-gate PR #59; **released as `0.4.0`** — tagged and
+published to PyPI): the additive compute engine + CUPED
 Tier-E — see "M9 facts an assistant must know" above for the working
 contracts. **Zero statistical numbers moved** (the flag on/off parity gate;
 no `ALGORITHM_VERSION` bump). `compute.incremental_reads` ships **default
 off** with the flip criteria in
 [cumulative-intervals.md §4.1](../../docs/specs/cumulative-intervals.md).
 
-**Next — the polish track continues: M10–M17 → `0.5.0`…`0.12.0`** (track
+**M10 shipped** (the record is
+[m10-implementation-plan.md](../../docs/specs/m10-implementation-plan.md) —
+done table, per-WP as-built notes, the §3 exit-gate record, the §6 review log;
+PRs #61–#64 + the exit-gate PR; release-ready as `0.5.0` — the `v0.5.0`
+tag/publish is the maintainer's step): timestamps + both track schema breaks +
+explore polish — the renamed `start_ts`/`horizon_ts` window with
+`interval_anchor` and the one `ExperimentConfig.grid()` factory (WP1–WP2), the
+dropped `_ab_results` date columns + the renamed/widened `_ab_experiments`
+window (WP2–WP3), the decoupled `heavy_lock` (WP4) and the bootstrap resample
+memo (WP5). See "M10 facts an assistant must know" and the M3 explore facts
+above for the working contracts. **Zero statistical numbers moved** (no
+`ALGORITHM_VERSION` bump; the exit gate's window golden was captured from the
+pre-M10 code itself) — with one disclosed derived-number change,
+`horizon_seconds()` across a DST transition.
+
+**Next — the polish track continues: M11–M17 → `0.6.0`…`0.12.0`** (track
 approved 2026-07-18; it absorbs the whole "Post-baseline hardening" backlog —
 see the track section in [ROADMAP.md](../../ROADMAP.md) and the as-designed
 contracts
-[m10](../../docs/specs/m10-implementation-plan.md)…[m12](../../docs/specs/m12-implementation-plan.md)
+[m11](../../docs/specs/m11-implementation-plan.md)…[m12](../../docs/specs/m12-implementation-plan.md)
 ([m7](../../docs/specs/m7-implementation-plan.md),
-[m8](../../docs/specs/m8-implementation-plan.md) and
-[m9](../../docs/specs/m9-implementation-plan.md) are now implementation
+[m8](../../docs/specs/m8-implementation-plan.md),
+[m9](../../docs/specs/m9-implementation-plan.md) and
+[m10](../../docs/specs/m10-implementation-plan.md) are now implementation
 records); M13–M17 are contours, each opens with a design session). One WP = one session =
 one PR; **M7–M12 move no statistical number** (parity gates + empty
-`ALGORITHM_VERSION` grep); M13/M15 use full change control. The M8→M9 contract
-(honored, and binding for M10+): STATE/tail-scan SQL builds ONLY through M8's
-`build_cohort_backend` factory.
+`ALGORITHM_VERSION` grep); M13/M15 use full change control. Two binding
+inter-milestone contracts: the M8→M9 one (honored — STATE/tail-scan SQL builds
+ONLY through `build_cohort_backend`) and M10's (the planner is reached ONLY
+through `ExperimentConfig.grid()`). Only the second is AST-gated
+(`tests/core/test_grid_factory_is_the_only_entry.py`); the cohort-factory
+contract is still honor-system, which is exactly the shape that let a
+decorative knob reach none of eight call sites — a gate for it is a named
+follow-up.
 Read before coding:
 
 - The M5 as-built + the math → [m5-implementation-plan.md](../../docs/specs/m5-implementation-plan.md),
@@ -593,7 +721,10 @@ Read before coding:
   [m3](../../docs/specs/m3-implementation-plan.md),
   [m4](../../docs/specs/m4-implementation-plan.md),
   [m5](../../docs/specs/m5-implementation-plan.md),
-  [m7](../../docs/specs/m7-implementation-plan.md)
+  [m7](../../docs/specs/m7-implementation-plan.md),
+  [m8](../../docs/specs/m8-implementation-plan.md),
+  [m9](../../docs/specs/m9-implementation-plan.md),
+  [m10](../../docs/specs/m10-implementation-plan.md)
 
 ## Invariants (do not violate)
 

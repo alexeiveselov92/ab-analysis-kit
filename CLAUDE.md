@@ -22,7 +22,7 @@ The as-built condensation for contributors/assistants (detectkit-style):
 Design contracts for what is being *built next* stay in [docs/specs/](docs/specs/)
 (canonical for M2+ work — table below). Keep rules ↔ docs in sync per milestone.
 
-## Status: M1–M9 shipped — `0.4.0` release-ready (latest on PyPI: `0.3.0`); polish track M10–M17 in flight
+## Status: M1–M10 shipped — `0.5.0` release-ready (latest on PyPI: `0.4.0`); polish track M11–M17 in flight
 
 **Done — M1, the pure statistical core** (`abkit.stats`, importable standalone;
 see [ROADMAP.md](ROADMAP.md) for the deferred-cleanup list): data model with the
@@ -172,21 +172,61 @@ scaffolded `example_signup_cr` (`max()` + a literal trial count) inflating
 `size_1` 11×. `incremental_reads` stays **default off** with the flip
 criteria in [cumulative-intervals.md §4.1](docs/specs/cumulative-intervals.md).
 **Zero statistical numbers moved** (the flag on/off parity gate is the
-milestone's №1 assertion; no `ALGORITHM_VERSION` bump). The `v0.4.0`
+milestone's №1 assertion; no `ALGORITHM_VERSION` bump). **Released as
+`0.4.0`** — tagged and published to PyPI.
+
+**Done — M10, timestamps + both schema breaks + explore polish → `0.5.0`**
+(the implementation record is
+[m10-implementation-plan.md](docs/specs/m10-implementation-plan.md) — done
+table, per-WP as-built notes, §3 exit-gate record, §6 review log; PRs
+#61–#64 + the exit-gate PR): an experiment's window is a pair of real
+instants and the config keys say so — **`start_date`/`end_date` are renamed
+`start_ts`/`horizon_ts`** with no aliases, both accept a bare date **or** a
+full timestamp, and a bare date is local midnight of THAT day for **both**
+edges, so `horizon_ts` is the EXCLUSIVE right edge (port `end_date:
+2024-07-14` as `horizon_ts: 2024-07-15`; the rename error spells it out). The
+new **`interval_anchor`** knob decides where the cutoff lattice sits
+(`midnight` | `start` | an explicit instant; cutoffs are `anchor + k·cadence`
+kept strictly after the start), and `ExperimentConfig.grid()` is now the ONE
+factory composing window + cadence + anchor — an AST gate forbids calling
+`generate_grid` from anywhere else, because the knob had reached none of the
+eight hand-copied call sites (WP1–WP2). **Both breaking schema changes of the
+whole track land here, with one recreate guide**: `_ab_results.start_date`/
+`end_date` are dropped (BI groups by `end_ts`; the calendar day a look covers
+is `end_ts − 1µs` read in the experiment timezone — a tested contract, not
+just a doc) and the `_ab_experiments` window is renamed + widened to
+`DateTime64(3)` holding the RESOLVED window in naive UTC, plus an
+`interval_anchor` column (WP2–WP3). In `abk explore`, `heavy_lock` now guards
+only `/reload`/`/validate`/`/apply` so a knob turn answers while Auto mode
+runs — with superseded work CANCELLED (`should_stop=` between points, 409
+`{stale: true}`) rather than queued, a 2-slot admission semaphore, and
+thread-scoped warning capture (`utils/warn_scope.py` — `catch_warnings` is
+process-global) (WP4); and dragging alpha over a bootstrap series stops
+redrawing the replicates — the draw is memoized per (metric, arm pair,
+cutoff, cache generation, method, resolved params), alpha excluded, measured
+6.01 s → 1.01 s over six turns (WP5). **Zero statistical numbers moved** (no
+`ALGORITHM_VERSION` bump; the exit gate's golden was captured from the
+pre-M10 code itself). One derived number legitimately did:
+`horizon_seconds()` is true elapsed time rather than a nominal day count, so it
+differs from the old value by exactly the window's UTC-offset change — ±30 min,
+±1h, ±2h or ±24h depending on the zone, and it fires for a permanent zone shift
+with no DST involved. It now agrees with its own grid (which pre-m10 it
+contradicted), and no persisted column derives from it. The `v0.5.0`
 tag/publish is the maintainer's step.
 
-**Next — the polish track continues: M10–M17 → `0.5.0`…`0.12.0`
+**Next — the polish track continues: M11–M17 → `0.6.0`…`0.12.0`
 (track approved 2026-07-18).** The code-verified pain audit
 ([docs/research/2026-07-data-flow-audit/REPORT.md](docs/research/2026-07-data-flow-audit/REPORT.md))
-plus the entire hardening backlog, one minor release per milestone: M10
-timestamps + both schema breaks → M11 `abk dashboard` → M12 notifications →
-M13–M17 (versioned stats, multi-arm decisions, new methods, owned
-randomization, app integration — contours, design-session-first). The
-track section in [ROADMAP.md](ROADMAP.md) is the map; the as-designed contracts
-are [m10](docs/specs/m10-implementation-plan.md)–[m12](docs/specs/m12-implementation-plan.md)
+plus the entire hardening backlog, one minor release per milestone: M11
+`abk dashboard` → M12 notifications → M13–M17 (versioned stats, multi-arm
+decisions, new methods, owned randomization, app integration — contours,
+design-session-first). The track section in [ROADMAP.md](ROADMAP.md) is the
+map; the as-designed contracts are
+[m11](docs/specs/m11-implementation-plan.md)–[m12](docs/specs/m12-implementation-plan.md)
 implementation plans ([m7](docs/specs/m7-implementation-plan.md),
-[m8](docs/specs/m8-implementation-plan.md) and
-[m9](docs/specs/m9-implementation-plan.md) are now implementation records).
+[m8](docs/specs/m8-implementation-plan.md),
+[m9](docs/specs/m9-implementation-plan.md) and
+[m10](docs/specs/m10-implementation-plan.md) are now implementation records).
 Discipline: one WP = one session = one PR; **M7–M12
 move no statistical number** (parity gates); M13/M15 go through full change
 control.

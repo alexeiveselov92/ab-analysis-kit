@@ -11,7 +11,7 @@ recorded here alongside an `ALGORITHM_VERSION` bump and a
 [`statistics-changes.md`](docs/specs/statistics-changes.md) entry (never a silent
 number change).
 
-## [Unreleased]
+## [0.5.0] - 2026-07-26
 
 ### Changed
 - **BREAKING — M10 WP1: an experiment's window is a pair of timestamps, and
@@ -100,8 +100,11 @@ number change).
   its own fine-grained lock. Three consequences worth knowing:
   - **the accepted trade** is that two recomputes racing may both run —
     wasted CPU and, for bootstrap knobs, one resample block of memory each;
-    never a wrong number (every input is immutable or read under the cache
-    lock);
+    never a wrong number for the inputs each used (every input is immutable or
+    read under the cache lock). One caveat, reproduced by the exit-gate review:
+    a `/reload` installing cutoffs under a running pass makes one reply mix two
+    renders of the same series, all points still labelled `exact` — the reply is
+    not yet the unit of consistency, and making it one is a named follow-up;
   - **staleness is re-checked after the compute, not just before it.** A
     request can now be superseded *while it computes*; it replies `409
     {stale: true}` rather than overwriting the fresher answer already in the
@@ -199,14 +202,40 @@ number change).
   one process-global recorder installed by the outermost scope, per-thread
   frames, and one `"always"` filter per nest per category — no per-call writes
   to the global filter list. Warning *routing* only — no number moves.
+- **A breaking-release schema refusal reached the operator as a stack trace,
+  not as an error line.** `ensure_tables()` ran outside `abk run`'s failure
+  handler, so the `ValueError` that names the drop-and-recreate remedy for a
+  pre-0.5.0 `_ab_experiments` escaped uncaught: Click printed a traceback and
+  the command's own error line never appeared. On the one release where that
+  message is the upgrade instruction, it was the message being buried.
+  `abk unlock` had the same hole (`abk validate` and `abk clean` already
+  echoed it).
+- **`horizon_seconds()` is the true elapsed window length**, measured between
+  the two resolved instants, where it used to be `(end − start).days + 1` whole
+  days. It now agrees with its own grid, which it used to contradict: pre-0.5.0
+  an October-to-November New York experiment reported `horizon_days` 12.04
+  beside a `horizon_seconds` of exactly 12 days. The change is exactly **the
+  UTC-offset difference between the window's local edges** — so ±1h across an
+  ordinary DST transition, ±30 min in Australia/Lord_Howe, ±2h in
+  Antarctica/Troll, ±24h across a date-line jump, and it also fires where there
+  is no DST at all (a permanent zone shift, e.g. Moscow's 2014 +4→+3). A window
+  whose offset does not change is unaffected. Two consumers: the readout's
+  pre-horizon rationale line, and config-lint's cadence gate — where a
+  sub-day cadence sitting between the old and new lengths can flip accept↔reject,
+  so a config that parsed on 0.4.0 may now be rejected (or vice versa) if a
+  transition falls inside its window. No persisted column derives from it.
 
 No `ALGORITHM_VERSION` bump and no `statistics-changes.md` entry anywhere in
-M10 so far: WP1/WP3 are config/planner/schema changes, WP4 is server
-concurrency and warning routing, and WP5 is a structural refactor plus a
-cache. The numeric gate for the window rename is that an unchanged window
-produces unchanged numbers — the whole existing suite (2 209 tests, incl.
-every e2e byte-stability and cross-mode parity gate) passes with only the
-config keys and the ported horizon values edited; WP4 touches no statistical
+M10: WP1/WP3 are config/planner/schema changes, WP4 is server concurrency and
+warning routing, and WP5 is a structural refactor plus a cache. The numeric
+gate for the window rename is that an unchanged window produces unchanged
+numbers, and it is executable at two levels: every e2e byte-stability and
+cross-mode parity gate in the suite still passes, with the only edits to those
+tests being the renamed config keys and the ported horizon values, and
+`tests/e2e/test_sub_day_anchors_and_explore.py` compares grids, cutoffs and
+every derived number across 11 window shapes against a golden **captured from
+the pre-M10 code itself** — byte-identical but for the `horizon_seconds()`
+change above, which is pinned in both directions. WP4 touches no statistical
 code path at all; WP5 moves bootstrap code inside `abkit.stats` and is pinned
 by the untouched golden suite plus per-class bit-exactness of the split.
 
