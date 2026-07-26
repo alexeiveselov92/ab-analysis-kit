@@ -1234,6 +1234,55 @@ class TestBootstrapMemo:
                 assert _point_numbers(want) == _point_numbers(got), f"alpha={alpha}"
         assert plain._session.memoized_count() == 0  # the baseline stayed un-memoized
 
+    def test_the_memo_matches_the_unmemoized_engine_across_the_whole_knob_matrix(
+        self, warehouse, tables
+    ):
+        """The parity gate widened from one knob state to a matrix.
+
+        Three bootstrap families x stat x pvalue_kind x test_type x four alphas,
+        against the same engine with the memo refused. The configured method is
+        CUPED so the Tier-S cache carries a covariate role — otherwise
+        ``post-normed-bootstrap`` produces no points and its column is vacuous.
+        """
+        import itertools
+
+        configured = {
+            "name": "cuped-t-test",
+            "params": {"test_type": "relative", "covariate_lookback": "7d"},
+        }
+        experiment = make_experiment("exp_memo_matrix", "arpu", configured)
+        run_pipeline(warehouse, tables, experiment)
+        plain = build_engine(warehouse, tables, experiment)
+        plain._session.boot_memo_budget = 0
+        memoized = build_engine(warehouse, tables, experiment)
+
+        compared = 0
+        for method, stat, kind, test_type in itertools.product(
+            ("bootstrap", "poisson-bootstrap", "post-normed-bootstrap"),
+            ("mean", "median"),
+            ("sign", "plugin"),
+            ("relative", "absolute"),
+        ):
+            if method == "poisson-bootstrap" and stat != "mean":
+                continue  # H7: the Poisson engine is mean-only
+            if method == "post-normed-bootstrap" and test_type == "absolute":
+                continue  # quarantined branch
+            params = {"test_type": test_type, "n_samples": 64, "pvalue_kind": kind}
+            if method != "poisson-bootstrap":
+                params["stat"] = stat
+            for alpha in (0.3, 0.05, 0.011, 0.2):
+                knobs = KnobState(method, params, alpha=alpha)
+                expected = plain.recompute("arpu", knobs).pairs[0].points
+                actual = memoized.recompute("arpu", knobs).pairs[0].points
+                assert len(actual) == len(expected)
+                for want, got in zip(expected, actual, strict=True):
+                    assert _point_numbers(want) == _point_numbers(got), (
+                        f"{method}/{stat}/{kind}/{test_type}@{alpha}"
+                    )
+                compared += len(actual)
+        assert compared >= 200, f"the matrix must not be vacuous (compared {compared} points)"
+        assert plain._session.memoized_count() == 0
+
     def test_the_resample_runs_once_per_cutoff_across_five_alphas(
         self, warehouse, tables, monkeypatch
     ):
