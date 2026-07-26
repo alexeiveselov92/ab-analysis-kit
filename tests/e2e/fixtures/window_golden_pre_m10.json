@@ -1,0 +1,1715 @@
+{
+  "daily_dst_fall_back": {
+    "cuped_preperiod": {
+      "14d": [
+        "2024-10-11T04:00:00",
+        "2024-10-25T04:00:00"
+      ],
+      "7d": [
+        "2024-10-18T04:00:00",
+        "2024-10-25T04:00:00"
+      ]
+    },
+    "horizon_days": 12.041666666666666,
+    "horizon_seconds": 1036800,
+    "horizon_ts": "2024-11-06T05:00:00",
+    "look_count": 12,
+    "looks": [
+      {
+        "elapsed_days": 1.0,
+        "end_ts": "2024-10-26T04:00:00",
+        "is_horizon": false,
+        "look_days": 1.0,
+        "weekly_cycle_pct": 0.14285714285714285,
+        "window_seconds": 86400
+      },
+      {
+        "elapsed_days": 2.0,
+        "end_ts": "2024-10-27T04:00:00",
+        "is_horizon": false,
+        "look_days": 2.0,
+        "weekly_cycle_pct": 0.2857142857142857,
+        "window_seconds": 172800
+      },
+      {
+        "elapsed_days": 3.0,
+        "end_ts": "2024-10-28T04:00:00",
+        "is_horizon": false,
+        "look_days": 3.0,
+        "weekly_cycle_pct": 0.42857142857142855,
+        "window_seconds": 259200
+      },
+      {
+        "elapsed_days": 4.0,
+        "end_ts": "2024-10-29T04:00:00",
+        "is_horizon": false,
+        "look_days": 4.0,
+        "weekly_cycle_pct": 0.5714285714285714,
+        "window_seconds": 345600
+      },
+      {
+        "elapsed_days": 5.0,
+        "end_ts": "2024-10-30T04:00:00",
+        "is_horizon": false,
+        "look_days": 5.0,
+        "weekly_cycle_pct": 0.7142857142857143,
+        "window_seconds": 432000
+      },
+      {
+        "elapsed_days": 6.0,
+        "end_ts": "2024-10-31T04:00:00",
+        "is_horizon": false,
+        "look_days": 6.0,
+        "weekly_cycle_pct": 0.8571428571428571,
+        "window_seconds": 518400
+      },
+      {
+        "elapsed_days": 7.0,
+        "end_ts": "2024-11-01T04:00:00",
+        "is_horizon": false,
+        "look_days": 7.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 604800
+      },
+      {
+        "elapsed_days": 8.0,
+        "end_ts": "2024-11-02T04:00:00",
+        "is_horizon": false,
+        "look_days": 8.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 691200
+      },
+      {
+        "elapsed_days": 9.0,
+        "end_ts": "2024-11-03T04:00:00",
+        "is_horizon": false,
+        "look_days": 9.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 777600
+      },
+      {
+        "elapsed_days": 10.041666666666666,
+        "end_ts": "2024-11-04T05:00:00",
+        "is_horizon": false,
+        "look_days": 10.041666666666666,
+        "weekly_cycle_pct": null,
+        "window_seconds": 867600
+      },
+      {
+        "elapsed_days": 11.041666666666666,
+        "end_ts": "2024-11-05T05:00:00",
+        "is_horizon": false,
+        "look_days": 11.041666666666666,
+        "weekly_cycle_pct": null,
+        "window_seconds": 954000
+      },
+      {
+        "elapsed_days": 12.041666666666666,
+        "end_ts": "2024-11-06T05:00:00",
+        "is_horizon": true,
+        "look_days": 12.041666666666666,
+        "weekly_cycle_pct": null,
+        "window_seconds": 1040400
+      }
+    ],
+    "start_ts": "2024-10-25T04:00:00"
+  },
+  "daily_dst_spring_forward": {
+    "cuped_preperiod": {
+      "14d": [
+        "2024-02-23T05:00:00",
+        "2024-03-08T05:00:00"
+      ],
+      "7d": [
+        "2024-03-01T05:00:00",
+        "2024-03-08T05:00:00"
+      ]
+    },
+    "horizon_days": 7.958333333333333,
+    "horizon_seconds": 691200,
+    "horizon_ts": "2024-03-16T04:00:00",
+    "look_count": 8,
+    "looks": [
+      {
+        "elapsed_days": 1.0,
+        "end_ts": "2024-03-09T05:00:00",
+        "is_horizon": false,
+        "look_days": 1.0,
+        "weekly_cycle_pct": 0.14285714285714285,
+        "window_seconds": 86400
+      },
+      {
+        "elapsed_days": 2.0,
+        "end_ts": "2024-03-10T05:00:00",
+        "is_horizon": false,
+        "look_days": 2.0,
+        "weekly_cycle_pct": 0.2857142857142857,
+        "window_seconds": 172800
+      },
+      {
+        "elapsed_days": 2.9583333333333335,
+        "end_ts": "2024-03-11T04:00:00",
+        "is_horizon": false,
+        "look_days": 2.9583333333333335,
+        "weekly_cycle_pct": 0.4226190476190476,
+        "window_seconds": 255600
+      },
+      {
+        "elapsed_days": 3.9583333333333335,
+        "end_ts": "2024-03-12T04:00:00",
+        "is_horizon": false,
+        "look_days": 3.9583333333333335,
+        "weekly_cycle_pct": 0.5654761904761905,
+        "window_seconds": 342000
+      },
+      {
+        "elapsed_days": 4.958333333333333,
+        "end_ts": "2024-03-13T04:00:00",
+        "is_horizon": false,
+        "look_days": 4.958333333333333,
+        "weekly_cycle_pct": 0.7083333333333333,
+        "window_seconds": 428400
+      },
+      {
+        "elapsed_days": 5.958333333333333,
+        "end_ts": "2024-03-14T04:00:00",
+        "is_horizon": false,
+        "look_days": 5.958333333333333,
+        "weekly_cycle_pct": 0.8511904761904762,
+        "window_seconds": 514800
+      },
+      {
+        "elapsed_days": 6.958333333333333,
+        "end_ts": "2024-03-15T04:00:00",
+        "is_horizon": false,
+        "look_days": 6.958333333333333,
+        "weekly_cycle_pct": 0.994047619047619,
+        "window_seconds": 601200
+      },
+      {
+        "elapsed_days": 7.958333333333333,
+        "end_ts": "2024-03-16T04:00:00",
+        "is_horizon": true,
+        "look_days": 7.958333333333333,
+        "weekly_cycle_pct": null,
+        "window_seconds": 687600
+      }
+    ],
+    "start_ts": "2024-03-08T05:00:00"
+  },
+  "daily_moscow": {
+    "cuped_preperiod": {
+      "14d": [
+        "2024-06-16T21:00:00",
+        "2024-06-30T21:00:00"
+      ],
+      "7d": [
+        "2024-06-23T21:00:00",
+        "2024-06-30T21:00:00"
+      ]
+    },
+    "horizon_days": 14.0,
+    "horizon_seconds": 1209600,
+    "horizon_ts": "2024-07-14T21:00:00",
+    "look_count": 14,
+    "looks": [
+      {
+        "elapsed_days": 1.0,
+        "end_ts": "2024-07-01T21:00:00",
+        "is_horizon": false,
+        "look_days": 1.0,
+        "weekly_cycle_pct": 0.14285714285714285,
+        "window_seconds": 86400
+      },
+      {
+        "elapsed_days": 2.0,
+        "end_ts": "2024-07-02T21:00:00",
+        "is_horizon": false,
+        "look_days": 2.0,
+        "weekly_cycle_pct": 0.2857142857142857,
+        "window_seconds": 172800
+      },
+      {
+        "elapsed_days": 3.0,
+        "end_ts": "2024-07-03T21:00:00",
+        "is_horizon": false,
+        "look_days": 3.0,
+        "weekly_cycle_pct": 0.42857142857142855,
+        "window_seconds": 259200
+      },
+      {
+        "elapsed_days": 4.0,
+        "end_ts": "2024-07-04T21:00:00",
+        "is_horizon": false,
+        "look_days": 4.0,
+        "weekly_cycle_pct": 0.5714285714285714,
+        "window_seconds": 345600
+      },
+      {
+        "elapsed_days": 5.0,
+        "end_ts": "2024-07-05T21:00:00",
+        "is_horizon": false,
+        "look_days": 5.0,
+        "weekly_cycle_pct": 0.7142857142857143,
+        "window_seconds": 432000
+      },
+      {
+        "elapsed_days": 6.0,
+        "end_ts": "2024-07-06T21:00:00",
+        "is_horizon": false,
+        "look_days": 6.0,
+        "weekly_cycle_pct": 0.8571428571428571,
+        "window_seconds": 518400
+      },
+      {
+        "elapsed_days": 7.0,
+        "end_ts": "2024-07-07T21:00:00",
+        "is_horizon": false,
+        "look_days": 7.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 604800
+      },
+      {
+        "elapsed_days": 8.0,
+        "end_ts": "2024-07-08T21:00:00",
+        "is_horizon": false,
+        "look_days": 8.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 691200
+      },
+      {
+        "elapsed_days": 9.0,
+        "end_ts": "2024-07-09T21:00:00",
+        "is_horizon": false,
+        "look_days": 9.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 777600
+      },
+      {
+        "elapsed_days": 10.0,
+        "end_ts": "2024-07-10T21:00:00",
+        "is_horizon": false,
+        "look_days": 10.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 864000
+      },
+      {
+        "elapsed_days": 11.0,
+        "end_ts": "2024-07-11T21:00:00",
+        "is_horizon": false,
+        "look_days": 11.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 950400
+      },
+      {
+        "elapsed_days": 12.0,
+        "end_ts": "2024-07-12T21:00:00",
+        "is_horizon": false,
+        "look_days": 12.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 1036800
+      },
+      {
+        "elapsed_days": 13.0,
+        "end_ts": "2024-07-13T21:00:00",
+        "is_horizon": false,
+        "look_days": 13.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 1123200
+      },
+      {
+        "elapsed_days": 14.0,
+        "end_ts": "2024-07-14T21:00:00",
+        "is_horizon": true,
+        "look_days": 14.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 1209600
+      }
+    ],
+    "start_ts": "2024-06-30T21:00:00"
+  },
+  "dense_early_schedule_moscow": {
+    "cuped_preperiod": {
+      "14d": [
+        "2024-06-16T21:00:00",
+        "2024-06-30T21:00:00"
+      ],
+      "7d": [
+        "2024-06-23T21:00:00",
+        "2024-06-30T21:00:00"
+      ]
+    },
+    "horizon_days": 14.0,
+    "horizon_seconds": 1209600,
+    "horizon_ts": "2024-07-14T21:00:00",
+    "look_count": 20,
+    "looks": [
+      {
+        "elapsed_days": 0.25,
+        "end_ts": "2024-07-01T03:00:00",
+        "is_horizon": false,
+        "look_days": 0.25,
+        "weekly_cycle_pct": 0.03571428571428571,
+        "window_seconds": 21600
+      },
+      {
+        "elapsed_days": 0.5,
+        "end_ts": "2024-07-01T09:00:00",
+        "is_horizon": false,
+        "look_days": 0.5,
+        "weekly_cycle_pct": 0.07142857142857142,
+        "window_seconds": 43200
+      },
+      {
+        "elapsed_days": 0.75,
+        "end_ts": "2024-07-01T15:00:00",
+        "is_horizon": false,
+        "look_days": 0.75,
+        "weekly_cycle_pct": 0.10714285714285714,
+        "window_seconds": 64800
+      },
+      {
+        "elapsed_days": 1.0,
+        "end_ts": "2024-07-01T21:00:00",
+        "is_horizon": false,
+        "look_days": 1.0,
+        "weekly_cycle_pct": 0.14285714285714285,
+        "window_seconds": 86400
+      },
+      {
+        "elapsed_days": 1.25,
+        "end_ts": "2024-07-02T03:00:00",
+        "is_horizon": false,
+        "look_days": 1.25,
+        "weekly_cycle_pct": 0.17857142857142858,
+        "window_seconds": 108000
+      },
+      {
+        "elapsed_days": 1.5,
+        "end_ts": "2024-07-02T09:00:00",
+        "is_horizon": false,
+        "look_days": 1.5,
+        "weekly_cycle_pct": 0.21428571428571427,
+        "window_seconds": 129600
+      },
+      {
+        "elapsed_days": 1.75,
+        "end_ts": "2024-07-02T15:00:00",
+        "is_horizon": false,
+        "look_days": 1.75,
+        "weekly_cycle_pct": 0.25,
+        "window_seconds": 151200
+      },
+      {
+        "elapsed_days": 2.0,
+        "end_ts": "2024-07-02T21:00:00",
+        "is_horizon": false,
+        "look_days": 2.0,
+        "weekly_cycle_pct": 0.2857142857142857,
+        "window_seconds": 172800
+      },
+      {
+        "elapsed_days": 3.0,
+        "end_ts": "2024-07-03T21:00:00",
+        "is_horizon": false,
+        "look_days": 3.0,
+        "weekly_cycle_pct": 0.42857142857142855,
+        "window_seconds": 259200
+      },
+      {
+        "elapsed_days": 4.0,
+        "end_ts": "2024-07-04T21:00:00",
+        "is_horizon": false,
+        "look_days": 4.0,
+        "weekly_cycle_pct": 0.5714285714285714,
+        "window_seconds": 345600
+      },
+      {
+        "elapsed_days": 5.0,
+        "end_ts": "2024-07-05T21:00:00",
+        "is_horizon": false,
+        "look_days": 5.0,
+        "weekly_cycle_pct": 0.7142857142857143,
+        "window_seconds": 432000
+      },
+      {
+        "elapsed_days": 6.0,
+        "end_ts": "2024-07-06T21:00:00",
+        "is_horizon": false,
+        "look_days": 6.0,
+        "weekly_cycle_pct": 0.8571428571428571,
+        "window_seconds": 518400
+      },
+      {
+        "elapsed_days": 7.0,
+        "end_ts": "2024-07-07T21:00:00",
+        "is_horizon": false,
+        "look_days": 7.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 604800
+      },
+      {
+        "elapsed_days": 8.0,
+        "end_ts": "2024-07-08T21:00:00",
+        "is_horizon": false,
+        "look_days": 8.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 691200
+      },
+      {
+        "elapsed_days": 9.0,
+        "end_ts": "2024-07-09T21:00:00",
+        "is_horizon": false,
+        "look_days": 9.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 777600
+      },
+      {
+        "elapsed_days": 10.0,
+        "end_ts": "2024-07-10T21:00:00",
+        "is_horizon": false,
+        "look_days": 10.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 864000
+      },
+      {
+        "elapsed_days": 11.0,
+        "end_ts": "2024-07-11T21:00:00",
+        "is_horizon": false,
+        "look_days": 11.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 950400
+      },
+      {
+        "elapsed_days": 12.0,
+        "end_ts": "2024-07-12T21:00:00",
+        "is_horizon": false,
+        "look_days": 12.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 1036800
+      },
+      {
+        "elapsed_days": 13.0,
+        "end_ts": "2024-07-13T21:00:00",
+        "is_horizon": false,
+        "look_days": 13.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 1123200
+      },
+      {
+        "elapsed_days": 14.0,
+        "end_ts": "2024-07-14T21:00:00",
+        "is_horizon": true,
+        "look_days": 14.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 1209600
+      }
+    ],
+    "start_ts": "2024-06-30T21:00:00"
+  },
+  "dense_early_schedule_utc": {
+    "cuped_preperiod": {
+      "14d": [
+        "2024-06-17T00:00:00",
+        "2024-07-01T00:00:00"
+      ],
+      "7d": [
+        "2024-06-24T00:00:00",
+        "2024-07-01T00:00:00"
+      ]
+    },
+    "horizon_days": 14.0,
+    "horizon_seconds": 1209600,
+    "horizon_ts": "2024-07-15T00:00:00",
+    "look_count": 60,
+    "looks": [
+      {
+        "elapsed_days": 0.041666666666666664,
+        "end_ts": "2024-07-01T01:00:00",
+        "is_horizon": false,
+        "look_days": 0.041666666666666664,
+        "weekly_cycle_pct": 0.005952380952380952,
+        "window_seconds": 3600
+      },
+      {
+        "elapsed_days": 0.08333333333333333,
+        "end_ts": "2024-07-01T02:00:00",
+        "is_horizon": false,
+        "look_days": 0.08333333333333333,
+        "weekly_cycle_pct": 0.011904761904761904,
+        "window_seconds": 7200
+      },
+      {
+        "elapsed_days": 0.125,
+        "end_ts": "2024-07-01T03:00:00",
+        "is_horizon": false,
+        "look_days": 0.125,
+        "weekly_cycle_pct": 0.017857142857142856,
+        "window_seconds": 10800
+      },
+      {
+        "elapsed_days": 0.16666666666666666,
+        "end_ts": "2024-07-01T04:00:00",
+        "is_horizon": false,
+        "look_days": 0.16666666666666666,
+        "weekly_cycle_pct": 0.023809523809523808,
+        "window_seconds": 14400
+      },
+      {
+        "elapsed_days": 0.20833333333333334,
+        "end_ts": "2024-07-01T05:00:00",
+        "is_horizon": false,
+        "look_days": 0.20833333333333334,
+        "weekly_cycle_pct": 0.029761904761904764,
+        "window_seconds": 18000
+      },
+      {
+        "elapsed_days": 0.25,
+        "end_ts": "2024-07-01T06:00:00",
+        "is_horizon": false,
+        "look_days": 0.25,
+        "weekly_cycle_pct": 0.03571428571428571,
+        "window_seconds": 21600
+      },
+      {
+        "elapsed_days": 0.2916666666666667,
+        "end_ts": "2024-07-01T07:00:00",
+        "is_horizon": false,
+        "look_days": 0.2916666666666667,
+        "weekly_cycle_pct": 0.04166666666666667,
+        "window_seconds": 25200
+      },
+      {
+        "elapsed_days": 0.3333333333333333,
+        "end_ts": "2024-07-01T08:00:00",
+        "is_horizon": false,
+        "look_days": 0.3333333333333333,
+        "weekly_cycle_pct": 0.047619047619047616,
+        "window_seconds": 28800
+      },
+      {
+        "elapsed_days": 0.375,
+        "end_ts": "2024-07-01T09:00:00",
+        "is_horizon": false,
+        "look_days": 0.375,
+        "weekly_cycle_pct": 0.05357142857142857,
+        "window_seconds": 32400
+      },
+      {
+        "elapsed_days": 0.4166666666666667,
+        "end_ts": "2024-07-01T10:00:00",
+        "is_horizon": false,
+        "look_days": 0.4166666666666667,
+        "weekly_cycle_pct": 0.05952380952380953,
+        "window_seconds": 36000
+      },
+      {
+        "elapsed_days": 0.4583333333333333,
+        "end_ts": "2024-07-01T11:00:00",
+        "is_horizon": false,
+        "look_days": 0.4583333333333333,
+        "weekly_cycle_pct": 0.06547619047619048,
+        "window_seconds": 39600
+      },
+      {
+        "elapsed_days": 0.5,
+        "end_ts": "2024-07-01T12:00:00",
+        "is_horizon": false,
+        "look_days": 0.5,
+        "weekly_cycle_pct": 0.07142857142857142,
+        "window_seconds": 43200
+      },
+      {
+        "elapsed_days": 0.5416666666666666,
+        "end_ts": "2024-07-01T13:00:00",
+        "is_horizon": false,
+        "look_days": 0.5416666666666666,
+        "weekly_cycle_pct": 0.07738095238095237,
+        "window_seconds": 46800
+      },
+      {
+        "elapsed_days": 0.5833333333333334,
+        "end_ts": "2024-07-01T14:00:00",
+        "is_horizon": false,
+        "look_days": 0.5833333333333334,
+        "weekly_cycle_pct": 0.08333333333333334,
+        "window_seconds": 50400
+      },
+      {
+        "elapsed_days": 0.625,
+        "end_ts": "2024-07-01T15:00:00",
+        "is_horizon": false,
+        "look_days": 0.625,
+        "weekly_cycle_pct": 0.08928571428571429,
+        "window_seconds": 54000
+      },
+      {
+        "elapsed_days": 0.6666666666666666,
+        "end_ts": "2024-07-01T16:00:00",
+        "is_horizon": false,
+        "look_days": 0.6666666666666666,
+        "weekly_cycle_pct": 0.09523809523809523,
+        "window_seconds": 57600
+      },
+      {
+        "elapsed_days": 0.7083333333333334,
+        "end_ts": "2024-07-01T17:00:00",
+        "is_horizon": false,
+        "look_days": 0.7083333333333334,
+        "weekly_cycle_pct": 0.10119047619047619,
+        "window_seconds": 61200
+      },
+      {
+        "elapsed_days": 0.75,
+        "end_ts": "2024-07-01T18:00:00",
+        "is_horizon": false,
+        "look_days": 0.75,
+        "weekly_cycle_pct": 0.10714285714285714,
+        "window_seconds": 64800
+      },
+      {
+        "elapsed_days": 0.7916666666666666,
+        "end_ts": "2024-07-01T19:00:00",
+        "is_horizon": false,
+        "look_days": 0.7916666666666666,
+        "weekly_cycle_pct": 0.1130952380952381,
+        "window_seconds": 68400
+      },
+      {
+        "elapsed_days": 0.8333333333333334,
+        "end_ts": "2024-07-01T20:00:00",
+        "is_horizon": false,
+        "look_days": 0.8333333333333334,
+        "weekly_cycle_pct": 0.11904761904761905,
+        "window_seconds": 72000
+      },
+      {
+        "elapsed_days": 0.875,
+        "end_ts": "2024-07-01T21:00:00",
+        "is_horizon": false,
+        "look_days": 0.875,
+        "weekly_cycle_pct": 0.125,
+        "window_seconds": 75600
+      },
+      {
+        "elapsed_days": 0.9166666666666666,
+        "end_ts": "2024-07-01T22:00:00",
+        "is_horizon": false,
+        "look_days": 0.9166666666666666,
+        "weekly_cycle_pct": 0.13095238095238096,
+        "window_seconds": 79200
+      },
+      {
+        "elapsed_days": 0.9583333333333334,
+        "end_ts": "2024-07-01T23:00:00",
+        "is_horizon": false,
+        "look_days": 0.9583333333333334,
+        "weekly_cycle_pct": 0.13690476190476192,
+        "window_seconds": 82800
+      },
+      {
+        "elapsed_days": 1.0,
+        "end_ts": "2024-07-02T00:00:00",
+        "is_horizon": false,
+        "look_days": 1.0,
+        "weekly_cycle_pct": 0.14285714285714285,
+        "window_seconds": 86400
+      },
+      {
+        "elapsed_days": 1.0416666666666667,
+        "end_ts": "2024-07-02T01:00:00",
+        "is_horizon": false,
+        "look_days": 1.0416666666666667,
+        "weekly_cycle_pct": 0.1488095238095238,
+        "window_seconds": 90000
+      },
+      {
+        "elapsed_days": 1.0833333333333333,
+        "end_ts": "2024-07-02T02:00:00",
+        "is_horizon": false,
+        "look_days": 1.0833333333333333,
+        "weekly_cycle_pct": 0.15476190476190474,
+        "window_seconds": 93600
+      },
+      {
+        "elapsed_days": 1.125,
+        "end_ts": "2024-07-02T03:00:00",
+        "is_horizon": false,
+        "look_days": 1.125,
+        "weekly_cycle_pct": 0.16071428571428573,
+        "window_seconds": 97200
+      },
+      {
+        "elapsed_days": 1.1666666666666667,
+        "end_ts": "2024-07-02T04:00:00",
+        "is_horizon": false,
+        "look_days": 1.1666666666666667,
+        "weekly_cycle_pct": 0.16666666666666669,
+        "window_seconds": 100800
+      },
+      {
+        "elapsed_days": 1.2083333333333333,
+        "end_ts": "2024-07-02T05:00:00",
+        "is_horizon": false,
+        "look_days": 1.2083333333333333,
+        "weekly_cycle_pct": 0.17261904761904762,
+        "window_seconds": 104400
+      },
+      {
+        "elapsed_days": 1.25,
+        "end_ts": "2024-07-02T06:00:00",
+        "is_horizon": false,
+        "look_days": 1.25,
+        "weekly_cycle_pct": 0.17857142857142858,
+        "window_seconds": 108000
+      },
+      {
+        "elapsed_days": 1.2916666666666667,
+        "end_ts": "2024-07-02T07:00:00",
+        "is_horizon": false,
+        "look_days": 1.2916666666666667,
+        "weekly_cycle_pct": 0.18452380952380953,
+        "window_seconds": 111600
+      },
+      {
+        "elapsed_days": 1.3333333333333333,
+        "end_ts": "2024-07-02T08:00:00",
+        "is_horizon": false,
+        "look_days": 1.3333333333333333,
+        "weekly_cycle_pct": 0.19047619047619047,
+        "window_seconds": 115200
+      },
+      {
+        "elapsed_days": 1.375,
+        "end_ts": "2024-07-02T09:00:00",
+        "is_horizon": false,
+        "look_days": 1.375,
+        "weekly_cycle_pct": 0.19642857142857142,
+        "window_seconds": 118800
+      },
+      {
+        "elapsed_days": 1.4166666666666667,
+        "end_ts": "2024-07-02T10:00:00",
+        "is_horizon": false,
+        "look_days": 1.4166666666666667,
+        "weekly_cycle_pct": 0.20238095238095238,
+        "window_seconds": 122400
+      },
+      {
+        "elapsed_days": 1.4583333333333333,
+        "end_ts": "2024-07-02T11:00:00",
+        "is_horizon": false,
+        "look_days": 1.4583333333333333,
+        "weekly_cycle_pct": 0.20833333333333331,
+        "window_seconds": 126000
+      },
+      {
+        "elapsed_days": 1.5,
+        "end_ts": "2024-07-02T12:00:00",
+        "is_horizon": false,
+        "look_days": 1.5,
+        "weekly_cycle_pct": 0.21428571428571427,
+        "window_seconds": 129600
+      },
+      {
+        "elapsed_days": 1.5416666666666667,
+        "end_ts": "2024-07-02T13:00:00",
+        "is_horizon": false,
+        "look_days": 1.5416666666666667,
+        "weekly_cycle_pct": 0.22023809523809526,
+        "window_seconds": 133200
+      },
+      {
+        "elapsed_days": 1.5833333333333333,
+        "end_ts": "2024-07-02T14:00:00",
+        "is_horizon": false,
+        "look_days": 1.5833333333333333,
+        "weekly_cycle_pct": 0.2261904761904762,
+        "window_seconds": 136800
+      },
+      {
+        "elapsed_days": 1.625,
+        "end_ts": "2024-07-02T15:00:00",
+        "is_horizon": false,
+        "look_days": 1.625,
+        "weekly_cycle_pct": 0.23214285714285715,
+        "window_seconds": 140400
+      },
+      {
+        "elapsed_days": 1.6666666666666667,
+        "end_ts": "2024-07-02T16:00:00",
+        "is_horizon": false,
+        "look_days": 1.6666666666666667,
+        "weekly_cycle_pct": 0.2380952380952381,
+        "window_seconds": 144000
+      },
+      {
+        "elapsed_days": 1.7083333333333333,
+        "end_ts": "2024-07-02T17:00:00",
+        "is_horizon": false,
+        "look_days": 1.7083333333333333,
+        "weekly_cycle_pct": 0.24404761904761904,
+        "window_seconds": 147600
+      },
+      {
+        "elapsed_days": 1.75,
+        "end_ts": "2024-07-02T18:00:00",
+        "is_horizon": false,
+        "look_days": 1.75,
+        "weekly_cycle_pct": 0.25,
+        "window_seconds": 151200
+      },
+      {
+        "elapsed_days": 1.7916666666666667,
+        "end_ts": "2024-07-02T19:00:00",
+        "is_horizon": false,
+        "look_days": 1.7916666666666667,
+        "weekly_cycle_pct": 0.255952380952381,
+        "window_seconds": 154800
+      },
+      {
+        "elapsed_days": 1.8333333333333333,
+        "end_ts": "2024-07-02T20:00:00",
+        "is_horizon": false,
+        "look_days": 1.8333333333333333,
+        "weekly_cycle_pct": 0.2619047619047619,
+        "window_seconds": 158400
+      },
+      {
+        "elapsed_days": 1.875,
+        "end_ts": "2024-07-02T21:00:00",
+        "is_horizon": false,
+        "look_days": 1.875,
+        "weekly_cycle_pct": 0.26785714285714285,
+        "window_seconds": 162000
+      },
+      {
+        "elapsed_days": 1.9166666666666667,
+        "end_ts": "2024-07-02T22:00:00",
+        "is_horizon": false,
+        "look_days": 1.9166666666666667,
+        "weekly_cycle_pct": 0.27380952380952384,
+        "window_seconds": 165600
+      },
+      {
+        "elapsed_days": 1.9583333333333333,
+        "end_ts": "2024-07-02T23:00:00",
+        "is_horizon": false,
+        "look_days": 1.9583333333333333,
+        "weekly_cycle_pct": 0.27976190476190477,
+        "window_seconds": 169200
+      },
+      {
+        "elapsed_days": 2.0,
+        "end_ts": "2024-07-03T00:00:00",
+        "is_horizon": false,
+        "look_days": 2.0,
+        "weekly_cycle_pct": 0.2857142857142857,
+        "window_seconds": 172800
+      },
+      {
+        "elapsed_days": 3.0,
+        "end_ts": "2024-07-04T00:00:00",
+        "is_horizon": false,
+        "look_days": 3.0,
+        "weekly_cycle_pct": 0.42857142857142855,
+        "window_seconds": 259200
+      },
+      {
+        "elapsed_days": 4.0,
+        "end_ts": "2024-07-05T00:00:00",
+        "is_horizon": false,
+        "look_days": 4.0,
+        "weekly_cycle_pct": 0.5714285714285714,
+        "window_seconds": 345600
+      },
+      {
+        "elapsed_days": 5.0,
+        "end_ts": "2024-07-06T00:00:00",
+        "is_horizon": false,
+        "look_days": 5.0,
+        "weekly_cycle_pct": 0.7142857142857143,
+        "window_seconds": 432000
+      },
+      {
+        "elapsed_days": 6.0,
+        "end_ts": "2024-07-07T00:00:00",
+        "is_horizon": false,
+        "look_days": 6.0,
+        "weekly_cycle_pct": 0.8571428571428571,
+        "window_seconds": 518400
+      },
+      {
+        "elapsed_days": 7.0,
+        "end_ts": "2024-07-08T00:00:00",
+        "is_horizon": false,
+        "look_days": 7.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 604800
+      },
+      {
+        "elapsed_days": 8.0,
+        "end_ts": "2024-07-09T00:00:00",
+        "is_horizon": false,
+        "look_days": 8.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 691200
+      },
+      {
+        "elapsed_days": 9.0,
+        "end_ts": "2024-07-10T00:00:00",
+        "is_horizon": false,
+        "look_days": 9.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 777600
+      },
+      {
+        "elapsed_days": 10.0,
+        "end_ts": "2024-07-11T00:00:00",
+        "is_horizon": false,
+        "look_days": 10.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 864000
+      },
+      {
+        "elapsed_days": 11.0,
+        "end_ts": "2024-07-12T00:00:00",
+        "is_horizon": false,
+        "look_days": 11.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 950400
+      },
+      {
+        "elapsed_days": 12.0,
+        "end_ts": "2024-07-13T00:00:00",
+        "is_horizon": false,
+        "look_days": 12.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 1036800
+      },
+      {
+        "elapsed_days": 13.0,
+        "end_ts": "2024-07-14T00:00:00",
+        "is_horizon": false,
+        "look_days": 13.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 1123200
+      },
+      {
+        "elapsed_days": 14.0,
+        "end_ts": "2024-07-15T00:00:00",
+        "is_horizon": true,
+        "look_days": 14.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 1209600
+      }
+    ],
+    "start_ts": "2024-07-01T00:00:00"
+  },
+  "non_dividing_5d": {
+    "cuped_preperiod": {
+      "14d": [
+        "2024-06-17T00:00:00",
+        "2024-07-01T00:00:00"
+      ],
+      "7d": [
+        "2024-06-24T00:00:00",
+        "2024-07-01T00:00:00"
+      ]
+    },
+    "horizon_days": 14.0,
+    "horizon_seconds": 1209600,
+    "horizon_ts": "2024-07-15T00:00:00",
+    "look_count": 3,
+    "looks": [
+      {
+        "elapsed_days": 5.0,
+        "end_ts": "2024-07-06T00:00:00",
+        "is_horizon": false,
+        "look_days": 5.0,
+        "weekly_cycle_pct": 0.7142857142857143,
+        "window_seconds": 432000
+      },
+      {
+        "elapsed_days": 10.0,
+        "end_ts": "2024-07-11T00:00:00",
+        "is_horizon": false,
+        "look_days": 10.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 864000
+      },
+      {
+        "elapsed_days": 14.0,
+        "end_ts": "2024-07-15T00:00:00",
+        "is_horizon": true,
+        "look_days": 14.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 1209600
+      }
+    ],
+    "start_ts": "2024-07-01T00:00:00"
+  },
+  "scaffold_daily_utc": {
+    "cuped_preperiod": {
+      "14d": [
+        "2024-06-17T00:00:00",
+        "2024-07-01T00:00:00"
+      ],
+      "7d": [
+        "2024-06-24T00:00:00",
+        "2024-07-01T00:00:00"
+      ]
+    },
+    "horizon_days": 14.0,
+    "horizon_seconds": 1209600,
+    "horizon_ts": "2024-07-15T00:00:00",
+    "look_count": 14,
+    "looks": [
+      {
+        "elapsed_days": 1.0,
+        "end_ts": "2024-07-02T00:00:00",
+        "is_horizon": false,
+        "look_days": 1.0,
+        "weekly_cycle_pct": 0.14285714285714285,
+        "window_seconds": 86400
+      },
+      {
+        "elapsed_days": 2.0,
+        "end_ts": "2024-07-03T00:00:00",
+        "is_horizon": false,
+        "look_days": 2.0,
+        "weekly_cycle_pct": 0.2857142857142857,
+        "window_seconds": 172800
+      },
+      {
+        "elapsed_days": 3.0,
+        "end_ts": "2024-07-04T00:00:00",
+        "is_horizon": false,
+        "look_days": 3.0,
+        "weekly_cycle_pct": 0.42857142857142855,
+        "window_seconds": 259200
+      },
+      {
+        "elapsed_days": 4.0,
+        "end_ts": "2024-07-05T00:00:00",
+        "is_horizon": false,
+        "look_days": 4.0,
+        "weekly_cycle_pct": 0.5714285714285714,
+        "window_seconds": 345600
+      },
+      {
+        "elapsed_days": 5.0,
+        "end_ts": "2024-07-06T00:00:00",
+        "is_horizon": false,
+        "look_days": 5.0,
+        "weekly_cycle_pct": 0.7142857142857143,
+        "window_seconds": 432000
+      },
+      {
+        "elapsed_days": 6.0,
+        "end_ts": "2024-07-07T00:00:00",
+        "is_horizon": false,
+        "look_days": 6.0,
+        "weekly_cycle_pct": 0.8571428571428571,
+        "window_seconds": 518400
+      },
+      {
+        "elapsed_days": 7.0,
+        "end_ts": "2024-07-08T00:00:00",
+        "is_horizon": false,
+        "look_days": 7.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 604800
+      },
+      {
+        "elapsed_days": 8.0,
+        "end_ts": "2024-07-09T00:00:00",
+        "is_horizon": false,
+        "look_days": 8.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 691200
+      },
+      {
+        "elapsed_days": 9.0,
+        "end_ts": "2024-07-10T00:00:00",
+        "is_horizon": false,
+        "look_days": 9.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 777600
+      },
+      {
+        "elapsed_days": 10.0,
+        "end_ts": "2024-07-11T00:00:00",
+        "is_horizon": false,
+        "look_days": 10.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 864000
+      },
+      {
+        "elapsed_days": 11.0,
+        "end_ts": "2024-07-12T00:00:00",
+        "is_horizon": false,
+        "look_days": 11.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 950400
+      },
+      {
+        "elapsed_days": 12.0,
+        "end_ts": "2024-07-13T00:00:00",
+        "is_horizon": false,
+        "look_days": 12.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 1036800
+      },
+      {
+        "elapsed_days": 13.0,
+        "end_ts": "2024-07-14T00:00:00",
+        "is_horizon": false,
+        "look_days": 13.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 1123200
+      },
+      {
+        "elapsed_days": 14.0,
+        "end_ts": "2024-07-15T00:00:00",
+        "is_horizon": true,
+        "look_days": 14.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 1209600
+      }
+    ],
+    "start_ts": "2024-07-01T00:00:00"
+  },
+  "short_window_under_a_week": {
+    "cuped_preperiod": {
+      "14d": [
+        "2024-06-17T00:00:00",
+        "2024-07-01T00:00:00"
+      ],
+      "7d": [
+        "2024-06-24T00:00:00",
+        "2024-07-01T00:00:00"
+      ]
+    },
+    "horizon_days": 4.0,
+    "horizon_seconds": 345600,
+    "horizon_ts": "2024-07-05T00:00:00",
+    "look_count": 4,
+    "looks": [
+      {
+        "elapsed_days": 1.0,
+        "end_ts": "2024-07-02T00:00:00",
+        "is_horizon": false,
+        "look_days": 1.0,
+        "weekly_cycle_pct": 0.14285714285714285,
+        "window_seconds": 86400
+      },
+      {
+        "elapsed_days": 2.0,
+        "end_ts": "2024-07-03T00:00:00",
+        "is_horizon": false,
+        "look_days": 2.0,
+        "weekly_cycle_pct": 0.2857142857142857,
+        "window_seconds": 172800
+      },
+      {
+        "elapsed_days": 3.0,
+        "end_ts": "2024-07-04T00:00:00",
+        "is_horizon": false,
+        "look_days": 3.0,
+        "weekly_cycle_pct": 0.42857142857142855,
+        "window_seconds": 259200
+      },
+      {
+        "elapsed_days": 4.0,
+        "end_ts": "2024-07-05T00:00:00",
+        "is_horizon": true,
+        "look_days": 4.0,
+        "weekly_cycle_pct": 0.5714285714285714,
+        "window_seconds": 345600
+      }
+    ],
+    "start_ts": "2024-07-01T00:00:00"
+  },
+  "sub_day_6h_utc": {
+    "cuped_preperiod": {
+      "14d": [
+        "2024-06-17T00:00:00",
+        "2024-07-01T00:00:00"
+      ],
+      "7d": [
+        "2024-06-24T00:00:00",
+        "2024-07-01T00:00:00"
+      ]
+    },
+    "horizon_days": 3.0,
+    "horizon_seconds": 259200,
+    "horizon_ts": "2024-07-04T00:00:00",
+    "look_count": 12,
+    "looks": [
+      {
+        "elapsed_days": 0.25,
+        "end_ts": "2024-07-01T06:00:00",
+        "is_horizon": false,
+        "look_days": 0.25,
+        "weekly_cycle_pct": 0.03571428571428571,
+        "window_seconds": 21600
+      },
+      {
+        "elapsed_days": 0.5,
+        "end_ts": "2024-07-01T12:00:00",
+        "is_horizon": false,
+        "look_days": 0.5,
+        "weekly_cycle_pct": 0.07142857142857142,
+        "window_seconds": 43200
+      },
+      {
+        "elapsed_days": 0.75,
+        "end_ts": "2024-07-01T18:00:00",
+        "is_horizon": false,
+        "look_days": 0.75,
+        "weekly_cycle_pct": 0.10714285714285714,
+        "window_seconds": 64800
+      },
+      {
+        "elapsed_days": 1.0,
+        "end_ts": "2024-07-02T00:00:00",
+        "is_horizon": false,
+        "look_days": 1.0,
+        "weekly_cycle_pct": 0.14285714285714285,
+        "window_seconds": 86400
+      },
+      {
+        "elapsed_days": 1.25,
+        "end_ts": "2024-07-02T06:00:00",
+        "is_horizon": false,
+        "look_days": 1.25,
+        "weekly_cycle_pct": 0.17857142857142858,
+        "window_seconds": 108000
+      },
+      {
+        "elapsed_days": 1.5,
+        "end_ts": "2024-07-02T12:00:00",
+        "is_horizon": false,
+        "look_days": 1.5,
+        "weekly_cycle_pct": 0.21428571428571427,
+        "window_seconds": 129600
+      },
+      {
+        "elapsed_days": 1.75,
+        "end_ts": "2024-07-02T18:00:00",
+        "is_horizon": false,
+        "look_days": 1.75,
+        "weekly_cycle_pct": 0.25,
+        "window_seconds": 151200
+      },
+      {
+        "elapsed_days": 2.0,
+        "end_ts": "2024-07-03T00:00:00",
+        "is_horizon": false,
+        "look_days": 2.0,
+        "weekly_cycle_pct": 0.2857142857142857,
+        "window_seconds": 172800
+      },
+      {
+        "elapsed_days": 2.25,
+        "end_ts": "2024-07-03T06:00:00",
+        "is_horizon": false,
+        "look_days": 2.25,
+        "weekly_cycle_pct": 0.32142857142857145,
+        "window_seconds": 194400
+      },
+      {
+        "elapsed_days": 2.5,
+        "end_ts": "2024-07-03T12:00:00",
+        "is_horizon": false,
+        "look_days": 2.5,
+        "weekly_cycle_pct": 0.35714285714285715,
+        "window_seconds": 216000
+      },
+      {
+        "elapsed_days": 2.75,
+        "end_ts": "2024-07-03T18:00:00",
+        "is_horizon": false,
+        "look_days": 2.75,
+        "weekly_cycle_pct": 0.39285714285714285,
+        "window_seconds": 237600
+      },
+      {
+        "elapsed_days": 3.0,
+        "end_ts": "2024-07-04T00:00:00",
+        "is_horizon": true,
+        "look_days": 3.0,
+        "weekly_cycle_pct": 0.42857142857142855,
+        "window_seconds": 259200
+      }
+    ],
+    "start_ts": "2024-07-01T00:00:00"
+  },
+  "sub_day_90m_moscow": {
+    "cuped_preperiod": {
+      "14d": [
+        "2024-06-16T21:00:00",
+        "2024-06-30T21:00:00"
+      ],
+      "7d": [
+        "2024-06-23T21:00:00",
+        "2024-06-30T21:00:00"
+      ]
+    },
+    "horizon_days": 2.0,
+    "horizon_seconds": 172800,
+    "horizon_ts": "2024-07-02T21:00:00",
+    "look_count": 32,
+    "looks": [
+      {
+        "elapsed_days": 0.0625,
+        "end_ts": "2024-06-30T22:30:00",
+        "is_horizon": false,
+        "look_days": 0.0625,
+        "weekly_cycle_pct": 0.008928571428571428,
+        "window_seconds": 5400
+      },
+      {
+        "elapsed_days": 0.125,
+        "end_ts": "2024-07-01T00:00:00",
+        "is_horizon": false,
+        "look_days": 0.125,
+        "weekly_cycle_pct": 0.017857142857142856,
+        "window_seconds": 10800
+      },
+      {
+        "elapsed_days": 0.1875,
+        "end_ts": "2024-07-01T01:30:00",
+        "is_horizon": false,
+        "look_days": 0.1875,
+        "weekly_cycle_pct": 0.026785714285714284,
+        "window_seconds": 16200
+      },
+      {
+        "elapsed_days": 0.25,
+        "end_ts": "2024-07-01T03:00:00",
+        "is_horizon": false,
+        "look_days": 0.25,
+        "weekly_cycle_pct": 0.03571428571428571,
+        "window_seconds": 21600
+      },
+      {
+        "elapsed_days": 0.3125,
+        "end_ts": "2024-07-01T04:30:00",
+        "is_horizon": false,
+        "look_days": 0.3125,
+        "weekly_cycle_pct": 0.044642857142857144,
+        "window_seconds": 27000
+      },
+      {
+        "elapsed_days": 0.375,
+        "end_ts": "2024-07-01T06:00:00",
+        "is_horizon": false,
+        "look_days": 0.375,
+        "weekly_cycle_pct": 0.05357142857142857,
+        "window_seconds": 32400
+      },
+      {
+        "elapsed_days": 0.4375,
+        "end_ts": "2024-07-01T07:30:00",
+        "is_horizon": false,
+        "look_days": 0.4375,
+        "weekly_cycle_pct": 0.0625,
+        "window_seconds": 37800
+      },
+      {
+        "elapsed_days": 0.5,
+        "end_ts": "2024-07-01T09:00:00",
+        "is_horizon": false,
+        "look_days": 0.5,
+        "weekly_cycle_pct": 0.07142857142857142,
+        "window_seconds": 43200
+      },
+      {
+        "elapsed_days": 0.5625,
+        "end_ts": "2024-07-01T10:30:00",
+        "is_horizon": false,
+        "look_days": 0.5625,
+        "weekly_cycle_pct": 0.08035714285714286,
+        "window_seconds": 48600
+      },
+      {
+        "elapsed_days": 0.625,
+        "end_ts": "2024-07-01T12:00:00",
+        "is_horizon": false,
+        "look_days": 0.625,
+        "weekly_cycle_pct": 0.08928571428571429,
+        "window_seconds": 54000
+      },
+      {
+        "elapsed_days": 0.6875,
+        "end_ts": "2024-07-01T13:30:00",
+        "is_horizon": false,
+        "look_days": 0.6875,
+        "weekly_cycle_pct": 0.09821428571428571,
+        "window_seconds": 59400
+      },
+      {
+        "elapsed_days": 0.75,
+        "end_ts": "2024-07-01T15:00:00",
+        "is_horizon": false,
+        "look_days": 0.75,
+        "weekly_cycle_pct": 0.10714285714285714,
+        "window_seconds": 64800
+      },
+      {
+        "elapsed_days": 0.8125,
+        "end_ts": "2024-07-01T16:30:00",
+        "is_horizon": false,
+        "look_days": 0.8125,
+        "weekly_cycle_pct": 0.11607142857142858,
+        "window_seconds": 70200
+      },
+      {
+        "elapsed_days": 0.875,
+        "end_ts": "2024-07-01T18:00:00",
+        "is_horizon": false,
+        "look_days": 0.875,
+        "weekly_cycle_pct": 0.125,
+        "window_seconds": 75600
+      },
+      {
+        "elapsed_days": 0.9375,
+        "end_ts": "2024-07-01T19:30:00",
+        "is_horizon": false,
+        "look_days": 0.9375,
+        "weekly_cycle_pct": 0.13392857142857142,
+        "window_seconds": 81000
+      },
+      {
+        "elapsed_days": 1.0,
+        "end_ts": "2024-07-01T21:00:00",
+        "is_horizon": false,
+        "look_days": 1.0,
+        "weekly_cycle_pct": 0.14285714285714285,
+        "window_seconds": 86400
+      },
+      {
+        "elapsed_days": 1.0625,
+        "end_ts": "2024-07-01T22:30:00",
+        "is_horizon": false,
+        "look_days": 1.0625,
+        "weekly_cycle_pct": 0.15178571428571427,
+        "window_seconds": 91800
+      },
+      {
+        "elapsed_days": 1.125,
+        "end_ts": "2024-07-02T00:00:00",
+        "is_horizon": false,
+        "look_days": 1.125,
+        "weekly_cycle_pct": 0.16071428571428573,
+        "window_seconds": 97200
+      },
+      {
+        "elapsed_days": 1.1875,
+        "end_ts": "2024-07-02T01:30:00",
+        "is_horizon": false,
+        "look_days": 1.1875,
+        "weekly_cycle_pct": 0.16964285714285715,
+        "window_seconds": 102600
+      },
+      {
+        "elapsed_days": 1.25,
+        "end_ts": "2024-07-02T03:00:00",
+        "is_horizon": false,
+        "look_days": 1.25,
+        "weekly_cycle_pct": 0.17857142857142858,
+        "window_seconds": 108000
+      },
+      {
+        "elapsed_days": 1.3125,
+        "end_ts": "2024-07-02T04:30:00",
+        "is_horizon": false,
+        "look_days": 1.3125,
+        "weekly_cycle_pct": 0.1875,
+        "window_seconds": 113400
+      },
+      {
+        "elapsed_days": 1.375,
+        "end_ts": "2024-07-02T06:00:00",
+        "is_horizon": false,
+        "look_days": 1.375,
+        "weekly_cycle_pct": 0.19642857142857142,
+        "window_seconds": 118800
+      },
+      {
+        "elapsed_days": 1.4375,
+        "end_ts": "2024-07-02T07:30:00",
+        "is_horizon": false,
+        "look_days": 1.4375,
+        "weekly_cycle_pct": 0.20535714285714285,
+        "window_seconds": 124200
+      },
+      {
+        "elapsed_days": 1.5,
+        "end_ts": "2024-07-02T09:00:00",
+        "is_horizon": false,
+        "look_days": 1.5,
+        "weekly_cycle_pct": 0.21428571428571427,
+        "window_seconds": 129600
+      },
+      {
+        "elapsed_days": 1.5625,
+        "end_ts": "2024-07-02T10:30:00",
+        "is_horizon": false,
+        "look_days": 1.5625,
+        "weekly_cycle_pct": 0.22321428571428573,
+        "window_seconds": 135000
+      },
+      {
+        "elapsed_days": 1.625,
+        "end_ts": "2024-07-02T12:00:00",
+        "is_horizon": false,
+        "look_days": 1.625,
+        "weekly_cycle_pct": 0.23214285714285715,
+        "window_seconds": 140400
+      },
+      {
+        "elapsed_days": 1.6875,
+        "end_ts": "2024-07-02T13:30:00",
+        "is_horizon": false,
+        "look_days": 1.6875,
+        "weekly_cycle_pct": 0.24107142857142858,
+        "window_seconds": 145800
+      },
+      {
+        "elapsed_days": 1.75,
+        "end_ts": "2024-07-02T15:00:00",
+        "is_horizon": false,
+        "look_days": 1.75,
+        "weekly_cycle_pct": 0.25,
+        "window_seconds": 151200
+      },
+      {
+        "elapsed_days": 1.8125,
+        "end_ts": "2024-07-02T16:30:00",
+        "is_horizon": false,
+        "look_days": 1.8125,
+        "weekly_cycle_pct": 0.25892857142857145,
+        "window_seconds": 156600
+      },
+      {
+        "elapsed_days": 1.875,
+        "end_ts": "2024-07-02T18:00:00",
+        "is_horizon": false,
+        "look_days": 1.875,
+        "weekly_cycle_pct": 0.26785714285714285,
+        "window_seconds": 162000
+      },
+      {
+        "elapsed_days": 1.9375,
+        "end_ts": "2024-07-02T19:30:00",
+        "is_horizon": false,
+        "look_days": 1.9375,
+        "weekly_cycle_pct": 0.2767857142857143,
+        "window_seconds": 167400
+      },
+      {
+        "elapsed_days": 2.0,
+        "end_ts": "2024-07-02T21:00:00",
+        "is_horizon": true,
+        "look_days": 2.0,
+        "weekly_cycle_pct": 0.2857142857142857,
+        "window_seconds": 172800
+      }
+    ],
+    "start_ts": "2024-06-30T21:00:00"
+  },
+  "weekly_utc": {
+    "cuped_preperiod": {
+      "14d": [
+        "2024-05-18T00:00:00",
+        "2024-06-01T00:00:00"
+      ],
+      "7d": [
+        "2024-05-25T00:00:00",
+        "2024-06-01T00:00:00"
+      ]
+    },
+    "horizon_days": 61.0,
+    "horizon_seconds": 5270400,
+    "horizon_ts": "2024-08-01T00:00:00",
+    "look_count": 9,
+    "looks": [
+      {
+        "elapsed_days": 7.0,
+        "end_ts": "2024-06-08T00:00:00",
+        "is_horizon": false,
+        "look_days": 7.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 604800
+      },
+      {
+        "elapsed_days": 14.0,
+        "end_ts": "2024-06-15T00:00:00",
+        "is_horizon": false,
+        "look_days": 14.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 1209600
+      },
+      {
+        "elapsed_days": 21.0,
+        "end_ts": "2024-06-22T00:00:00",
+        "is_horizon": false,
+        "look_days": 21.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 1814400
+      },
+      {
+        "elapsed_days": 28.0,
+        "end_ts": "2024-06-29T00:00:00",
+        "is_horizon": false,
+        "look_days": 28.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 2419200
+      },
+      {
+        "elapsed_days": 35.0,
+        "end_ts": "2024-07-06T00:00:00",
+        "is_horizon": false,
+        "look_days": 35.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 3024000
+      },
+      {
+        "elapsed_days": 42.0,
+        "end_ts": "2024-07-13T00:00:00",
+        "is_horizon": false,
+        "look_days": 42.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 3628800
+      },
+      {
+        "elapsed_days": 49.0,
+        "end_ts": "2024-07-20T00:00:00",
+        "is_horizon": false,
+        "look_days": 49.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 4233600
+      },
+      {
+        "elapsed_days": 56.0,
+        "end_ts": "2024-07-27T00:00:00",
+        "is_horizon": false,
+        "look_days": 56.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 4838400
+      },
+      {
+        "elapsed_days": 61.0,
+        "end_ts": "2024-08-01T00:00:00",
+        "is_horizon": true,
+        "look_days": 61.0,
+        "weekly_cycle_pct": null,
+        "window_seconds": 5270400
+      }
+    ],
+    "start_ts": "2024-06-01T00:00:00"
+  }
+}

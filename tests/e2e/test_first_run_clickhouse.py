@@ -223,6 +223,114 @@ def test_pre_m9_install_migrates_and_the_additive_path_reconciles(
     assert "DIVERGED" not in verify.output
 
 
+def _live_column_types(client, table: str) -> dict[str, str]:
+    rows = client.execute(
+        "SELECT name, type FROM system.columns "
+        "WHERE database = 'abkit_internal' AND table = %(t)s",
+        {"t": table},
+    )
+    return dict(rows)
+
+
+def test_m10_window_schema_on_a_real_server(clickhouse, tmp_path, monkeypatch):
+    """The M10 exit gate's leg 3 (§3(3)), the half only real DDL can settle.
+
+    The in-memory fake stores column NAMES only, so "widened to
+    ``DateTime64(3)``" is unprovable there — and a create-time type is exactly
+    what a breaking schema change gets wrong. Everything else about the two
+    breaks (names present/absent, the drop-and-recreate remedy on the terminal,
+    no shipped text naming the dropped columns) is pinned without Docker in
+    ``test_sub_day_anchors_and_explore.py`` and ``tests/docs``.
+    """
+    _, client, _ = _prepare_project(clickhouse, tmp_path, monkeypatch, "demo_m10")
+
+    result = runner.invoke(cli_group(), ["run", "--select", "example_signup_test"])
+    assert result.exit_code == 0, result.output
+
+    # ── WP3: the two derived Date columns are gone from the results table…
+    results = _live_column_types(client, "_ab_results")
+    assert results, "the results table was not created"
+    assert "start_date" not in results
+    assert "end_date" not in results
+    # …and the instants that replace them are what BI groups by
+    assert results["start_ts"].startswith("DateTime64(3")
+    assert results["end_ts"].startswith("DateTime64(3")
+
+    # ── WP1/WP2: the catalog window is renamed AND widened, with the anchor
+    catalog = _live_column_types(client, "_ab_experiments")
+    assert "start_date" not in catalog
+    assert "end_date" not in catalog
+    assert catalog["start_ts"].startswith("DateTime64(3"), catalog["start_ts"]
+    assert catalog["horizon_ts"].startswith("DateTime64(3"), catalog["horizon_ts"]
+    assert catalog["interval_anchor"] == "String"
+
+    # the resolved window really round-trips through the widened columns (the
+    # scaffold's UTC midnight edges, stored in naive UTC like `_ab_results`)
+    window = client.execute(
+        "SELECT start_ts, horizon_ts, interval_anchor FROM abkit_internal._ab_experiments FINAL "
+        "WHERE experiment = 'example_signup_test'"
+    )
+    assert len(window) == 1
+    start_ts, horizon_ts, anchor = window[0]
+    assert start_ts.replace(tzinfo=None) == datetime(2024, 7, 1)
+    assert horizon_ts.replace(tzinfo=None) == datetime(2024, 7, 15)
+    assert anchor == "midnight"
+
+
+def test_a_pre_m10_catalog_refuses_to_migrate_and_names_the_remedy(
+    clickhouse, tmp_path, monkeypatch
+):
+    """A TYPE change is not auto-migratable: ``ensure_columns`` is ADD-only, so
+    an install carrying the pre-M10 ``start_date``/``end_date`` ``Date`` columns
+    must stop with the drop-and-recreate remedy — on the terminal, not as a
+    traceback — rather than half-migrate or write into the wrong shape.
+    """
+    from abkit.core.models import ColumnDefinition, TableModel
+    from abkit.database.clickhouse_manager import ClickHouseDatabaseManager
+    from abkit.database.tables import get_experiments_table_model
+
+    _, client, conn = _prepare_project(clickhouse, tmp_path, monkeypatch, "demo_m10_stale")
+
+    current = get_experiments_table_model()
+    renamed = {"start_ts", "horizon_ts", "interval_anchor"}
+    columns = []
+    for column in current.columns:
+        if column.name in renamed:
+            continue
+        columns.append(column)
+        if column.name == "is_actual":
+            columns += [
+                ColumnDefinition("start_date", "Date"),
+                ColumnDefinition("end_date", "Date"),
+            ]
+    manager = ClickHouseDatabaseManager(
+        **conn, internal_database="abkit_internal", data_database="analytics"
+    )
+    try:
+        manager.create_table(
+            "abkit_internal._ab_experiments",
+            TableModel(
+                columns=columns,
+                primary_key=current.primary_key,
+                engine=current.engine,
+                order_by=current.order_by,
+                indexes=current.indexes,
+                version_column=current.version_column,
+            ),
+        )
+    finally:
+        manager.close()
+    assert "start_date" in _live_columns(client, "_ab_experiments")
+
+    result = runner.invoke(cli_group(), ["run", "--select", "example_signup_test"])
+    assert result.exit_code == 1
+    assert "drop and recreate" in result.output.lower()
+    assert "DROP TABLE abkit_internal._ab_experiments" in result.output
+    # refused, not half-applied: the stale table is untouched
+    live = _live_columns(client, "_ab_experiments")
+    assert "start_date" in live and "start_ts" not in live
+
+
 def cli_group():
     from abkit.cli.main import cli
 

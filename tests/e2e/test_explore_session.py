@@ -49,10 +49,18 @@ def scaffolded(tmp_path, monkeypatch):
     return warehouse
 
 
-def http(url: str, payload: dict):
+def http(url: str, payload: dict, timeout: float = 10):
+    """One request; returns ``(status, parsed-or-text)`` without raising.
+
+    A transport failure (connection refused/reset) comes back as
+    ``(0, "transport: …")`` like the tuning-suite helper: raised inside a
+    thread it would vanish into a stack trace and leave the caller asserting
+    on a reply COUNT with no clue why one is missing (the m10 WP5 round-2
+    lesson).
+    """
     request = urllib.request.Request(url, data=json.dumps(payload).encode(), method="POST")
     try:
-        with urllib.request.urlopen(request, timeout=10) as resp:
+        with urllib.request.urlopen(request, timeout=timeout) as resp:
             body = resp.read().decode()
             return resp.status, json.loads(body) if body.startswith("{") else body
     except urllib.error.HTTPError as exc:
@@ -61,6 +69,8 @@ def http(url: str, payload: dict):
             return exc.code, json.loads(body)
         except ValueError:
             return exc.code, body
+    except (urllib.error.URLError, OSError) as exc:  # refused/reset/timed out
+        return 0, f"transport: {exc!r}"
 
 
 class Served:

@@ -29,7 +29,13 @@ def run_unlock(select: tuple[str, ...], profile: str | None) -> None:
     manager = context.manager_factory(profile)()
     try:
         tables = InternalTablesManager(manager)
-        tables.ensure_tables()
+        try:
+            tables.ensure_tables()
+        except Exception as exc:
+            # The breaking-release schema guard names a drop-and-recreate
+            # remedy; a traceback would bury it (`abk run` does the same).
+            echo_error("unlock", str(exc))
+            raise SystemExit(1) from exc
 
         cleared = 0
         errors = 0

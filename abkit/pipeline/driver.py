@@ -207,7 +207,20 @@ def run_experiment(
         outcome.status = "skipped"
         return outcome
 
-    tables.ensure_tables()
+    try:
+        tables.ensure_tables()
+    except Exception as exc:
+        # Before the lock exists, so this cannot go through the main handler
+        # below — and it must NOT escape as a traceback: the one failure a
+        # real operator hits here is the breaking-release schema guard
+        # (``ensure_columns`` refusing a NOT-NULL add), whose whole value is
+        # the drop-and-recreate remedy it names. Click's standalone mode would
+        # print a stack trace and bury it (the M7 WP6 lesson: a message the
+        # user must read has to be echoed as a CLI line).
+        outcome.status = STATUS_FAILED
+        outcome.error = f"{type(exc).__name__}: {exc}"
+        return outcome
+
     timeout = project.timeouts.compute
     if not tables.acquire_lock(
         experiment.name, LOCK_SCOPE, LOCK_PROCESS, timeout_seconds=timeout, force=force
