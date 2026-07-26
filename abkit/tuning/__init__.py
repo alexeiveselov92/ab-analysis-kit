@@ -5,6 +5,10 @@ Tier-S per-unit cache, D2); ``recompute`` answers knob changes from it
 (Tiers E/α/S/R, D1) and carries the calibration lookup (D3). The localhost
 server (WP6) and ``abk explore`` (WP8) bind these; nothing here touches the
 DB after session load.
+
+``jobs`` joins them for the ``abk dashboard`` cockpit
+(m11-implementation-plan.md DASH-1): a subprocess registry, sharing only this
+package — it has no session, no DB and no statistics of its own.
 """
 
 from abkit.tuning.config_writer import (
@@ -14,6 +18,7 @@ from abkit.tuning.config_writer import (
     apply_tuned_config,
 )
 from abkit.tuning.html import render_explore_html
+from abkit.tuning.jobs import Job, JobManager
 from abkit.tuning.payload import build_explore_payload
 from abkit.tuning.recompute import (
     CalibrationStatus,
@@ -42,6 +47,8 @@ __all__ = [
     "ComparisonSeries",
     "ExplorePoint",
     "ExploreSession",
+    "Job",
+    "JobManager",
     "KnobState",
     "OrphanedSeries",
     "PairRecompute",

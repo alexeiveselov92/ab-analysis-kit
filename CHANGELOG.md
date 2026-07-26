@@ -11,6 +11,24 @@ recorded here alongside an `ALGORITHM_VERSION` bump and a
 [`statistics-changes.md`](docs/specs/statistics-changes.md) entry (never a silent
 number change).
 
+## [Unreleased]
+
+### Added
+- **M11 DASH-1 — the dashboard's subprocess registry (`abkit/tuning/jobs.py`).**
+  Groundwork for `abk dashboard` (M11, `0.6.0`): an in-memory registry that
+  spawns the real `abk` CLI as a subprocess and pumps its merged output into a
+  pollable line buffer. **No user-facing surface yet** — nothing imports it
+  outside its own tests until the dashboard server lands (DASH-3/DASH-4), and
+  no statistical number moves (it reads no results and computes nothing).
+  Three deliberate deviations from the donor port it is based on: the job-kind
+  vocabulary is abkit's (`run`/`unlock`/`clean`/`explore`, with `explore`
+  outside the one-at-a-time gate but deduped per experiment) and **both spawn
+  entry points validate against it** rather than accepting any string; the
+  dedup key is a purpose-built `Job.experiment` field; and `wait_for_line`
+  counts absolute line indices, so a job chattier than the 5000-line buffer cap
+  before it prints the awaited line is still matched instead of failing at its
+  timeout.
+
 ## [0.5.0] - 2026-07-26
 
 ### Changed
