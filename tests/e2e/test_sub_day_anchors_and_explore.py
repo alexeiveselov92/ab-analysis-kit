@@ -538,6 +538,9 @@ class TestSubDayStart:
             "example_signup_cr": "failed",  # the pre-existing fraction defect
         }, statuses
         assert "well-calibrated" in result.output
+        # the REASON too, not just the status: a different failure with the same
+        # status would otherwise let this test pass while its docstring lied
+        assert "fraction input_kind requires an nobs (trials) array" in result.output
 
     def test_day_state_materializes_every_closed_day_of_a_sub_day_series(
         self, tmp_path, monkeypatch
@@ -594,8 +597,13 @@ class TestSubDayStart:
 
         result = runner.invoke(cli, ["run", "--select", SUB_DAY_EXP])
         assert result.exit_code == 0, result.output
+        # the ENGINE ran (direct mode never writes this table at all, and the
+        # round-trip line names the origin the fix moved)
+        assert "cohort copy from 2024-07-01 00:00:00" in result.output, result.output
+        assert "+600 units" in result.output
         persisted = warehouse._rows.get("_ab_exposures", [])
         assert len(persisted) == 600, f"the copy dropped {600 - len(persisted)} unit(s)"
+        assert len({row["unit_id"] for row in persisted}) == 600, "duplicated units"
         # the exposures it copied really do precede the start instant
         assert EXPOSURE_TS < datetime(2024, 7, 1, 9, 0)
 

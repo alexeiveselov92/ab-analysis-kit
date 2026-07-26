@@ -2101,3 +2101,62 @@ to the committed fixture (identical, every case, every field) — the gate reall
 does compare against a different code path; and the D6 port is the correct
 translation of "the same window", proven from the pre-m10 planner's own
 `horizon_ts = tz_midnight_utc(end_date + 1d)` rather than from prose.
+
+### Exit gate round 2 — the round-1 fixes attacked in turn
+
+**Disclosure first: round 2's four-lens fleet died before returning anything.**
+All four agents failed on the org's monthly spend limit (`agents_error: 4`,
+zero results) after ~180 tool calls of work. An empty workflow result is not a
+clean review — this project has recorded that lesson once already — so round 2
+was executed directly instead, against the same four attack lists the lenses
+carried. That makes it a self-review rather than an independent one, which is
+weaker on exactly the axis rounds 1 and 2 exist to cover, and is recorded here
+as a deviation rather than papered over. Every claim below is a command that ran.
+
+**The new LAW survived its sharpest attack.** Round 1 replaced the "±1h across
+DST" waiver list with "the delta equals the UTC-offset change between the
+window's LOCAL edges". The obvious way to break that is PEP 495: an edge landing
+in a local hour that is AMBIGUOUS (a fall-back repeat) or in a GAP (a
+spring-forward skip), where "the offset at that local time" is not a function.
+Four such windows were measured (start in the gap, horizon in the gap, start in
+the ambiguous hour, horizon in it) and the law held for all four — because it
+reads the offset through the same `replace(tzinfo=zone)` mechanism
+`resolve_instant()` uses, so the two cannot disagree by construction. A wrong
+story about DST was replaced by one that is true for the same reason the code is.
+
+**Six gates re-verified by mutation or probe**, each a claim round 1 made:
+
+| Probe | Result |
+|---|---|
+| `raise` in `abk plan`'s post-baseline sizing path | `test_plan_accepts_a_timestamped_start` FAILS — the sizing math really executes now (before round 1 it only ran the SKIPPED-no-baseline branch) |
+| `raise` in the worker-pool bootstrap branch | `test_the_worker_pool_path_names_the_remedy_too` FAILS — the test really takes the pool path, not the serial one |
+| drop a SECOND look from the Apia case | `test_the_only_grid_that_moved_is_a_start_on_a_skipped_local_day` FAILS — the `continue` that excuses that case from the byte-identity loop hides nothing else about it |
+| force a PARTIAL fallback (delete one state day, re-plan) | the driver prints `incremental read fell back to full recompute — state through 2024-07-02, cutoffs need closed days through 2024-07-03`, so leg 2's output grep is a real guard. This mattered: `_fallback` is INTERNAL to `load_cutoff`, so the call counter alone would NOT have caught a partial fallback |
+| rename guard against 5 payload shapes | both-old-keys, old+new mixed, old keys set to `None`, a valid config and a non-dict payload all behave correctly; every stale key present is named |
+| copy origin across 6 knob combinations | `batch_interval: 1d` and `7d`, `maturity_delay: 2h`, `Europe/Moscow` (day floor 14h before the start), a 23:30 start, and a re-run: 600 units every time, and the re-run stays 600 — append-only, no duplicates |
+
+**Two gaps found and closed in round 2 itself:**
+
+1. `test_validate_accepts_a_timestamped_start` pinned the fraction cell's
+   *status* but not its *reason*, so a different failure with the same status
+   would have let the test pass while its own docstring lied about why. The
+   reason string is now asserted.
+2. `test_copy_mode_still_copies_the_whole_opening_day` asserted the row count
+   without proving the copy ENGINE produced it. It now asserts the round-trip log
+   line (which names the origin the fix moved) and that the 600 units are
+   distinct — a duplicated copy would otherwise have satisfied the count.
+
+**Cleared, with the check that cleared it:** the `http()` helper's transport
+sentinel cannot mask a failure (all 8 call sites in `test_explore_session.py`
+assert `status == 200` or `== 409`, never a negation); the three window shapes
+round 1 added are non-degenerate and land where intended (39/13/8 looks, and
+`whole_day_until_across_dst` visibly holds local 00:00 across the fall-back:
+`…04:00` before, `…05:00` UTC after); the `_ab_experiments` catalog really is an
+Ordinary `MergeTree` with no version column and abkit's own reader uses no FINAL;
+and the tzdata claim in the round-1 record was re-derived by enumerating every
+zone over 1970–2036 rather than trusted (3 dates, 7 zone entries with aliases).
+
+**Final state:** 2 369 passed, 6 skipped; mypy 111 = `main`'s baseline;
+`ALGORITHM_VERSION` grep over the diff empty; `tests/golden` untouched;
+`__version__ = 0.5.0` matching the CHANGELOG heading, with `0.4.0` the latest on
+PyPI and `v0.5.0` deliberately untagged (the maintainer's step).
