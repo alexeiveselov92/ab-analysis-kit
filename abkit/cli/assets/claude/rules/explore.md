@@ -71,6 +71,13 @@ The one session-load pass at startup (lock-free, read-only) fills a **bounded**
 Tier-S cache. Over budget ⇒ honest suffstats-only degradation (a smaller live
 surface), never a silently partial cache.
 
+Since 0.5.0 an **alpha drag over a bootstrap series redraws nothing**: the
+replicates are alpha-free, so they are drawn once per (metric, arm pair,
+cutoff, method, resolved params) and the percentile CI is re-derived per alpha.
+Same replicates ⇒ same numbers (a cache, not an approximation); a `Reload`
+of a cutoff discards them, and any knob that feeds the draw itself
+(`n_samples`, `stat`, `stratify`, …) is a new draw.
+
 ## Calibration is always visible; Apply is gated
 
 - The **A/A real-α chip** lives in the cockpit, never a separate screen. It keys

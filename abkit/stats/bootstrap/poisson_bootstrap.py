@@ -17,7 +17,11 @@ from __future__ import annotations
 
 from abkit.stats.base import require_pair_type
 from abkit.stats.bootstrap.applier import stat_point
-from abkit.stats.bootstrap.bootstrap import BOOTSTRAP_PARAM_SPECS, BaseBootstrapMethod
+from abkit.stats.bootstrap.bootstrap import (
+    BOOTSTRAP_PARAM_SPECS,
+    BaseBootstrapMethod,
+    ResampleOutcome,
+)
 from abkit.stats.bootstrap.engine import (
     poisson_bootstrap_means,
     poisson_unit_scale,
@@ -25,7 +29,6 @@ from abkit.stats.bootstrap.engine import (
 )
 from abkit.stats.exceptions import MethodParamError
 from abkit.stats.registry import register
-from abkit.stats.result import TestResult
 from abkit.stats.samples import Sample
 
 #: Poisson stratification uses the 1/count unit scale, never ``weight_method`` —
@@ -49,7 +52,7 @@ class PoissonBootstrapTest(BaseBootstrapMethod):
                 f"{self.params['stat']!r}"
             )
 
-    def from_samples(self, sample_1: Sample, sample_2: Sample) -> TestResult:
+    def _resample(self, sample_1: Sample, sample_2: Sample) -> ResampleOutcome:
         require_pair_type(self.name, sample_1, sample_2, Sample)
         scale_1 = scale_2 = None
         if bool(self.params["stratify"]):
@@ -70,8 +73,8 @@ class PoissonBootstrapTest(BaseBootstrapMethod):
         value_1 = stat_point(sample_1.array, self._stat)
         value_2 = stat_point(sample_2.array, self._stat)
         effect = self._point_effect(value_1, value_2, result_warnings)
-        return self._finalize(
-            sample_1, sample_2, boot_data, effect, result_warnings, value_1=value_1, value_2=value_2
+        return ResampleOutcome(
+            boot_data, effect, tuple(result_warnings), value_1=value_1, value_2=value_2
         )
 
 
@@ -87,7 +90,7 @@ class PairedPoissonBootstrapTest(PoissonBootstrapTest):
     name = "paired-poisson-bootstrap"
     is_paired = True
 
-    def from_samples(self, sample_1: Sample, sample_2: Sample) -> TestResult:
+    def _resample(self, sample_1: Sample, sample_2: Sample) -> ResampleOutcome:
         require_pair_type(self.name, sample_1, sample_2, Sample)
         self._validate_paired(sample_1, sample_2)
         scale = None
@@ -107,6 +110,6 @@ class PairedPoissonBootstrapTest(PoissonBootstrapTest):
         value_1 = stat_point(sample_1.array, self._stat)
         value_2 = stat_point(sample_2.array, self._stat)
         effect = self._point_effect(value_1, value_2, result_warnings)
-        return self._finalize(
-            sample_1, sample_2, boot_data, effect, result_warnings, value_1=value_1, value_2=value_2
+        return ResampleOutcome(
+            boot_data, effect, tuple(result_warnings), value_1=value_1, value_2=value_2
         )

@@ -14,17 +14,22 @@ calibration lookup states. The warehouse harness lives in
 
 from __future__ import annotations
 
+import contextlib
+import itertools
 import json
-from datetime import datetime
+import threading
+from datetime import datetime, timedelta
 
 import pytest
 from synthetic_ab import (
     METRICS,
     PROJECT,
+    START,
     SyntheticWarehouse,
     assert_close,
     build_engine,
     build_session,
+    experiment_payload,
     make_experiment,
     persisted,
     run_pipeline,
@@ -33,14 +38,18 @@ from synthetic_ab import (
 )
 
 from abkit.config import ProjectConfig
+from abkit.config.experiment_config import ExperimentConfig
 from abkit.config.method_config import MethodConfig
+from abkit.config.metric_config import MetricConfig
 from abkit.database.internal_tables import InternalTablesManager
 from abkit.stats import (
     MethodParamError,
     QuarantinedMethodError,
     UnknownMethodError,
+    create_method,
     get_method_class,
 )
+from abkit.stats.bootstrap import BaseBootstrapMethod, BootstrapTest
 from abkit.tuning import (
     KnobState,
     RecomputeEngine,
@@ -49,6 +58,7 @@ from abkit.tuning import (
     resolve_fpr_budget,
 )
 from abkit.tuning.recompute import alpha_knob_tier, classify_knob
+from abkit.tuning.session import BOOT_MEMO_ENTRY_OVERHEAD
 
 
 @pytest.fixture
@@ -1086,3 +1096,740 @@ class TestDemotedRows:
         # chips must not pretend an all-demoted series carries inference
         assert result.pairs[0].chips["lift"] is None
         assert "no recomputable" in result.pairs[0].chips["power_note"]
+
+
+# ── m10 WP5: the bootstrap resample memo ─────────────────────────────────────
+#
+# One knob-drag over alpha re-answers the WHOLE series per request, and for a
+# bootstrap comparison every request redrew every replicate. The draw is now
+# memoized per (metric, pair, cutoff, cache generation, method, resolved
+# params) — everything it is a function of, alpha excluded. These gates are the
+# two halves of that claim: the numbers are the un-memoized ones, and the
+# entries a reload (or a colliding key) must NOT serve are never served.
+
+
+def _resample_spy(monkeypatch):
+    """Count ``_resample`` calls on the plain bootstrap class."""
+    calls: list[tuple] = []
+    original = BootstrapTest._resample
+
+    def counting(self, sample_1, sample_2):
+        calls.append((sample_1.name, sample_2.name, sample_1.sample_size))
+        return original(self, sample_1, sample_2)
+
+    monkeypatch.setattr(BootstrapTest, "_resample", counting)
+    return calls
+
+
+def _tiny_memo():
+    """A minimal memo entry — only its size matters to the budget."""
+    import numpy as np
+
+    from abkit.stats.bootstrap import ResampleOutcome
+    from abkit.tuning.session import BootMemoEntry
+
+    return BootMemoEntry(outcome=ResampleOutcome(np.zeros(8), 0.0, ()), caught=(), values=8)
+
+
+def _point_numbers(point) -> tuple:
+    return (
+        point.effect,
+        point.left_bound,
+        point.right_bound,
+        point.pvalue,
+        point.reject,
+        tuple(point.warnings),
+        point.tier,
+    )
+
+
+def _scaled_entry(loaded, factor: float, variant: str = "treatment"):
+    """A copy of one cached cutoff with ONE arm scaled — a "reload" that moves
+    the numbers unambiguously.
+
+    Scaling both arms would not: these are RELATIVE comparisons, so a common
+    factor cancels out of the effect and the percentile bounds, leaving only a
+    last-ULP difference — a test that "passes" on rounding noise.
+    """
+    import numpy as np
+
+    from abkit.loaders.metric_loader import MetricLoadResult
+
+    return MetricLoadResult(
+        metric=loaded.metric,
+        units_by_variant={v: np.array(u) for v, u in loaded.units_by_variant.items()},
+        roles_by_variant={
+            name: {
+                role: np.asarray(arr) * (factor if name == variant else 1.0)
+                for role, arr in roles.items()
+            }
+            for name, roles in loaded.roles_by_variant.items()
+        },
+        strata_by_variant=dict(loaded.strata_by_variant),
+    )
+
+
+ALPHAS = (0.01, 0.02, 0.05, 0.1, 0.2)
+
+
+@contextlib.contextmanager
+def _memo_disabled(method_name: str):
+    """Run the engine down its verbatim ``_compare`` path for one method.
+
+    The dispatcher gates on ``supports_resample_memo``, so clearing the flag is
+    what makes the baseline a genuinely DIFFERENT code path (``compare_pair`` ->
+    ``from_samples``) instead of the same memo code over an empty cache.
+    """
+    method_cls = get_method_class(method_name)
+    original = method_cls.supports_resample_memo
+    method_cls.supports_resample_memo = False  # type: ignore[misc]
+    try:
+        yield
+    finally:
+        method_cls.supports_resample_memo = original  # type: ignore[misc]
+
+
+#: A SECOND sample-typed metric over a different fact table — the fixture the
+#: cross-metric collision gate needs (both metrics must be bootstrap-eligible,
+#: i.e. type "sample", with genuinely different per-unit data).
+CLICKS_SAMPLE = MetricConfig.model_validate(
+    {
+        "name": "clicks",
+        "type": "sample",
+        "columns": {"variant": "variant", "value": "clicks"},
+        "query": (
+            "{% import 'abkit_assignment.jinja' as ab %}\n"
+            "SELECT {{ ab.variant_col() }} AS variant, user_id, sum(clicks) AS clicks "
+            "FROM {{ data_database }}.user_engagement {{ ab.exposed_units() }} "
+            "GROUP BY variant, user_id"
+        ),
+    }
+)
+
+
+def _two_sample_metrics_experiment(name: str):
+    """One experiment comparing TWO sample metrics under the SAME method."""
+    payload = experiment_payload(name, "arpu", BOOTSTRAP)
+    payload["comparisons"].append(
+        {"metric": "clicks", "is_main_metric": False, "method": BOOTSTRAP}
+    )
+    return ExperimentConfig.model_validate(payload)
+
+
+def _three_arm_warehouse():
+    """control/treatment/treatment2 — three pairs at every cutoff.
+
+    120 units per arm: below ``min_units_per_arm`` (100) every row is demoted to
+    ``insufficient_data`` and passes through as a baseline point, so Tier S —
+    the thing under test — never runs.
+    """
+    wh = SyntheticWarehouse()
+    for i in range(120):
+        wh.cohort.append((f"c{i:03d}", "control", START + timedelta(hours=1)))
+        wh.cohort.append((f"t{i:03d}", "treatment", START + timedelta(hours=1)))
+        wh.cohort.append((f"x{i:03d}", "treatment2", START + timedelta(hours=1)))
+    seed_all_events(wh)
+    return wh
+
+
+def _three_arm_experiment(name: str):
+    payload = experiment_payload(name, "arpu", BOOTSTRAP)
+    payload["assignment"]["variants"] = ["control", "treatment", "treatment2"]
+    payload["assignment"]["expected_split"] = {
+        "control": 1 / 3,
+        "treatment": 1 / 3,
+        "treatment2": 1 / 3,
+    }
+    return ExperimentConfig.model_validate(payload)
+
+
+class TestBootstrapMemo:
+    def test_five_alphas_reproduce_the_unmemoized_numbers_exactly(
+        self, warehouse, tables, monkeypatch
+    ):
+        """The parity gate: the memo path vs the verbatim ``compare_pair`` path,
+        byte for byte, at five alphas."""
+        experiment = make_experiment("exp_memo_parity", "arpu", BOOTSTRAP)
+        run_pipeline(warehouse, tables, experiment)
+
+        # The baseline must be a DIFFERENT code path, not the same one with an
+        # empty cache (review round 1): monkeypatching the capability flag off
+        # sends the engine down the verbatim `_compare` -> `compare_pair` ->
+        # `from_samples` route the pipeline itself uses. `boot_memo_budget = 0`
+        # is also exercised below, but as the refusal path, not as the oracle.
+        plain = build_engine(warehouse, tables, experiment)
+        monkeypatch.setattr(BootstrapTest, "supports_resample_memo", False)
+        memoized = build_engine(warehouse, tables, experiment)
+
+        expected_by_alpha = {}
+        for alpha in ALPHAS:
+            knobs = KnobState("bootstrap", BOOTSTRAP["params"], alpha=alpha)
+            expected_by_alpha[alpha] = [
+                _point_numbers(p) for p in plain.recompute("arpu", knobs).pairs[0].points
+            ]
+        assert plain._session.memoized_count() == 0  # the baseline never memoized
+        monkeypatch.undo()  # the memo path is back on for `memoized`
+
+        for alpha in ALPHAS:
+            knobs = KnobState("bootstrap", BOOTSTRAP["params"], alpha=alpha)
+            actual = memoized.recompute("arpu", knobs).pairs[0].points
+            assert len(actual) == 4
+            for want, got in zip(expected_by_alpha[alpha], actual, strict=True):
+                assert want == _point_numbers(got), f"alpha={alpha}"
+        assert memoized._session.memoized_count() == 4
+
+    def test_the_memo_matches_the_unmemoized_engine_across_the_whole_knob_matrix(
+        self, warehouse, tables
+    ):
+        """The parity gate widened from one knob state to a matrix.
+
+        Three bootstrap families x stat x pvalue_kind x test_type x four alphas,
+        against the same engine with the memo refused. The configured method is
+        CUPED so the Tier-S cache carries a covariate role — otherwise
+        ``post-normed-bootstrap`` produces no points and its column is vacuous.
+        """
+        import itertools
+
+        configured = {
+            "name": "cuped-t-test",
+            "params": {"test_type": "relative", "covariate_lookback": "7d"},
+        }
+        experiment = make_experiment("exp_memo_matrix", "arpu", configured)
+        run_pipeline(warehouse, tables, experiment)
+        plain = build_engine(warehouse, tables, experiment)
+        memoized = build_engine(warehouse, tables, experiment)
+
+        compared = 0
+        for method, stat, kind, test_type in itertools.product(
+            ("bootstrap", "poisson-bootstrap", "post-normed-bootstrap"),
+            ("mean", "median"),
+            ("sign", "plugin"),
+            ("relative", "absolute"),
+        ):
+            if method == "poisson-bootstrap" and stat != "mean":
+                continue  # H7: the Poisson engine is mean-only
+            if method == "post-normed-bootstrap" and test_type == "absolute":
+                continue  # quarantined branch
+            params = {"test_type": test_type, "n_samples": 64, "pvalue_kind": kind}
+            if method != "poisson-bootstrap":
+                params["stat"] = stat
+            for alpha in (0.3, 0.05, 0.011, 0.2):
+                knobs = KnobState(method, params, alpha=alpha)
+                # the oracle runs with the capability OFF — the verbatim
+                # compare_pair path, not the same memo code over an empty cache
+                with _memo_disabled(method):
+                    expected = [
+                        _point_numbers(p) for p in plain.recompute("arpu", knobs).pairs[0].points
+                    ]
+                actual = memoized.recompute("arpu", knobs).pairs[0].points
+                assert len(actual) == len(expected)
+                for want, got in zip(expected, actual, strict=True):
+                    assert want == _point_numbers(
+                        got
+                    ), f"{method}/{stat}/{kind}/{test_type}@{alpha}"
+                compared += len(actual)
+        assert compared >= 200, f"the matrix must not be vacuous (compared {compared} points)"
+        assert plain._session.memoized_count() == 0
+        assert memoized._session.memoized_count() > 0
+
+    def test_the_resample_runs_once_per_cutoff_across_five_alphas(
+        self, warehouse, tables, monkeypatch
+    ):
+        """…and the memo is what makes that true — the instrumentation gate."""
+        experiment = make_experiment("exp_memo_once", "arpu", BOOTSTRAP)
+        run_pipeline(warehouse, tables, experiment)
+        engine = build_engine(warehouse, tables, experiment)
+
+        calls = _resample_spy(monkeypatch)
+        for alpha in ALPHAS:
+            engine.recompute("arpu", KnobState("bootstrap", BOOTSTRAP["params"], alpha=alpha))
+        assert len(calls) == 4, "4 cutoffs × 5 alphas must cost 4 resamples, not 20"
+        assert engine._session.memoized_count() == 4
+
+    def test_the_memo_is_off_when_the_budget_refuses_the_entry(
+        self, warehouse, tables, monkeypatch
+    ):
+        """A budget too small for one entry resamples every time — bounded, not
+        wrong (and the parity gate above depends on this being real)."""
+        experiment = make_experiment("exp_memo_budget", "arpu", BOOTSTRAP)
+        run_pipeline(warehouse, tables, experiment)
+        engine = build_engine(warehouse, tables, experiment)
+        engine._session.boot_memo_budget = 0
+
+        calls = _resample_spy(monkeypatch)
+        for alpha in (0.05, 0.01):
+            engine.recompute("arpu", KnobState("bootstrap", BOOTSTRAP["params"], alpha=alpha))
+        assert len(calls) == 8
+        assert engine._session.memoized_count() == 0
+
+    def test_a_reload_reresamples_that_cutoff_and_follows_the_new_data(
+        self, warehouse, tables, monkeypatch
+    ):
+        """A /reload replaces one cached cutoff — its memo entry must not survive
+        it, and the point must move to the new data (a stale hit would keep the
+        pre-reload CI while every other tier reported the new one)."""
+        experiment = make_experiment("exp_memo_reload", "arpu", BOOTSTRAP)
+        run_pipeline(warehouse, tables, experiment)
+        engine = build_engine(warehouse, tables, experiment)
+        session = engine._session
+        knobs = KnobState("bootstrap", BOOTSTRAP["params"], alpha=0.05)
+
+        before = {
+            p.end_ts: _point_numbers(p) for p in engine.recompute("arpu", knobs).pairs[0].points
+        }
+        reloaded_ts = sorted(before)[1]
+        loaded, lookback, generation = session.cached_entry("arpu", reloaded_ts)
+        session.install_cutoff("arpu", reloaded_ts, _scaled_entry(loaded, 3.0), lookback)
+        assert session.cached_entry("arpu", reloaded_ts)[2] == generation + 1
+        assert session.memoized_count() == 3  # that cutoff's entry was dropped
+
+        calls = _resample_spy(monkeypatch)
+        after = {
+            p.end_ts: _point_numbers(p) for p in engine.recompute("arpu", knobs).pairs[0].points
+        }
+        assert len(calls) == 1, "only the reloaded cutoff resamples again"
+        assert after[reloaded_ts] != before[reloaded_ts]
+        for end_ts, numbers in before.items():
+            if end_ts != reloaded_ts:
+                assert after[end_ts] == numbers
+
+    def test_an_insert_that_lost_the_race_to_a_reload_is_never_served(
+        self, warehouse, tables, monkeypatch
+    ):
+        """The interleaving m10 WP4's review found: a Tier-S reader reads the
+        PRE-reload entry, the reload lands, and only then does the reader insert
+        its resample. The generation in the key makes that insert unreachable —
+        the race costs a discarded resample, never a stale hit.
+
+        The poisoned entry is re-inserted under the REAL key the engine built
+        (generation and all), so nothing here can pass by accidentally missing.
+        """
+        import numpy as np
+
+        from abkit.stats.bootstrap import ResampleOutcome
+        from abkit.tuning.session import BootMemoEntry
+
+        experiment = make_experiment("exp_memo_race", "arpu", BOOTSTRAP)
+        run_pipeline(warehouse, tables, experiment)
+        engine = build_engine(warehouse, tables, experiment)
+        session = engine._session
+        knobs = KnobState("bootstrap", BOOTSTRAP["params"], alpha=0.05)
+
+        # (1) the reader's read — replayed by warming the memo for real
+        before = {
+            p.end_ts: _point_numbers(p) for p in engine.recompute("arpu", knobs).pairs[0].points
+        }
+        target = sorted(session.cached_cutoffs("arpu"))[2]
+        stale_key = next(key for key in session.boot_memo if key.end_ts == target)
+        loaded, lookback, generation = session.cached_entry("arpu", target)
+        assert stale_key.generation == generation
+
+        # (2) the reload lands first
+        session.install_cutoff("arpu", target, _scaled_entry(loaded, 5.0), lookback)
+
+        # (3) …and only now the loser inserts, keyed to the render it read
+        poison = BootMemoEntry(
+            outcome=ResampleOutcome(np.full(200, 99.0), 99.0, ("poison",)),
+            caught=("poison-caught",),
+            values=200,
+        )
+        session.memoize_resample(stale_key, poison)
+        assert session.memoized_resample(stale_key) is poison  # it IS in the memo
+
+        after = {p.end_ts: p for p in engine.recompute("arpu", knobs).pairs[0].points}
+        assert after[target].effect not in (99.0, before[target][0])
+        assert "poison" not in after[target].warnings
+        assert "poison-caught" not in after[target].warnings
+
+    def test_two_metrics_never_share_one_memo_entry(self, warehouse, tables):
+        """``(method_config_id, end_ts)`` — the key the plan proposed — collides
+        across metrics: same method, same cutoff, different per-unit data. The
+        second metric would then be served the first one's replicates."""
+        experiment = _two_sample_metrics_experiment("exp_memo_two_metrics")
+        metrics = {**METRICS, "clicks": CLICKS_SAMPLE}
+        run_pipeline(warehouse, tables, experiment, metrics=metrics)
+        engine = build_engine(warehouse, tables, experiment, metrics=metrics)
+        knobs = KnobState("bootstrap", BOOTSTRAP["params"], alpha=0.05)
+
+        engine.recompute("arpu", knobs)  # warms the memo under one method identity
+        clicks = engine.recompute("clicks", knobs).pairs[0].points
+        expected = persisted(tables, experiment, "clicks")
+        assert len(clicks) == 4
+        for point in clicks:
+            row = expected[("control", "treatment", point.end_ts)]
+            assert point.effect == row["effect"]
+            assert point.left_bound == row["left_bound"]
+            assert point.right_bound == row["right_bound"]
+
+    def test_arm_pairs_never_share_one_memo_entry(self):
+        """The multi-arm half of the same collision: one metric, one cutoff,
+        three pairs — identical method identity, different arms."""
+        warehouse = _three_arm_warehouse()
+        tables = InternalTablesManager(warehouse)  # this fixture has its own warehouse
+        experiment = _three_arm_experiment("exp_memo_multiarm")
+        run_pipeline(warehouse, tables, experiment)
+        engine = build_engine(warehouse, tables, experiment)
+        # the CONFIGURED knobs: three comparisons ⇒ a two-tier-corrected alpha,
+        # so the points must reproduce the persisted rows byte for byte
+        result = engine.recompute("arpu", engine.default_knobs("arpu"))
+
+        expected = persisted(tables, experiment, "arpu")
+        # every pairwise comparison, not just main×treatment
+        assert {(p.name_1, p.name_2) for p in result.pairs} == {
+            ("control", "treatment"),
+            ("control", "treatment2"),
+            ("treatment", "treatment2"),
+        }
+        for pair in result.pairs:
+            assert pair.points, f"{pair.name_1}->{pair.name_2} produced no points"
+            for point in pair.points:
+                assert point.tier == "exact", "a demoted row would not exercise the memo"
+                row = expected[(pair.name_1, pair.name_2, point.end_ts)]
+                assert point.effect == row["effect"]
+                assert point.left_bound == row["left_bound"]
+                assert point.right_bound == row["right_bound"]
+
+    def test_an_identity_excluded_param_still_splits_the_key(self, warehouse, tables, monkeypatch):
+        """``max_block_bytes`` and ``seed`` are identity-EXCLUDED, so
+        ``method_config_id`` cannot tell two such knob states apart — but both
+        reach the draw. The key carries the RESOLVED params for that reason."""
+        experiment = make_experiment("exp_memo_block", "arpu", BOOTSTRAP)
+        run_pipeline(warehouse, tables, experiment)
+        engine = build_engine(warehouse, tables, experiment)
+
+        calls = _resample_spy(monkeypatch)
+        engine.recompute("arpu", KnobState("bootstrap", BOOTSTRAP["params"], alpha=0.05))
+        engine.recompute(
+            "arpu",
+            KnobState("bootstrap", {**BOOTSTRAP["params"], "max_block_bytes": 4096}, alpha=0.05),
+        )
+        assert len(calls) == 8, "a different max_block_bytes is a different draw, not a hit"
+
+    def test_a_hit_replays_a_warning_the_resample_itself_emitted(
+        self, warehouse, tables, monkeypatch
+    ):
+        """``AbkitStatsWarning``s raised INSIDE the resample reach the point via
+        the engine's capture. A hit never re-runs the resample, so the memo has
+        to carry those messages — otherwise the same knob state warns on the
+        first request and goes quiet on every later one."""
+        import warnings as py_warnings
+
+        from abkit.stats import AbkitStatsWarning
+
+        experiment = make_experiment("exp_memo_caught", "arpu", BOOTSTRAP)
+        run_pipeline(warehouse, tables, experiment)
+        engine = build_engine(warehouse, tables, experiment)
+
+        original = BootstrapTest._resample
+        emitted: list[int] = []
+
+        def warning_resample(self, sample_1, sample_2):
+            emitted.append(1)
+            py_warnings.warn("resample says hello", AbkitStatsWarning, stacklevel=2)
+            return original(self, sample_1, sample_2)
+
+        monkeypatch.setattr(BootstrapTest, "_resample", warning_resample)
+        knobs = KnobState("bootstrap", BOOTSTRAP["params"], alpha=0.05)
+        first = engine.recompute("arpu", knobs).pairs[0].points
+        second = engine.recompute("arpu", knobs).pairs[0].points
+
+        assert len(emitted) == 4, "the second request must not re-run the resample"
+        for point in (*first, *second):
+            assert "resample says hello" in point.warnings
+        assert [p.warnings for p in first] == [p.warnings for p in second]
+
+    def test_a_lying_capability_flag_fails_with_a_named_error(self, warehouse, tables, monkeypatch):
+        """A method that declares ``supports_resample_memo`` without the split
+        must fail SAYING so — not with a bare ``AttributeError`` or a ``None``
+        outcome from inside the engine (the M7 lying-``supports_vectorized``
+        lesson). Deleting the override leaves ``__abstractmethods__`` already
+        computed, so this is exactly the shape a downstream plugin can ship.
+        """
+        # (a) the stats-core contract: the named refusal, for any method — and
+        #     it must not claim a flag the method never set (round 2)
+        with pytest.raises(NotImplementedError, match="does not declare supports_resample_memo"):
+            create_method("t-test")._resample(object(), object())
+
+        # (b) through the engine, on a class that declares the flag and lost
+        #     its _resample
+        experiment = make_experiment("exp_memo_liar", "arpu", BOOTSTRAP)
+        run_pipeline(warehouse, tables, experiment)
+        engine = build_engine(warehouse, tables, experiment)
+        monkeypatch.delattr(BootstrapTest, "_resample")
+        with pytest.raises(NotImplementedError, match="declares supports_resample_memo but"):
+            engine.recompute("arpu", KnobState("bootstrap", BOOTSTRAP["params"], alpha=0.05))
+        monkeypatch.undo()
+
+        # (c) …and the OTHER half: _resample present, _finalize missing, which
+        #     round 1's fix left dying with a bare AttributeError
+        engine = build_engine(warehouse, tables, experiment)
+        monkeypatch.delattr(BaseBootstrapMethod, "_finalize")
+        with pytest.raises(NotImplementedError, match="no matching _finalize"):
+            engine.recompute("arpu", KnobState("bootstrap", BOOTSTRAP["params"], alpha=0.05))
+
+    def test_the_memo_says_so_when_the_budget_is_smaller_than_the_series(self, warehouse, tables):
+        """An oldest-first budget on a whole-series scan degrades to NO reuse at
+        all (every entry is evicted before its next turn). That must not be
+        silent — the reply carries the same kind of honest warning the Tier-S
+        cache gives when it degrades."""
+        experiment = make_experiment("exp_memo_thrash", "arpu", BOOTSTRAP)
+        run_pipeline(warehouse, tables, experiment)
+        engine = build_engine(warehouse, tables, experiment)
+        # room for one entry, not for the series' four
+        engine._session.boot_memo_budget = BOOTSTRAP["params"]["n_samples"] + 130
+
+        result = engine.recompute("arpu", KnobState("bootstrap", BOOTSTRAP["params"], alpha=0.05))
+        assert any("resample memo is smaller" in w for w in result.warnings)
+        # …and a session with room says nothing
+        roomy = build_engine(warehouse, tables, experiment)
+        quiet = roomy.recompute("arpu", KnobState("bootstrap", BOOTSTRAP["params"], alpha=0.05))
+        assert not any("resample memo is smaller" in w for w in quiet.warnings)
+
+    def test_a_single_resample_too_big_for_the_budget_says_so_too(self, warehouse, tables):
+        """The LOUDEST case was the silent one (review round 2): an entry bigger
+        than the whole budget is refused outright, so every alpha turn redraws
+        it forever — and the round-1 warning, keyed on evictions, never fired
+        because a refusal evicts nothing. Reachable at the shipped default:
+        ``n_samples`` has no maximum."""
+        experiment = make_experiment("exp_memo_refuse", "arpu", BOOTSTRAP)
+        run_pipeline(warehouse, tables, experiment)
+        engine = build_engine(warehouse, tables, experiment)
+        engine._session.boot_memo_budget = 10  # smaller than one 200-replicate entry
+
+        result = engine.recompute("arpu", KnobState("bootstrap", BOOTSTRAP["params"], alpha=0.05))
+        assert engine._session.memoized_count() == 0
+        assert engine._session.memo_eviction_count() == 0  # nothing was evicted…
+        assert any("resample memo is smaller" in w for w in result.warnings)  # …but it is honest
+
+    def test_healthy_turnover_between_knob_states_does_not_warn(self, warehouse, tables):
+        """Round 1's warning read a SESSION-WIDE eviction counter, so switching
+        knob states — the memo doing exactly its job, making room for the new
+        state — reported a degradation that the next request contradicted."""
+        experiment = make_experiment("exp_memo_turnover", "arpu", BOOTSTRAP)
+        run_pipeline(warehouse, tables, experiment)
+        engine = build_engine(warehouse, tables, experiment)
+        # room for ~1.5 series: one knob state fits, two do not
+        engine._session.boot_memo_budget = 6 * (BOOTSTRAP["params"]["n_samples"] + 128)
+
+        first = engine.recompute("arpu", KnobState("bootstrap", BOOTSTRAP["params"], alpha=0.05))
+        assert not any("resample memo is smaller" in w for w in first.warnings)
+        second = engine.recompute(
+            "arpu", KnobState("bootstrap", {**BOOTSTRAP["params"], "stat": "median"}, alpha=0.05)
+        )
+        assert (
+            engine._session.memo_eviction_count() > 0
+        ), "the fixture must evict or it proves nothing"
+        assert not any("resample memo is smaller" in w for w in second.warnings)
+        # and the claim the warning would have made is false: the next alpha
+        # turn on the SAME knob state reuses everything
+        calls: list[tuple] = []
+        original = BootstrapTest._resample
+
+        def counting(self, sample_1, sample_2):
+            calls.append((sample_1.name, sample_2.name))
+            return original(self, sample_1, sample_2)
+
+        BootstrapTest._resample = counting  # type: ignore[method-assign]
+        try:
+            engine.recompute(
+                "arpu",
+                KnobState("bootstrap", {**BOOTSTRAP["params"], "stat": "median"}, alpha=0.2),
+            )
+        finally:
+            BootstrapTest._resample = original  # type: ignore[method-assign]
+        assert calls == [], "full reuse — the round-1 warning would have contradicted this"
+
+    def test_another_requests_evictions_are_not_reported_against_this_reply(
+        self, warehouse, tables, monkeypatch
+    ):
+        """m10 WP4 made ``/recompute`` concurrent over ONE session, so a
+        session-wide counter let an unrelated handler's evictions surface in
+        this reply — quoting this reply's own roomy budget.
+
+        The interleaving is forced and the arithmetic is deliberate: the other
+        handler's entries are the OLDEST, so the evictions its traffic causes
+        during this pass fall on its own slots, never on ours. Our four survive,
+        our next alpha turn reuses them, and the reply must stay quiet.
+        """
+        experiment = make_experiment("exp_memo_crosstalk", "arpu", BOOTSTRAP)
+        run_pipeline(warehouse, tables, experiment)
+        engine = build_engine(warehouse, tables, experiment)
+        session = engine._session
+
+        tiny_slot = 8 + BOOT_MEMO_ENTRY_OVERHEAD
+        our_slot = BOOTSTRAP["params"]["n_samples"] + BOOT_MEMO_ENTRY_OVERHEAD
+        filler = itertools.count()
+
+        def neighbour_insert() -> None:
+            index = next(filler)
+            session.memoize_resample(
+                session.boot_memo_key(
+                    "other",
+                    "control",
+                    "treatment",
+                    datetime(2024, 1, 1) + timedelta(days=index),
+                    1,
+                    create_method("bootstrap", params={"n_samples": 8, "seed": index}),
+                ),
+                _tiny_memo(),
+            )
+
+        for _ in range(40):  # the neighbour's entries are the oldest
+            neighbour_insert()
+        session.boot_memo_budget = 40 * tiny_slot + 4 * our_slot + 3 * tiny_slot
+
+        original = BootstrapTest._resample
+
+        def resample_with_a_noisy_neighbour(self, sample_1, sample_2):
+            for _ in range(5):  # 4 cutoffs x 5 = 20 inserts ⇒ real evictions
+                neighbour_insert()
+            return original(self, sample_1, sample_2)
+
+        monkeypatch.setattr(BootstrapTest, "_resample", resample_with_a_noisy_neighbour)
+        result = engine.recompute("arpu", KnobState("bootstrap", BOOTSTRAP["params"], alpha=0.05))
+
+        assert session.memo_eviction_count() > 0, "the neighbour must really evict"
+        assert not any("resample memo is smaller" in w for w in result.warnings)
+        # and the claim holds: our four are intact, so the next turn reuses them
+        monkeypatch.setattr(BootstrapTest, "_resample", original)
+        calls = _resample_spy(monkeypatch)
+        engine.recompute("arpu", KnobState("bootstrap", BOOTSTRAP["params"], alpha=0.2))
+        assert calls == []
+
+    def test_the_generation_must_come_from_the_SAME_locked_read_as_the_entry(
+        self, warehouse, tables
+    ):
+        """The WP's central atomicity claim, made falsifiable (review round 2).
+
+        ``cached_entry()`` returns (entry, lookback, generation) in ONE critical
+        section. Read the generation separately and a ``/reload`` landing in
+        between keys THIS render's replicates to the NEXT render's generation —
+        a stale hit that survives every purge. The instrument is the WP4 hooked
+        lock: a complete install runs at the reader's first release, so a
+        two-read implementation memoizes the old data under the new generation
+        and the FOLLOWING request serves it.
+        """
+        experiment = make_experiment("exp_memo_atomic", "arpu", BOOTSTRAP)
+        run_pipeline(warehouse, tables, experiment)
+        engine = build_engine(warehouse, tables, experiment)
+        session = engine._session
+        knobs = KnobState("bootstrap", BOOTSTRAP["params"], alpha=0.05)
+
+        target = sorted(session.cached_cutoffs("arpu"))[0]
+        loaded, lookback, _ = session.cached_entry("arpu", target)
+        scaled = _scaled_entry(loaded, 4.0)
+
+        fired = threading.Event()
+        reader = threading.current_thread()
+
+        class _InstallOnFirstRelease:
+            """A lock that lands a full ``/reload`` at the reader's first release."""
+
+            def __init__(self) -> None:
+                self._lock = threading.Lock()
+
+            def acquire(self, *args, **kwargs):
+                return self._lock.acquire(*args, **kwargs)
+
+            def release(self) -> None:
+                self._lock.release()
+                if not fired.is_set() and threading.current_thread() is reader:
+                    fired.set()
+                    session.install_cutoff("arpu", target, scaled, lookback)
+
+            def locked(self) -> bool:
+                return self._lock.locked()
+
+            def __enter__(self):
+                return self._lock.acquire()
+
+            def __exit__(self, *exc: object) -> None:
+                self.release()
+
+        session.cache_lock = _InstallOnFirstRelease()  # type: ignore[assignment]
+        engine.recompute("arpu", knobs)
+        assert fired.is_set(), "the instrumented release never ran — the test proved nothing"
+        session.cache_lock = threading.Lock()  # type: ignore[assignment]
+
+        # whatever the racy pass memoized, the NEXT request must answer off the
+        # installed (4x treatment) render — never the pre-reload replicates
+        after = {p.end_ts: p for p in engine.recompute("arpu", knobs).pairs[0].points}[target]
+        reference = build_engine(warehouse, tables, experiment)
+        reference._session.install_cutoff("arpu", target, scaled, lookback)
+        expected = {p.end_ts: p for p in reference.recompute("arpu", knobs).pairs[0].points}[target]
+        assert _point_numbers(after) == _point_numbers(expected)
+
+    def test_the_memoized_replicates_are_frozen_read_only(self, warehouse, tables):
+        """One outcome is handed to a ``_finalize`` per alpha. An in-place write
+        in some future ``_finalize`` would silently corrupt every later reuse —
+        the array is read-only so it would raise instead."""
+        experiment = make_experiment("exp_memo_frozen", "arpu", BOOTSTRAP)
+        run_pipeline(warehouse, tables, experiment)
+        engine = build_engine(warehouse, tables, experiment)
+        engine.recompute("arpu", KnobState("bootstrap", BOOTSTRAP["params"], alpha=0.05))
+
+        entries = list(engine._session.boot_memo.values())
+        assert entries
+        for entry in entries:
+            assert entry.outcome.boot_data.flags.writeable is False
+
+    def test_a_hit_replays_the_resample_warnings_without_growing_them(self, warehouse, tables):
+        """Warnings are user-visible on the point. The resample's own warnings
+        (``ResampleOutcome.warnings`` -> ``_finalize``'s list -> the result) must
+        appear on a HIT too, and ``_finalize``'s appended H5 warning must not
+        accumulate across reuses.
+
+        The reference is an INDEPENDENT ``compare_pair`` over the same containers
+        and the same derived seed — three memo answers compared only to each
+        other would have stayed green with the whole channel dropped (review
+        round 1).
+        """
+        import numpy as np
+
+        from abkit.pipeline.analyze import build_container
+        from abkit.stats import create_method, derive_seed
+
+        experiment = make_experiment("exp_memo_warn", "arpu", BOOTSTRAP)
+        run_pipeline(warehouse, tables, experiment)
+        engine = build_engine(warehouse, tables, experiment)
+        session = engine._session
+
+        # a zero control arm ⇒ H5: relative effect undefined + non-finite
+        # replicates ⇒ both halves contribute warnings
+        target = sorted(session.cached_cutoffs("arpu"))[0]
+        loaded, lookback, _ = session.cached_entry("arpu", target)
+        zeroed = _scaled_entry(loaded, 1.0)
+        zeroed.roles_by_variant["control"]["value"] = np.zeros_like(
+            zeroed.roles_by_variant["control"]["value"]
+        )
+        session.install_cutoff("arpu", target, zeroed, lookback)
+
+        # the independent oracle: the stats core, called the way the pipeline does
+        reference = create_method(
+            "bootstrap",
+            alpha=0.05,
+            params={
+                **BOOTSTRAP["params"],
+                "seed": derive_seed(
+                    experiment.name,
+                    "arpu",
+                    "control",
+                    "treatment",
+                    target,
+                    BOOTSTRAP["params"]["n_samples"],
+                ),
+            },
+        ).compare_pair(
+            build_container("sample", "control", zeroed),
+            build_container("sample", "treatment", zeroed),
+        )
+        assert reference.warnings, "the fixture must actually warn or it proves nothing"
+
+        knobs = KnobState("bootstrap", BOOTSTRAP["params"], alpha=0.05)
+        answers = [
+            {p.end_ts: p for p in engine.recompute("arpu", knobs).pairs[0].points}[target]
+            for _ in range(3)
+        ]
+        for answer in answers:  # miss, hit, hit — all three carry the same set
+            assert answer.warnings == reference.warnings
+            assert _point_numbers(answer) == _point_numbers(answers[0])

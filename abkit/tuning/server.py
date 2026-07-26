@@ -125,6 +125,15 @@ class _ExploreServer(ThreadingHTTPServer):
     # Don't block interpreter exit on in-flight request threads (we stop after
     # a single successful apply anyway).
     daemon_threads = True
+    # socketserver's default listen backlog is 5 — the right size while one
+    # coarse lock serialized every POST, tight since m10 WP4 made /recompute
+    # concurrent and a knob drag arrives as a burst of simultaneous connections.
+    # A connection the accept queue drops is not a 409 the client can reason
+    # about; it is a transport error. This is a hardening, not a proven fix: a
+    # 20-connection CI test lost exactly one reply once, and a local probe could
+    # not reproduce the drop at either size. On a localhost cockpit the only
+    # cost of a deeper queue is a few descriptors, so it is worth taking.
+    request_queue_size = 64
 
     def __init__(self, address: tuple[str, int], handler: type[BaseHTTPRequestHandler]) -> None:
         super().__init__(address, handler)

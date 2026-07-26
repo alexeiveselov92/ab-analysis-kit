@@ -50,7 +50,9 @@ CI runs the full matrix on every push; keep it green.
 2. Declare params as `ParamSpec`s — typed, defaulted, identity-flagged
    (`seed` must be identity-excluded for bootstrap methods).
 3. Implement **both** entries where the math allows: `from_samples` and
-   `from_suffstats` (dual-entry equivalence is tested).
+   `from_suffstats` (dual-entry equivalence is tested). A **bootstrap-family**
+   method implements `_resample` instead of `from_samples` — the base class
+   composes the two halves (see step 4b).
 4. (Optional, M7) If the method can score suffstats **arrays**, opt in to the
    vectorized validate path: set `supports_vectorized = True` + implement
    `from_suffstats_array` → `BatchEffectResult`, route every power term
@@ -59,6 +61,16 @@ CI runs the full matrix on every push; keep it green.
    capability-roster test in `tests/stats/test_vectorized_parity.py`.
    Without the flag the method just takes the scalar fallback — never
    required.
+4b. (Optional, M10 WP5) If the method's cost is an alpha-INDEPENDENT step
+   followed by a cheap alpha-dependent finish, split it: implement
+   `_resample(s1, s2) -> ResampleOutcome` (immutable — `warnings` is a tuple,
+   because `_finalize` appends to the list it is given) plus a `_finalize`
+   that reads the outcome without mutating it, inherit `from_samples` from
+   the base class, and set `supports_resample_memo = True`. Explore then
+   redraws nothing across an alpha drag. The roster gate in
+   `tests/stats/test_bootstrap_methods.py` requires flag, override and
+   inherited template together; without the flag the method is simply
+   recomputed per alpha — never special-cased.
 5. Tests: known-answer test; dual-entry equivalence; params/identity hash
    addition to `tests/stats/test_identity.py`; golden test if reproducing a
    legacy method.

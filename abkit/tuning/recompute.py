@@ -48,6 +48,15 @@ goes through ``ExploreSession``'s locked accessors (never ``session.cache``
 directly). Warning capture goes through ``utils.warn_scope`` — the stdlib's
 ``catch_warnings`` mutates process-global state and would cross-attribute (or
 permanently lose) warnings across concurrent handler threads.
+
+Bootstrap memoization (m10 WP5): a Tier-S bootstrap point is
+``_resample`` (draw ``n_samples`` replicates — the whole cost) followed by
+``_finalize`` (percentile CI + p-value at ONE alpha — microseconds). Only the
+second half depends on alpha, so the first is memoized on the session per
+:class:`~abkit.tuning.session.BootMemoKey` and an alpha drag over a cached
+series resamples nothing after its first request. The numbers are the
+un-memoized ones by construction: the same outcome enters the same
+``_finalize``.
 """
 
 from __future__ import annotations
@@ -56,7 +65,7 @@ import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import scipy.stats as sps
 
@@ -79,9 +88,11 @@ from abkit.stats import (
     get_method_class,
 )
 from abkit.stats.base import BaseMethod, ParamSpec
+from abkit.stats.bootstrap import BaseBootstrapMethod, ResampleOutcome
 from abkit.stats.power import get_cuped_ttest_power, get_fraction_power, get_ttest_power
+from abkit.stats.samples import RatioSample, Sample
 from abkit.stats.sequential import mixture_tau2, se_from_ci_length, to_always_valid
-from abkit.tuning.session import ComparisonSeries, ExploreSession
+from abkit.tuning.session import BootMemoEntry, BootMemoKey, ComparisonSeries, ExploreSession
 from abkit.utils.json_utils import json_loads
 from abkit.utils.warn_scope import capture_warnings
 
@@ -556,6 +567,13 @@ def _clean(value: float | None) -> float | None:
     return value if math.isfinite(value) else None
 
 
+#: Sentinel recorded in a pass's ``stored`` list when one resample was REFUSED
+#: by the memo budget (bigger than the whole budget). Distinguishable from a
+#: real key, and it means "this point can never be reused", the strongest form
+#: of the not-fitting signal.
+_REFUSED = "refused"
+
+
 class RecomputeSuperseded(Exception):
     """A newer request arrived while this recompute was running (m10 WP4).
 
@@ -739,6 +757,11 @@ class RecomputeEngine:
                 ):
                     av_pairs.add(pair)
 
+        # keys THIS pass stored (plus a sentinel per budget refusal) — the honest
+        # per-pass measure of "did my working set fit?", replacing round 1's
+        # session-wide eviction counter (round 2: it fired on healthy turnover
+        # and reported other requests' evictions against this reply)
+        stored_keys: list[BootMemoKey | str] = []
         seq_reload_needed = False
         pairs: list[PairRecompute] = []
         for (name_1, name_2), rows in pair_rows.items():
@@ -751,7 +774,14 @@ class RecomputeEngine:
                         f"recompute of '{metric}' was superseded by a newer request"
                     )
                 point = self._compute_point(
-                    series, row, method_cls, probe.params, knobs, reusable, identity_changed
+                    series,
+                    row,
+                    method_cls,
+                    probe.params,
+                    knobs,
+                    reusable,
+                    identity_changed,
+                    stored_keys,
                 )
                 if point is not None:
                     points.append(point)
@@ -777,6 +807,19 @@ class RecomputeEngine:
         )
         if session.cache_disabled_reason is not None:
             engine_warnings.append(session.cache_disabled_reason)
+        if stored_keys and not session.memoized_all(stored_keys):
+            # Something this pass stored is already gone (evicted by this pass's
+            # own later points, or refused outright), so the NEXT alpha turn
+            # cannot reuse it: the memo is smaller than this knob state's
+            # working set. Measured per pass, not from a session-wide counter —
+            # healthy turnover between knob states is not a degradation, and a
+            # concurrent request's evictions are not this reply's business.
+            engine_warnings.append(
+                "the bootstrap resample memo is smaller than this knob state's series "
+                f"(EXPLORE_BOOT_MEMO_BUDGET={session.boot_memo_budget} values): alpha "
+                "changes will re-resample instead of reusing — lower n_samples, or "
+                "explore fewer cutoffs at a time"
+            )
 
         return RecomputeResult(
             metric=metric,
@@ -800,6 +843,7 @@ class RecomputeEngine:
         knobs: KnobState,
         reusable: BaseMethod | None,
         identity_changed: bool,
+        stored_keys: list[BootMemoKey | str],
     ) -> ExplorePoint | None:
         """One row → the best-tier point, or ``None`` (a baseline-only gap)."""
         if row.get("insufficient_data"):
@@ -815,10 +859,13 @@ class RecomputeEngine:
             return self._point_from_result(row, result, caught, tier="exact")
 
         # Tier S — the session cache (from_samples), cached cutoffs only. The
-        # entry and the lookback it was RENDERED with come out as one locked
-        # pair (m10 WP4): a concurrent /reload replaces them in sequence, and a
-        # torn read would gate a fresh entry on the previous lookback tag.
-        loaded, entry_lookback = self._session.cached_entry(series.metric.name, row["end_ts"])
+        # entry, the lookback it was RENDERED with and its generation come out
+        # as one locked triple (m10 WP4/WP5): a concurrent /reload replaces them
+        # in sequence, and a torn read would gate a fresh entry on the previous
+        # lookback tag — or memoize its resample against the wrong render.
+        loaded, entry_lookback, generation = self._session.cached_entry(
+            series.metric.name, row["end_ts"]
+        )
         if loaded is not None and self._cache_serves(
             series,
             method_cls,
@@ -844,7 +891,29 @@ class RecomputeEngine:
                     seeded_params.get("n_samples", 1000),
                 )
                 method = create_method(knobs.method_name, alpha=knobs.alpha, params=seeded_params)
-            result, caught = _compare(method, group_1, group_2)
+            if (
+                reusable is None
+                and method_cls.supports_resample_memo
+                and _is_raw_pair(group_1, group_2)
+            ):
+                result, caught = self._memoized_compare(
+                    method,
+                    group_1,
+                    group_2,
+                    # composed ONLY here, through the session's factory (the m9
+                    # state_series_key discipline — an AST gate enforces it)
+                    self._session.boot_memo_key(
+                        series.metric.name,
+                        row["name_1"],
+                        row["name_2"],
+                        row["end_ts"],
+                        generation,
+                        method,
+                    ),
+                    stored_keys,
+                )
+            else:
+                result, caught = _compare(method, group_1, group_2)
             return self._point_from_result(row, result, caught, tier="exact")
 
         if identity_changed:
@@ -880,6 +949,63 @@ class RecomputeEngine:
             # same-identity knob state — there is no number to mislabel.
             return self._baseline_point(row)
         return None
+
+    def _memoized_compare(
+        self,
+        method: BaseMethod,
+        group_1: Any,
+        group_2: Any,
+        key: BootMemoKey,
+        stored: list[BootMemoKey | str],
+    ) -> tuple[TestResult, list[str]]:
+        """``_compare`` with the resample half memoized (m10 WP5).
+
+        Dragging the alpha slider re-answers the WHOLE series at a new alpha,
+        and for a bootstrap comparison alpha changes nothing before
+        ``_finalize``: the replicates, the point effect and the resample's own
+        warnings are all alpha-free. So the draw is done once per
+        :class:`~abkit.tuning.session.BootMemoKey` and every later alpha reuses
+        it — the same TestResult the un-memoized path produces, at the cost of a
+        percentile lookup instead of an n_samples-wide resample.
+
+        A miss under a race is deliberately cheap and safe: two threads may both
+        resample (deterministic inputs ⇒ the same replicates, last writer wins),
+        and a resample whose cutoff was re-installed while it ran is stored
+        under a key nobody can reach (the generation moved), never served.
+
+        ``stored`` collects the keys THIS pass inserted, so ``recompute()`` can
+        tell whether the pass's own working set fit (review round 2: a
+        session-wide eviction counter said "too small" while the memo was
+        working perfectly, and let a concurrent request's evictions be reported
+        against this reply).
+        """
+        session = self._session
+        if not hasattr(method, "_finalize"):
+            # the other half of the capability contract — a method with only
+            # _resample would otherwise die with a bare AttributeError here
+            raise NotImplementedError(
+                f"{method.name}: declares supports_resample_memo and implements "
+                "_resample but no matching _finalize (see BaseBootstrapMethod)"
+            )
+        memo = session.memoized_resample(key)
+        if memo is None:
+            outcome, resample_caught = _resample_captured(method, group_1, group_2)
+            memo = BootMemoEntry(
+                outcome=outcome,
+                caught=tuple(resample_caught),
+                values=int(outcome.boot_data.size),
+            )
+            if session.memoize_resample(key, memo):
+                stored.append(key)
+            else:
+                # too big for the whole budget: this point will redraw on every
+                # future alpha turn, so say so rather than lose the speedup
+                # silently (round 2 — the loudest case was the silent one)
+                stored.append(_REFUSED)
+        result, finalize_caught = _finalize_captured(method, group_1, group_2, memo.outcome)
+        # the resample's warnings first, then the finalize step's — the exact
+        # order one capture around the whole from_samples would have produced
+        return result, [*memo.caught, *finalize_caught]
 
     def _sequentialize_points(
         self, points: list[ExplorePoint], alpha: float
@@ -1177,5 +1303,63 @@ def _compare(method: BaseMethod, group_1: Any, group_2: Any) -> tuple[TestResult
     """
     with capture_warnings(AbkitStatsWarning) as caught:
         result = method.compare_pair(group_1, group_2)
-    messages = [str(w.message) for w in caught if issubclass(w.category, AbkitStatsWarning)]
-    return result, messages
+    return result, _stats_messages(caught)
+
+
+def _stats_messages(caught: list[Any]) -> list[str]:
+    return [str(w.message) for w in caught if issubclass(w.category, AbkitStatsWarning)]
+
+
+def _is_raw_pair(group_1: Any, group_2: Any) -> bool:
+    """The raw-sample half of ``BaseMethod.compare_pair``'s dispatch.
+
+    The memo path calls ``_resample``/``_finalize`` — the ``from_samples``
+    halves — directly, so it may only run for the pair shape ``compare_pair``
+    would have routed there. Any other shape takes the verbatim ``_compare``
+    fallback (the M7 dispatcher discipline), keeping the mixed-pair
+    ``SampleValidationError`` and the suffstats route exactly where they were.
+    """
+    return isinstance(group_1, (Sample, RatioSample)) and isinstance(group_2, (Sample, RatioSample))
+
+
+def _resample_captured(
+    method: BaseMethod, group_1: Any, group_2: Any
+) -> tuple[ResampleOutcome, list[str]]:
+    """The alpha-free half of ``from_samples``, with the same warning capture.
+
+    ``supports_resample_memo`` is the contract that ``_resample`` exists (a
+    method declaring the flag without the split is a plugin bug — pinned by
+    ``tests/stats/test_bootstrap_methods.py``). The replicates are frozen
+    read-only before they enter the memo: they are handed to one ``_finalize``
+    per alpha, and an in-place write in a future ``_finalize`` would silently
+    corrupt every later reuse instead of failing.
+    """
+    bootstrap_method = cast(BaseBootstrapMethod, method)
+    with capture_warnings(AbkitStatsWarning) as caught:
+        outcome = bootstrap_method._resample(group_1, group_2)
+    outcome.boot_data.flags.writeable = False
+    return outcome, _stats_messages(caught)
+
+
+def _finalize_captured(
+    method: BaseMethod, group_1: Any, group_2: Any, outcome: ResampleOutcome
+) -> tuple[TestResult, list[str]]:
+    """The alpha-dependent half of ``from_samples``, with the same capture.
+
+    ``list(outcome.warnings)`` is not a nicety: ``_finalize`` APPENDS its H5
+    non-finite warning to the list it is given and hands that same list to the
+    ``TestResult``, so passing a memoized outcome's own sequence would grow one
+    duplicate warning per alpha.
+    """
+    bootstrap_method = cast(BaseBootstrapMethod, method)
+    with capture_warnings(AbkitStatsWarning) as caught:
+        result = bootstrap_method._finalize(
+            group_1,
+            group_2,
+            outcome.boot_data,
+            outcome.effect,
+            list(outcome.warnings),
+            value_1=outcome.value_1,
+            value_2=outcome.value_2,
+        )
+    return result, _stats_messages(caught)

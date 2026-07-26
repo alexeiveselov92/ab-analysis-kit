@@ -327,7 +327,8 @@ coercion; the gate is numeric — an unchanged window persists unchanged
 explore lock decouples (`heavy_lock` only for reload/validate/apply;
 `/recompute` free + post-compute stale re-check; WP4), and bootstrap
 resampling memoizes (`_resample`+`_finalize` split, memo key
-`(method_config_id, end_ts)`, "5 α → 1 resample"; WP5).
+`(metric, arm pair, cutoff, cache generation, method, resolved params)` —
+alpha excluded; "5 α → 1 resample"; WP5).
 
 ### M11 — `abk dashboard` (the flagship overview UI) → `0.6.0` 📋
 Design contract: [m11-implementation-plan.md](docs/specs/m11-implementation-plan.md).

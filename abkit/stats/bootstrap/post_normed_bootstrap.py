@@ -27,11 +27,10 @@ import numpy as np
 
 from abkit.stats.base import require_pair_type
 from abkit.stats.bootstrap.applier import stat_point
-from abkit.stats.bootstrap.bootstrap import BaseBootstrapMethod
+from abkit.stats.bootstrap.bootstrap import BaseBootstrapMethod, ResampleOutcome
 from abkit.stats.bootstrap.engine import bootstrap_statistics
 from abkit.stats.exceptions import QuarantinedMethodError
 from abkit.stats.registry import register
-from abkit.stats.result import TestResult
 from abkit.stats.samples import Sample
 
 
@@ -52,7 +51,7 @@ class PostNormedBootstrapTest(BaseBootstrapMethod):
                 "'ratio-delta' method"
             )
 
-    def from_samples(self, sample_1: Sample, sample_2: Sample) -> TestResult:
+    def _resample(self, sample_1: Sample, sample_2: Sample) -> ResampleOutcome:
         require_pair_type(self.name, sample_1, sample_2, Sample)
         self._require_covariates(sample_1, sample_2)
         assert sample_1.cov_array is not None and sample_2.cov_array is not None
@@ -80,7 +79,10 @@ class PostNormedBootstrapTest(BaseBootstrapMethod):
 
         result_warnings: list[str] = []
         effect = self._post_normed_effect(sample_1, sample_2, result_warnings)
-        return self._finalize(sample_1, sample_2, boot_data, effect, result_warnings)
+        # value_1/value_2 stay None: this class never computed them for
+        # _finalize (its point estimate is the post-normed ratio), so the
+        # finalize step derives them exactly as it did before the split.
+        return ResampleOutcome(boot_data, effect, tuple(result_warnings))
 
     def _post_normed_effect(
         self, sample_1: Sample, sample_2: Sample, result_warnings: list[str]

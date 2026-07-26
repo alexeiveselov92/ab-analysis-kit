@@ -118,6 +118,26 @@ number change).
     how many resample blocks exist at once, so a small admission semaphore
     (2 slots) fronts the compute and drops a request superseded *while it
     waits* before it computes anything.
+- **M10 WP5: dragging the alpha slider over a bootstrap series stops
+  re-drawing the replicates.** A Tier-S bootstrap point is a resample
+  (`n_samples` draws — effectively the whole cost) followed by a percentile CI
+  and a p-value at one alpha (microseconds). Only the second half depends on
+  alpha, so `abk explore` now memoizes the first: the draw happens once per
+  (metric, arm pair, cutoff, cache generation, method, resolved params) and
+  every later alpha reuses it. Measured over 4 000 units × 10 000 replicates ×
+  4 cutoffs, a six-turn drag went **6.01 s → 1.01 s** — the first answer is
+  unchanged, each turn after it **1.00 s → 0.002 s**. Bounded by a
+  value-counted budget (≈16 MB of replicates) with oldest-first eviction, and
+  dropped for a cutoff whenever `/reload` re-renders it. The budget charges
+  each slot a fixed overhead beyond its replicates (a value-only cap bounds the
+  payload, not the number of slots), and when a knob state's series does not fit
+  — where an oldest-first policy degrades to no reuse at all — the reply says so
+  instead of silently losing the speedup. **The numbers do not
+  move**: the memoized outcome enters the same finalize step it would have,
+  which is pinned per method class (`from_samples` == `_resample` +
+  `_finalize`, bit for bit) and per engine path (five alphas against the same
+  engine with the memo disabled). No `ALGORITHM_VERSION` bump and no
+  `statistics-changes.md` entry.
 
 ### Added
 - **M10 WP1 — `interval_anchor`: where the cutoff lattice sits.** `cadence`
@@ -138,6 +158,16 @@ number change).
   (`tests/core/test_grid_factory_is_the_only_entry.py`) enforces it, because
   the alternative had already happened: the new knob reached none of the eight
   hand-copied call sites.
+- **Plugin API (M10 WP5): `supports_resample_memo` + the `_resample`/
+  `_finalize` split.** A method that can separate its costly alpha-free work
+  from its cheap alpha-dependent finish may declare the capability and
+  implement `_resample() -> ResampleOutcome`; the base bootstrap class then
+  composes `from_samples` for it and the explore engine memoizes the first
+  half. Opt-in exactly like `supports_vectorized` (M7): the `False` default
+  leaves a method fully functional through the ordinary `compare_pair` path —
+  nothing special-cases a method name. The whole bootstrap family
+  (6 classes) declares it; a roster gate keeps declaration and implementation
+  in step.
 
 ### Fixed
 - **Three M9 surfaces read the raw config field where they meant "the local
@@ -172,11 +202,13 @@ number change).
 
 No `ALGORITHM_VERSION` bump and no `statistics-changes.md` entry anywhere in
 M10 so far: WP1/WP3 are config/planner/schema changes, WP4 is server
-concurrency and warning routing. The numeric gate for the window rename is
-that an unchanged window produces unchanged numbers — the whole existing suite
-(2 209 tests, incl. every e2e byte-stability and cross-mode parity gate)
-passes with only the config keys and the ported horizon values edited; WP4
-touches no statistical code path at all.
+concurrency and warning routing, and WP5 is a structural refactor plus a
+cache. The numeric gate for the window rename is that an unchanged window
+produces unchanged numbers — the whole existing suite (2 209 tests, incl.
+every e2e byte-stability and cross-mode parity gate) passes with only the
+config keys and the ported horizon values edited; WP4 touches no statistical
+code path at all; WP5 moves bootstrap code inside `abkit.stats` and is pinned
+by the untouched golden suite plus per-class bit-exactness of the split.
 
 ## [0.4.0] - 2026-07-25
 

@@ -327,6 +327,13 @@ class BaseMethod(ABC):
     #: the scalar ``from_suffstats`` fallback — a method without a batch kernel
     #: is never special-cased, only iterated (m7-implementation-plan.md §WP2).
     supports_vectorized: ClassVar[bool] = False
+    #: Splits ``from_samples`` into a costly ``_resample`` step and a cheap
+    #: alpha-dependent ``_finalize`` step, so a caller may reuse one resample
+    #: across several alphas (the explore Tier-S memo, m10 WP5). Opt-in like
+    #: :attr:`supports_vectorized`: the False default keeps every method fully
+    #: functional through the whole-``compare_pair`` path — a method without the
+    #: split is never special-cased, only recomputed.
+    supports_resample_memo: ClassVar[bool] = False
 
     def __init__(self, alpha: float = 0.05, **params: Any) -> None:
         if not 0.0 < alpha < 1.0:
@@ -435,6 +442,34 @@ class BaseMethod(ABC):
         raise NotImplementedError(
             f"{self.name}: no array-wise significance kernel "
             "(supports_vectorized=False); use the scalar from_suffstats path"
+        )
+
+    def _resample(self, sample_1: Any, sample_2: Any) -> Any:
+        """The alpha-INDEPENDENT half of ``from_samples`` (m10 WP5).
+
+        Optional capability, gated by :attr:`supports_resample_memo` and
+        mirroring :meth:`from_suffstats_array`'s shape: draw whatever the
+        comparison's expensive step produces and return it, so a caller may run
+        the cheap alpha-dependent half (``_finalize``) several times over ONE
+        draw — this is how ``abk explore`` answers an alpha drag over a
+        bootstrap series without redrawing.
+
+        The concrete contract lives in the family base that composes the two
+        halves (today only
+        :class:`~abkit.stats.bootstrap.bootstrap.BaseBootstrapMethod`, which
+        returns a :class:`~abkit.stats.bootstrap.bootstrap.ResampleOutcome` and
+        owns the matching ``_finalize``). Declaring the flag without both halves
+        is a plugin bug, and this default says so instead of failing with a bare
+        ``AttributeError`` deep inside a caller.
+        """
+        declared = (
+            "declares supports_resample_memo but implements"
+            if (self.supports_resample_memo)
+            else "does not declare supports_resample_memo and implements"
+        )
+        raise NotImplementedError(
+            f"{self.name}: {declared} no _resample/_finalize split "
+            "(see BaseBootstrapMethod for the contract)"
         )
 
     # --- shared result assembly ----------------------------------------------

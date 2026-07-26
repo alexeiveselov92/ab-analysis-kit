@@ -9,6 +9,8 @@ common result assembly (percentile CI, H4 p-value, ``boot_mean`` diagnostic).
 from __future__ import annotations
 
 import math
+from abc import abstractmethod
+from typing import ClassVar, NamedTuple
 
 import numpy as np
 import scipy.stats as sps
@@ -53,6 +55,31 @@ BOOTSTRAP_PARAM_SPECS: tuple[ParamSpec, ...] = (
 )
 
 
+class ResampleOutcome(NamedTuple):
+    """Everything :meth:`BaseBootstrapMethod._resample` produces — alpha-free.
+
+    The split point of the m10 WP5 template method: ``_resample`` draws the
+    replicates (the expensive, alpha-INDEPENDENT half of ``from_samples``) and
+    ``_finalize`` turns them into a :class:`TestResult` at one alpha (the cheap,
+    alpha-DEPENDENT half). Everything here is immutable — ``warnings`` is a
+    tuple, not the mutable list ``_finalize`` appends to — because the explore
+    engine memoizes one outcome across several alphas
+    (``abkit/tuning/recompute.py``); a shared list would accumulate H5 warnings
+    across reuses.
+
+    ``value_1``/``value_2`` carry the per-arm point statistics when the subclass
+    already computed them (M7 WP1 A4 — the same values feed the point effect);
+    ``None`` leaves them to :meth:`BaseBootstrapMethod._finalize`, exactly as
+    before the split.
+    """
+
+    boot_data: FloatArray
+    effect: float
+    warnings: tuple[str, ...]
+    value_1: float | None = None
+    value_2: float | None = None
+
+
 class BaseBootstrapMethod(BaseMethod):
     """Shared bootstrap machinery — abstract, never registered directly.
 
@@ -75,6 +102,48 @@ class BaseBootstrapMethod(BaseMethod):
     # CI-inversion, so bootstrap methods are ineligible for the sequential
     # transform (docs/specs/m5-implementation-plan.md D1/WP1).
     supports_sequential = False
+    # The whole family implements the m10 WP5 _resample/_finalize split.
+    supports_resample_memo: ClassVar[bool] = True
+
+    # --- the template method (m10 WP5) ------------------------------------------
+    @abstractmethod
+    def _resample(self, sample_1: Sample, sample_2: Sample) -> ResampleOutcome:
+        """Draw the bootstrap replicates and the real-data point effect.
+
+        The alpha-INDEPENDENT half of ``from_samples``: input validation, the
+        resample plans, the RNG draws, ``_boot_effect`` and the point estimate —
+        everything each subclass used to inline before its ``_finalize`` call.
+        Alpha enters only in :meth:`_finalize` (the percentile CI and the
+        ``reject`` verdict), which is why one outcome can serve several alphas.
+
+        Abstract, but with the base class's named refusal as its body: ABC
+        enforcement covers a subclass that never defines it, and this covers
+        every other way the method can go missing (a runtime patch, a class
+        assembled outside the normal path) with a message that says what is
+        wrong instead of an ``AttributeError`` or a silent ``None``.
+        """
+        return super()._resample(sample_1, sample_2)  # type: ignore[no-any-return]
+
+    def from_samples(self, sample_1: Sample, sample_2: Sample) -> TestResult:
+        """``_resample`` then ``_finalize`` — the composition every subclass had.
+
+        A pure structural split (m10 WP5): the two halves run back to back in
+        the same order with the same inputs, so every number is unchanged by
+        construction (pinned per class in ``tests/stats/test_bootstrap_methods.py``
+        and by the untouched golden suite).
+        """
+        outcome = self._resample(sample_1, sample_2)
+        return self._finalize(
+            sample_1,
+            sample_2,
+            outcome.boot_data,
+            outcome.effect,
+            # a fresh list per call: _finalize APPENDS its H5 warning, and the
+            # outcome may be a memoized one served to several alphas
+            list(outcome.warnings),
+            value_1=outcome.value_1,
+            value_2=outcome.value_2,
+        )
 
     def _validate_params(self) -> None:
         # n_samples/max_block_bytes ranges are enforced by their ParamSpec bounds.
@@ -298,7 +367,7 @@ class BootstrapTest(BaseBootstrapMethod):
 
     name = "bootstrap"
 
-    def from_samples(self, sample_1: Sample, sample_2: Sample) -> TestResult:
+    def _resample(self, sample_1: Sample, sample_2: Sample) -> ResampleOutcome:
         require_pair_type(self.name, sample_1, sample_2, Sample)
         plan_1, plan_2 = self._independent_plans(sample_1, sample_2)
         rng = self._make_rng()
@@ -313,6 +382,6 @@ class BootstrapTest(BaseBootstrapMethod):
         value_1 = stat_point(sample_1.array, self._stat)
         value_2 = stat_point(sample_2.array, self._stat)
         effect = self._point_effect(value_1, value_2, result_warnings)
-        return self._finalize(
-            sample_1, sample_2, boot_data, effect, result_warnings, value_1=value_1, value_2=value_2
+        return ResampleOutcome(
+            boot_data, effect, tuple(result_warnings), value_1=value_1, value_2=value_2
         )

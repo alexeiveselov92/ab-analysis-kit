@@ -17,7 +17,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import numpy as np
 import pytest
@@ -25,6 +25,7 @@ import yaml
 from synthetic_ab import (
     METRICS,
     REL,
+    START,
     SyntheticWarehouse,
     build_session,
     experiment_payload,
@@ -45,7 +46,13 @@ CUPED = {"name": "cuped-t-test", "params": {"test_type": "relative", "covariate_
 
 
 def http(url: str, payload: dict | None = None, raw: bytes | None = None):
-    """One request; returns ``(status, parsed-or-text)`` without raising."""
+    """One request; returns ``(status, parsed-or-text)`` without raising.
+
+    A transport failure (connection refused/reset — e.g. a listen backlog too
+    small for a burst) is returned as ``(0, "transport: …")`` rather than raised:
+    inside a thread it would otherwise vanish into a stack trace and leave the
+    caller asserting on a reply COUNT, with no clue why one is missing.
+    """
     data = raw if raw is not None else (json.dumps(payload).encode() if payload else b"{}")
     request = urllib.request.Request(url, data=data, method="POST")
     try:
@@ -58,6 +65,8 @@ def http(url: str, payload: dict | None = None, raw: bytes | None = None):
             return exc.code, json.loads(body)
         except ValueError:
             return exc.code, body
+    except (urllib.error.URLError, OSError) as exc:  # refused/reset/timed out
+        return 0, f"transport: {exc!r}"
 
 
 def http_get(url: str):
@@ -564,14 +573,13 @@ class TestApplyGateClosure:
             explore.endpoint("apply"), {**TestApply.APPLY, "confirm_uncalibrated": True}
         )
         assert status == 200
-        # the server may already be down; a second Apply must never double-write
-        try:
-            status_two, detail = http(
-                explore.endpoint("apply"), {**TestApply.APPLY, "confirm_uncalibrated": True}
-            )
-            assert status_two in (409, 400)
-        except OSError:
-            pass  # connection refused after shutdown — equally safe
+        # the server may already be down; a second Apply must never double-write.
+        # status 0 is the helper's transport sentinel (connection refused after
+        # shutdown) — equally safe, and no longer an exception to swallow.
+        status_two, _ = http(
+            explore.endpoint("apply"), {**TestApply.APPLY, "confirm_uncalibrated": True}
+        )
+        assert status_two in (409, 400, 0)
         history = list((explore.path.parent / ".history").rglob("*.yml"))
         assert len(history) == 1  # exactly ONE archive: no racing double Apply
 
@@ -1071,3 +1079,116 @@ class TestPayloadAndHtml:
         stripped = page.replace("http://www.w3.org", "")
         assert "http://" not in stripped
         assert "https://" not in stripped
+
+
+class TestBootstrapMemoThroughTheServer:
+    """m10 WP5 end to end: the memo must survive the real handler, and a
+    ``/reload`` that changes the data must be visible in the very next answer.
+
+    The engine-level gates live in ``tests/tuning/test_recompute.py``; these two
+    run through HTTP because that is where ``/recompute`` and ``/reload`` are
+    genuinely concurrent (m10 WP4) and where a stale hit would reach a user.
+    """
+
+    METHOD = {"name": "bootstrap", "params": {"test_type": "relative", "n_samples": 200}}
+
+    @staticmethod
+    def _numbers(reply):
+        return [
+            (p["end_ts"], p["effect"], p["left_bound"], p["right_bound"], p["tier"])
+            for p in reply["pairs"][0]["points"]
+        ]
+
+    def _grow_the_warehouse(self, explore):
+        """Make a re-render legitimately differ: more revenue for the treatment."""
+        for unit, variant, _ in explore.warehouse.cohort:
+            if variant != "treatment":
+                continue
+            for day in range(4):
+                explore.warehouse.events["user_revenue"].append(
+                    (unit, variant, START + timedelta(days=day, hours=13), {"gross_usd": 5.0})
+                )
+
+    def test_a_reload_that_changes_the_data_is_visible_in_the_next_recompute(self, tmp_path):
+        explore = Explore(tmp_path, method=self.METHOD)
+        try:
+            request = recompute_request(method=self.METHOD, alpha=0.05)
+            status, first = http(explore.endpoint("recompute"), request)
+            assert status == 200
+            assert all(p["tier"] == "exact" for p in first["pairs"][0]["points"])
+
+            self._grow_the_warehouse(explore)
+            status, reloaded = http(explore.endpoint("reload"), request)
+            assert status == 200
+            assert self._numbers(reloaded) != self._numbers(
+                first
+            ), "the fixture must actually move the numbers or the gate is vacuous"
+
+            status, after = http(explore.endpoint("recompute"), request)
+            assert status == 200
+            assert self._numbers(after) == self._numbers(reloaded)
+        finally:
+            explore.stop()
+
+    def test_knob_turns_racing_a_reload_never_hang_and_never_answer_stale(self, tmp_path):
+        """Eight concurrent knob turns over a reload that moves every number.
+
+        Anything that answers AFTER the reload installed its cutoffs must carry
+        the new numbers; the memo is keyed to the cache generation, so a request
+        that read the pre-reload entry can only insert an unreachable entry.
+        """
+        explore = Explore(tmp_path, method=self.METHOD)
+        try:
+            alphas = [0.01, 0.02, 0.03, 0.04, 0.06, 0.07, 0.08, 0.09]
+            replies: list = []
+            errors: list = []
+
+            def turn(alpha: float, request_id: int) -> None:
+                try:
+                    for _ in range(3):
+                        replies.append(
+                            http(
+                                explore.endpoint("recompute"),
+                                recompute_request(
+                                    method=self.METHOD, alpha=alpha, request_id=request_id
+                                ),
+                            )
+                        )
+                except BaseException as exc:  # pragma: no cover - the failure path
+                    errors.append(exc)
+
+            threads = [
+                threading.Thread(target=turn, args=(alpha, 1000 + i), daemon=True)
+                for i, alpha in enumerate(alphas)
+            ]
+            for thread in threads:
+                thread.start()
+            self._grow_the_warehouse(explore)
+            status, reloaded = http(
+                explore.endpoint("reload"),
+                recompute_request(method=self.METHOD, alpha=0.05, request_id=2000),
+            )
+            for thread in threads:
+                thread.join(timeout=120)
+            assert not any(thread.is_alive() for thread in threads), "a knob turn hung"
+            assert not errors, errors
+            assert status == 200, reloaded
+            assert {code for code, _ in replies} <= {200, 409}
+
+            # after the dust settles every alpha answers off the RELOADED data
+            for alpha in alphas:
+                status, reply = http(
+                    explore.endpoint("recompute"),
+                    recompute_request(method=self.METHOD, alpha=alpha, request_id=3000),
+                )
+                assert status == 200
+                fresh = {
+                    p["end_ts"]: (p["effect"], p["value_2"]) for p in reply["pairs"][0]["points"]
+                }
+                for point in reloaded["pairs"][0]["points"]:
+                    assert fresh[point["end_ts"]] == (
+                        point["effect"],
+                        point["value_2"],
+                    ), f"alpha={alpha} answered pre-reload numbers"
+        finally:
+            explore.stop()

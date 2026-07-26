@@ -15,10 +15,9 @@ from __future__ import annotations
 
 from abkit.stats.base import require_pair_type
 from abkit.stats.bootstrap.applier import stat_point
-from abkit.stats.bootstrap.bootstrap import BaseBootstrapMethod
+from abkit.stats.bootstrap.bootstrap import BaseBootstrapMethod, ResampleOutcome
 from abkit.stats.bootstrap.engine import bootstrap_statistics
 from abkit.stats.registry import register
-from abkit.stats.result import TestResult
 from abkit.stats.samples import Sample
 
 
@@ -34,7 +33,7 @@ class PairedBootstrapTest(BaseBootstrapMethod):
     name = "paired-bootstrap"
     is_paired = True
 
-    def from_samples(self, sample_1: Sample, sample_2: Sample) -> TestResult:
+    def _resample(self, sample_1: Sample, sample_2: Sample) -> ResampleOutcome:
         require_pair_type(self.name, sample_1, sample_2, Sample)
         self._validate_paired(sample_1, sample_2)
         plan = self._paired_plan(sample_1, sample_2)
@@ -52,6 +51,6 @@ class PairedBootstrapTest(BaseBootstrapMethod):
         value_1 = stat_point(sample_1.array, self._stat)
         value_2 = stat_point(sample_2.array, self._stat)
         effect = self._point_effect(value_1, value_2, result_warnings)
-        return self._finalize(
-            sample_1, sample_2, boot_data, effect, result_warnings, value_1=value_1, value_2=value_2
+        return ResampleOutcome(
+            boot_data, effect, tuple(result_warnings), value_1=value_1, value_2=value_2
         )

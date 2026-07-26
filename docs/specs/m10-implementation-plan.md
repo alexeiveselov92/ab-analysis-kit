@@ -222,6 +222,18 @@ canonical design JSON's own step-by-step content (not replacing it):
   `boot_memo_lock`, never the reverse), and the "5 alphas → 1 resample"
   instrumentation test as the engagement proof (not just a numbers-match
   parity test, which alone wouldn't prove memoization actually fired).
+  > **[Amended by WP5's as-built — this paragraph's key is WRONG; do not copy
+  > it.]** As shipped the key is
+  > `BootMemoKey(metric, name_1, name_2, end_ts, generation, method, canonical
+  > resolved params)`, composed ONLY through `ExploreSession.boot_memo_key()`.
+  > `method_config_id` is a hash of the method name plus its non-default
+  > IDENTITY params, so `(method_config_id, end_ts)` collides across metrics,
+  > across the arm pairs of a multi-arm experiment, and across the
+  > identity-EXCLUDED `seed` (which IS the draw) — each collision a wrong
+  > number, each pinned by a test that goes red under this paragraph's key.
+  > And the lock order is not a rule but an absence: the memo purge runs
+  > AFTER `install_cutoff` releases `cache_lock`, so the two locks are never
+  > nested (an AST gate keeps it that way). See §WP5's as-built notes.
 
 ---
 
@@ -907,7 +919,76 @@ with a superseded answer.
 
 ---
 
-### WP5 — Explore: memoize bootstrap resampling across alpha-only changes
+### WP5 — Explore: memoize bootstrap resampling across alpha-only changes ✅ SHIPPED (`35323f4`)
+
+> **As-built notes (what the session found beyond the contract):**
+>
+> - **The prescribed key `(method_config_id, end_ts)` is not enough — it
+>   collides three ways, each of them a wrong number.** `method_config_id` is
+>   a hash of the method name plus its non-default IDENTITY params, so it
+>   carries neither *which data* was resampled nor two params that reach the
+>   draw:
+>   1. **across metrics** — one session serves every comparison, so two
+>      sample-typed metrics under the same method and cutoff share a key while
+>      resampling completely different arrays;
+>   2. **across arm pairs** — a multi-arm experiment computes
+>      `(control, treatment)` and `(control, treatment2)` at the same cutoff
+>      under one identity;
+>   3. **across `seed`** — identity-EXCLUDED by design (baseline fact #3), yet
+>      the per-row derived seed IS the draw. (`max_block_bytes` is also
+>      identity-excluded and also carried, but as belt-and-braces only: it is
+>      block-invariant by the engine's contract — measured byte-identical across
+>      five block sizes on both engines — so carrying it costs at most a missed
+>      hit, and a missed hit costs a resample where a wrong hit would cost a
+>      wrong number. Same for `pvalue_kind`, which `_finalize` reads. Narrowing
+>      the key to the draw-affecting params behind a declarative `ParamSpec`
+>      flag is a **named follow-up**, not a fix.)
+>   As built the key is a `BootMemoKey` NamedTuple — `(metric, name_1, name_2,
+>   end_ts, generation, method, canonical resolved params)` — i.e. everything
+>   the draw is a function of, minus alpha. All three collisions are pinned by
+>   tests that go red under the contract's key
+>   (`tests/tuning/test_recompute.py::TestBootstrapMemo`).
+> - **The step-6 amendment's `cache_epoch` is per CUTOFF, and it is in the
+>   KEY, not a check at insert time.** `install_cutoff` bumps
+>   `cache_generation[(metric, end_ts)]` and `cached_entry()` returns it inside
+>   the SAME critical section as the entry and the lookback tag (the WP4 triple,
+>   now widened). A resample memoized against generation *n* is therefore
+>   unreachable after a reload rather than merely purged — the interleaving WP4's
+>   review demonstrated costs a discarded resample, never a stale hit. One
+>   consequence is better than the contract asked for: since correctness no
+>   longer needs the purge, the purge is housekeeping and runs AFTER
+>   `install_cutoff` releases `cache_lock`, so `cache_lock` and `boot_memo_lock`
+>   are **never nested** and §0.4(f)'s lock-ordering rule has nothing to order.
+> - **The split returns a `ResampleOutcome` NamedTuple, not the prescribed
+>   3-tuple.** `_finalize` already accepted the caller's `value_1`/`value_2`
+>   (the M7 WP1 A4 hoist), and four of the six classes pass them; a 3-tuple
+>   would have silently dropped that optimization and made the memo recompute
+>   `stat_point` per alpha. `warnings` is a TUPLE for a reason the contract
+>   could not have known: `_finalize` APPENDS its H5 warning to the list it is
+>   handed and stores that same list on the `TestResult`, so a shared mutable
+>   list would have grown one duplicate warning per alpha (pinned).
+> - **Warnings have two channels and both had to be replayed.** Besides the
+>   result's own `warnings` list, `_compare` captures `AbkitStatsWarning`s
+>   raised DURING the call. A hit never re-runs the resample, so its captured
+>   messages are stored in the memo entry and re-attached ahead of the finalize
+>   step's — the same order one capture around the whole `from_samples` produced.
+> - **The capability is declared, not sniffed** (`supports_resample_memo`,
+>   mirroring M7's `supports_vectorized`): the engine dispatches on the flag and
+>   falls back to the verbatim `_compare` for anything else — including a pair
+>   shape `compare_pair` would have routed to `from_suffstats`. A registry
+>   roster gate keeps the flag, the `_resample` override and the inherited
+>   template `from_samples` in step, so a future plugin cannot half-adopt it.
+> - **Measured** (4 000 units × 10 000 replicates × 4 cutoffs, six alpha turns):
+>   6.01 s → 1.01 s total; per turn 1.00 s → **0.002 s** after the first. At a
+>   modest 1 000 units × 2 000 replicates the warm drag is 20× faster. The
+>   budget is counted in replicate VALUES (≈16 MB), not entries — `n_samples`
+>   is a live knob, so an entry cap bounds nothing; an entry bigger than the
+>   whole budget is refused rather than admitted-then-thrashing.
+> - **File-list deviations:** the bootstrap method tests live in
+>   `tests/stats/test_bootstrap_methods.py` (there is no `tests/stats/bootstrap/`
+>   package), and the session-level memo discipline is pinned in
+>   `tests/tuning/test_session_cache_lock.py` beside the cache it shares a
+>   lifecycle with.
 
 **Goal.** Split every `BaseBootstrapMethod` subclass's `from_samples`
 (`bootstrap.py`, `paired_bootstrap.py`, `post_normed_bootstrap.py`,
@@ -1590,3 +1671,132 @@ one Auto `/validate`) produced 0 5xx, 0 hung threads and a post-storm reply
 differing only in the `calibration` block the Auto run populated; the poll
 costs 0.744 µs per call (+32 µs on an 18-row recompute); superseded requests
 compute exactly one point (`1,1,1,1,1` against a winner's 8).
+
+### WP5 round 1 (`35323f4`…`dc0ba98`) — 6 lenses, 19 findings, 8 survived a skeptic
+
+Six lenses (numbers-moved, concurrency, key completeness, warnings/side
+effects/memory, can-the-new-gates-fail, contract & blast radius), each in its
+own worktree and required to RUN its scenario, then one skeptic per finding
+tasked with refuting it (default REFUTED; "does it also happen on `main`?" as an
+explicit question). 19 raised, 8 confirmed. **No finding touched a number** —
+the numbers lens independently re-derived the milestone's headline claim (4 131
+main-vs-WP5 results across all 6 classes and 8 data shapes, byte-identical at
+`float.hex()`, including warnings, diagnostics and every refusal's exception
+text), and the key lens failed to construct a single collision.
+
+| # | Defect | Severity | Fix |
+|---|---|---|---|
+| 1 | **The counter-exactness gate could not fail.** With `boot_memo_lock` stripped from `memoize_resample` the test passed **0 of 60** runs: its threads used a key each, so `previous` was always `None` and the whole update was `+= entry.values` — bytecode with no CALL and no backward jump, which CPython never preempts, at any switch interval. The WP4 original it was copied from shares 4 keys, which is exactly why its window contains a call and it catches its mutation 20/20. | high (a gate that cannot fail) | 16 SHARED keys, so the `pop(...)` call sits inside the window: the mutation is now caught **6/6** (the skeptic's independent variant: 12/12). |
+| 2 | **The purge hammer could not fail either** (3/20): its readers recycled ONE key, so the memo never held more than one entry and an unlocked `drop_memoized_cutoff` never scanned a mutating dict. | high (same) | 4 000 pre-filled entries under an untouched cutoff (so every purge walks a long dict), fresh generations per insert, and a 1 µs switch interval: **6/6**, raising the real `RuntimeError: OrderedDict mutated during iteration` that would be a 500 on `/reload`. |
+| 3 | **The resample's own result warnings were pinned by nothing.** `BootMemoEntry.caught` (the `AbkitStatsWarning` channel) was pinned; `ResampleOutcome.warnings` → `_finalize`'s list → `TestResult.warnings` was not — the test compared three memoized answers only to each other, so dropping the whole channel stayed green across all 657 tuning+stats tests. | silent-loss (gate) | the fixture now checks against an INDEPENDENT `compare_pair` over the same containers and the same derived seed. Mutation (`list(outcome.warnings)` → `[]`): red. |
+| 4 | **The headline parity gate compared the memo path against itself.** `boot_memo_budget = 0` disables the CACHE, not the code path — both sides still ran `_memoized_compare` → `_resample_captured`/`_finalize_captured`. | contract (gate) | the oracle now clears `supports_resample_memo`, which routes the baseline down the verbatim `_compare` → `compare_pair` → `from_samples` path the pipeline itself uses. Both parity gates (5-alpha and the knob matrix) use it; the budget-0 refusal path keeps its own test. |
+| 5 | **A value-only budget bounds the payload, not the memory.** Each slot costs ~773 B beyond its replicates (the key's canonical params JSON dominates), so a client sweeping distinct `n_samples` values could hold millions of 1-replicate entries "inside" a 16 MB budget and retain more than a gigabyte. | perf/resource | every add and subtract goes through one `memo_slot_charge()` = replicates + `BOOT_MEMO_ENTRY_OVERHEAD` (128 values ≈ 1 KiB). Writing it in two places first made the counter drift — the session's own concurrency gates caught that within the minute. |
+| 6 | **A lying capability flag died with a bare `AttributeError`** deep inside the engine. `supports_resample_memo` is advertised on `BaseMethod`, but the protocol it promises only existed on the bootstrap base — a downstream plugin had no signature to implement and no message telling it what was missing (the M7 lying-`supports_vectorized` lesson, unlearned). | contract | `BaseMethod._resample` now mirrors `from_suffstats_array`: a documented default raising `NotImplementedError` that names the flag; `BaseBootstrapMethod`'s abstract override delegates to it, so a runtime-patched-away implementation fails the same way. Pinned through both the stats core and the engine. |
+| 7 | **The as-built justified keying on `max_block_bytes` with a false claim** ("the block size is free to change the draw"). It is block-invariant by the engine's contract — measured byte-identical across five block sizes on both engines. | contract (docs) | the bullet now separates `seed` (genuinely the draw) from the belt-and-braces params, and records the `ParamSpec`-flag narrowing as a named follow-up. |
+| 8 | Three test files were not black-clean, so `pre-commit run --all-files` rewrote them — the "black churn in `tests/`" pain the project has already recorded twice. | style | formatted with the pinned black. |
+
+**Fixed beyond the confirmed set** (both filed as nits by their skeptics, both
+cheap and both matching an established precedent the project has already paid
+for twice):
+
+- `BootMemoKey` is composed ONLY through `ExploreSession.boot_memo_key()`, with
+  an AST gate — the m9 `state_series_key()` and m10 WP1 grid-factory discipline
+  (a composition copied to a second call site is one that will be copied with a
+  field dropped, and every dropped field here is a wrong number).
+- The "the two locks are never nested" claim is now a **test**: an AST walk over
+  `session.py` refuses any `boot_memo*`/`drop_memoized*` reference inside a
+  `with self.cache_lock:` body. Both gates go red on their mutation.
+- The FIFO budget's silent cliff (once the working set exceeds the budget, an
+  oldest-first policy yields NO reuse at all) is now **disclosed**: `recompute()`
+  compares the session's eviction counter around the pass and appends a warning
+  naming the budget — the same honesty the Tier-S cache owes when it degrades.
+  (The skeptic downgraded the CPU half to PRE_EXISTING: thrashing costs what
+  `main` already cost, never more.)
+
+**Verified clean, with the evidence:**
+
+- **No number moves, established independently of the repo's own tests**: 4 131
+  main-vs-WP5 comparisons across the 6 classes × 8 data shapes byte-identical;
+  my own 64-cell knob-matrix fuzz (3 families × stat × pvalue_kind × test_type ×
+  4 alphas, 256 points) memo-on vs memo-off identical; `git diff main..HEAD --
+  tests/golden` empty; zero `ALGORITHM_VERSION` changes.
+- **No collision exists in the shipped key.** Three independent search
+  strategies failed to construct one; the data axis is closed by construction
+  (one writer, `cached_entry()` returns the entry and its generation in one
+  critical section, and `MetricLoadResult` is never mutated after installation).
+- **The generation scheme is sound under concurrency**: no interleaving serves a
+  stale resample — the counter is written by one function, never reset (a
+  `disable_cache` deliberately leaves it monotone), and a production-shaped
+  hammer (4 recompute threads + 400 installs) shows 0 exceptions and 0 drift on
+  the shipped code against 30 `RuntimeError`s + 258 drift with the lock removed.
+- **Warnings cannot cross-attribute**: `warn_scope` frames are per-thread and a
+  replayed warning always belongs to the same logical comparison the key names
+  (8-thread × 2-metric tagged run).
+- Deliberately NOT changed: the memo key still carries `pvalue_kind` and
+  `max_block_bytes` (correct, merely wider than necessary — the narrowing is a
+  named follow-up, and a missed hit costs a resample while a wrong hit would
+  cost a wrong number); `contributing.md` step 4b keeps its general wording,
+  scoped by the sentence naming the bootstrap family as today's only adopter.
+
+### WP5 round 2 — the round-1 fixes attacked in turn
+
+Three lenses over the round-1 fix delta (`dc0ba98..37872fd`) plus two
+independent re-establishments of the whole WP, each in its own worktree, each
+required to run what it claims. 9 findings, 5 reproduced. The standing lesson
+held again: **round 1's own fix opened the round's worst hole.**
+
+| # | Defect | Severity | Fix |
+|---|---|---|---|
+| 1 | **Round 1's eviction warning fired when the memo was working perfectly, and blamed this reply for another request's evictions.** It compared a SESSION-WIDE monotone counter around the pass, so ordinary turnover between two knob states ("make room for the new state") reported a degradation the very next request contradicted — measured: the warning fires, then the same knobs at a new alpha reuse everything and resample **0** times. And since m10 WP4 made `/recompute` concurrent over one session, a bootstrap handler's evictions surfaced in an unrelated reply, quoting that reply's own roomy budget. | contract (a warning users learn to ignore) | measure the PASS: `_memoized_compare` records the keys this pass stored, and `recompute()` asks `session.memoized_all(...)` — did anything I just stored already go? Healthy turnover and a noisy neighbour are both silent; real thrash still speaks. |
+| 2 | **The loudest case was the silent one.** An entry bigger than the WHOLE budget is refused, evicting nothing — so the eviction-keyed warning never fired for the one case where reuse is zero *forever*. Reachable at the shipped default: `n_samples` has no maximum, so anything above ~2 M replicates refuses every entry. | perf/resource | the refusal is recorded as a sentinel in the same per-pass list, so it warns through the same branch. |
+| 3 | **The capability refusal covered only half the contract.** Round 1 gave `BaseMethod._resample` a named `NotImplementedError`; a method with `_resample` but no `_finalize` still died with a bare `AttributeError` inside the engine. | contract | `_memoized_compare` checks both halves up front and names the missing one. Both shapes pinned. |
+| 4 | **The WP's central atomicity claim was pinned by nothing.** Nothing failed when the memo key's `generation` stopped coming from the same locked read as the entry — the torn read that keys THIS render's replicates to the NEXT render's generation, i.e. a stale hit that survives every purge. | contract (a gate that cannot fail) | the WP4 hooked-lock instrument, extended: a complete `/reload` lands at the reader's first release, and the FOLLOWING request must answer off the installed render. A two-read implementation serves the pre-reload numbers and the test goes red. |
+| 5 | **The round-1 docs correction reached two of three bodies.** `.claude/rules/architecture.md` still asserted the `max_block_bytes` collision the fix had retracted — and it is the body a future contributor reads before picking up the named narrowing follow-up. | contract (three-way sync) | corrected; the rules bullet now separates the collision-critical fields from the belt-and-braces ones. |
+| 6 | The named refusal claimed the method "declares `supports_resample_memo`" even for a method that never declared it. | style | the message branches on the flag. |
+| 7 | The two new AST gates matched only the direct spelling (`BootMemoKey(...)`), missing the alias, module-attribute, rebinding and `_make` forms — the exact evasion class WP4's round 2 had to fix in its own gate. | style (gate coverage) | the key gate resolves import aliases and rebindings and covers `_make`; its evasion suite has 5 shapes. |
+
+**Recorded, deliberately NOT fixed** (unreachable in-tree, and the guard would
+cost more than it buys): a plugin that declares `supports_resample_memo`, keeps
+a working `_resample`/`_finalize` pair AND overrides `from_samples` would have
+explore skip the override while the pipeline still runs it. In-repo the roster
+gate refuses exactly that shape (`from_samples is BaseBootstrapMethod.from_samples`);
+downstream it is out of contract, and detecting it generically means marking the
+template method itself. Named, not built.
+
+**Verified clean in round 2, with the evidence** (independent of the repo's own
+tests — the numbers lens diffed against the `main` tree, which has no memo code
+at all):
+
+- **16 128 stats-layer cases** (6 families × 8 data flavours incl. all-zero
+  control, constant, 1e-9, 1e12, Pareto; stratified and not; every stat ×
+  pvalue_kind × test_type × alpha × max_block_bytes) byte-identical to `main` on
+  every `TestResult` field, diagnostic and warning — the split moves no number.
+- **21 328 engine-layer points** across two seed sets, **14 503 of them served by
+  a memo HIT**, byte-identical to `main` across all 18 `ExplorePoint` fields, the
+  raw `TestResult`, the chips and the engine warnings — with 3-arm pairs, two
+  sample metrics, degenerate H5 arms (350+ undefined-effect and 800+ non-finite
+  warnings actually exercised), 298 interleaved `/reload`s (scale, zero, 1e18,
+  NaN, lookback change) and stratified entries in the space.
+- **46 696 points across two HTTP storms** checked against per-generation
+  memo-free oracles: **zero stale hits and zero mixtures** (the signature a stale
+  hit would leave, since `_finalize` takes `value_i` from the memoized outcome
+  but `std`/`size` from the live containers).
+- `boot_memo_values == sum(memo_slot_charge(...))` held exactly after every
+  scenario including a mid-storm `disable_cache` and an `n_samples` sweep with
+  472 evictions; no lock cycle exists; `boot_data` is a fresh allocation in both
+  engines (never a view into a block buffer), so the budget's `values` is an
+  honest memory measure.
+
+**A CI-only failure, and what it was allowed to say.** The first run of the
+round-2 tree lost exactly one reply out of twenty in WP4's
+`test_lock_free_recomputes_keep_the_cache_consistent_under_a_reload`
+(`assert 19 == 20`). The count was all the test could say: its `http()` helper
+converted HTTP errors into `(status, body)` but let a TRANSPORT error escape,
+so inside a thread it vanished into a stack trace and the reply simply never
+arrived. The helper now returns `(0, "transport: …")` and the existing
+per-reply assertion names the cause the next time. Sized with it: the server's
+accept queue (socketserver's default backlog of 5 — right while one lock
+serialized every POST, tight now that a knob drag arrives as a burst of
+concurrent connections) is now 64. Disclosed as a hardening, not a proven fix:
+a local probe could not reproduce a drop at either backlog size, the failure
+has not recurred, and the comment in `server.py` says exactly that.
