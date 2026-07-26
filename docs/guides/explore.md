@@ -125,6 +125,15 @@ the bounded Tier-S cache. If the experiment is larger than the cache budget, the
 cockpit degrades **honestly** to a suffstats-only surface (a smaller live
 recompute set) rather than silently caching a partial slice.
 
+**Dragging alpha over a bootstrap series is cheap after the first answer
+(0.5.0).** A bootstrap point is a resample (the whole cost) plus a percentile
+CI at one alpha (microseconds), and only the second half depends on alpha, so
+the replicates are drawn once per (metric, arm pair, cutoff, method, params)
+and reused across alphas. The same replicates give the same numbers — this is a
+cache, not an approximation — and a `Reload` that re-renders a cutoff discards
+them for that cutoff. Changing any knob that feeds the draw itself
+(`n_samples`, `stat`, `stratify`, …) is a new draw, as it must be.
+
 ## Calibration is always visible; Apply is gated
 
 The single most important safety property of the cockpit: **you cannot silently
