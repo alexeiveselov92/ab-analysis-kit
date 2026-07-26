@@ -675,6 +675,26 @@ class TestModuleContract:
             isinstance(node, ast.Name) and node.id == "PIPELINE_KINDS" for node in ast.walk(gate)
         )
 
+    def test_shutdown_latches_closed_inside_the_snapshot_critical_section(self):
+        """The atomicity claim itself — too narrow a window to time, so read it.
+
+        If ``self._closed = True`` moves out of the ``with self._lock`` block
+        that snapshots the registry, a spawn slipping between the two once
+        again produces a child nobody reaps. No timing test can reliably hit
+        that interleaving, so the structure is what gets pinned.
+        """
+        tree = ast.parse(Path(jobs_module.__file__).read_text(encoding="utf-8"))
+        shutdown = next(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef) and node.name == "shutdown"
+        )
+        guarded = [node for node in shutdown.body if isinstance(node, ast.With)]
+        assert len(guarded) == 1, "shutdown should snapshot under exactly one lock block"
+        body_src = [ast.dump(stmt) for stmt in guarded[0].body]
+        assert any("_closed" in dumped for dumped in body_src), "the latch escaped the lock"
+        assert any("_jobs" in dumped for dumped in body_src), "the snapshot escaped the lock"
+
     def test_the_registry_never_imports_the_statistics_core(self):
         tree = ast.parse(Path(jobs_module.__file__).read_text(encoding="utf-8"))
         imported: list[str] = []
