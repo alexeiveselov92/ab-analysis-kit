@@ -343,7 +343,7 @@ class TestWindowFields:
         the horizon VALUE moves too."""
         payload = base_payload()
         payload[old] = payload.pop({"start_date": "start_ts", "end_date": "horizon_ts"}[old])
-        with pytest.raises(ValidationError, match=f"`{old}` was renamed to `{new}`"):
+        with pytest.raises(ValidationError, match=f"`{old}` → `{new}`"):
             ExperimentConfig.model_validate(payload)
 
     def test_the_end_date_hint_spells_out_the_off_by_one(self):
@@ -351,6 +351,24 @@ class TestWindowFields:
         payload["end_date"] = payload.pop("horizon_ts")
         with pytest.raises(ValidationError, match="EXCLUSIVE right edge"):
             ExperimentConfig.model_validate(payload)
+
+    def test_a_real_0_4_0_config_is_told_about_BOTH_renames_at_once(self):
+        """The upgrade path an operator actually walks. Reporting only the first
+        stale key hid the one instruction that changes a VALUE: `start_date`
+        sorts first and its note says the value carries over unchanged, so an
+        operator who renamed both keys mechanically got a window one day short
+        that validates in silence — the single silent-wrong-number path this
+        rename can produce."""
+        payload = base_payload()
+        payload["start_date"] = payload.pop("start_ts")
+        payload["end_date"] = payload.pop("horizon_ts")
+        with pytest.raises(ValidationError) as excinfo:
+            ExperimentConfig.model_validate(payload)
+        message = str(excinfo.value)
+        assert "`start_date` → `start_ts`" in message
+        assert "`end_date` → `horizon_ts`" in message
+        assert "EXCLUSIVE right edge" in message  # the +1 day instruction
+        assert "horizon_ts: 2024-07-15" in message
 
     def test_a_bare_date_stays_a_date_and_a_timestamp_stays_a_datetime(self):
         """Type-preserving on purpose: str() of the field reaches the m9 state

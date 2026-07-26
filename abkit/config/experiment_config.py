@@ -527,15 +527,26 @@ class ExperimentConfig(BaseModel):
         ``extra="ignore"`` (pydantic's default) would otherwise drop the old
         key and report a bare "Field required: start_ts", leaving the reader
         to guess that the VALUE also moves (horizon_ts is exclusive).
+
+        **Every** renamed key present is reported in ONE error. Raising on the
+        first one hid the message that matters: an 0.4.0 config carries both
+        keys, ``start_date`` sorts first, and its note says the value carries
+        over unchanged — so the operator never saw the ``end_date`` →
+        ``horizon_ts`` ``+1 day`` instruction, renamed both keys mechanically,
+        and got a window one day short that validates silently. The one
+        genuinely silent-wrong-number path this rename can produce.
         """
         if not isinstance(data, dict):
             return data
-        for old, (new, note) in _RENAMED_WINDOW_FIELDS.items():
-            if old in data:
-                raise ValueError(
-                    f"`{old}` was renamed to `{new}` (abkit 0.5.0 — experiment "
-                    f"windows are timestamps, not dates): {note}"
-                )
+        present = [
+            (old, *_RENAMED_WINDOW_FIELDS[old]) for old in _RENAMED_WINDOW_FIELDS if old in data
+        ]
+        if present:
+            renames = "; ".join(f"`{old}` → `{new}`: {note}" for old, new, note in present)
+            raise ValueError(
+                "renamed window field(s) (abkit 0.5.0 — experiment windows are "
+                f"timestamps, not dates) — {renames}"
+            )
         return data
 
     @model_validator(mode="after")

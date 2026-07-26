@@ -654,6 +654,20 @@ def run_experiments(
         bootstrap = manager_factory()
         try:
             InternalTablesManager(bootstrap).ensure_tables()
+        except Exception as exc:
+            # The same schema-guard failure `run_experiment` handles, on the
+            # pool path: report it as every selected experiment's outcome so the
+            # CLI prints the drop-and-recreate remedy instead of a traceback.
+            # Missing this second call site left `--workers N>1` over 2+
+            # experiments burying the message the release depends on.
+            return [
+                RunOutcome(
+                    experiment=experiment.name,
+                    status=STATUS_FAILED,
+                    error=f"{type(exc).__name__}: {exc}",
+                )
+                for _, experiment in experiments
+            ]
         finally:
             bootstrap.close()
 

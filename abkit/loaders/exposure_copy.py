@@ -81,11 +81,12 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import numpy as np
 
 from abkit.config.experiment_config import CohortCopyConfig, ExperimentConfig
-from abkit.core.period_planner import Grid
+from abkit.core.period_planner import Grid, local_date, tz_midnight_utc
 from abkit.database.internal_tables import InternalTablesManager
 from abkit.database.manager import BaseDatabaseManager
 from abkit.loaders.exposure_source import (
@@ -211,7 +212,17 @@ def copy_exposures_incremental(
             "disable cohort_copy)"
         )
 
-    origin = grid.start_ts
+    # The scan origin is the OPENING LOCAL DAY's midnight, not `grid.start_ts`
+    # itself. Until m10 those were the same value (a start was always a bare
+    # date), and anchoring on the instant silently drops every unit exposed
+    # earlier on the opening day: the scaffold's own 08:00 cohort vanishes
+    # under a 09:00 start — 0 of 600 units persisted, while the SRM line still
+    # reads 600 off the LIVE source, so a real warehouse's metric join returns
+    # nothing and every look degrades to "insufficient" without a warning.
+    # Direct mode applies no lower bound at all, so the day floor is also the
+    # closer match to it. Byte-identical for every midnight start.
+    zone = ZoneInfo(experiment.timezone)
+    origin = tz_midnight_utc(local_date(grid.start_ts, zone), zone)
     bound = closed_interval_bound(cfg, origin, now)
     if bound is None:
         _log(f"LOAD  {name}: cohort copy — no batch interval has closed yet, waiting")

@@ -39,6 +39,7 @@ import json
 import math
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 import yaml
@@ -48,6 +49,7 @@ from test_first_run import EXPOSURE_TS, SeedMirrorWarehouse
 import abkit.config.profile as profile_mod
 from abkit.cli.main import cli
 from abkit.config import ExperimentConfig
+from abkit.core.period_planner import as_local_datetime
 
 runner = CliRunner()
 
@@ -85,24 +87,39 @@ WINDOW_CASES = [
         [{"every": "6h", "until": "2d"}, {"every": "1d"}],
         "Europe/Moscow",
     ),
+    # …plus the shapes review round 1 found missing, each chosen because it can
+    # move a number the first eleven cannot:
+    ("single_day_window", "2024-07-01", "2024-07-01", "1d", "UTC"),
+    # a NON-day-multiple `until`, which takes the day-lattice's elapsed-seconds
+    # branch rather than its day-space one
+    (
+        "non_day_multiple_until",
+        "2024-07-01",
+        "2024-07-14",
+        [{"every": "6h", "until": "36h"}, {"every": "1d"}],
+        "UTC",
+    ),
+    ("half_hour_dst_lord_howe", "2024-09-29", "2024-10-09", "1d", "Australia/Lord_Howe"),
+    ("two_hour_dst_troll", "2024-03-27", "2024-04-08", "1d", "Antarctica/Troll"),
+    # a whole local calendar day that never existed (Apia crossed the date line)
+    ("apia_line_jump_2011", "2011-12-27", "2012-01-03", "1d", "Pacific/Apia"),
+    ("apia_start_on_the_skipped_day", "2011-12-30", "2012-01-05", "1d", "Pacific/Apia"),
+    # an offset change with NO DST on either side (a permanent zone shift)
+    ("moscow_permanent_shift_2014", "2014-10-20", "2014-11-02", "1d", "Europe/Moscow"),
+    # a zone whose offset is not a whole hour, with no change inside the window
+    ("kathmandu_45min_offset", "2024-07-01", "2024-07-08", "1d", "Asia/Kathmandu"),
 ]
 
 #: the CUPED lookbacks whose whole-day pre-period window is captured
 LOOKBACKS = ["7d", "14d"]
 
-#: The ONE derived number M10 moved, and only where a DST transition falls
-#: inside the window: ``horizon_seconds()`` was a nominal day count
-#: (``(end − start).days + 1``) × 86 400 and is now the true elapsed length
-#: between the two resolved instants. Pre-m10 that made the config disagree
-#: with its OWN grid — ``daily_dst_fall_back``'s golden carries
-#: ``horizon_days: 12.0416…`` (grid-derived, honest) beside
-#: ``horizon_seconds: 1036800`` (12.0 days) — and the two now agree. It reaches
-#: config-lint's cadence gate and the readout's pre-horizon RATIONALE line;
-#: no persisted ``_ab_results`` column derives from it.
-DST_HORIZON_SECONDS = {
-    "daily_dst_fall_back": 12 * DAY_SECONDS + 3600,
-    "daily_dst_spring_forward": 8 * DAY_SECONDS - 3600,
-}
+#: The ONE case whose GRID moved, and the only one: a ``start_ts`` on a local
+#: calendar day that never existed. Pre-m10 both the start and the first daily
+#: lattice point snapped to the same instant, so the series opened with a
+#: ZERO-LENGTH look; the m10 planner keeps cutoffs strictly after the start and
+#: drops it. Disclosed rather than waived — an empty first window computed
+#: nothing and could not be read.
+SKIPPED_LOCAL_DAY_CASE = "apia_start_on_the_skipped_day"
 
 _HAS_TS_FIELDS = "start_ts" in ExperimentConfig.model_fields
 
@@ -219,7 +236,7 @@ class TestWindowGoldenAgainstPreM10:
         # below by never being compared
         golden = json.loads(GOLDEN_PATH.read_text(encoding="utf-8"))
         assert set(golden) == {case[0] for case in WINDOW_CASES}
-        assert len(golden) == len(WINDOW_CASES) == 11
+        assert len(golden) == len(WINDOW_CASES) == 19
 
     def test_every_window_reproduces_its_pre_m10_grid_and_derived_numbers(self):
         golden = json.loads(GOLDEN_PATH.read_text(encoding="utf-8"))
@@ -228,39 +245,90 @@ class TestWindowGoldenAgainstPreM10:
         for name in sorted(golden):
             expected = dict(golden[name])
             actual = dict(captured[name])
-            # the one documented divergence is asserted separately, below
+            # the two documented divergences are asserted separately, below
             expected.pop("horizon_seconds")
             actual.pop("horizon_seconds")
+            if name == SKIPPED_LOCAL_DAY_CASE:
+                continue  # its grid moved too — pinned exactly below
             assert actual == expected, f"{name}: window surface moved"
 
-    def test_the_only_derived_number_that_moved_is_the_dst_horizon_length(self):
+    def test_horizon_seconds_moves_by_exactly_the_windows_utc_offset_change(self):
+        """The general law, not an allowlist.
+
+        ``horizon_seconds()`` was a nominal day count and is now the elapsed
+        length between the two resolved instants, so it differs from the pre-m10
+        value by exactly the UTC-offset change between the window's edges — and
+        by nothing anywhere else. Stating it as "±1h across DST" was wrong three
+        ways: the delta is ±30 min in Australia/Lord_Howe, ±2h in
+        Antarctica/Troll and −24h across Pacific/Apia's line jump, and it fires
+        with no DST at all (Moscow's 2014 permanent +4→+3 shift, ``dst() == 0``
+        on both sides). A waiver list would have had to grow for each; this
+        cannot.
+        """
         golden = json.loads(GOLDEN_PATH.read_text(encoding="utf-8"))
         captured = capture_window_surface()
+        moved = []
 
-        for name in sorted(golden):
-            pre_m10 = golden[name]["horizon_seconds"]
-            now = captured[name]["horizon_seconds"]
-            if name in DST_HORIZON_SECONDS:
-                # moved, by exactly the transition — and toward its own grid
-                assert now == DST_HORIZON_SECONDS[name], name
-                assert now != pre_m10, name
-                assert abs(now - pre_m10) == 3600, name
-                assert now == pytest.approx(
-                    golden[name]["horizon_days"] * DAY_SECONDS
-                ), f"{name}: horizon_seconds must agree with the grid it describes"
-            else:
-                # every other window — including both sub-day ones — unmoved
-                assert now == pre_m10, f"{name}: horizon_seconds moved"
-
-    def test_no_dst_free_window_is_in_the_divergence_list(self):
-        # the divergence list must not be able to grow into a blanket waiver
-        golden = json.loads(GOLDEN_PATH.read_text(encoding="utf-8"))
-        for name in DST_HORIZON_SECONDS:
-            assert name in golden
-            assert golden[name]["horizon_seconds"] % DAY_SECONDS == 0  # the nominal count
-            assert DST_HORIZON_SECONDS[name] % DAY_SECONDS == 3600 or (
-                DST_HORIZON_SECONDS[name] % DAY_SECONDS == DAY_SECONDS - 3600
+        for name, start, end_inclusive, cadence, tz in WINDOW_CASES:
+            config = ExperimentConfig.model_validate(
+                window_document(name, start, end_inclusive, cadence, tz)
             )
+            zone = ZoneInfo(tz)
+
+            def utc_offset(local_edge, zone=zone):
+                """The zone's offset at a LOCAL wall-clock edge.
+
+                Taken at the local time, never at the resolved instant: on
+                Pacific/Apia's skipped day the resolved instant lands on the
+                far side of the jump, so reading the offset there loses the
+                24h it is the whole point of.
+                """
+                return local_edge.replace(tzinfo=zone).utcoffset().total_seconds()
+
+            expected_delta = utc_offset(as_local_datetime(config.start_ts)) - utc_offset(
+                as_local_datetime(config.horizon_ts)
+            )
+            actual_delta = captured[name]["horizon_seconds"] - golden[name]["horizon_seconds"]
+            assert actual_delta == expected_delta, name
+            # …and the new value agrees with the grid it describes, which the
+            # old one did not
+            assert captured[name]["horizon_seconds"] == pytest.approx(
+                golden[name]["horizon_days"] * DAY_SECONDS
+            ), f"{name}: horizon_seconds must agree with the grid"
+            if actual_delta:
+                moved.append(name)
+
+        # the law is only worth asserting if cases actually exercise it, in
+        # every magnitude the wrong "±1h across DST" story missed
+        assert len(moved) == 7, moved
+        assert {
+            "daily_dst_fall_back",  # +1h, DST
+            "half_hour_dst_lord_howe",  # -30min, DST
+            "two_hour_dst_troll",  # -2h, DST
+            "apia_line_jump_2011",  # -24h, a date-line jump
+            "moscow_permanent_shift_2014",  # +1h, NO DST on either side
+        } <= set(moved)
+
+    def test_the_only_grid_that_moved_is_a_start_on_a_skipped_local_day(self):
+        """The second disclosed divergence, pinned exactly.
+
+        Pacific/Apia's 2011-12-30 never existed locally, so pre-m10 the start
+        and the first daily lattice point resolved to the SAME instant and the
+        series opened with a zero-length look. It is gone, and nothing else
+        about the case moved.
+        """
+        golden = json.loads(GOLDEN_PATH.read_text(encoding="utf-8"))[SKIPPED_LOCAL_DAY_CASE]
+        actual = capture_window_surface()[SKIPPED_LOCAL_DAY_CASE]
+
+        assert golden["start_ts"] == actual["start_ts"]  # the window is unchanged
+        assert golden["horizon_ts"] == actual["horizon_ts"]
+        assert actual["look_count"] == golden["look_count"] - 1
+
+        dropped = golden["looks"][0]
+        assert dropped["end_ts"] == golden["start_ts"], "the dropped look was zero-length"
+        assert dropped["window_seconds"] == 0
+        # every surviving look is byte-identical to its pre-m10 twin
+        assert actual["looks"] == golden["looks"][1:]
 
 
 # --------------------------------------------------------------------------
@@ -403,25 +471,48 @@ class TestSubDayStart:
 
     def test_plan_accepts_a_timestamped_start(self, tmp_path, monkeypatch):
         _sub_day_project(tmp_path, monkeypatch)
+        # `abk plan` needs a persisted baseline, or every comparison prints
+        # "SKIPPED: no baseline" and the sizing math the gate names
+        # (look_days/horizon_days, achievable MDE, required N) never runs
+        assert runner.invoke(cli, ["run", "--select", SUB_DAY_EXP]).exit_code == 0
         result = runner.invoke(cli, ["plan", "--select", SUB_DAY_EXP])
         assert result.exit_code == 0, result.output
+        assert "SKIPPED: no baseline" not in result.output, result.output
+        assert "looks:" in result.output, result.output
 
     def test_validate_accepts_a_timestamped_start(self, tmp_path, monkeypatch):
-        # the A/A matrix enumerates the SAME grid; a placebo panel over sub-day
-        # looks is a surface no other suite drives off a timestamped start
-        _sub_day_project(tmp_path, monkeypatch)
+        """The A/A matrix enumerates the SAME grid, a surface no other suite
+        drives off a timestamped start.
+
+        Exit 0 alone would be a green light over a half-failed matrix, so the
+        per-cell outcomes are pinned. The fraction cell DOES fail here — and
+        measurably NOT because of the timestamped start: it fails identically at
+        `f85371d` with a midnight start and the same 6h cadence (`fraction
+        input_kind requires an nobs (trials) array`), i.e. a pre-existing
+        sub-day-cadence defect in the A/A panel, out of M10's scope. Pinned as
+        the current truth so the day it changes, this notices.
+        """
+        warehouse, _ = _sub_day_project(tmp_path, monkeypatch)
         assert runner.invoke(cli, ["run", "--select", SUB_DAY_EXP]).exit_code == 0
         result = runner.invoke(cli, ["validate", "--select", SUB_DAY_EXP, "--iterations", "50"])
         assert result.exit_code == 0, result.output
 
-    def test_day_state_clamps_the_opening_day_to_the_start_instant(self, tmp_path, monkeypatch):
-        """The falsifiable half of WP1's STATE fix.
+        statuses = {row["metric"]: row["status"] for row in warehouse._rows["_ab_aa_runs"]}
+        assert statuses == {
+            STATE_METRIC: "success",  # the sample metric scores normally
+            "example_signup_cr": "failed",  # the pre-existing fraction defect
+        }, statuses
+        assert "well-calibrated" in result.output
 
-        With a 14:30 start the seed's only opening-day facts (12:00) lie BEFORE
-        the experiment: an unclamped whole-day render would materialize 600
-        rows for Jul 1 out of pre-experiment events. The clamped render finds
-        nothing, so the day carries no state at all — while a 09:00 start (the
-        12:00 facts inside the window) materializes all three days.
+    def test_day_state_materializes_every_closed_day_of_a_sub_day_series(
+        self, tmp_path, monkeypatch
+    ):
+        """The 09:00 half: the clamp must not COST a day.
+
+        The seed's opening-day facts (12:00) are inside `[09:00, Jul 2)`, so all
+        three closed days carry state. This says the clamp does not over-clamp;
+        the test below is the one that can fail if it does not clamp at all
+        (with a 14:30 start the same facts fall before the window).
         """
         warehouse, _ = _sub_day_project(tmp_path, monkeypatch)
         assert runner.invoke(cli, ["run", "--select", SUB_DAY_EXP]).exit_code == 0
@@ -442,6 +533,37 @@ class TestSubDayStart:
         assert days == {"2024-07-02", "2024-07-03"}, "the opening day summed pre-start facts"
         assert state, "day state vanished entirely — the leg proves nothing"
 
+    def test_copy_mode_still_copies_the_whole_opening_day(self, tmp_path, monkeypatch):
+        """m8 × m10: the persisted-cohort engine must not lose the units exposed
+        before a sub-day start.
+
+        The incremental copy anchors its first scan bucket at the opening LOCAL
+        DAY, not at `grid.start_ts`. Anchoring on the instant — which was
+        invisible until m10, because a start was always a bare date — dropped
+        every unit exposed earlier that day: the scaffold's 08:00 cohort
+        vanishes under a 09:00 start, 0 of 600 units persisted, while the SRM
+        line still reads 600 off the LIVE source. A real warehouse's metric join
+        then returns nothing and every look degrades to "insufficient", unwarned.
+        """
+        warehouse, path = _sub_day_project(tmp_path, monkeypatch)
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+        document["assignment"]["cohort_copy"] = {"enabled": True}
+        path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+        # copy mode requires the bounds hook to be a LIVE render reference
+        query = Path(document["assignment"]["query_file"])
+        sql = query.read_text(encoding="utf-8")
+        query.write_text(
+            sql.rstrip().rstrip(";") + "\n  WHERE 1 = 1 {{ ab_added_filters }}\n",
+            encoding="utf-8",
+        )
+
+        result = runner.invoke(cli, ["run", "--select", SUB_DAY_EXP])
+        assert result.exit_code == 0, result.output
+        persisted = warehouse._rows.get("_ab_exposures", [])
+        assert len(persisted) == 600, f"the copy dropped {600 - len(persisted)} unit(s)"
+        # the exposures it copied really do precede the start instant
+        assert EXPOSURE_TS < datetime(2024, 7, 1, 9, 0)
+
     def test_the_additive_read_path_reproduces_recompute_under_a_timestamped_start(
         self, tmp_path, monkeypatch
     ):
@@ -452,8 +574,29 @@ class TestSubDayStart:
         agree over the whole sub-day series, with nothing falling back.
         """
         incremental, _ = _sub_day_project(tmp_path, monkeypatch, incremental=True)
+
+        # Count real additive reads. Without this the leg is SELF-parity: if the
+        # driver stopped honouring `compute.incremental_reads` the comparison
+        # below would put recompute against recompute and stay green — the exact
+        # trap WP5's own review found in the memo gate.
+        import abkit.compute.incremental_backend as incremental_mod
+
+        reads: list[tuple] = []
+        original_load = incremental_mod.IncrementalBackend.load_cutoff
+
+        def counted(self, *args, **kwargs):
+            reads.append((args, tuple(sorted(kwargs))))
+            return original_load(self, *args, **kwargs)
+
+        monkeypatch.setattr(incremental_mod.IncrementalBackend, "load_cutoff", counted)
+
         result = runner.invoke(cli, ["run", "--select", SUB_DAY_EXP])
         assert result.exit_code == 0, result.output
+        # one additive read per cutoff of the state-eligible metric
+        assert len(reads) == 11, len(reads)
+        # …and none of them degraded to the recompute fallback
+        assert "falling back" not in result.output.lower()
+        assert "fell back" not in result.output.lower()
 
         verify = runner.invoke(cli, ["verify-incremental", "--select", SUB_DAY_EXP])
         assert verify.exit_code == 0, verify.output
@@ -753,6 +896,10 @@ class TestCockpitUnderLoad:
         memoized_calls, memoized = drag(True)
         unmemoized_calls, unmemoized = drag(False)
 
+        # a floor first: `0 == 0 * 5` would satisfy the ratio below while
+        # proving nothing (a degraded Tier-S cache resamples nothing at all)
+        assert memoized_calls == 10, memoized_calls
+        assert all(len(points) == 11 for points in memoized), "the series went empty"
         # the oracle really is the other path: five drags, five draws per look
         assert unmemoized_calls == memoized_calls * len(ALPHA_DRAG)
         # …and every number over the wire is identical, alpha by alpha

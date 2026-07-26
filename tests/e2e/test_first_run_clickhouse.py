@@ -276,8 +276,12 @@ def test_m10_window_schema_on_a_real_server(clickhouse, tmp_path, monkeypatch):
 
     # the resolved window really round-trips through the widened columns (the
     # scaffold's UTC midnight edges, stored in naive UTC like `_ab_results`)
+    # No FINAL: `_ab_experiments` is a plain MergeTree (no version column), so
+    # FINAL is illegal on it — abkit's own reader (`get_experiment`) does not use
+    # it either, because `upsert_experiment` replaces the row with a SYNCHRONOUS
+    # delete + insert. Exactly one row is the assertion, not a dedup artifact.
     window = client.execute(
-        "SELECT start_ts, horizon_ts, interval_anchor FROM abkit_internal._ab_experiments FINAL "
+        "SELECT start_ts, horizon_ts, interval_anchor FROM abkit_internal._ab_experiments "
         "WHERE experiment = 'example_signup_test'"
     )
     assert len(window) == 1
