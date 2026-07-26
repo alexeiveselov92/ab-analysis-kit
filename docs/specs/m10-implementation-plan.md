@@ -1310,11 +1310,12 @@ cross-check the coverage map in [ROADMAP.md](../../ROADMAP.md) (REPORT
 
 > **All four legs land in one new e2e module** (23 tests) plus two tests added
 > to the Docker-gated `tests/e2e/test_first_run_clickhouse.py` for the single
-> claim an in-memory backend cannot express. Suite: **2 366 passed, 6 skipped**
-> (2 343 + 23 new; the skips are the 4 Docker-gated ClickHouse tests — 2 of
-> them this gate's — plus the MySQL-mock and `ABK_BENCH` cases that were
-> already skipping). Zero `ALGORITHM_VERSION` changes; `tests/golden`
-> untouched; mypy unchanged.
+> claim an in-memory backend cannot express. Suite after round 1's additions:
+> **2 369 passed, 6 skipped** (2 343 on `main` + 26 new; the skips are the 4
+> Docker-gated ClickHouse tests — 2 of them this gate's — plus the MySQL-mock
+> and `ABK_BENCH` cases that were already skipping). Zero
+> `ALGORITHM_VERSION` changes; `tests/golden` untouched; mypy 111 = `main`'s
+> baseline.
 >
 > **Three corrections this gate forced on the gate's own wording:**
 >
@@ -2043,11 +2044,15 @@ a sentence this PR added, and every one was checked by running something:
    day that never existed, pre-m10 opened the series with a ZERO-LENGTH look and
    m10 drops it. WP1's own round had ordered this disclosed and it had reached
    neither the CHANGELOG nor the rules. Now pinned exactly and scoped in both.
+   (Enumerated rather than taken on trust: tzdata puts a skipped local day on
+   exactly 3 dates between 1970 and 2036 — 1993-08-21 Kwajalein, 1994-12-31
+   Enderbury/Kanton/Kiritimati, 2011-12-30 Apia/Fakaofo — i.e. 7 zone entries
+   counting aliases, every one historical.)
 3. **`type(x) is date` appears nowhere in `abkit/`.** The rules described a
    construct from the design document, not the code (which tests
    `isinstance(value, datetime)` FIRST, because `datetime` subclasses `date`).
 4. **"the recipe is test-pinned per dialect" was false.** The skeptic kept the
-   whole 2 366-test suite green with the PostgreSQL `AT TIME ZONE` operands
+   whole suite green with the PostgreSQL `AT TIME ZONE` operands
    swapped, its sign flipped, and the MySQL `CONVERT_TZ` arguments reversed:
    `TestTimezoneDates` pins the recipe transcribed to Python, and no test
    executes or even greps the three dialect expressions.

@@ -474,11 +474,12 @@ two-process lock race) is deferred to a Docker-equipped environment.
   (`end_date: 2024-07-14` → `horizon_ts: 2024-07-15`); every other number stays
   byte-identical (pinned by the exit-gate golden captured at `f85371d` over 22
   window shapes) **with two disclosed exceptions**: `horizon_seconds()` (below)
-  and — for a `start_ts` on a local calendar day that never existed, of which
-  tzdata holds 7 historical instances (Kwajalein 1993, Enderbury/Kanton/
-  Kiritimati 1994, Apia/Fakaofo 2011) — the pre-m10 series' ZERO-LENGTH opening
-  look, which the m10 planner drops because it keeps cutoffs strictly after the
-  start.
+  and — for a `start_ts` on a local calendar day that never existed, which
+  tzdata puts on exactly 3 dates between 1970 and 2036 (1993-08-21 Kwajalein,
+  1994-12-31 Enderbury/Kanton/Kiritimati, 2011-12-30 Apia/Fakaofo; 7 zone
+  entries counting aliases, all historical) — the pre-m10 series' ZERO-LENGTH
+  opening look, which the m10 planner drops because it keeps cutoffs strictly
+  after the start.
 - **`interval_anchor` decides WHERE the cutoff lattice sits** (D2): `midnight`
   (the default the scaffold writes out — local midnight of the opening day,
   i.e. whole calendar days, the pre-m10 rule), `start` (count from the start
