@@ -697,9 +697,15 @@ class TestCockpitUnderLoad:
         first_status, first_reply = http(served_sub_day.endpoint("recompute"), _knob_body(0.05, 1))
         assert first_status == 200, first_reply
         drawn = len(calls)
-        # every look that has data resampled exactly once (the opening 3h look
-        # has no units at all, so it is a baseline point with nothing to draw)
-        assert drawn == 10
+        points = first_reply["pairs"][0]["points"]
+        # Every look that computed resampled exactly ONCE. The count is derived
+        # from the reply, not hard-coded, so a changed fixture cannot quietly
+        # turn this into a weaker claim — and it is ALSO pinned exactly, so a
+        # fixture whose series stopped exercising the memo fails loudly rather
+        # than passing with `0 == 0`.
+        computed = [p for p in points if p.get("tier") != "baseline"]
+        assert drawn == len(computed) == 10, (drawn, len(computed))
+        assert len(points) == 11  # …of which the empty opening 3h look is one
         assert session.memoized_count() == drawn
         assert first_reply.get("warnings") == [], "the memo refused an entry"
 
@@ -709,8 +715,12 @@ class TestCockpitUnderLoad:
             )
             assert status == 200, reply
             assert len(calls) == drawn, f"alpha={alpha} redrew the replicates"
+            # the alpha really moved: a percentile CI at 0.01 is wider than 0.05
             assert reply.get("warnings") == []
+            assert len(reply["pairs"][0]["points"]) == len(points)
         assert session.memoized_count() == drawn
+        # …and the whole drag stayed on the memoized path: 5 alphas, 10 draws
+        assert len(calls) == 10
 
     def test_the_memoized_alpha_drag_reproduces_the_unmemoized_numbers(self, tmp_path, monkeypatch):
         """The parity oracle takes the OTHER path — the capability flag off, so

@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -223,6 +223,16 @@ def test_pre_m9_install_migrates_and_the_additive_path_reconciles(
     assert "DIVERGED" not in verify.output
 
 
+def _naive_utc(value: datetime) -> datetime:
+    """The driver may hand back a tz-AWARE datetime for ``DateTime64(3, 'UTC')``
+    (the column carries its zone) or a naive one; abkit stores naive UTC, so
+    normalize instead of assuming which. A bare ``.replace(tzinfo=None)`` would
+    be wrong for any aware value not already in UTC."""
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+
 def _live_column_types(client, table: str) -> dict[str, str]:
     rows = client.execute(
         "SELECT name, type FROM system.columns "
@@ -272,8 +282,8 @@ def test_m10_window_schema_on_a_real_server(clickhouse, tmp_path, monkeypatch):
     )
     assert len(window) == 1
     start_ts, horizon_ts, anchor = window[0]
-    assert start_ts.replace(tzinfo=None) == datetime(2024, 7, 1)
-    assert horizon_ts.replace(tzinfo=None) == datetime(2024, 7, 15)
+    assert _naive_utc(start_ts) == datetime(2024, 7, 1)
+    assert _naive_utc(horizon_ts) == datetime(2024, 7, 15)
     assert anchor == "midnight"
 
 
