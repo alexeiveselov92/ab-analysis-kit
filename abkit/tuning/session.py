@@ -46,7 +46,7 @@ from __future__ import annotations
 
 import threading
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import NamedTuple
@@ -439,10 +439,24 @@ class ExploreSession:
             return self.boot_memo_values
 
     def memo_eviction_count(self) -> int:
-        """Evictions so far — ``recompute()`` reads it around a pass to tell the
-        user the memo is too small for what they are exploring."""
+        """Evictions so far — instrumentation only (see :meth:`memoized_all` for
+        the question ``recompute()`` actually asks)."""
         with self.boot_memo_lock:
             return self.boot_memo_evictions
+
+    def memoized_all(self, keys: Sequence[BootMemoKey | str]) -> bool:
+        """Are ALL of these still memoized? — one locked membership check.
+
+        ``recompute()`` asks it about the keys ONE pass stored: if any is
+        already gone, that pass's own working set did not fit and the next alpha
+        turn will redraw. A session-wide eviction counter cannot answer this
+        (review round 2): it also counts healthy turnover between knob states,
+        and — since m10 WP4 made ``/recompute`` concurrent — another request's
+        evictions. Anything that is not a key (the refusal sentinel) answers
+        False by construction.
+        """
+        with self.boot_memo_lock:
+            return all(isinstance(key, BootMemoKey) and key in self.boot_memo for key in keys)
 
 
 def load_session(

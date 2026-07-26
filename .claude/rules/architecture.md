@@ -156,9 +156,14 @@ two-process lock race) is deferred to a Docker-equipped environment.
   `supports_vectorized` pattern — the engine falls back to the verbatim
   `_compare` otherwise). The engine memoizes the outcome on the session under
   `BootMemoKey(metric, name_1, name_2, end_ts, generation, method, resolved
-  params)` — **compose it nowhere else**; dropping any field collides across
-  metrics, across arm pairs, or across the identity-EXCLUDED `seed`/
-  `max_block_bytes`, and alpha is absent on purpose. `generation` is
+  params)` — **compose it ONLY through `ExploreSession.boot_memo_key()`**
+  (AST-gated, the m9 `state_series_key` discipline). Alpha is absent on purpose;
+  dropping any other field collides — across metrics, across arm pairs, across
+  the identity-EXCLUDED `seed` (which IS the draw), and across two methods that
+  share a param set (`bootstrap` / `post-normed-bootstrap`). `max_block_bytes`
+  and `pvalue_kind` ride along as belt-and-braces only: both are draw-invariant
+  (measured), so they cost at most a missed hit — narrowing the key behind a
+  declarative `ParamSpec` flag is a named follow-up. `generation` is
   `install_cutoff`'s per-cutoff counter, returned by `cached_entry()` in the
   same critical section as the entry, so a resample that lost the race to a
   `/reload` is unreachable rather than stale. `boot_memo` is reached only

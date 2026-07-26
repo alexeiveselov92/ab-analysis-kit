@@ -614,6 +614,34 @@ def test_the_gate_does_not_flag_the_accessors():
 # -- the m10 WP5 structural gates ---------------------------------------------
 
 
+def _boot_memo_key_names(tree: ast.Module) -> set[str]:
+    """Every local name bound to ``BootMemoKey``, alias forms included.
+
+    The m10 WP4 round-2 lesson: a gate that matches one spelling teaches the
+    others. ``from abkit.tuning.session import BootMemoKey as K`` and
+    ``session_module.BootMemoKey`` are the same construction.
+    """
+    names = {"BootMemoKey"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if alias.name == "BootMemoKey":
+                    names.add(alias.asname or alias.name)
+        elif isinstance(node, ast.Assign):
+            # K = BootMemoKey  (a rebinding hands the constructor out)
+            value = node.value
+            resolved = None
+            if isinstance(value, ast.Name) and value.id in names:
+                resolved = value.id
+            elif isinstance(value, ast.Attribute) and value.attr == "BootMemoKey":
+                resolved = value.attr
+            if resolved is not None:
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        names.add(target.id)
+    return names
+
+
 def test_boot_memo_keys_are_composed_only_by_the_session_factory():
     """``BootMemoKey`` has seven fields and every missing one is a silent wrong
     number (another metric's, another arm pair's, another seed's replicates), so
@@ -626,18 +654,61 @@ def test_boot_memo_keys_are_composed_only_by_the_session_factory():
         if path == DEFINITION:
             continue
         tree = ast.parse(path.read_text(), filename=str(path))
+        names = _boot_memo_key_names(tree)
         for node in ast.walk(tree):
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-                if node.func.id == "BootMemoKey":
+            if isinstance(node, ast.Call):
+                func = node.func
+                if isinstance(func, ast.Name) and func.id in names:
                     offenders.append(f"{path.relative_to(PACKAGE.parent)}:{node.lineno}")
-            elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-                if node.func.attr == "BootMemoKey":
+                elif isinstance(func, ast.Attribute) and func.attr == "BootMemoKey":
                     offenders.append(f"{path.relative_to(PACKAGE.parent)}:{node.lineno}")
+            elif isinstance(node, ast.Attribute) and node.attr == "_make":
+                # BootMemoKey._make([...]) — the NamedTuple back door
+                value = node.value
+                if (isinstance(value, ast.Name) and value.id in names) or (
+                    isinstance(value, ast.Attribute) and value.attr == "BootMemoKey"
+                ):
+                    offenders.append(f"{path.relative_to(PACKAGE.parent)}:{node.lineno} (_make)")
     assert (
         not offenders
     ), "compose a memo key ONLY through ExploreSession.boot_memo_key():\n  " + "\n  ".join(
         offenders
     )
+
+
+KEY_EVASIONS = {
+    "direct": "from abkit.tuning.session import BootMemoKey\nk = BootMemoKey(1, 2, 3, 4, 5, 6, 7)\n",
+    "aliased_import": (
+        "from abkit.tuning.session import BootMemoKey as K\nk = K(1, 2, 3, 4, 5, 6, 7)\n"
+    ),
+    "module_attribute": "import abkit.tuning.session as s\nk = s.BootMemoKey(1, 2)\n",
+    "rebound": "from abkit.tuning.session import BootMemoKey\nK = BootMemoKey\nk = K(1, 2)\n",
+    "namedtuple_make": (
+        "from abkit.tuning.session import BootMemoKey\nk = BootMemoKey._make(parts)\n"
+    ),
+}
+
+
+def test_the_key_gate_catches_every_construction_shape():
+    """A gate that only matches one spelling teaches people the others."""
+    for label, source in KEY_EVASIONS.items():
+        tree = ast.parse(source)
+        names = _boot_memo_key_names(tree)
+        hit = False
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                func = node.func
+                if (isinstance(func, ast.Name) and func.id in names) or (
+                    isinstance(func, ast.Attribute) and func.attr == "BootMemoKey"
+                ):
+                    hit = True
+            elif isinstance(node, ast.Attribute) and node.attr == "_make":
+                value = node.value
+                if (isinstance(value, ast.Name) and value.id in names) or (
+                    isinstance(value, ast.Attribute) and value.attr == "BootMemoKey"
+                ):
+                    hit = True
+        assert hit, label
 
 
 def test_the_memo_lock_is_never_taken_inside_the_cache_lock():

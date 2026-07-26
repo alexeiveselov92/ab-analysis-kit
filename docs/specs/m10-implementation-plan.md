@@ -1737,3 +1737,52 @@ for twice):
   named follow-up, and a missed hit costs a resample while a wrong hit would
   cost a wrong number); `contributing.md` step 4b keeps its general wording,
   scoped by the sentence naming the bootstrap family as today's only adopter.
+
+### WP5 round 2 — the round-1 fixes attacked in turn
+
+Three lenses over the round-1 fix delta (`dc0ba98..37872fd`) plus two
+independent re-establishments of the whole WP, each in its own worktree, each
+required to run what it claims. 9 findings, 5 reproduced. The standing lesson
+held again: **round 1's own fix opened the round's worst hole.**
+
+| # | Defect | Severity | Fix |
+|---|---|---|---|
+| 1 | **Round 1's eviction warning fired when the memo was working perfectly, and blamed this reply for another request's evictions.** It compared a SESSION-WIDE monotone counter around the pass, so ordinary turnover between two knob states ("make room for the new state") reported a degradation the very next request contradicted — measured: the warning fires, then the same knobs at a new alpha reuse everything and resample **0** times. And since m10 WP4 made `/recompute` concurrent over one session, a bootstrap handler's evictions surfaced in an unrelated reply, quoting that reply's own roomy budget. | contract (a warning users learn to ignore) | measure the PASS: `_memoized_compare` records the keys this pass stored, and `recompute()` asks `session.memoized_all(...)` — did anything I just stored already go? Healthy turnover and a noisy neighbour are both silent; real thrash still speaks. |
+| 2 | **The loudest case was the silent one.** An entry bigger than the WHOLE budget is refused, evicting nothing — so the eviction-keyed warning never fired for the one case where reuse is zero *forever*. Reachable at the shipped default: `n_samples` has no maximum, so anything above ~2 M replicates refuses every entry. | perf/resource | the refusal is recorded as a sentinel in the same per-pass list, so it warns through the same branch. |
+| 3 | **The capability refusal covered only half the contract.** Round 1 gave `BaseMethod._resample` a named `NotImplementedError`; a method with `_resample` but no `_finalize` still died with a bare `AttributeError` inside the engine. | contract | `_memoized_compare` checks both halves up front and names the missing one. Both shapes pinned. |
+| 4 | **The WP's central atomicity claim was pinned by nothing.** Nothing failed when the memo key's `generation` stopped coming from the same locked read as the entry — the torn read that keys THIS render's replicates to the NEXT render's generation, i.e. a stale hit that survives every purge. | contract (a gate that cannot fail) | the WP4 hooked-lock instrument, extended: a complete `/reload` lands at the reader's first release, and the FOLLOWING request must answer off the installed render. A two-read implementation serves the pre-reload numbers and the test goes red. |
+| 5 | **The round-1 docs correction reached two of three bodies.** `.claude/rules/architecture.md` still asserted the `max_block_bytes` collision the fix had retracted — and it is the body a future contributor reads before picking up the named narrowing follow-up. | contract (three-way sync) | corrected; the rules bullet now separates the collision-critical fields from the belt-and-braces ones. |
+| 6 | The named refusal claimed the method "declares `supports_resample_memo`" even for a method that never declared it. | style | the message branches on the flag. |
+| 7 | The two new AST gates matched only the direct spelling (`BootMemoKey(...)`), missing the alias, module-attribute, rebinding and `_make` forms — the exact evasion class WP4's round 2 had to fix in its own gate. | style (gate coverage) | the key gate resolves import aliases and rebindings and covers `_make`; its evasion suite has 5 shapes. |
+
+**Recorded, deliberately NOT fixed** (unreachable in-tree, and the guard would
+cost more than it buys): a plugin that declares `supports_resample_memo`, keeps
+a working `_resample`/`_finalize` pair AND overrides `from_samples` would have
+explore skip the override while the pipeline still runs it. In-repo the roster
+gate refuses exactly that shape (`from_samples is BaseBootstrapMethod.from_samples`);
+downstream it is out of contract, and detecting it generically means marking the
+template method itself. Named, not built.
+
+**Verified clean in round 2, with the evidence** (independent of the repo's own
+tests — the numbers lens diffed against the `main` tree, which has no memo code
+at all):
+
+- **16 128 stats-layer cases** (6 families × 8 data flavours incl. all-zero
+  control, constant, 1e-9, 1e12, Pareto; stratified and not; every stat ×
+  pvalue_kind × test_type × alpha × max_block_bytes) byte-identical to `main` on
+  every `TestResult` field, diagnostic and warning — the split moves no number.
+- **21 328 engine-layer points** across two seed sets, **14 503 of them served by
+  a memo HIT**, byte-identical to `main` across all 18 `ExplorePoint` fields, the
+  raw `TestResult`, the chips and the engine warnings — with 3-arm pairs, two
+  sample metrics, degenerate H5 arms (350+ undefined-effect and 800+ non-finite
+  warnings actually exercised), 298 interleaved `/reload`s (scale, zero, 1e18,
+  NaN, lookback change) and stratified entries in the space.
+- **46 696 points across two HTTP storms** checked against per-generation
+  memo-free oracles: **zero stale hits and zero mixtures** (the signature a stale
+  hit would leave, since `_finalize` takes `value_i` from the memoized outcome
+  but `std`/`size` from the live containers).
+- `boot_memo_values == sum(memo_slot_charge(...))` held exactly after every
+  scenario including a mid-storm `disable_cache` and an `n_samples` sweep with
+  472 evictions; no lock cycle exists; `boot_data` is a fresh allocation in both
+  engines (never a view into a block buffer), so the budget's `values` is an
+  honest memory measure.

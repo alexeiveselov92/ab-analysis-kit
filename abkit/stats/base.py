@@ -462,9 +462,14 @@ class BaseMethod(ABC):
         is a plugin bug, and this default says so instead of failing with a bare
         ``AttributeError`` deep inside a caller.
         """
+        declared = (
+            "declares supports_resample_memo but implements"
+            if (self.supports_resample_memo)
+            else "does not declare supports_resample_memo and implements"
+        )
         raise NotImplementedError(
-            f"{self.name}: declares supports_resample_memo but implements no "
-            "_resample/_finalize split (see BaseBootstrapMethod for the contract)"
+            f"{self.name}: {declared} no _resample/_finalize split "
+            "(see BaseBootstrapMethod for the contract)"
         )
 
     # --- shared result assembly ----------------------------------------------

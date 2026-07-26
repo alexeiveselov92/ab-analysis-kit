@@ -567,6 +567,13 @@ def _clean(value: float | None) -> float | None:
     return value if math.isfinite(value) else None
 
 
+#: Sentinel recorded in a pass's ``stored`` list when one resample was REFUSED
+#: by the memo budget (bigger than the whole budget). Distinguishable from a
+#: real key, and it means "this point can never be reused", the strongest form
+#: of the not-fitting signal.
+_REFUSED = "refused"
+
+
 class RecomputeSuperseded(Exception):
     """A newer request arrived while this recompute was running (m10 WP4).
 
@@ -750,7 +757,11 @@ class RecomputeEngine:
                 ):
                     av_pairs.add(pair)
 
-        evictions_before = session.memo_eviction_count()
+        # keys THIS pass stored (plus a sentinel per budget refusal) — the honest
+        # per-pass measure of "did my working set fit?", replacing round 1's
+        # session-wide eviction counter (round 2: it fired on healthy turnover
+        # and reported other requests' evictions against this reply)
+        stored_keys: list[BootMemoKey | str] = []
         seq_reload_needed = False
         pairs: list[PairRecompute] = []
         for (name_1, name_2), rows in pair_rows.items():
@@ -763,7 +774,14 @@ class RecomputeEngine:
                         f"recompute of '{metric}' was superseded by a newer request"
                     )
                 point = self._compute_point(
-                    series, row, method_cls, probe.params, knobs, reusable, identity_changed
+                    series,
+                    row,
+                    method_cls,
+                    probe.params,
+                    knobs,
+                    reusable,
+                    identity_changed,
+                    stored_keys,
                 )
                 if point is not None:
                     points.append(point)
@@ -789,17 +807,18 @@ class RecomputeEngine:
         )
         if session.cache_disabled_reason is not None:
             engine_warnings.append(session.cache_disabled_reason)
-        if session.memo_eviction_count() > evictions_before:
-            # The memo is smaller than what this knob state needs, so the next
-            # alpha turn will re-resample instead of reusing (an oldest-first
-            # budget on a whole-series scan degrades to no reuse at all). Say so
-            # rather than let the speedup vanish silently — the same honesty the
-            # Tier-S cache owes when it degrades.
+        if stored_keys and not session.memoized_all(stored_keys):
+            # Something this pass stored is already gone (evicted by this pass's
+            # own later points, or refused outright), so the NEXT alpha turn
+            # cannot reuse it: the memo is smaller than this knob state's
+            # working set. Measured per pass, not from a session-wide counter —
+            # healthy turnover between knob states is not a degradation, and a
+            # concurrent request's evictions are not this reply's business.
             engine_warnings.append(
                 "the bootstrap resample memo is smaller than this knob state's series "
                 f"(EXPLORE_BOOT_MEMO_BUDGET={session.boot_memo_budget} values): alpha "
-                "changes will re-resample instead of reusing — lower n_samples or raise "
-                "the budget"
+                "changes will re-resample instead of reusing — lower n_samples, or "
+                "explore fewer cutoffs at a time"
             )
 
         return RecomputeResult(
@@ -824,6 +843,7 @@ class RecomputeEngine:
         knobs: KnobState,
         reusable: BaseMethod | None,
         identity_changed: bool,
+        stored_keys: list[BootMemoKey | str],
     ) -> ExplorePoint | None:
         """One row → the best-tier point, or ``None`` (a baseline-only gap)."""
         if row.get("insufficient_data"):
@@ -890,6 +910,7 @@ class RecomputeEngine:
                         generation,
                         method,
                     ),
+                    stored_keys,
                 )
             else:
                 result, caught = _compare(method, group_1, group_2)
@@ -935,6 +956,7 @@ class RecomputeEngine:
         group_1: Any,
         group_2: Any,
         key: BootMemoKey,
+        stored: list[BootMemoKey | str],
     ) -> tuple[TestResult, list[str]]:
         """``_compare`` with the resample half memoized (m10 WP5).
 
@@ -950,8 +972,21 @@ class RecomputeEngine:
         resample (deterministic inputs ⇒ the same replicates, last writer wins),
         and a resample whose cutoff was re-installed while it ran is stored
         under a key nobody can reach (the generation moved), never served.
+
+        ``stored`` collects the keys THIS pass inserted, so ``recompute()`` can
+        tell whether the pass's own working set fit (review round 2: a
+        session-wide eviction counter said "too small" while the memo was
+        working perfectly, and let a concurrent request's evictions be reported
+        against this reply).
         """
         session = self._session
+        if not hasattr(method, "_finalize"):
+            # the other half of the capability contract — a method with only
+            # _resample would otherwise die with a bare AttributeError here
+            raise NotImplementedError(
+                f"{method.name}: declares supports_resample_memo and implements "
+                "_resample but no matching _finalize (see BaseBootstrapMethod)"
+            )
         memo = session.memoized_resample(key)
         if memo is None:
             outcome, resample_caught = _resample_captured(method, group_1, group_2)
@@ -960,7 +995,13 @@ class RecomputeEngine:
                 caught=tuple(resample_caught),
                 values=int(outcome.boot_data.size),
             )
-            session.memoize_resample(key, memo)
+            if session.memoize_resample(key, memo):
+                stored.append(key)
+            else:
+                # too big for the whole budget: this point will redraw on every
+                # future alpha turn, so say so rather than lose the speedup
+                # silently (round 2 — the loudest case was the silent one)
+                stored.append(_REFUSED)
         result, finalize_caught = _finalize_captured(method, group_1, group_2, memo.outcome)
         # the resample's warnings first, then the finalize step's — the exact
         # order one capture around the whole from_samples would have produced
