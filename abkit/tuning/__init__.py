@@ -18,7 +18,7 @@ from abkit.tuning.config_writer import (
     apply_tuned_config,
 )
 from abkit.tuning.html import render_explore_html
-from abkit.tuning.jobs import Job, JobManager
+from abkit.tuning.jobs import Job, JobManager, JobManagerClosed
 from abkit.tuning.payload import build_explore_payload
 from abkit.tuning.recompute import (
     CalibrationStatus,
@@ -49,6 +49,7 @@ __all__ = [
     "ExploreSession",
     "Job",
     "JobManager",
+    "JobManagerClosed",
     "KnobState",
     "OrphanedSeries",
     "PairRecompute",

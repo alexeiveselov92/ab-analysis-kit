@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 from abkit.tuning import jobs as jobs_module
-from abkit.tuning.jobs import JobManager
+from abkit.tuning.jobs import JobManager, JobManagerClosed
 
 # A child that outlives any assertion in this file; the fixture reaps it.
 SLEEPER = "import time; time.sleep(300)"
@@ -71,6 +71,34 @@ def _await_status(
             return status
         time.sleep(0.02)
     pytest.fail(f"job stayed {mgr.snapshot(job)['status']!r}, expected one of {sorted(expected)}")
+
+
+def _live_sleeper_pids(cwd: Path) -> list[int]:
+    """PIDs of test children still alive, matched by their working directory.
+
+    Each test gets its own ``tmp_path``, so this sees only its own spawns —
+    and a reaped/zombie child has no readable ``cwd`` link, which is exactly
+    the distinction the leak assertions need.
+    """
+    target = str(cwd.resolve())
+    alive: list[int] = []
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            if os.readlink(entry / "cwd") != target:
+                continue
+            cmdline = (entry / "cmdline").read_bytes()
+        except OSError:
+            continue
+        if b"time.sleep(300)" in cmdline:
+            alive.append(int(entry.name))
+    return alive
+
+
+requires_procfs = pytest.mark.skipif(
+    not Path("/proc").is_dir(), reason="leaked-child detection reads Linux /proc"
+)
 
 
 def _await(condition, *, timeout: float = 20.0, what: str = "condition") -> None:
@@ -302,6 +330,19 @@ class TestExploreDedup:
         assert manager.snapshot(job)["experiment"] == "exp_a"
         assert manager.list_snapshots()[0]["experiment"] == "exp_a"
 
+    def test_a_pipeline_job_can_carry_its_experiment_too(self, manager, tmp_path):
+        job = manager.spawn_pipeline(
+            "run",
+            "run --select exp_a",
+            [sys.executable, "-c", SLEEPER],
+            cwd=tmp_path,
+            env=dict(os.environ),
+            experiment="exp_a",
+        )
+        assert job is not None
+        assert manager.snapshot(job)["experiment"] == "exp_a"
+        assert manager.running_job_for("run", "exp_a") is job
+
     def test_set_url_is_visible_to_pollers(self, manager, tmp_path):
         job = _spawn(manager, SLEEPER, kind="explore", experiment="exp_a", tmp_path=tmp_path)
         manager.set_url(job, "http://127.0.0.1:9/?token=x")
@@ -344,6 +385,29 @@ class TestStop:
         snap = manager.snapshot(job)
         assert snap["status"] == "stopped"
         assert snap["returncode"] not in (0, None)
+
+    def test_a_job_that_survives_the_stop_and_succeeds_reports_done(self, manager, tmp_path):
+        """A clean exit outranks stop_requested — the donor's flag alone lies.
+
+        The pump reaps the process BEFORE it takes ``job.lock``, so a stop
+        landing in that window marks a run that had already finished on its
+        own. Here the same interleaving is made deterministic from the other
+        side: the child ignores SIGTERM and exits 0, so ``terminate()``
+        provably changed nothing and "stopped" would be a false report.
+        """
+        job = _spawn(
+            manager,
+            "import signal, time\n"
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+            "time.sleep(1.0)\n",
+            tmp_path=tmp_path,
+        )
+        time.sleep(0.5)  # let the handler install
+        assert manager.stop(job.id) is True
+        assert _await_status(manager, job, expected={"done", "failed", "stopped"}) == "done"
+        snap = manager.snapshot(job)
+        assert snap["returncode"] == 0
+        assert job.stop_requested is True  # the flag WAS set; the status still says done
 
 
 class TestWaitForLine:
@@ -398,6 +462,48 @@ class TestWaitForLine:
         assert line is not None and "token=t" in line
         assert job.dropped > 0  # the buffer really did saturate
 
+    def test_a_line_appended_after_the_watcher_scanned_a_full_buffer_is_still_seen(
+        self, manager, tmp_path, monkeypatch
+    ):
+        """The same law as above, with the interleaving forced rather than timed.
+
+        The child is silent; the buffer is put in the saturated state by hand
+        and the awaited line is appended only AFTER the watcher has provably
+        scanned it once — so this cannot pass by accident on a loaded runner,
+        the way a child-timing version could.
+        """
+        monkeypatch.setattr(jobs_module, "_MAX_LINES", 5)
+        job = _spawn(manager, SLEEPER, kind="explore", experiment="exp_a", tmp_path=tmp_path)
+        with job.lock:  # a pump that already dropped 20 lines off the front
+            job.lines = [f"noise {i}" for i in range(20, 25)]
+            job.dropped = 20
+            job.truncated = True
+
+        scanned = threading.Event()
+        examined: list[str] = []
+
+        def predicate(line: str) -> bool:
+            examined.append(line)
+            scanned.set()
+            return "Explore:" in line
+
+        result: list[str | None] = []
+        watcher = threading.Thread(
+            target=lambda: result.append(manager.wait_for_line(job, predicate, timeout=15.0))
+        )
+        watcher.start()
+        try:
+            assert scanned.wait(10.0), "the watcher never scanned the saturated buffer"
+            with job.lock:  # one more pumped line, evicting the oldest
+                job.lines.pop(0)
+                job.dropped += 1
+                job.lines.append("  Explore: http://127.0.0.1:8/?token=t")
+            watcher.join(timeout=20.0)
+        finally:
+            watcher.join(timeout=20.0)
+        assert result == ["  Explore: http://127.0.0.1:8/?token=t"]
+        assert examined[:5] == [f"noise {i}" for i in range(20, 25)]  # scanned, then advanced
+
 
 class TestRegistryCap:
     def test_finished_jobs_are_evicted_oldest_first(self, manager, tmp_path, monkeypatch):
@@ -416,6 +522,25 @@ class TestRegistryCap:
         ]
         ids = {s["id"] for s in manager.list_snapshots()}
         assert ids == {j.id for j in running}  # over cap rather than orphaning a process
+
+    def test_eviction_walks_past_a_running_head_to_the_finished_job_behind_it(
+        self, manager, tmp_path, monkeypatch
+    ):
+        """The scan is forward, not head-only — a head-only check grows unbounded.
+
+        A long cockpit started first with quick jobs finishing behind it is the
+        dashboard's ordinary shape, and it is the ONLY shape in which the
+        difference shows: every other eviction test leaves the finished job at
+        index 0.
+        """
+        monkeypatch.setattr(jobs_module, "_MAX_JOBS", 2)
+        first = _spawn(manager, SLEEPER, kind="explore", label="live cockpit", tmp_path=tmp_path)
+        middle = _spawn(manager, "pass", label="quick run", tmp_path=tmp_path)
+        _await_status(manager, middle, expected={"done"})
+        last = _spawn(manager, SLEEPER, kind="explore", label="second cockpit", tmp_path=tmp_path)
+        ids = {s["id"] for s in manager.list_snapshots()}
+        assert ids == {first.id, last.id}
+        assert middle.id not in ids  # the finished job behind the running head
 
     def test_get_finds_a_registered_job_and_misses_an_unknown_id(self, manager, tmp_path):
         job = _spawn(manager, SLEEPER, tmp_path=tmp_path)
@@ -448,9 +573,81 @@ class TestShutdown:
         mgr = JobManager()
         mgr.shutdown()
         mgr.shutdown()
-        job = _spawn(mgr, "pass", tmp_path=tmp_path)
-        _await_status(mgr, job, expected={"done"})
+
+    @requires_procfs
+    def test_spawning_after_shutdown_is_refused_and_the_child_is_not_left_running(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setattr(jobs_module, "_STOP_GRACE_SECONDS", 0.3)
+        mgr = JobManager()
         mgr.shutdown()
+        with pytest.raises(JobManagerClosed):
+            _spawn(mgr, SLEEPER, tmp_path=tmp_path)
+        assert mgr.list_snapshots() == []  # nothing registered either
+        _await(
+            lambda: not _live_sleeper_pids(tmp_path),
+            what="the refused child to be terminated",
+        )
+
+    @requires_procfs
+    def test_a_spawn_racing_shutdown_never_leaves_a_live_child(self, tmp_path, monkeypatch):
+        """The donor's snapshot-then-reap loses this race 300/300 (review R1).
+
+        Both orders are legitimate — the job lands in the snapshot and is
+        reaped, or the registry is already closed and spawn refuses — but a
+        surviving subprocess is not: for abkit that is an ``abk run`` holding
+        the pipeline lock with nobody left to watch it.
+        """
+        monkeypatch.setattr(jobs_module, "_STOP_GRACE_SECONDS", 0.3)
+        for _ in range(25):
+            mgr = JobManager()
+            barrier = threading.Barrier(2)
+            spawned: list[object] = []
+
+            def spawner(mgr=mgr, barrier=barrier, spawned=spawned) -> None:
+                barrier.wait()
+                try:
+                    spawned.append(_spawn(mgr, SLEEPER, tmp_path=tmp_path))
+                except JobManagerClosed:
+                    spawned.append(None)
+
+            thread = threading.Thread(target=spawner)
+            thread.start()
+            barrier.wait()
+            mgr.shutdown()
+            thread.join(timeout=20)
+            assert not thread.is_alive()
+            assert len(spawned) == 1
+        _await(
+            lambda: not _live_sleeper_pids(tmp_path),
+            timeout=30.0,
+            what="every raced child to be reaped",
+        )
+
+    def test_the_grace_budget_is_shared_across_jobs_rather_than_multiplied(
+        self, tmp_path, monkeypatch
+    ):
+        """Bounded total teardown, unlike stop()'s independent per-job window.
+
+        Pinned because it is a real asymmetry inside one module, not because
+        it is obviously right: three SIGTERM-deaf jobs must still cost about
+        ONE grace period in total, and all three must die.
+        """
+        monkeypatch.setattr(jobs_module, "_STOP_GRACE_SECONDS", 0.6)
+        mgr = JobManager()
+        jobs = [
+            _spawn(mgr, STUBBORN_SLEEPER, label=f"deaf {i}", tmp_path=tmp_path) for i in range(3)
+        ]
+        time.sleep(0.6)  # let every handler install
+        started = time.monotonic()
+        mgr.shutdown()
+        elapsed = time.monotonic() - started
+        # Shared budget ⇒ ~0.6s total; a per-job window would cost ~1.8s.
+        assert (
+            elapsed < 2 * 0.6
+        ), f"shutdown took {elapsed:.2f}s — the budget is per-job, not shared"
+        for job in jobs:
+            _await(lambda job=job: job.proc.poll() is not None, what=f"{job.label} to die")
 
 
 class TestModuleContract:

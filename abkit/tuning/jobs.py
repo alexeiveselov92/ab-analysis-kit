@@ -9,7 +9,8 @@ stdout/stderr into an in-memory line buffer the page polls, and reporting
 status/return code. Nothing here touches the DB, the pipeline lock, or
 ``abkit.stats``.
 
-Three deliberate deviations from the donor (DASH-1 steps 1/3/4/5):
+Deliberate deviations from the donor (DASH-1 steps 1/3/4/5, plus two hazards
+the DASH-1 review reproduced in the donor's own shape):
 
 * **The kind vocabulary is abkit's** — ``run``/``unlock``/``clean``/``explore``
   (the donor's ``autotune``/``tune`` have no abkit equivalent). ``explore``
@@ -21,18 +22,38 @@ Three deliberate deviations from the donor (DASH-1 steps 1/3/4/5):
   **validate against it**: the donor took any string, so a typo'd kind would
   silently become "not a pipeline job" and skip the gate it was meant to
   respect.
-* **``Job.experiment`` replaces the donor's ``Job.metric``** — abkit's whole
+* **``Job.experiment`` replaces the donor's ``Job.metric``.** abkit's whole
   dashboard grain is the experiment (every button is experiment-scoped), so
-  the dedup key is a purpose-built field rather than an overloaded one, and it
-  rides along in both snapshot shapes so the client's job chip can render
-  ``<kind> <experiment>`` without parsing ``label``.
+  the dedup key is a purpose-built field rather than an overloaded one. Unlike
+  the donor's ``metric`` — which only ever fed ``running_tune_for`` — it is
+  accepted by :meth:`JobManager.spawn_pipeline` too and rides along in both
+  snapshot shapes, so a client can label a job from a structured field instead
+  of parsing ``label``. It is only ever as populated as the caller makes it:
+  a spawn that passes no ``experiment`` (a multi-experiment ``abk run``, say)
+  reports ``None``, and a label is the honest fallback there.
 * **:meth:`JobManager.wait_for_line` is drop-aware.** The donor tracked its
   scan position as an index into the *current* buffer, which stops advancing
   once the buffer hits :data:`_MAX_LINES` (each append pops the front, so the
-  length is pinned) — the watcher then goes permanently blind. Both this
-  method and :meth:`JobManager.snapshot` now count ABSOLUTE line indices, so a
-  job that is chattier than the cap before it prints the line being waited for
-  (``Explore: <url>``) is still matched instead of failing at the timeout.
+  length is pinned) — the watcher then goes permanently blind. It now counts
+  ABSOLUTE line indices, the scheme :meth:`JobManager.snapshot` already used,
+  so a job that is chattier than the cap before it prints the line being
+  waited for (``Explore: <url>``) is still matched instead of failing at the
+  timeout.
+* **A spawn racing :meth:`JobManager.shutdown` cannot orphan its child.**
+  ``shutdown`` snapshots the registry and reaps that snapshot, so in the donor
+  a job appended afterwards survives the teardown — reparented, untracked, and
+  in abkit's case potentially an ``abk run`` still holding the pipeline lock
+  (reproduced 300/300 in review). The registry now latches closed under the
+  same lock that takes the snapshot: a later :meth:`JobManager.spawn` kills the
+  child it just created and raises :class:`JobManagerClosed`, so every spawned
+  process is either in the snapshot or never left alive.
+* **A job that exits successfully is never reported as ``stopped``.** The pump
+  reaps the process before it takes ``job.lock``, so in the donor a Stop click
+  landing in that window flips an already-successful run to ``stopped`` even
+  though its ``terminate()`` hit an exited process and did nothing. Status now
+  reads ``stopped`` only when a stop was requested **and** the exit was not a
+  clean one — a job that ignored SIGTERM and finished its work reports
+  ``done``, which is what actually happened.
 """
 
 from __future__ import annotations
@@ -64,8 +85,39 @@ JOB_KINDS = frozenset({"run", "unlock", "clean", "explore"})
 PIPELINE_KINDS = frozenset({"run", "unlock", "clean"})
 
 
+class JobManagerClosed(RuntimeError):
+    """Raised by :meth:`JobManager.spawn` once :meth:`JobManager.shutdown` ran.
+
+    A job route racing the dashboard's teardown must answer "not now" (a 503)
+    rather than leave a subprocess nobody will ever reap.
+    """
+
+
 def _now_ms() -> int:
     return int(datetime.now(timezone.utc).timestamp() * 1000)
+
+
+def _terminate_and_reap(proc: subprocess.Popen[str]) -> None:
+    """SIGTERM now; SIGKILL from a daemon thread if the grace period lapses.
+
+    Never blocks the caller: a request handler asking for a stop must not wait
+    out :data:`_STOP_GRACE_SECONDS` before replying.
+    """
+    try:
+        proc.terminate()
+    except Exception:
+        pass
+
+    def _grace() -> None:
+        try:
+            proc.wait(timeout=_STOP_GRACE_SECONDS)
+        except subprocess.TimeoutExpired:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
+    threading.Thread(target=_grace, daemon=True).start()
 
 
 @dataclass
@@ -116,7 +168,12 @@ def _pump(job: Job) -> None:
         returncode = job.proc.wait()
         with job.lock:
             job.returncode = returncode
-            if job.stop_requested:
+            # The reap above happens OUTSIDE job.lock, so a stop() landing in
+            # that window sets stop_requested on a process that had already
+            # exited under its own power (its terminate() reached nothing).
+            # A clean exit therefore outranks the flag: "stopped" is reserved
+            # for a stop request the job did not survive intact.
+            if job.stop_requested and returncode != 0:
                 job.status = "stopped"
             else:
                 job.status = "done" if returncode == 0 else "failed"
@@ -134,6 +191,10 @@ class JobManager:
         # internally, so holding _gate around it must not self-deadlock.
         self._gate = threading.Lock()
         self._jobs: list[Job] = []
+        # Latched by shutdown() under _lock, in the same critical section that
+        # snapshots the registry — that is what makes "every spawned child is
+        # either in the snapshot or killed by its own spawn()" airtight.
+        self._closed = False
 
     def spawn(
         self,
@@ -153,7 +214,9 @@ class JobManager:
         Raises ``ValueError`` for a *kind* outside :data:`JOB_KINDS`: an
         unknown kind would sail past :meth:`pipeline_active`'s gate and
         :meth:`running_job_for`'s dedup alike, which is precisely the silent
-        divergence the vocabulary constant exists to prevent.
+        divergence the vocabulary constant exists to prevent. Raises
+        :class:`JobManagerClosed` once :meth:`shutdown` has run — the child is
+        killed before the raise, never left behind.
         """
         if kind not in JOB_KINDS:
             raise ValueError(f"unknown job kind {kind!r} (expected one of {sorted(JOB_KINDS)})")
@@ -177,18 +240,28 @@ class JobManager:
             experiment=experiment,
         )
         with self._lock:
-            self._jobs.append(job)
-            if len(self._jobs) > _MAX_JOBS:
-                # Evict the oldest *finished* job — never a running one, which
-                # would orphan its process (untracked by stop()/shutdown()).
-                # If everything is still running, the registry briefly exceeds
-                # the cap rather than losing track of a live subprocess.
-                for i, old in enumerate(self._jobs):
-                    with old.lock:
-                        still_running = old.status == "running"
-                    if not still_running:
-                        self._jobs.pop(i)
-                        break
+            closed = self._closed
+            if not closed:
+                self._jobs.append(job)
+                if len(self._jobs) > _MAX_JOBS:
+                    # Evict the oldest *finished* job — never a running one,
+                    # which would orphan its process (untracked by stop()/
+                    # shutdown()). The scan walks PAST a running job to find a
+                    # finished one behind it; if everything is still running
+                    # the registry briefly exceeds the cap rather than losing
+                    # track of a live subprocess.
+                    for i, old in enumerate(self._jobs):
+                        with old.lock:
+                            still_running = old.status == "running"
+                        if not still_running:
+                            self._jobs.pop(i)
+                            break
+        if closed:
+            _terminate_and_reap(proc)
+            raise JobManagerClosed(
+                f"the job registry is shut down; {kind!r} was not started "
+                "(its process has been terminated)"
+            )
         threading.Thread(target=_pump, args=(job,), daemon=True).start()
         return job
 
@@ -264,6 +337,7 @@ class JobManager:
         *,
         cwd: Path,
         env: dict[str, str],
+        experiment: str | None = None,
     ) -> Job | None:
         """Atomically spawn a pipeline job, or return ``None`` if one is running.
 
@@ -276,6 +350,10 @@ class JobManager:
         ``explore`` is not gated one-at-a-time and must go through
         :meth:`spawn`, so accepting it here would return a job the gate never
         actually protected.
+
+        *experiment* is optional here (a run may span a whole selection) but
+        pass it whenever the job targets exactly one, so the registry can label
+        the job from a field instead of a formatted string.
         """
         if kind not in PIPELINE_KINDS:
             raise ValueError(
@@ -285,7 +363,7 @@ class JobManager:
         with self._gate:
             if self.pipeline_active():
                 return None
-            return self.spawn(kind, label, argv, cwd=cwd, env=env)
+            return self.spawn(kind, label, argv, cwd=cwd, env=env, experiment=experiment)
 
     def running_job_for(self, kind: str, experiment: str) -> Job | None:
         """The still-running *kind* job for *experiment*, if any.
@@ -327,21 +405,7 @@ class JobManager:
             if job.status != "running":
                 return False
             job.stop_requested = True
-        try:
-            job.proc.terminate()
-        except Exception:
-            pass
-
-        def _grace() -> None:
-            try:
-                job.proc.wait(timeout=_STOP_GRACE_SECONDS)
-            except subprocess.TimeoutExpired:
-                try:
-                    job.proc.kill()
-                except Exception:
-                    pass
-
-        threading.Thread(target=_grace, daemon=True).start()
+        _terminate_and_reap(job.proc)
         return True
 
     def wait_for_line(
@@ -380,8 +444,21 @@ class JobManager:
             time.sleep(0.05)
 
     def shutdown(self) -> None:
-        """Terminate every still-running job (grace period, then kill)."""
+        """Terminate every still-running job (grace period, then kill).
+
+        Latches the registry closed in the same critical section that takes
+        the snapshot, so a concurrent :meth:`spawn` either landed in this
+        snapshot or refuses and kills its own child — no process outlives the
+        teardown untracked. Idempotent; a manager stays closed.
+
+        Unlike :meth:`stop`'s per-job grace thread, the grace period here is
+        ONE budget shared by every job in iteration order: total teardown
+        latency stays bounded by :data:`_STOP_GRACE_SECONDS` (the donor's
+        choice, kept), at the price of jobs late in the order getting little
+        SIGTERM grace before the SIGKILL. Every one of them is still reaped.
+        """
         with self._lock:
+            self._closed = True
             jobs = list(self._jobs)
         running = []
         for job in jobs:
