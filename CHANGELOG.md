@@ -199,8 +199,6 @@ number change).
   one process-global recorder installed by the outermost scope, per-thread
   frames, and one `"always"` filter per nest per category — no per-call writes
   to the global filter list. Warning *routing* only — no number moves.
-
-### Fixed (exit gate)
 - **A breaking-release schema refusal reached the operator as a stack trace,
   not as an error line.** `ensure_tables()` ran outside `abk run`'s failure
   handler, so the `ValueError` that names the drop-and-recreate remedy for a
