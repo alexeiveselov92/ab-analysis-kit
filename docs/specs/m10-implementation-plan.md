@@ -1,15 +1,17 @@
 # M10 Implementation Plan — timestamps + schema cleanup + explore polish
 
-> **Status: as-designed contract for M10 (track approved 2026-07-18), targets
-> release `0.5.0`. NOT yet implemented** — this document is the contract the
-> implementation sessions execute, in the shape of
+> **Implementation record — M10 shipped in full (WP1–WP5 + the exit gate),
+> 2026-07-25/26; version bumped to `0.5.0`, release-ready pending the
+> maintainer's `v0.5.0` tag/publish step.** Written as the as-designed
+> contract for M10 (track approved 2026-07-18) in the shape of
 > [m4-implementation-plan.md](m4-implementation-plan.md) /
-> [m6-implementation-plan.md](m6-implementation-plan.md). It becomes the
-> implementation record at the exit gate (the m4–m6 pattern): as each WP lands,
-> its section is annotated done and a §5 adversarial-review record is appended,
-> mirroring [m4](m4-implementation-plan.md)/[m6](m6-implementation-plan.md).
-> This document must never claim unbuilt code exists — every WP is written in
-> contract/future tense ("WP2 adds…", "the gate asserts…").
+> [m6-implementation-plan.md](m6-implementation-plan.md), and amended in place
+> at the exit gate into this record (the m4–m9 pattern). The WP bodies below
+> keep their original contract wording ("WP2 adds…") as the designed
+> baseline; the **"done" table** below, the **per-WP as-built notes** (the
+> block quotes opening each WP), the **exit-gate record** appended to §3 and
+> the **adversarial-review record** in §6 are the authoritative as-built
+> account. Where a WP body and its as-built note disagree, the note wins.
 >
 > **Read [§4](#4-decisions--settled-by-the-maintainer-2026-07-25) BEFORE any WP.**
 > All five "before start" questions were settled by the maintainer on
@@ -26,17 +28,42 @@
 > [data-contract-and-reporting.md](data-contract-and-reporting.md) (§5 the
 > `_ab_results` window columns), [ROADMAP.md](../../ROADMAP.md) M10. Sibling
 > milestone docs: [m9-implementation-plan.md](m9-implementation-plan.md) (M10
-> depends on nothing from M9 code-wise, but M9's `build_cohort_backend`
-> discipline is the pattern M10 does *not* touch),
+> was expected to depend on nothing from M9 code-wise — **it did**: three M9
+> surfaces broke on a timestamped start, see WP1's as-built notes),
 > [m11-implementation-plan.md](m11-implementation-plan.md) (clones
-> `tuning/server.py` **after** this milestone's WP4 lands, inheriting the
-> decoupled lock model).
+> `tuning/server.py` **after** this milestone's WP4, which has landed — it
+> inherits the decoupled lock model).
 >
 > Source: `~/.claude/plans/report-md-replicated-truffle.md` (the approved
 > polish-track plan, M10 section) + the canonical detailed WP breakdown
 > `~/.claude/plans/abkit-v2-details/design_time_explore.json`, cross-checked
 > against `~/.claude/plans/abkit-v2-details/verify_time_explore.json` (code-verified
 > file:line facts, treated as ground truth for citations in this document).
+
+## Status — all work packages shipped (the "done" table)
+
+| WP | Landed as | Load-bearing as-built delta (details in the per-WP notes) |
+|---|---|---|
+| WP1 — config + planner core: sub-day timestamps | PR #61 (`a634f90`) | the fields are **renamed** `start_ts`/`horizon_ts` (D1) and a bare date is local midnight for BOTH edges, so the horizon is EXCLUSIVE and a ported `end_date` gains a day (D6); §0.2's call-site register was ~60% accurate and its central claim false — six further sites, four of them in M9 code; the knob reached nothing until `ExperimentConfig.grid()` became the one factory (AST-gated) |
+| WP2 — propagate the anchors (CUPED, render-smoke, catalog, docs) | PR #61 (`a634f90`) — **inseparable from WP1** | a field rename cannot land half-way, so all four steps shipped in WP1's commit; the catalog change grew from "widen" into rename + widen + a new `interval_anchor` column storing the RESOLVED window in naive UTC (a BI join now lines up) |
+| WP3 — drop the `_ab_results` date columns | PR #62 (`52f92da`) | the audit found a **live** `SELECT metric, end_date, …` in the quickstart and four specs naming `end_date` as the results grain — none of them in the WP's file list; the operator hazard is backend-asymmetric (PG/MySQL fail loudly, ClickHouse silently stamps `1970-01-01`), which is why the CHANGELOG's recreate note is combined and explicit |
+| WP4 — decouple the explore request lock | PR #63 (`8f8d232`) | the removed lock did **two** jobs: it also CANCELLED superseded work (a 6-turn drag went 0.80 s → 3.40 s at 8.7× CPU without it) and BOUNDED concurrent computes — restored as `should_stop=` polling + a 2-slot admission semaphore, not a queue; `warnings.catch_warnings` is process-global and had to be replaced thread-scoped (`utils/warn_scope.py`) |
+| WP5 — memoize bootstrap resampling across alphas | PR #64 (`eaa1476`) | the contract's key `(method_config_id, end_ts)` collides three ways — across metrics, across arm pairs, and across the identity-EXCLUDED `seed`, which IS the draw; as shipped `BootMemoKey` carries all of it and the cache **generation** rides IN the key, so a resample that lost a race to `/reload` is unreachable rather than stale (and the two locks are never nested) |
+| exit gate — the §3 e2e + docs sync + the `0.5.0` cut | this PR | leg 1 found the one derived number that DID move (`horizon_seconds()` across DST — pre-m10 the config disagreed with its own grid) and leg 3 found the breaking-change remedy escaping as an uncaught traceback, so the message the release most needs never reached the terminal |
+
+**Zero statistical numbers moved anywhere in the milestone** — no
+`ALGORITHM_VERSION` bump in any PR, no `statistics-changes.md` deviation
+entry, `abkit.stats` purity intact, `tests/golden` untouched. WP5's
+bootstrap split is a pure refactor pinned per class (`from_samples` ==
+`_resample` + `_finalize`, bit for bit); the window rename's numeric gate is
+that an unchanged window persists unchanged `_ab_results` numbers, pinned by
+the exit gate's pre-m10 golden (§3 leg 1) with **one disclosed exception**:
+`horizon_seconds()` is now the true elapsed length rather than a nominal day
+count, so a DST-crossing window differs by ±1h. It reaches config-lint's
+cadence gate and the readout's pre-horizon rationale line — no persisted
+column derives from it. Every WP PR carried its own adversarial review
+(1–2 rounds each, findings fixed in-PR before merge); §6 is the record and
+the milestone-level exit gate is recorded at the end of §3.
 
 ## 0. Scope, posture & decisions
 
@@ -239,7 +266,7 @@ canonical design JSON's own step-by-step content (not replacing it):
 
 ## 1. Work packages
 
-### WP1 — Config + planner core: sub-day start/horizon timestamps ✅ SHIPPED (`aef6c66`)
+### WP1 — Config + planner core: sub-day start/horizon timestamps ✅ SHIPPED (PR #61, squashed as `a634f90`)
 
 > **Amended by the §4 decisions (2026-07-25) — read them first.** Three things
 > in the body below are superseded: (a) the fields are **renamed** to
@@ -444,7 +471,7 @@ verification).
 
 ---
 
-### WP2 — Propagate sub-day anchors: CUPED lookback, SQL render-smoke, catalog table, docs ✅ SHIPPED INSIDE WP1 (`aef6c66`)
+### WP2 — Propagate sub-day anchors: CUPED lookback, SQL render-smoke, catalog table, docs ✅ SHIPPED INSIDE WP1 (PR #61, squashed as `a634f90`)
 
 > **This WP has no separate session: the rename made it inseparable from WP1.**
 > A field rename cannot land half-way — every consumer must move in the same
@@ -572,7 +599,7 @@ date-only anchor behavior. Every other consumer enumerated in §0.2 needs
 
 ---
 
-### WP3 — Drop `start_date`/`end_date` from `_ab_results`; fix stale hints and comments ✅ SHIPPED
+### WP3 — Drop `start_date`/`end_date` from `_ab_results`; fix stale hints and comments ✅ SHIPPED (PR #62, squashed as `52f92da`)
 
 > **As-built notes (what the session found beyond the contract):**
 >
@@ -731,7 +758,7 @@ policy: CHANGELOG + drop/recreate guidance, no migration tooling.
 
 ---
 
-### WP4 — Explore: decouple the global request lock (cheap tiers vs Reload/Auto-validate) ✅ SHIPPED (`708b8a5`)
+### WP4 — Explore: decouple the global request lock (cheap tiers vs Reload/Auto-validate) ✅ SHIPPED (PR #63, squashed as `8f8d232`)
 
 > **As-built notes (what the session found beyond the contract):**
 >
@@ -919,7 +946,7 @@ with a superseded answer.
 
 ---
 
-### WP5 — Explore: memoize bootstrap resampling across alpha-only changes ✅ SHIPPED (`35323f4`)
+### WP5 — Explore: memoize bootstrap resampling across alpha-only changes ✅ SHIPPED (PR #64, squashed as `eaa1476`)
 
 > **As-built notes (what the session found beyond the contract):**
 >
@@ -1270,10 +1297,116 @@ and the `abk init` generated project sample (`abkit/cli/commands/init.py`)
 are updated in the same PRs that change the behavior they describe — no
 separate doc-catch-up WP. At milestone close: flip `CLAUDE.md` +
 `.claude/rules/architecture.md` status to "M10 shipped", append this
-document's §5 adversarial-review record (mirroring
-[m4](m4-implementation-plan.md) §5 / [m6](m6-implementation-plan.md) §0.5),
-and cross-check the coverage map in [ROADMAP.md](../../ROADMAP.md) (REPORT
+document's **§6** adversarial-review record (mirroring
+[m4](m4-implementation-plan.md) §5 / [m6](m6-implementation-plan.md) §0.5 —
+in *this* document the review record is §6, since §5 is Dependencies), and
+cross-check the coverage map in [ROADMAP.md](../../ROADMAP.md) (REPORT
 #9–#12 → M10).
+
+### Exit-gate record — 2026-07-26 (`tests/e2e/test_sub_day_anchors_and_explore.py`)
+
+> **All four legs land in one new e2e module** (23 tests) plus two tests added
+> to the Docker-gated `tests/e2e/test_first_run_clickhouse.py` for the single
+> claim an in-memory backend cannot express. Suite: **2 366 passed, 6 skipped**
+> (2 343 + 23 new; the skips are the 4 Docker-gated ClickHouse tests — 2 of
+> them this gate's — plus the MySQL-mock and `ABK_BENCH` cases that were
+> already skipping). Zero `ALGORITHM_VERSION` changes; `tests/golden`
+> untouched; mypy unchanged.
+>
+> **Three corrections this gate forced on the gate's own wording:**
+>
+> 1. **Item 1's "real existing fixture YAML configs from `tests/fixtures`"
+>    describes a directory that does not exist** — there is not one `.yml`
+>    under `tests/`; experiment documents are built in code and the only real
+>    on-disk config is the `abk init` scaffold. And post-D1 a fixture carrying
+>    bare `start_date`/`end_date` would not validate at all. Re-expressed
+>    honestly: `capture_window_surface()` enumerates 11 window shapes (the
+>    ones `tests/core/test_period_planner.py` pins: whole days, Moscow, both
+>    DST directions, sub-day steps, a non-dividing cadence, a sub-week window,
+>    two dense-early schedules), the golden was **captured by running that
+>    same function at `f85371d`** — the last commit before WP1 — and the
+>    module docstring says regeneration may only ever happen from a pre-m10
+>    checkout. A golden re-captured at HEAD would compare HEAD with itself.
+> 2. **One derived number DID move, and the gate now pins it in both
+>    directions.** Grids, cutoff sets, `window_seconds`, `elapsed_days`,
+>    `weekly_cycle_pct`, `look_days`/`horizon_days` and the CUPED pre-period
+>    are byte-identical across all 11 shapes. `horizon_seconds()` is not: it
+>    was `((end − start).days + 1) × 86 400` and is now the elapsed length
+>    between the two resolved instants, so a DST-crossing window differs by
+>    ±1h (`daily_dst_fall_back` 1 036 800 → 1 040 400,
+>    `daily_dst_spring_forward` 691 200 → 687 600). Pre-m10 that made the
+>    config disagree with its OWN grid — the same fall-back case's
+>    `horizon_days` was already 12.0416… — so the change makes two horizon
+>    lengths agree. Its consumers are config-lint's cadence gate and the
+>    readout's pre-horizon rationale line; no persisted `_ab_results` column
+>    derives from it. `DST_HORIZON_SECONDS` is a two-entry allowlist and a
+>    companion test forbids it from growing into a blanket waiver.
+> 3. **Item 3's "fails with the drop-and-recreate message rather than a bare
+>    type error" was half-true, in the worse half.** `ensure_columns` raised
+>    the right message, but `tables.ensure_tables()` sat OUTSIDE the driver's
+>    `except BaseException` handler, so it escaped as an uncaught `ValueError`:
+>    Click's standalone mode printed a stack trace and `abk run`'s own error
+>    line never appeared — `result.output` carried nothing. The one failure a
+>    real operator hits on this release's breaking change was the one whose
+>    remedy was buried (the M7 WP6 lesson repeating: a message the user must
+>    read has to be echoed as a CLI line). Fixed in the driver and in
+>    `abk unlock`, which had the same hole; `abk validate` and `abk clean`
+>    already echoed it.
+>
+> **What the four legs assert** (§3's items, in order):
+>
+> - **Leg 1** — the pre-m10 golden above, plus a coverage test asserting the
+>   golden holds a case for every entry in `WINDOW_CASES` (a case dropped from
+>   the golden would otherwise pass by never being compared).
+> - **Leg 2** — a 09:00 start anchors at the instant with two cutoffs INSIDE
+>   the opening local day (the shape §6's WP1 round 1 says hid two
+>   silent-wrong-number defects); the opening look persists a real 3h
+>   `window_seconds`; the catalog stores the resolved instant + the anchor; an
+>   off-phase `interval_anchor` moves the lattice without moving the edges; the
+>   CUPED pre-period stays whole-day; and the timestamped start is accepted by
+>   config-lint, the driver, `abk plan`, `abk validate` and `abk explore` — the
+>   last three being surfaces no other suite drives off a sub-day start. Day
+>   state's opening-day clamp is made **falsifiable** by a second fixture
+>   starting at 14:30, after the seed's 12:00 facts: the day is left
+>   unmaterialized, where an unclamped render would have summed
+>   pre-experiment events into it. The additive read path reconciles the whole
+>   sub-day series (`11 matched`, zero `unverified`) and reproduces the
+>   recompute numbers — §3(a)'s re-check of the four M9 call sites, executed
+>   rather than reasoned.
+> - **Leg 3** — `_ab_results` created without the dropped columns, the catalog
+>   created with `start_ts`/`horizon_ts`/`interval_anchor`, and a fabricated
+>   pre-m10 catalog table refusing to migrate with the remedy **on the
+>   terminal**. On real ClickHouse: the live types (`DateTime64(3, 'UTC')`,
+>   `String`), the resolved window round-tripping, and the refusal leaving the
+>   stale table untouched rather than half-migrated. That no shipped hint or BI
+>   recipe names the dropped columns is the standing text gate
+>   `tests/docs/test_no_stale_window_keys.py` (+ WP3's
+>   `test_no_dropped_result_columns_in_pasteable_sql`) — not duplicated here.
+> - **Leg 4** — over real HTTP, a knob turn answers 200 while a REAL reduced-N
+>   Auto `/validate` still holds `heavy_lock` and has not replied. The proof is
+>   the ORDER, not a duration: a queued request could not have answered at all
+>   (§3(b)). Five alphas over one bootstrap knob draw the replicates exactly
+>   once per look (10 draws for 11 points — the empty opening look has nothing
+>   to draw), with an empty `warnings` list proving the budget refused nothing
+>   (§3(c)). The parity oracle takes the OTHER path — `supports_resample_memo`
+>   off, so the engine runs verbatim `compare_pair` per alpha, 50 draws vs 10 —
+>   and every number over the wire is identical. WP5's own round 1 found the
+>   engine-level parity gate comparing the memo path with itself; this one
+>   cannot.
+>
+> **Every new gate was mutation-verified** (revert the fix → a named test
+> fails): the driver echo (leg 3 goes red), the STATE opening-day clamp (leg
+> 2), `supports_resample_memo` (leg 4's memo), `/recompute` back under
+> `heavy_lock` (leg 4's lock split), a 1h shift in the resolved horizon and a
+> changed CUPED pre-period edge (leg 1 and 2), and a tampered golden fixture.
+> Tooling lesson: the first attempt at the horizon mutation was a silent
+> string-replace no-op that still printed "applied" — a mutation script must
+> assert its own edit landed, or it certifies nothing.
+>
+> The e2e `http()` helper now returns transport failures as
+> `(0, "transport: …")` like its tuning-suite sibling (the WP5 round-2
+> lesson): raised inside a thread it vanishes into a stack trace and leaves
+> the caller asserting on a reply COUNT.
 
 ---
 
@@ -1573,6 +1706,28 @@ for a window butting against the representable calendar edge (year 1 / 9999).
 A lattice step off the end now saturates, which every comparison in the
 enumeration already reads correctly as "beyond that edge". (Pre-m10 raised
 identically, so it is a hardening, not a regression.)
+
+### WP2 — no separate round (its review is WP1's)
+
+WP2 shipped inside WP1's commit (a field rename cannot land half-way), so the
+rounds above cover it: the CUPED whole-day pre-period, the render-smoke's move
+onto `start_instant()`, and the `_ab_experiments` rename/widen/`interval_anchor`
+column were all in the diff those lenses read. The catalog change is where a
+reviewed-in-flight discovery landed — there was no `_ab_experiments` contract
+test at all before it (`TestExperimentsCatalogSchema` is new), and the
+ADD-only guard's refusal message gained its drop-and-recreate remedy in that
+round.
+
+### WP3 (PR #62) — review folded into the WP, 2 findings that changed the diff
+
+WP3's round is recorded in its as-built notes above and in the PR body rather
+than as a separate round table; both findings are load-bearing enough to name
+here:
+
+| # | Defect | Severity | Fix |
+|---|---|---|---|
+| 1 | **The replacement recipe's test passed with half the recipe deleted.** `TestTimezoneDates` checked `end_ts − 1µs` read in the experiment timezone against the dropped `end_date` — but at UTC+3 (Moscow) the timezone leg is unobservable: dropping it lands on the right day by coincidence. A BI user west of Greenwich would have followed a recipe the suite called proven. | silent-wrong-value in shipped docs | split the assertions so each of the two corrections (exclusivity, UTC) is gated separately, and add an `America/New_York` case where the timezone leg is observable. Mutating either leg now fails a test. |
+| 2 | **The existing docs gate could not see the shape that mattered.** `tests/docs`' window-key check is anchored to the YAML **key** form (`^\s*name:`), so a live `SELECT metric, end_date, … FROM _ab_results` in `docs/getting-started/quickstart.md` sailed past it — and a scoped grep over `abkit/` could never have found it either. | stale pasteable SQL shipped to users | `test_no_dropped_result_columns_in_pasteable_sql` bans the bare identifier on every paste surface in any syntax and asserts a scanned-file COUNT, so a renamed directory cannot turn it into a silent no-op. It immediately caught one of that same commit's own doc edits. |
 
 ### WP4 round 1 (`708b8a5` + `fdb103c`) — 5 lenses, 10 refutations
 

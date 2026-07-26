@@ -11,12 +11,14 @@ stabilization chart), writes them to a clean warehouse table any BI can read, an
 gives you a local cockpit to tune the analysis and a harness to prove your method is
 actually calibrated.
 
-> **Status: `0.4.0` (Alpha) — release-ready; `0.3.0` is the latest on PyPI**
-> (milestones **M1–M9** shipped — M9 adds the additive compute engine: a STATE
-> stage materializing per-(unit, day) moments, the opt-in
-> `compute.incremental_reads` path that turns the O(D²) full-window rescan into
-> a linear one, `abk verify-incremental` to prove it moved no number, and
-> instant CUPED in the cockpit). The
+> **Status: `0.5.0` (Alpha) — release-ready; `0.4.0` is the latest on PyPI**
+> (milestones **M1–M10** shipped — M10 makes an experiment's window a pair of
+> real timestamps (`start_ts`/`horizon_ts`, with `interval_anchor` deciding
+> where the cutoff lattice sits), collects both breaking schema changes of the
+> polish track into this one release with a single recreate instruction, and
+> fixes two live `abk explore` defects: a knob turn no longer queues behind a
+> Reload or Auto-validate, and dragging alpha over a bootstrap series stops
+> redrawing the replicates — 6.01 s → 1.01 s over six turns). The
 > statistical core, the declarative config / DB / pipeline layer, the explore cockpit +
 > self-contained reports, `abk validate` (now numpy-vectorized — minutes → sub-seconds),
 > opt-in sequential analysis + `abk plan`, and the DX layer (`abk init-claude`, docs site,
@@ -29,8 +31,9 @@ pip install ab-analysis-kit          # Python 3.10+; add a DB extra for real dat
 pip install "ab-analysis-kit[clickhouse]"   # or [postgres] / [mysql] / [all-db]
 ```
 
-(`0.4.0`'s M9 additive engine lands with its tag; until then `pip install
-ab-analysis-kit` gets `0.3.0` — for the M9 behavior install from source:
+(`0.5.0`'s renamed window fields + explore fixes land with its tag; until then
+`pip install ab-analysis-kit` gets `0.4.0`, which still expects
+`start_date`/`end_date` — for the M10 behavior install from source:
 `pip install -e ".[dev]"`.)
 
 `abk --version` and `abk --help` work with no database driver; you can even lint a

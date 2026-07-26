@@ -224,17 +224,19 @@ below and in the milestone docs). Core (M7–M12): ~42 sessions; extension
   criterion** — track lesson: a rule without an executable gate does not hold
   (the 800k-iteration nested `for` loop slipped past numpy-first).
 - **Schema policy:** breaks ship as documented recreate instructions, never
-  migration code; **both real breaks are collected in M10** (drop the
-  `_ab_results` date columns + widen `_ab_experiments` `Date`→`DateTime64`) —
-  one guide, one release. Column *additions* are non-breaking (additive
-  `ensure_columns`, M9).
+  migration code; **both real breaks were collected in M10** (drop the
+  `_ab_results` date columns + rename/widen the `_ab_experiments` window
+  `Date`→`DateTime64(3)`) — one guide, one release, shipped in `0.5.0`. Column
+  *additions* are non-breaking (additive `ensure_columns`, M9).
 - **Inter-milestone contracts** (plan-review findings): M8's
   `build_cohort_backend`/`ab_cohort_source` factory is the **only** way M9's
   STATE writer and tail-scan build cohort SQL (the blocker finding — a
   hand-rolled render silently joins a non-existent `_ab_exposures` under the
   no-copy default and yields silent zeros); M11 clones `tuning/server.py`
-  **after** M10 WP4 so it inherits the decoupled lock model; M14's dashboard
-  surface builds on M11.
+  **after** M10 WP4 — which has shipped, so the clone inherits the decoupled
+  lock model (`heavy_lock` + the admission semaphore + `should_stop=`
+  cancellation, not the old coarse `request_lock`); M14's dashboard surface
+  builds on M11.
 - **Coverage map:** REPORT #5–8→M7, #3–4→M8, #1–2→M9, #9–12→M10, #13→M11,
   #14→M12, #15→parked (revisited in M17). Hardening tiers below: Now-bug→M7
   WP0; "0.1.x safe wins" stats hot path→M7 WP1, its multi-arm UX wins→M14;
@@ -309,10 +311,11 @@ the additive path `N·D` — and zero inside COMPUTE at daily cadence.
 Zero statistical numbers moved (no `ALGORITHM_VERSION` bump; the flag-off/on
 parity gate is the milestone's №1 assertion).
 
-### M10 — timestamps + schema cleanup + explore polish → `0.5.0` 📋
-Design contract: [m10-implementation-plan.md](docs/specs/m10-implementation-plan.md)
-— **read its §4 first: five decisions settled 2026-07-25, two of which
-overturn the WP bodies.** The window fields are **renamed**
+### M10 — timestamps + schema cleanup + explore polish → `0.5.0` ✅
+Implementation record:
+[m10-implementation-plan.md](docs/specs/m10-implementation-plan.md)
+— **its §4 records the five decisions settled 2026-07-25, two of which
+overturned the WP bodies.** The window fields are **renamed**
 `start_date`/`end_date` → `start_ts`/`horizon_ts` (no aliases — a date-shaped
 name contradicts a flexible-interval system, and the legacy shape was to be
 rewritten, not inherited), and grid anchoring becomes the configurable
@@ -320,15 +323,41 @@ rewritten, not inherited), and grid anchoring becomes the configurable
 out — | `start` | an explicit timestamp, e.g. 3-day windows at 00:00 MSK on a
 UTC warehouse), with one engine rule: cutoffs = anchor + k·interval, snapped
 forward to ≥ start.
-Experiment start/horizon become full timestamps (`date | datetime` union, no
+Experiment start/horizon became full timestamps (`date | datetime` union, no
 coercion; the gate is numeric — an unchanged window persists unchanged
-`_ab_results` numbers; WP1–2), **both track schema breaks land here in one recreate guide**
-(drop `_ab_results` date columns + widen `_ab_experiments`; WP2–3), the
-explore lock decouples (`heavy_lock` only for reload/validate/apply;
-`/recompute` free + post-compute stale re-check; WP4), and bootstrap
-resampling memoizes (`_resample`+`_finalize` split, memo key
-`(metric, arm pair, cutoff, cache generation, method, resolved params)` —
-alpha excluded; "5 α → 1 resample"; WP5).
+`_ab_results` numbers; WP1–2 = PR #61), **both track schema breaks landed here
+in one recreate guide** (drop the `_ab_results` date columns = WP3, PR #62;
+rename + widen `_ab_experiments` = WP2), the explore lock decoupled
+(`heavy_lock` only for reload/validate/apply; `/recompute` free + post-compute
+stale re-check; WP4 = PR #63), and bootstrap resampling memoizes
+(`_resample`+`_finalize` split, memo key `(metric, arm pair, cutoff, cache
+generation, method, resolved params)` — alpha excluded; "5 α → 1 resample";
+WP5 = PR #64). Zero statistical numbers moved.
+
+**Load-bearing as-built deltas.** A bare date is local midnight of THAT day for
+**both** edges (D6), so `horizon_ts` is the EXCLUSIVE right edge and a ported
+`end_date: 2024-07-14` becomes `horizon_ts: 2024-07-15` — one vocabulary, no
+`+1 day` translation anywhere. WP1's own review found §0.2's call-site register
+~60% accurate and its central claim false: six further sites needed changes,
+four of them in M9 code (`IncrementalBackend` compared a `date` against the
+config field — a `TypeError` on *every* cutoff under `incremental_reads`), and
+the new knob reached none of the eight hand-copied `generate_grid` calls until
+`ExperimentConfig.grid()` became the one factory (AST-gated, m8's
+`build_cohort_backend` discipline). WP4's removed lock turned out to do **two**
+jobs — it also cancelled superseded work (a 6-turn alpha drag cost 3.40 s at
+8.7× CPU without that) and bounded concurrent computes — so the fix is
+`should_stop=` polling plus a 2-slot admission semaphore, and
+`warnings.catch_warnings` had to become thread-scoped because it is
+process-global. WP5's prescribed memo key `(method_config_id, end_ts)` collides
+three ways (metrics, arm pairs, and the identity-EXCLUDED `seed`, which IS the
+draw); the shipped key carries all of it plus the cache generation, so a
+resample that lost a race to `/reload` is unreachable rather than stale. The
+exit gate (`tests/e2e/test_sub_day_anchors_and_explore.py`) pins a golden
+captured from the pre-m10 code across 11 window shapes, and found the one
+derived number that DID move — `horizon_seconds()` is now true elapsed time, so
+a DST-crossing window differs by ±1h, which makes it agree with its own grid
+for the first time — plus a breaking-change remedy that escaped as an uncaught
+traceback instead of `abk run`'s error line.
 
 ### M11 — `abk dashboard` (the flagship overview UI) → `0.6.0` 📋
 Design contract: [m11-implementation-plan.md](docs/specs/m11-implementation-plan.md).
