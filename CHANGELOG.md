@@ -14,12 +14,79 @@ number change).
 ## [Unreleased]
 
 ### Added
+- **M11 DASH-2 — the dashboard's row shaper (`abkit/tuning/overview.py`).**
+  One row per experiment (the maintainer's 2026-07-27 grain decision) off the
+  persisted `_ab_results`: latest verdict, effect/CI/p-value/alpha, the SRM
+  gate, and a sparkline bucketed to at most 160 points, plus the metadata-only
+  boot list `GET /` will bake. **No route or command reaches it yet** — it is
+  exported from `abkit.tuning` and consumed only by its own tests until the
+  dashboard server lands (DASH-3) — and **no statistical number moves**: every
+  verdict is `abkit.pipeline.readout.evaluate()`'s, the same function `abk run
+  --report` calls, and a test now pins the row's headline cells against
+  `build_report_payload`'s so the two surfaces cannot drift. Worth knowing
+  about the shape it settled on:
+  - **The window preset (`24h`/`7d`/`30d`/`90d`/`all`) is the sparkline's
+    x-range and nothing else.** `_ab_results` rows are cumulative looks from a
+    pinned start, so filtering them by `end_ts` before the readout does not
+    produce a shorter experiment — it produces a truncated stabilization
+    history. Measured: it turned a 14-look daily WIN into INCONCLUSIVE at
+    `24h` (i.e. every daily experiment), and inverted a 6h-cadence
+    INCONCLUSIVE into a WIN. Verdict cells are always the full series'.
+  - **Rows for an arm pair the config no longer declares are dropped before
+    the readout** (the report already filters this way). They do not reach
+    `evaluate`'s series lookup, but they *do* join the read-time
+    Benjamini-Hochberg family and tighten every threshold — nine renamed-away
+    pairs were enough to turn the report's WIN into the dashboard's
+    INCONCLUSIVE on identical rows.
+  - The SRM flag is read **window-independently** (through the report's own
+    `srm_summary` over all persisted rows), so a preset can never silence a red
+    assignment gate; the sparkline is filtered to the comparison's **current**
+    `method_config_id`, so an orphaned series left by an edited identity param
+    cannot interleave a second generation's points into one curve; the
+    20 000-look cap is **display-only**, like the window.
+  - A verdict the readout **qualified** never renders as an unqualified one:
+    under `guardrail_policy: warn` a WIN is kept *with* a mandatory loud
+    caveat, so the row carries `rationale`, `caveats` and
+    `guardrail_regressed` — each listed pair carries its own two, and the
+    row-level flag is ORed across all of them, because a regression on the
+    second arm must not leave a green flag on the row that lists it. The
+    readout's own `warnings` (renamed arms, orphaned series — the two states
+    `abk clean` exists for) ride along in `warnings`, so a renamed arm no
+    longer looks exactly like a never-run experiment.
+  - The row's per-pair list is named **`verdicts`**, matching
+    `ExperimentReadout.verdicts`; `comparisons` stays the boot entry's
+    CONFIGURED list. The dashboard client merges the two payloads by
+    experiment name, and one key holding two incompatible shapes is a trap.
+  - Both surfaces carry the experiment's **`timezone`**: every instant on them
+    is naive UTC, and since `0.5.0` "the calendar day a look covers" is a
+    timezone-sensitive contract.
+  - `project` is a **required** argument, not an optional one: without it the
+    readout falls back to stored-alpha CI significance and mis-scores a
+    project-level `benjamini_hochberg` — loudly in its own warnings, but a
+    glanceable row is the wrong place to discover that.
+  - `locked` probes the `run` lock only (the out-of-band `validate` claim does
+    not block `abk run`), and the probe is isolated in **both** directions: it
+    runs in a `finally` so a failed read cannot report "unlocked" for the
+    degraded row an operator is most likely to press Run on, and it swallows
+    its own failure so an unreadable `_ab_tasks` cannot blank a verdict and an
+    SRM chip that `_ab_results` could answer perfectly well.
+  - An unknown window preset raises **`UnknownWindowPreset`** (a `ValueError`
+    subclass), so a route can answer 400 for it and 500 for anything else —
+    every other failure is swallowed into `row["error"]`.
+  - One bad experiment degrades to a full-shape row carrying an `error` string
+    (with the fields filled before the failure kept) instead of sinking the
+    list.
+  A secondary or guardrail metric never appears in a row's per-comparison
+  verdict list — `evaluate()` only crosses **main** comparisons with treatment
+  arms — but it does appear in the boot entry's configured-comparison list, so
+  the per-metric Run button DASH-4a/DASH-5 add still has something to bind to.
 - **M11 DASH-1 — the dashboard's subprocess registry (`abkit/tuning/jobs.py`).**
   Groundwork for `abk dashboard` (M11, `0.6.0`): an in-memory registry that
   spawns the real `abk` CLI as a subprocess and pumps its merged output into a
-  pollable line buffer. **No user-facing surface yet** — nothing imports it
-  outside its own tests until the dashboard server lands (DASH-3/DASH-4), and
-  no statistical number moves (it reads no results and computes nothing).
+  pollable line buffer. **No route or command reaches it yet** — it is
+  exported from `abkit.tuning` and consumed only by its own tests until the
+  dashboard server lands (DASH-3/DASH-4), and no statistical number moves (it
+  reads no results and computes nothing).
   Deliberate deviations from the donor port it is based on: the job-kind
   vocabulary is abkit's (`run`/`unlock`/`clean`/`explore`, with `explore`
   outside the one-at-a-time gate but deduped per experiment) and **both spawn

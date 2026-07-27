@@ -9,6 +9,9 @@ DB after session load.
 ``jobs`` joins them for the ``abk dashboard`` cockpit
 (m11-implementation-plan.md DASH-1): a subprocess registry, sharing only this
 package — it has no session, no DB and no statistics of its own.
+``overview`` (DASH-2) is the same cockpit's read side: one row per experiment
+off the persisted ``_ab_results``, with every verdict sourced from
+``pipeline.readout.evaluate`` — it computes no statistic and holds no session.
 """
 
 from abkit.tuning.config_writer import (
@@ -19,6 +22,15 @@ from abkit.tuning.config_writer import (
 )
 from abkit.tuning.html import render_explore_html
 from abkit.tuning.jobs import Job, JobManager, JobManagerClosed
+from abkit.tuning.overview import (
+    ALL_WINDOW_PRESETS,
+    MAX_STAT_POINTS,
+    WINDOW_PRESETS,
+    UnknownWindowPreset,
+    build_experiment_row,
+    build_experiment_row_safe,
+    build_overview_boot_entries,
+)
 from abkit.tuning.payload import build_explore_payload
 from abkit.tuning.recompute import (
     CalibrationStatus,
@@ -41,7 +53,10 @@ from abkit.tuning.session import (
 )
 
 __all__ = [
+    "ALL_WINDOW_PRESETS",
     "EXPLORE_CACHE_BUDGET",
+    "MAX_STAT_POINTS",
+    "WINDOW_PRESETS",
     "AppliedConfig",
     "CalibrationStatus",
     "ComparisonSeries",
@@ -57,10 +72,14 @@ __all__ = [
     "RecomputeResult",
     "RecomputeSuperseded",
     "TunedComparison",
+    "UnknownWindowPreset",
     "apply_tuned_config",
     "backend_cutoff_loader",
+    "build_experiment_row",
+    "build_experiment_row_safe",
     "build_explore_payload",
     "build_explore_server",
+    "build_overview_boot_entries",
     "find_calibration",
     "load_session",
     "render_explore_html",

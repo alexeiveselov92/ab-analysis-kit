@@ -49,7 +49,11 @@ dashboard verdict is sourced through the **already-shipped**
 explore session already call — never through a re-implementation, a
 recomputation, or a shortcut over raw `_ab_results` rows. DASH-7's exit gate
 adds an explicit assertion of this (no numeric divergence from what
-`abk run --report` would show for the same window).
+`abk run --report` would show). **Not "for the same window"** — DASH-2's
+as-built settles that the window preset scopes the sparkline only and never
+the verdict, precisely because `abk run --report` passes no window at all;
+DASH-2 already pins the row's headline cells against `build_report_payload`'s,
+and DASH-7 extends that through the HTTP layer.
 
 ### 0.2 Reuse surface — what already exists (do not rebuild)
 
@@ -228,8 +232,8 @@ changes); `tests/tuning/test_overview.py` (new).
 **Steps:**
 1. Define `WINDOW_PRESETS = {'24h':1,'7d':7,'30d':30,'90d':90}`,
    `ALL_WINDOW_PRESETS = frozenset({*WINDOW_PRESETS,'all'})` filtering on
-   `end_ts` (donor's `overview.py:38-39` pattern, field renamed from the
-   metric-timestamp axis to `end_ts`).
+   `end_ts` (the donor's `overview.py` `WINDOW_PRESETS`/`ALL_WINDOW_PRESETS` pattern,
+   field renamed from the metric-timestamp axis to `end_ts`).
 2. Define `_MAX_SPARK_BUCKETS = 160` and a defensive `MAX_STAT_POINTS` cap
    (e.g. `20_000`) on rows read per (experiment, metric, pair) before
    bucketing — port `_spark_series` (`detektkit/detectkit/ui/overview.py:264-281`)
@@ -250,7 +254,9 @@ changes); `tests/tuning/test_overview.py` (new).
    (`readout.py:430`), so a filter would be vacuous; and no
    `verdicts[0]`-fallback-for-no-main-flag exists because
    `ExperimentConfig` validation forbids zero main comparisons
-   (`experiment_config.py:393-395`). Guard the theoretical empty-`verdicts`
+   (`ExperimentConfig.validate_comparisons`; ≥2 variants is
+   `AssignmentConfig.validate_variants` — cited by symbol, because the m10
+   window rename already rotted the line numbers this step first carried). Guard the theoretical empty-`verdicts`
    case (defensively, not as a designed state) by degrading the row via
    step 6's error path rather than indexing blind.
 5. Row shape (mirrors `_empty_row`'s full-shape-with-error-degrade
@@ -295,7 +301,9 @@ changes); `tests/tuning/test_overview.py` (new).
   `IndexError`.
 - No `abkit.stats` import, no numeric recomputation — `evaluate()` is the
   **only** verdict source (byte-identical to what `abk run --report` would
-  show for the same window).
+  show; see the as-built record — "for the same window" turned out to be the
+  wrong framing, and the gate is now an assertion against
+  `build_report_payload`'s own verdict list).
 
 **Risks / hotspots:** REPORT's phrasing "the list of experiments AND their
 metrics" is genuinely ambiguous between row-per-experiment (chosen here) and
@@ -306,6 +314,103 @@ dedup key from DASH-1 stays experiment-scoped regardless (buttons remain
 experiment-scoped either way).
 
 **Session estimate:** 1 session.
+
+**As built (PR #68, 2026-07-27) — what DASH-3/DASH-5 must know.** Shipped with
+the deviations below, all but one found by this WP's own two adversarial
+review rounds and each reproduced before it was accepted. The module docstring
+carries the same list in the same order. **The two that change the payload
+DASH-3/DASH-5 consume are (1) — the window no longer scopes the verdict — and
+(7) — the per-pair list is called `verdicts`, not `comparisons`.**
+
+1. **Step 3's "filter to `end_ts` within the window; call `evaluate`" is
+   wrong, and the window is now display-only.** The step was inherited from
+   the donor, whose datapoints are a plain time series where a left-bounded
+   window really is a shorter series. `_ab_results` rows are **cumulative
+   looks from a pinned start**: dropping the oldest deletes stabilization
+   history while every surviving row still measures from `start_ts`.
+   Measured on the fixture — a 14-look daily WIN reads INCONCLUSIVE at the
+   `24h` preset (one look, below `MIN_STABLE_CUTOFFS`), i.e. **every** daily
+   experiment; and a 6h-cadence series inverts the other way, reporting a WIN
+   the full readout refuses. `abk run --report` passes no `start`/`end` at
+   all, so the report's verdict IS the full-series verdict and the plan's own
+   "byte-identical to what `abk run --report` would show" gate was
+   unsatisfiable as written. **The preset now bounds the sparkline only**;
+   every verdict cell is the full series'. A window-scoped verdict, if ever
+   wanted, is an as-of replay (pin the RIGHT edge, keep history) and needs the
+   look count + rationale on the row to be honest — that is not this WP.
+2. **Rows for an undeclared arm pair are dropped before the readout**, the
+   filter `reporting/builder.py` already applies. `readout._filter_rows`
+   screens by metric and `method_config_id` only, so a mid-flight arm rename
+   leaves rows that never reach a series lookup but DO join the read-time
+   BH family and tighten every threshold: nine renamed-away pairs flipped the
+   report's WIN to the dashboard's INCONCLUSIVE on identical rows.
+3. **SRM is read window-independently** (`srm_summary` over all persisted
+   rows), matching the report, so no preset can silence a red gate — and it is
+   read BEFORE the readout, so it survives on a row whose verdict failed.
+4. **The row carries `caveats` and `guardrail_regressed`** beside the verdict.
+   Step 5's shape has the verdict word alone, but under `guardrail_policy:
+   warn` the readout KEEPS a WIN and attaches a mandatory loud caveat — a row
+   showing only "WIN" hands over exactly the green light the policy withheld.
+5. **`project` is required, not optional, on both row builders and on
+   `build_overview_boot_entries`.** Without it `evaluate` degrades to
+   stored-alpha CI significance and mis-scores a project-level
+   `benjamini_hochberg` (verified: WIN vs INCONCLUSIVE on the same rows), and
+   the boot list would resolve `dir` against the literal `"experiments"` while
+   the stats row used `project.paths.experiments` — the shell and the fill
+   grouping the same experiment under two keys.
+6. **`locked` is probed in a `finally`, inside its own `try` — isolated in
+   BOTH directions.** It only greys a button, and `_ab_tasks` can be
+   unreadable (a partially-completed `ensure_tables`, a narrow read-only
+   grant) while `_ab_results` is fine; as first-and-unisolated it blanked the
+   verdict, the SRM chip and the sparkline. Round 2 caught the mirror image:
+   probed only after a successful read, it reported `locked: false` for every
+   degraded row — the row an operator is most likely to press Run on. Failing
+   to `False` is safe: the spawned `abk run` takes the real lock itself.
+7. **The per-pair list is `verdicts`, not `comparisons`** (round 2). The boot
+   entry's `comparisons` is the CONFIGURED list and the stats row's was the
+   verdict list; DASH-5 merges the two payloads by experiment name, so one key
+   with two incompatible shapes is a trap. Each entry carries its OWN
+   `caveats` and `guardrail_regressed` — the row-level flag is ORed across all
+   pairs, because a regression on the second arm must not leave a green flag
+   on the row that lists it.
+8. **The row also carries `rationale`, `warnings` and `timezone`** (round 2).
+   `warnings` is `readout.warnings` plus the dropped-undeclared-pair count, so
+   the two states `abk clean` exists for are visible on the surface an
+   operator actually watches — without it a renamed arm is byte-identical to a
+   never-run experiment. `timezone` is the experiment's own: every instant on
+   the row is naive UTC and m10 made "the calendar day a look covers"
+   timezone-sensitive.
+9. **An unknown preset raises `UnknownWindowPreset`** (a `ValueError`
+   subclass, exported from `abkit.tuning`), so DASH-3 can answer 400 for it
+   and 500 for anything else instead of guessing which `ValueError` it caught.
+
+Also as-built, for DASH-3's wiring: the row's `pair` sub-key is the report
+payload's own `{"c": name_1, "t": name_2}`; `last_end_ts` is the headline
+pair's latest cutoff — the instant every stat cell on the row is as of, NOT
+the experiment's latest row (another metric can be ahead);
+`build_experiment_row_safe`'s window argument is spelled **`window_preset=`**
+(DASH-3 step 4 below says `window`); `MAX_STAT_POINTS` is exported so the
+server does not hardcode a second copy of the cap; and the finite-scrub helper
+is a local copy rather than an import from `tuning/recompute`.
+
+**Two things DASH-5 must decide, because DASH-2 deliberately did not.** The
+row has no field for the `abk-insufficient` marker class (§4): `is_horizon`
+feeds `abk-prehorizon` and `srm_flag` feeds `abk-srm-fail`, but "insufficient"
+is a per-look property whose source in the report is the persisted
+`insufficient_data` cell — DASH-5 either reads it (a persisted column, not a
+re-derived decision) or drops the chip. And `verdict: null` means *either*
+"no `_ab_results` yet" *or* "this row degraded"; the two are told apart by
+`error`, which is `null` only in the first case.
+
+**Two named follow-ups, neither blocking.** `load_results` is `SELECT *`, so
+every row drags `metric_query` + `metric_rendered_query` (~2.7 KB of SQL text
+per persisted look) across the wire for a payload that never reads them — a
+projected read belongs with DASH-3's perf pass, not here. And
+`experiments_base_dir` honors `project.paths.experiments` while
+`discovery.select_experiments` still hardcodes `"experiments"`, so a project
+that renames the directory resolves `dir` correctly and then matches no
+experiment at all through the selector — a pre-existing repo inconsistency
+this WP surfaced but did not widen.
 
 ---
 
@@ -348,8 +453,10 @@ by this server — only a `db_lock` serializes `InternalTablesManager` reads.
 4. `_route_get`: `/` → boot payload
    (`overview.build_overview_boot_entries`, DASH-2) baked via
    `render_dashboard_html`; `/api/stats/<experiment>`
-   (`urllib.parse.unquote`) → `build_experiment_row_safe(..., window)` under
-   `db_lock`, JSON reply; `/api/jobs` → `jobs.list_snapshots()`;
+   (`urllib.parse.unquote`) → `build_experiment_row_safe(...,
+   window_preset=...)` under `db_lock` (DASH-2 as-built: that is the argument's
+   spelling, and `UnknownWindowPreset` — a `ValueError` subclass — is the one
+   exception it raises, so 400 vs 500 needs no guessing), JSON reply; `/api/jobs` → `jobs.list_snapshots()`;
    `/api/job/<id>?offset=` → `jobs.snapshot(job, offset)`.
 5. `build_dashboard_server(...) -> (server,url)` and
    `serve_dashboard(...) -> None` following `build_explore_server`/
