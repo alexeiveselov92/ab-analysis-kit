@@ -27,7 +27,7 @@ from abkit.config import ProjectConfig
 from abkit.config.experiment_config import ExperimentConfig
 from abkit.database.internal_tables import InternalTablesManager
 from abkit.database.internal_tables._results import RESULT_COLUMNS
-from abkit.pipeline.readout import ExperimentReadout, evaluate
+from abkit.pipeline.readout import MIN_STABLE_CUTOFFS, ExperimentReadout, evaluate
 from abkit.tuning import overview
 from abkit.tuning.overview import (
     ALL_WINDOW_PRESETS,
@@ -222,6 +222,8 @@ class TestGoldenRow:
             "elapsed_days": 14.0,
             "is_horizon": True,
             "weekly_cycle_pct": None,
+            "caveats": [],
+            "guardrail_regressed": False,
             "last_end_ts": ms(datetime(2026, 1, 15)),
             "spark": [[ms(START + timedelta(days=d)), 0.1] for d in range(1, 15)],
             "comparisons": [
@@ -255,14 +257,67 @@ class TestGoldenRow:
         assert row["last_end_ts"] == ms(headline.end_ts)
         assert len(rows) == 14
 
-    def test_the_degraded_row_has_exactly_the_keys_a_filled_row_has(self, tables):
+    def test_a_really_degraded_row_has_exactly_the_keys_a_filled_row_has(self, tables, monkeypatch):
+        """Built through the failing path, not compared to its own constructor."""
+        experiment = make_experiment()
+        seed_series(tables, experiment)
+        filled = row_for(tables, experiment)
+
+        monkeypatch.setattr(
+            overview, "evaluate", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x"))
+        )
+        degraded = row_safe_for(tables, experiment)
+
+        assert set(degraded) == set(filled), "one client renders both"
+        assert degraded["comparisons"] == []
+        assert degraded["caveats"] == []
+        assert degraded["tags"] == ["growth", "checkout"]
+        assert degraded["locked"] is False
+        assert degraded["guardrail_regressed"] is False
+
+    def test_the_empty_row_defaults_are_the_documented_ones(self):
+        """Values, not just keys — a client following the contract indexes them."""
+        assert overview._empty_row("x") == {
+            "name": "x",
+            "dir": "",
+            "file": "",
+            "tags": [],
+            "status": None,
+            "start_ts": None,
+            "horizon_ts": None,
+            "main_metric": None,
+            "locked": False,
+            "verdict": None,
+            "srm_flag": False,
+            "srm_pvalue": None,
+            "effect": None,
+            "ci": [None, None],
+            "pvalue": None,
+            "alpha": None,
+            "elapsed_days": None,
+            "is_horizon": False,
+            "weekly_cycle_pct": None,
+            "caveats": [],
+            "guardrail_regressed": False,
+            "last_end_ts": None,
+            "spark": [],
+            "comparisons": [],
+            "error": None,
+        }
+
+    def test_the_payload_is_json_serializable_with_the_stdlib_encoder(self, tables):
+        import json
+
         experiment = make_experiment()
         seed_series(tables, experiment)
 
-        filled = row_for(tables, experiment)
-        empty = overview._empty_row("dash_exp")
+        row = row_for(tables, experiment)
 
-        assert set(filled) == set(empty), "a degraded row must be renderable by the same client"
+        json.dumps(row)  # no custom default= — no numpy scalar, no datetime, no NaN
+        assert isinstance(row["start_ts"], int) and not isinstance(row["start_ts"], bool)
+        assert isinstance(row["last_end_ts"], int)
+        assert all(isinstance(point[0], int) for point in row["spark"])
+        assert isinstance(row["locked"], bool)
 
     def test_one_load_results_call_serves_every_comparison(self, tables):
         experiment = make_experiment(
@@ -402,15 +457,22 @@ class TestSpark:
         assert all(value == 0.1 for _, value in row["spark"])
 
     def test_the_point_cap_is_display_only_and_never_moves_the_verdict(self, tables, monkeypatch):
+        """The cap is set BELOW the stabilization floor on purpose.
+
+        At exactly ``MIN_STABLE_CUTOFFS`` a truncated series still stabilizes,
+        so the assertion would hold even if the cap reached ``evaluate()`` —
+        a gate that cannot fail. One look below it, the verdict WOULD move.
+        """
+        cap = MIN_STABLE_CUTOFFS - 1
         experiment = make_experiment()
         seed_series(tables, experiment)
         full = row_for(tables, experiment)
 
-        monkeypatch.setattr(overview, "MAX_STAT_POINTS", 3)
+        monkeypatch.setattr(overview, "MAX_STAT_POINTS", cap)
         capped = row_for(tables, experiment)
 
-        assert len(capped["spark"]) == 3, "the sparkline truncates to the most recent looks"
-        assert capped["spark"] == full["spark"][-3:]
+        assert len(capped["spark"]) == cap, "the sparkline truncates to the most recent looks"
+        assert capped["spark"] == full["spark"][-cap:]
         for cell in ("verdict", "effect", "ci", "pvalue", "alpha", "elapsed_days", "last_end_ts"):
             assert capped[cell] == full[cell], f"{cell} moved with a DISPLAY cap"
 
@@ -435,16 +497,48 @@ class TestWindowPresets:
         assert ALL_WINDOW_PRESETS == {"24h", "7d", "30d", "90d", "all"}
         assert WINDOW_PRESETS == {"24h": 1, "7d": 7, "30d": 30, "90d": 90}
 
-    def test_a_window_with_no_looks_reads_as_no_looks_not_as_a_verdict(self, tables):
+    def test_the_preset_never_moves_the_verdict(self, tables):
+        """The blocker this WP's review found: these rows are CUMULATIVE looks.
+
+        Truncating the left edge deletes stabilization history while every
+        surviving row still measures from ``start_ts`` — a 14-look daily
+        experiment would read INCONCLUSIVE at ``24h`` (one look, below
+        ``MIN_STABLE_CUTOFFS``) purely because someone changed a display knob.
+        """
+        experiment = make_experiment()
+        seed_series(tables, experiment)
+        full = evaluate(experiment, tables.load_results(experiment.name), project=PROJECT)
+
+        rows = {preset: row_for(tables, experiment, preset) for preset in ALL_WINDOW_PRESETS}
+
+        assert full.verdicts[0].verdict == "WIN"
+        for preset, row in rows.items():
+            for cell in ("verdict", "effect", "ci", "pvalue", "alpha", "last_end_ts"):
+                assert row[cell] == rows["all"][cell], f"{preset} moved {cell}"
+            assert row["verdict"] == "WIN"
+
+    def test_a_window_with_no_looks_keeps_the_verdict_and_empties_the_sparkline(self, tables):
+        """ "Decided; nothing new in this window" — never a downgraded verdict."""
         experiment = make_experiment()
         seed_series(tables, experiment)
 
         row = row_for(tables, experiment, "24h", now=NOW + timedelta(days=90))
 
         assert row["error"] is None
-        assert row["last_end_ts"] is None, "the client's 'no looks in this window' signal"
-        assert row["spark"] == []
-        assert row["verdict"] == "INCONCLUSIVE"
+        assert row["spark"] == [], "the client's 'no looks in this window' signal"
+        assert row["verdict"] == "WIN"
+        assert row["last_end_ts"] == ms(datetime(2026, 1, 15))
+
+    def test_the_inclusive_left_edge_keeps_a_look_landing_exactly_on_it(self, tables):
+        experiment = make_experiment()
+        seed_series(tables, experiment)
+        # the day-14 look sits exactly on the 7d window's left edge
+        boundary_now = START + timedelta(days=14) + timedelta(days=7)
+
+        row = row_for(tables, experiment, "7d", now=boundary_now)
+
+        assert len(row["spark"]) == 1
+        assert row["spark"][0][0] == ms(START + timedelta(days=14))
 
     @pytest.mark.parametrize("builder", [build_experiment_row, build_experiment_row_safe])
     def test_an_unknown_preset_raises_out_of_both_entries(self, tables, builder):
@@ -534,7 +628,7 @@ class TestComparisonsSubList:
             ]
         )
 
-        entry = build_overview_boot_entries(ROOT, [(EXP_PATH, experiment)])[0]
+        entry = build_overview_boot_entries(ROOT, [(EXP_PATH, experiment)], project=PROJECT)[0]
 
         assert entry["comparisons"] == [
             {"metric": "revenue", "is_main_metric": True},
@@ -562,8 +656,10 @@ class TestDegrade:
         assert row["spark"] == []
 
     def test_the_fields_filled_before_the_failure_survive_it(self, tables, monkeypatch):
+        """A FLAGGED SRM on purpose: ``False`` is also the empty-row default,
+        so seeding a healthy gate would assert nothing about the ordering."""
         experiment = make_experiment()
-        seed_series(tables, experiment)
+        seed_series(tables, experiment, srm_flag=True, srm_pvalue=1e-9)
         monkeypatch.setattr(
             overview, "evaluate", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x"))
         )
@@ -574,7 +670,10 @@ class TestDegrade:
         assert row["file"] == "experiments/dash_exp.yml"
         assert row["tags"] == ["growth", "checkout"]
         assert row["main_metric"] == "revenue"
-        assert row["srm_flag"] is False, "SRM ran before the readout and is kept"
+        assert (row["srm_flag"], row["srm_pvalue"]) == (True, 1e-9), (
+            "the SRM read precedes the readout, so a broken assignment stays "
+            "loud on a row whose verdict failed"
+        )
 
     def test_a_db_failure_degrades_too(self, tables, monkeypatch):
         experiment = make_experiment()
@@ -669,12 +768,34 @@ class TestLock:
             driver.LOCK_PROCESS,
         )
 
+    def test_an_unreadable_tasks_table_costs_the_flag_and_nothing_else(self, tables, monkeypatch):
+        """A partial ``ensure_tables`` or a narrow read-only grant must not be
+        able to blank a verdict — least of all the SRM chip."""
+        experiment = make_experiment()
+        seed_series(tables, experiment, srm_flag=True, srm_pvalue=1e-9)
+        monkeypatch.setattr(
+            type(tables),
+            "check_lock",
+            lambda *a, **k: (_ for _ in ()).throw(RuntimeError("_ab_tasks does not exist")),
+        )
+
+        row = row_safe_for(tables, experiment)
+
+        assert row["error"] is None
+        assert row["locked"] is False, "fails closed on the flag, open on the button"
+        # SRM gates the decision, so INCONCLUSIVE here is the readout's own
+        # answer — the point is that it is an ANSWER, not a blanked row.
+        assert row["verdict"] == "INCONCLUSIVE"
+        assert row["effect"] == 0.1
+        assert (row["srm_flag"], row["srm_pvalue"]) == (True, 1e-9)
+        assert len(row["spark"]) == 14
+
 
 class TestBootEntries:
     def test_the_boot_entry_shape(self):
         experiment = make_experiment()
 
-        entries = build_overview_boot_entries(ROOT, [(EXP_PATH, experiment)])
+        entries = build_overview_boot_entries(ROOT, [(EXP_PATH, experiment)], project=PROJECT)
 
         assert entries == [
             {
@@ -693,7 +814,7 @@ class TestBootEntries:
     def test_it_carries_no_stats_at_all(self):
         experiment = make_experiment()
 
-        entry = build_overview_boot_entries(ROOT, [(EXP_PATH, experiment)])[0]
+        entry = build_overview_boot_entries(ROOT, [(EXP_PATH, experiment)], project=PROJECT)[0]
 
         stat_keys = {"verdict", "effect", "ci", "pvalue", "spark", "srm_flag", "locked"}
         assert stat_keys.isdisjoint(entry), "GET / must not need a database"
@@ -701,7 +822,7 @@ class TestBootEntries:
     def test_absent_tags_read_as_an_empty_list_never_null(self):
         experiment = make_experiment(tags=None)
 
-        entry = build_overview_boot_entries(ROOT, [(EXP_PATH, experiment)])[0]
+        entry = build_overview_boot_entries(ROOT, [(EXP_PATH, experiment)], project=PROJECT)[0]
 
         assert entry["tags"] == []
 
@@ -709,7 +830,7 @@ class TestBootEntries:
         experiment = make_experiment()
         path = ROOT / "experiments" / "growth" / "q1" / "dash_exp.yml"
 
-        entry = build_overview_boot_entries(ROOT, [(path, experiment)])[0]
+        entry = build_overview_boot_entries(ROOT, [(path, experiment)], project=PROJECT)[0]
 
         assert entry["dir"] == "growth/q1"
         assert entry["file"] == "experiments/growth/q1/dash_exp.yml"
@@ -730,7 +851,7 @@ class TestBootEntries:
         seed_series(tables, experiment)
         path = ROOT / "experiments" / "growth" / "dash_exp.yml"
 
-        entry = build_overview_boot_entries(ROOT, [(path, experiment)])[0]
+        entry = build_overview_boot_entries(ROOT, [(path, experiment)], project=PROJECT)[0]
         row = row_for(tables, experiment, experiment_path=path)
 
         for key in ("name", "dir", "file", "tags", "status", "start_ts", "horizon_ts"):
@@ -751,6 +872,309 @@ class TestLocation:
             "",
             "/elsewhere/x.yml",
         )
+
+
+class TestAgreesWithTheReport:
+    """The milestone's #1 gate: the dashboard cannot say what the report won't."""
+
+    def test_the_headline_equals_what_abk_run_report_would_bake(self, tables):
+        from abkit.reporting.builder import build_report_payload
+
+        experiment = make_experiment()
+        seed_series(tables, experiment)
+
+        row = row_for(tables, experiment)
+        payload = build_report_payload(experiment, tables, project=PROJECT, generated_at="now")
+        baked = payload["verdicts"][0]
+
+        assert row["verdict"] == baked["verdict"]
+        assert row["effect"] == baked["effect"]
+        assert row["ci"] == [baked["lo"], baked["hi"]]
+        assert row["pvalue"] == baked["pvalue"]
+        assert row["alpha"] == baked["alpha"]
+        assert row["last_end_ts"] == baked["end_ts"]
+
+    def test_the_project_reaches_evaluate_so_read_time_bh_is_applied(self, tables):
+        """Without ``project=`` the readout falls back to stored-alpha CI and a
+        project-level Benjamini-Hochberg is mis-scored — a silent false WIN."""
+        project = ProjectConfig.model_validate(
+            {
+                "name": "p",
+                "default_profile": "dev",
+                "statistics": {"correction": "benjamini_hochberg"},
+            }
+        )
+        experiment = make_experiment(
+            correction=None,
+            comparisons=[
+                {"metric": m, "is_main_metric": True, "method": {"name": "t-test"}}
+                for m in ("revenue", "signups", "clicks", "visits")
+            ],
+        )
+        seed_series(tables, experiment, metric="revenue", pvalue=0.06)
+        for metric in ("signups", "clicks", "visits"):
+            seed_series(tables, experiment, metric=metric, pvalue=0.06)
+
+        row = row_for(tables, experiment, project=project)
+        rows = tables.load_results(experiment.name)
+
+        assert row["verdict"] == evaluate(experiment, rows, project=project).verdicts[0].verdict
+        assert row["verdict"] != evaluate(experiment, rows).verdicts[0].verdict, (
+            "the fixture must actually distinguish the two resolutions, "
+            "or this gate proves nothing"
+        )
+
+    def test_rows_from_a_renamed_away_arm_never_join_the_correction_family(self, tables):
+        """``_filter_rows`` screens by metric and method id only; the BH family
+        is built from every informative row at the cutoff."""
+        from abkit.reporting.builder import build_report_payload
+
+        experiment = make_experiment(correction="benjamini_hochberg")
+        seed_series(tables, experiment, pvalue=0.03, left_bound=0.01, right_bound=0.19)
+        for index in range(9):
+            rows = [
+                make_row(experiment, day=day, pvalue=0.9, name_2=f"treatment_v{index}")
+                for day in range(1, 15)
+            ]
+            save_rows(tables, rows)
+
+        row = row_for(tables, experiment)
+        baked = build_report_payload(experiment, tables, project=PROJECT, generated_at="now")
+
+        assert row["verdict"] == baked["verdicts"][0]["verdict"]
+        assert row["verdict"] == "WIN"
+        assert len(row["spark"]) == 14, "the stale pairs stay out of the curve too"
+
+
+class TestSparkIsTheHeadlinesOwnSeries:
+    def test_another_metrics_rows_never_join_the_curve(self, tables):
+        experiment = make_experiment(
+            comparisons=[
+                {"metric": "revenue", "is_main_metric": True, "method": {"name": "t-test"}},
+                {"metric": "signups", "method": {"name": "t-test"}},
+            ]
+        )
+        seed_series(tables, experiment, metric="revenue", days=3)
+        seed_series(tables, experiment, metric="signups", days=3, effect=99.0)
+
+        row = row_for(tables, experiment)
+
+        assert [value for _, value in row["spark"]] == [0.1, 0.1, 0.1]
+
+    def test_another_arms_rows_never_join_the_curve(self, tables):
+        experiment = make_experiment(
+            assignment={
+                "query": "SELECT 1",
+                "variants": ["control", "treat_a", "treat_b"],
+                "expected_split": {"control": 0.34, "treat_a": 0.33, "treat_b": 0.33},
+            }
+        )
+        seed_series(tables, experiment, name_2="treat_a", days=3)
+        seed_series(tables, experiment, name_2="treat_b", days=3, effect=99.0)
+
+        row = row_for(tables, experiment)
+
+        assert [value for _, value in row["spark"]] == [0.1, 0.1, 0.1]
+
+    def test_the_method_id_is_the_headlines_own_not_the_first_comparisons(self, tables):
+        """A guardrail declared FIRST under a different method must not blank
+        the chart while every headline number renders fine."""
+        experiment = make_experiment(
+            comparisons=[
+                {
+                    "metric": "latency",
+                    "is_guardrail": True,
+                    "desired_direction": "decrease",
+                    "method": {"name": "z-test"},
+                },
+                {"metric": "revenue", "is_main_metric": True, "method": {"name": "t-test"}},
+            ]
+        )
+        seed_series(tables, experiment, metric="latency", days=5)
+        seed_series(tables, experiment, metric="revenue", days=5)
+
+        row = row_for(tables, experiment)
+
+        assert len(row["spark"]) == 5
+
+
+class TestSeveralMainMetrics:
+    def _experiment(self):
+        return make_experiment(
+            assignment={
+                "query": "SELECT 1",
+                "variants": ["control", "treat_a", "treat_b"],
+                "expected_split": {"control": 0.34, "treat_a": 0.33, "treat_b": 0.33},
+            },
+            comparisons=[
+                {"metric": "revenue", "is_main_metric": True, "method": {"name": "t-test"}},
+                {"metric": "signups", "is_main_metric": True, "method": {"name": "t-test"}},
+            ],
+        )
+
+    def test_the_expand_list_carries_each_pairs_own_metric_and_verdict(self, tables):
+        experiment = self._experiment()
+        for metric in ("revenue", "signups"):
+            seed_series(tables, experiment, metric=metric, name_2="treat_a")
+            seed_series(tables, experiment, metric=metric, name_2="treat_b")
+        # one losing arm — a sub-list that copied the headline would hide it
+        save_rows(
+            tables,
+            [
+                make_row(
+                    experiment,
+                    metric="revenue",
+                    name_2="treat_b",
+                    day=day,
+                    effect=-0.1,
+                    left_bound=-0.15,
+                    right_bound=-0.05,
+                )
+                for day in range(1, 15)
+            ],
+        )
+
+        row = row_for(tables, experiment)
+
+        assert row["comparisons"] == [
+            {
+                "metric": "revenue",
+                "pair": {"c": "control", "t": "treat_a"},
+                "verdict": "WIN",
+                "effect": 0.1,
+            },
+            {
+                "metric": "revenue",
+                "pair": {"c": "control", "t": "treat_b"},
+                "verdict": "LOSE",
+                "effect": -0.1,
+            },
+            {
+                "metric": "signups",
+                "pair": {"c": "control", "t": "treat_a"},
+                "verdict": "WIN",
+                "effect": 0.1,
+            },
+            {
+                "metric": "signups",
+                "pair": {"c": "control", "t": "treat_b"},
+                "verdict": "WIN",
+                "effect": 0.1,
+            },
+        ]
+
+    def test_the_headline_metric_is_the_first_main_one_on_both_surfaces(self, tables):
+        experiment = self._experiment()
+        for metric in ("revenue", "signups"):
+            seed_series(tables, experiment, metric=metric, name_2="treat_a")
+            seed_series(tables, experiment, metric=metric, name_2="treat_b")
+
+        row = row_for(tables, experiment)
+        entry = build_overview_boot_entries(ROOT, [(EXP_PATH, experiment)], project=PROJECT)[0]
+
+        assert row["main_metric"] == "revenue"
+        assert entry["main_metric"] == "revenue"
+        assert row["comparisons"][0]["metric"] == "revenue"
+
+
+class TestQualifiedVerdicts:
+    def test_a_regressed_guardrail_is_disclosed_even_when_the_win_is_kept(self, tables):
+        """``guardrail_policy: warn`` keeps WIN *with* a mandatory loud caveat —
+        a row carrying only the word WIN would be the green light it withheld."""
+        experiment = make_experiment(
+            readout={"guardrail_policy": "warn"},
+            comparisons=[
+                {"metric": "revenue", "is_main_metric": True, "method": {"name": "t-test"}},
+                {
+                    "metric": "latency",
+                    "is_guardrail": True,
+                    "desired_direction": "decrease",
+                    "method": {"name": "t-test"},
+                },
+            ],
+        )
+        seed_series(tables, experiment, metric="revenue")
+        seed_series(
+            tables,
+            experiment,
+            metric="latency",
+            effect=0.3,
+            left_bound=0.2,
+            right_bound=0.4,
+        )
+
+        row = row_for(tables, experiment)
+
+        assert row["verdict"] == "WIN"
+        assert row["guardrail_regressed"] is True
+        assert any("latency" in caveat for caveat in row["caveats"])
+
+    def test_a_clean_win_carries_neither(self, tables):
+        experiment = make_experiment()
+        seed_series(tables, experiment)
+
+        row = row_for(tables, experiment)
+
+        assert (row["verdict"], row["guardrail_regressed"], row["caveats"]) == ("WIN", False, [])
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [(None, None), (float("nan"), None), (float("inf"), None), ("", None), (b"x", None)],
+    )
+    def test_the_scrubber_answers_none_for_anything_json_cannot_hold(self, value, expected):
+        """Width matters: a driver can hand back a string or bytes cell, and a
+        raising scrubber would cost the whole row over one unreadable number."""
+        assert overview._num(value) is expected
+
+    def test_a_non_finite_headline_cell_is_nulled_not_passed_through(self, tables):
+        experiment = make_experiment()
+        seed_series(tables, experiment, days=13)
+        save_rows(
+            tables,
+            [make_row(experiment, day=14, effect=float("inf"), pvalue=float("nan"))],
+        )
+
+        row = row_for(tables, experiment)
+
+        assert row["effect"] is None
+        assert row["pvalue"] is None
+
+
+class TestConfigCellsAreReadNotAssumed:
+    @pytest.mark.parametrize("status", ["design", "running", "concluded", "archived"])
+    def test_status_is_the_configs_own_on_both_surfaces(self, tables, status):
+        experiment = make_experiment(status=status)
+        seed_series(tables, experiment)
+
+        row = row_for(tables, experiment)
+        entry = build_overview_boot_entries(ROOT, [(EXP_PATH, experiment)], project=PROJECT)[0]
+
+        assert row["status"] == status
+        assert entry["status"] == status
+
+    def test_a_renamed_experiments_dir_is_honored_by_the_stats_row_too(self, tables):
+        project = ProjectConfig.model_validate(
+            {"name": "p", "default_profile": "dev", "paths": {"experiments": "tests_ab"}}
+        )
+        experiment = make_experiment()
+        seed_series(tables, experiment)
+        path = ROOT / "tests_ab" / "growth" / "dash_exp.yml"
+
+        row = row_for(tables, experiment, project=project, experiment_path=path)
+        entry = build_overview_boot_entries(ROOT, [(path, experiment)], project=project)[0]
+
+        assert row["dir"] == "growth"
+        assert entry["dir"] == row["dir"], "the shell and the fill must group alike"
+
+    def test_tags_are_copied_so_a_consumer_cannot_mutate_the_config(self, tables):
+        experiment = make_experiment()
+        seed_series(tables, experiment)
+
+        row = row_for(tables, experiment)
+        entry = build_overview_boot_entries(ROOT, [(EXP_PATH, experiment)], project=PROJECT)[0]
+
+        assert row["tags"] is not experiment.tags
+        assert entry["tags"] is not experiment.tags
 
 
 class TestModuleContract:

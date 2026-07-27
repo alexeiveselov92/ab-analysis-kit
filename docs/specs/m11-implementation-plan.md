@@ -228,8 +228,8 @@ changes); `tests/tuning/test_overview.py` (new).
 **Steps:**
 1. Define `WINDOW_PRESETS = {'24h':1,'7d':7,'30d':30,'90d':90}`,
    `ALL_WINDOW_PRESETS = frozenset({*WINDOW_PRESETS,'all'})` filtering on
-   `end_ts` (donor's `overview.py:38-39` pattern, field renamed from the
-   metric-timestamp axis to `end_ts`).
+   `end_ts` (the donor's `overview.py` `WINDOW_PRESETS`/`ALL_WINDOW_PRESETS` pattern,
+   field renamed from the metric-timestamp axis to `end_ts`).
 2. Define `_MAX_SPARK_BUCKETS = 160` and a defensive `MAX_STAT_POINTS` cap
    (e.g. `20_000`) on rows read per (experiment, metric, pair) before
    bucketing — port `_spark_series` (`detektkit/detectkit/ui/overview.py:264-281`)
@@ -250,7 +250,9 @@ changes); `tests/tuning/test_overview.py` (new).
    (`readout.py:430`), so a filter would be vacuous; and no
    `verdicts[0]`-fallback-for-no-main-flag exists because
    `ExperimentConfig` validation forbids zero main comparisons
-   (`experiment_config.py:393-395`). Guard the theoretical empty-`verdicts`
+   (`ExperimentConfig.validate_comparisons`; ≥2 variants is
+   `AssignmentConfig.validate_variants` — cited by symbol, because the m10
+   window rename already rotted the line numbers this step first carried). Guard the theoretical empty-`verdicts`
    case (defensively, not as a designed state) by degrading the row via
    step 6's error path rather than indexing blind.
 5. Row shape (mirrors `_empty_row`'s full-shape-with-error-degrade
@@ -306,6 +308,63 @@ dedup key from DASH-1 stays experiment-scoped regardless (buttons remain
 experiment-scoped either way).
 
 **Session estimate:** 1 session.
+
+**As built (PR #68, 2026-07-27) — what DASH-3/DASH-5 must know.** Shipped with
+six deviations from the steps above, five of them found by this WP's own
+adversarial review rounds and each reproduced before it was accepted. The
+module docstring carries the same list; the two that change the contract
+DASH-3/DASH-5 consume are the first and the last.
+
+1. **Step 3's "filter to `end_ts` within the window; call `evaluate`" is
+   wrong, and the window is now display-only.** The step was inherited from
+   the donor, whose datapoints are a plain time series where a left-bounded
+   window really is a shorter series. `_ab_results` rows are **cumulative
+   looks from a pinned start**: dropping the oldest deletes stabilization
+   history while every surviving row still measures from `start_ts`.
+   Measured on the fixture — a 14-look daily WIN reads INCONCLUSIVE at the
+   `24h` preset (one look, below `MIN_STABLE_CUTOFFS`), i.e. **every** daily
+   experiment; and a 6h-cadence series inverts the other way, reporting a WIN
+   the full readout refuses. `abk run --report` passes no `start`/`end` at
+   all, so the report's verdict IS the full-series verdict and the plan's own
+   "byte-identical to what `abk run --report` would show" gate was
+   unsatisfiable as written. **The preset now bounds the sparkline only**;
+   every verdict cell is the full series'. A window-scoped verdict, if ever
+   wanted, is an as-of replay (pin the RIGHT edge, keep history) and needs the
+   look count + rationale on the row to be honest — that is not this WP.
+2. **Rows for an undeclared arm pair are dropped before the readout**, the
+   filter `reporting/builder.py` already applies. `readout._filter_rows`
+   screens by metric and `method_config_id` only, so a mid-flight arm rename
+   leaves rows that never reach a series lookup but DO join the read-time
+   BH family and tighten every threshold: nine renamed-away pairs flipped the
+   report's WIN to the dashboard's INCONCLUSIVE on identical rows.
+3. **SRM is read window-independently** (`srm_summary` over all persisted
+   rows), matching the report, so no preset can silence a red gate — and it is
+   read BEFORE the readout, so it survives on a row whose verdict failed.
+4. **The row carries `caveats` and `guardrail_regressed`** beside the verdict.
+   Step 5's shape has the verdict word alone, but under `guardrail_policy:
+   warn` the readout KEEPS a WIN and attaches a mandatory loud caveat — a row
+   showing only "WIN" hands over exactly the green light the policy withheld.
+5. **`project` is required, not optional, on both row builders and on
+   `build_overview_boot_entries`.** Without it `evaluate` degrades to
+   stored-alpha CI significance and mis-scores a project-level
+   `benjamini_hochberg` (verified: WIN vs INCONCLUSIVE on the same rows), and
+   the boot list would resolve `dir` against the literal `"experiments"` while
+   the stats row used `project.paths.experiments` — the shell and the fill
+   grouping the same experiment under two keys.
+6. **`locked` is probed LAST and inside its own `try`.** It only greys a
+   button, and `_ab_tasks` can be unreadable (a partially-completed
+   `ensure_tables`, a narrow read-only grant) while `_ab_results` is fine; as
+   first-and-unisolated it blanked the verdict, the SRM chip and the
+   sparkline. Failing to `False` is safe — the spawned `abk run` takes the
+   real lock itself.
+
+Also as-built, for DASH-3's wiring: the row's `pair` sub-key is the report
+payload's own `{"c": name_1, "t": name_2}`; `last_end_ts` is the headline
+pair's latest cutoff, i.e. the instant every stat cell on the row is as of;
+`MAX_STAT_POINTS` is exported from `abkit.tuning` so the server does not
+hardcode a second copy of the cap; and the finite-scrub helper is a local copy
+rather than an import from `tuning/recompute`, so the dashboard's read side
+does not drag the explore engine in.
 
 ---
 

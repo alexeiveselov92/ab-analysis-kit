@@ -24,6 +24,7 @@ from abkit.tuning.html import render_explore_html
 from abkit.tuning.jobs import Job, JobManager, JobManagerClosed
 from abkit.tuning.overview import (
     ALL_WINDOW_PRESETS,
+    MAX_STAT_POINTS,
     WINDOW_PRESETS,
     build_experiment_row,
     build_experiment_row_safe,
@@ -53,6 +54,7 @@ from abkit.tuning.session import (
 __all__ = [
     "ALL_WINDOW_PRESETS",
     "EXPLORE_CACHE_BUDGET",
+    "MAX_STAT_POINTS",
     "WINDOW_PRESETS",
     "AppliedConfig",
     "CalibrationStatus",

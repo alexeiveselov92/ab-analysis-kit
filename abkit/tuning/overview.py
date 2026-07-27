@@ -24,35 +24,71 @@ straight off the config.
 Deliberate deviations from the donor (``detectkit/ui/overview.py``) and from a
 literal reading of the plan, each with the hazard it avoids:
 
+* **The window preset is the sparkline's x-range and NOTHING else** — the
+  plan's DASH-2 step 3 says to filter rows by ``end_ts`` and hand the result
+  to ``evaluate``; doing that is wrong here, and the review reproduced both
+  halves of the damage. The donor's datapoints are a plain time series, where
+  a left-bounded window is a shorter series. ``_ab_results`` rows are
+  **cumulative looks from a pinned start**: dropping the oldest does not
+  produce a shorter experiment, it produces a truncated *stabilization
+  history*, while each surviving row still measures the whole window from
+  ``start_ts``. Measured on the fixture: a 14-look daily experiment that
+  ``evaluate`` calls WIN reads INCONCLUSIVE at the ``24h`` preset (one look
+  left, below ``MIN_STABLE_CUTOFFS``) — i.e. every daily experiment — and a
+  6h-cadence series inverts the other way, reporting a WIN the full readout
+  refuses because the look that crossed zero fell outside the window while
+  the rationale still says "trailing 7-day window". ``abk run --report``
+  passes no ``start``/``end`` at all, so the report's verdict IS the
+  full-series verdict; anything else here would be a silent disagreement.
+* **Undeclared arm pairs are dropped before the readout** (the
+  ``reporting/builder.py`` filter, mirrored). ``readout._filter_rows`` screens
+  by metric and ``method_config_id`` only, but the read-time
+  Benjamini-Hochberg family is built from every informative row at a cutoff —
+  so rows left by a mid-flight arm rename inflate the family and tighten every
+  threshold. Reproduced: nine renamed-away pairs turn the report's WIN into
+  the dashboard's INCONCLUSIVE on identical rows.
 * **SRM is read window-independently** through
-  :func:`abkit.pipeline.readout.srm_summary` over ALL persisted rows, not off
-  the windowed ``ExperimentReadout``. "Is assignment broken?" is
-  whole-experiment health; sourcing it from the window would let a red chip go
-  silent because an operator switched to ``24h``. This is exactly what the
-  report already does (``reporting/builder.py`` pairs ``evaluate`` over the
-  windowed rows with ``srm_summary`` over the unwindowed ones), so the two
-  surfaces agree.
+  :func:`abkit.pipeline.readout.srm_summary` over ALL persisted rows. "Is
+  assignment broken?" is whole-experiment health, and the report reads it the
+  same way (``reporting/builder.py`` deliberately keeps the SRM block out of
+  the window so a pinned replay never silences a failing gate).
 * **The sparkline filters by the comparison's CURRENT** ``method_config_id``.
   ``evaluate`` drops orphaned series internally; a sparkline built off raw
   rows would silently interleave one point per historical config generation —
   the donor's dead-detector-id hazard, with ``_ab_results``' orphan series
   (an edited identity param leaves old rows behind) as abkit's version of it.
-* **:data:`MAX_STAT_POINTS` is display-only.** It truncates the sparkline
-  input, never ``evaluate``'s input: a rendering cap that could move a verdict
-  would be a statistical change in a UI milestone.
+* **:data:`MAX_STAT_POINTS` is display-only**, like the window: it truncates
+  the sparkline input, never ``evaluate``'s.
+* **A qualified verdict never renders as an unqualified one.** The plan's row
+  shape carries the verdict word alone, but under ``guardrail_policy: warn``
+  the readout KEEPS a WIN and attaches a mandatory loud caveat — the one
+  policy whose safety is the caveat. The row therefore also carries
+  ``caveats`` and ``guardrail_regressed``.
+* **``project`` is required, not optional.** With it absent and the experiment
+  leaving ``correction`` unset, ``evaluate`` falls back to stored-alpha CI
+  significance and mis-scores a project-level ``benjamini_hochberg`` — it says
+  so in its own warnings, which a glanceable row has nowhere to put. A
+  docstring sentence is not a defense; the signature is.
 * **``locked`` probes the ``run`` lock only**, not the out-of-band ``validate``
-  one. The flag exists to grey the dashboard's Run button, and a held
-  ``validate`` claim does not block ``abk run`` (different ``process_type``,
-  so ``acquire_lock`` never sees it).
+  one, and it is probed LAST inside its own ``try`` — a cosmetic flag must not
+  be able to blank a row's statistics (a partially-completed ``ensure_tables``
+  or a read-only credential can leave ``_ab_tasks`` unreadable while
+  ``_ab_results`` is fine). A held ``validate`` claim does not block ``abk
+  run`` (different ``process_type``), which is the button the flag greys.
 * ``±inf`` is scrubbed to ``null`` alongside ``NaN`` (the donor filters only
-  NaN). JSON has no ``Infinity``, and abkit legitimately stores it —
-  ``pair_mde`` uses ``math.inf`` for "configured but unavailable".
+  NaN, and JSON has no ``Infinity``). This is defence in depth, not a live
+  hazard: ``pipeline/enrich`` already NULLs every non-finite value on the
+  WRITE path, so a stored ``±inf`` means a hand-written or externally loaded
+  row — and the bucket mean is scrubbed too, since summing large finite
+  effects can overflow where no single one did.
 """
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from datetime import datetime, timedelta
+from itertools import combinations
 from pathlib import Path
 from typing import Any
 
@@ -64,7 +100,6 @@ from abkit.database.internal_tables import InternalTablesManager
 from abkit.database.internal_tables._tasks import DEFAULT_PROCESS_TYPE, DEFAULT_SCOPE
 from abkit.pipeline.readout import PairVerdict, evaluate, srm_summary
 from abkit.tuning.payload import _ms
-from abkit.tuning.recompute import _clean, _row_float
 from abkit.utils.datetime_utils import now_utc_naive, to_naive_utc
 
 #: Day counts for the fixed window presets; ``"all"`` has no fixed lookback
@@ -91,15 +126,36 @@ _LOCK_SCOPE = DEFAULT_SCOPE
 _LOCK_PROCESS_TYPE = DEFAULT_PROCESS_TYPE
 
 
-def experiments_base_dir(project_root: Path, project: ProjectConfig | None = None) -> Path:
+def _num(value: Any) -> float | None:
+    """A stored number, JSON-safe: ``None``/NaN/±inf all become ``None``.
+
+    A local copy on purpose. The codebase already keeps three of these
+    (``pipeline/enrich``, ``stats/result``, ``tuning/recompute``) rather than
+    one shared import, and the dashboard's read side must not depend on the
+    explore recompute engine — DASH-3 imports this module to stay independent
+    of it, and a private import would drag ~1300 lines and its statistics
+    surface back in.
+    """
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def experiments_base_dir(project_root: Path, project: ProjectConfig) -> Path:
     """The directory experiment YAMLs live in — ``project.paths.experiments``.
 
     One derivation shared by the stats row and the boot list, so the two
-    payloads can never disagree on an experiment's ``dir``. Without a
-    *project* it falls back to the same literal ``discovery.select_experiments``
-    defaults to.
+    payloads can never disagree on an experiment's ``dir``. *project* is
+    required at both call sites for exactly that reason: an optional fallback
+    to the literal ``"experiments"`` would let the boot shell group a renamed
+    project's cards under one key while the stats fill patches them in under
+    another, with no error anywhere.
     """
-    return project_root / (project.paths.experiments if project is not None else "experiments")
+    return project_root / project.paths.experiments
 
 
 def resolve_experiment_location(
@@ -139,13 +195,13 @@ def _validate_window_preset(window_preset: str) -> None:
 
 
 def _window_start(window_preset: str, now: datetime) -> datetime | None:
-    """Left edge of the preset's ``end_ts`` filter; ``None`` means unbounded.
+    """Left edge of the SPARKLINE's ``end_ts`` filter; ``None`` is unbounded.
 
     Anchored on *now*, not on the experiment's last look, so a finished
-    experiment simply shows nothing under a short preset instead of
-    back-dating its window — the row's ``last_end_ts`` stays ``None`` and the
-    client can say "no looks in this window" rather than reporting a verdict
-    the operator's window never covered.
+    experiment draws an empty sparkline under a short preset instead of
+    back-dating its window. The verdict cells are unaffected — they are always
+    the full series — so an empty ``spark`` beside a real verdict reads
+    exactly as it should: "decided; nothing new in this window".
     """
     if window_preset == "all":
         return None
@@ -172,7 +228,9 @@ def _spark_series(rows: Sequence[dict]) -> list[list[Any]]:
     plot against the emitted timestamp, never against the index. The
     timestamp is the bucket's LAST look; the value is the mean of its finite
     effects (``None`` when a bucket has none, which keeps the gap visible on
-    the x axis instead of silently closing it).
+    the x axis instead of silently closing it). The mean itself goes back
+    through the finite scrub: summing finite effects near the float ceiling
+    overflows to ``inf``, which JSON cannot express.
     """
     n = len(rows)
     if n == 0:
@@ -182,9 +240,9 @@ def _spark_series(rows: Sequence[dict]) -> list[list[Any]]:
     for i in range(0, n, step):
         chunk = rows[i : i + step]
         values = [
-            value for value in (_row_float(row, "effect") for row in chunk) if value is not None
+            value for value in (_num(row.get("effect")) for row in chunk) if value is not None
         ]
-        mean_value = float(np.mean(values)) if values else None
+        mean_value = _num(float(np.mean(values))) if values else None
         out.append([_ms(chunk[-1]["end_ts"]), mean_value])
     return out
 
@@ -218,6 +276,8 @@ def _empty_row(name: str) -> dict[str, Any]:
         "elapsed_days": None,
         "is_horizon": False,
         "weekly_cycle_pct": None,
+        "caveats": [],
+        "guardrail_regressed": False,
         "last_end_ts": None,
         "spark": [],
         "comparisons": [],
@@ -276,16 +336,51 @@ def _pair_rows(
     return picked[-MAX_STAT_POINTS:]
 
 
+def _declared_pairs_only(experiment: ExperimentConfig, rows: Sequence[dict]) -> list[dict]:
+    """Drop rows whose arm pair is not among the CURRENTLY declared variants.
+
+    Mirrors ``reporting/builder.py``, which filters the same way before it
+    calls ``evaluate`` — and it is not cosmetic: ``readout._filter_rows`` drops
+    rows only by metric and ``method_config_id``, while the read-time
+    Benjamini-Hochberg family is built from EVERY informative row at a cutoff.
+    Rows left behind by a mid-flight arm rename would otherwise inflate the
+    family and tighten every member's threshold, so the dashboard would
+    contradict ``abk run --report`` on identical rows.
+    """
+    declared = set(combinations(experiment.assignment.variants, 2))
+    return [row for row in rows if (str(row["name_1"]), str(row["name_2"])) in declared]
+
+
+def _fill_lock(
+    row: dict[str, Any], *, experiment: ExperimentConfig, tables: InternalTablesManager
+) -> None:
+    """Probe the pipeline lock — last, and isolated from every statistic.
+
+    ``locked`` only greys a button; the verdict, the SRM gate and the
+    sparkline must not depend on ``_ab_tasks`` being readable (a
+    partially-completed ``ensure_tables()`` leaves ``_ab_results`` created and
+    ``_ab_tasks`` absent, and a read-only dashboard credential can be granted
+    one and not the other). Failing to ``False`` leaves Run enabled, which is
+    safe: the spawned ``abk run`` takes the real lock itself and refuses.
+    """
+    try:
+        row["locked"] = (
+            tables.check_lock(experiment.name, _LOCK_SCOPE, _LOCK_PROCESS_TYPE) is not None
+        )
+    except Exception:  # noqa: BLE001 — a cosmetic flag must not cost the row
+        row["locked"] = False
+
+
 def _fill_stats(
     row: dict[str, Any],
     *,
     experiment: ExperimentConfig,
-    project: ProjectConfig | None,
+    project: ProjectConfig,
     tables: InternalTablesManager,
     window_preset: str,
     now: datetime,
 ) -> None:
-    """Populate everything that needs the database: lock, SRM, verdict, spark.
+    """Populate everything that needs the database: verdict, SRM, spark, lock.
 
     A project that has never run has no ``_ab_results`` table; that is the
     honest "no data yet" state, not an error, so the stats stay at their
@@ -293,21 +388,20 @@ def _fill_stats(
     precedent — a read-only surface never creates schema).
     """
     if not tables.results_table_exists():
+        _fill_lock(row, experiment=experiment, tables=tables)
         return
 
-    row["locked"] = tables.check_lock(experiment.name, _LOCK_SCOPE, _LOCK_PROCESS_TYPE) is not None
-
-    rows = tables.load_results(experiment.name)
+    rows = _declared_pairs_only(experiment, tables.load_results(experiment.name))
 
     # Whole-experiment health, deliberately NOT windowed (module docstring).
     srm_flag, srm_pvalue = srm_summary(experiment, rows)
     row["srm_flag"] = bool(srm_flag)
-    row["srm_pvalue"] = _clean(srm_pvalue)
+    row["srm_pvalue"] = _num(srm_pvalue)
 
-    start = _window_start(window_preset, now)
-    windowed = rows if start is None else [r for r in rows if r["end_ts"] >= start]
-
-    readout = evaluate(experiment, windowed, project=project)
+    # The FULL series, never the window — these rows are CUMULATIVE looks, so
+    # dropping the oldest is not a shorter experiment, it is a truncated
+    # stabilization history (module docstring).
+    readout = evaluate(experiment, rows, project=project)
     if not readout.verdicts:
         # Unreachable through a validated config (≥1 main comparison and ≥2
         # variants are both enforced), so degrade rather than index blind.
@@ -318,14 +412,21 @@ def _fill_stats(
 
     headline = readout.verdicts[0]
     row["verdict"] = headline.verdict
-    row["effect"] = _clean(headline.effect)
-    row["ci"] = [_clean(headline.left_bound), _clean(headline.right_bound)]
-    row["pvalue"] = _clean(headline.pvalue)
-    row["alpha"] = _clean(headline.alpha)
-    row["elapsed_days"] = _clean(headline.elapsed_days)
+    row["effect"] = _num(headline.effect)
+    row["ci"] = [_num(headline.left_bound), _num(headline.right_bound)]
+    row["pvalue"] = _num(headline.pvalue)
+    row["alpha"] = _num(headline.alpha)
+    row["elapsed_days"] = _num(headline.elapsed_days)
     row["is_horizon"] = bool(headline.is_horizon)
-    row["weekly_cycle_pct"] = _clean(headline.weekly_cycle_pct)
+    row["weekly_cycle_pct"] = _num(headline.weekly_cycle_pct)
+    # The cutoff every stat cell above is as of — the headline pair's latest look.
     row["last_end_ts"] = None if headline.end_ts is None else _ms(headline.end_ts)
+    # A verdict the readout QUALIFIED must never render as an unqualified one:
+    # under ``guardrail_policy: warn`` a WIN is kept with a mandatory loud
+    # caveat, and a row carrying only the word "WIN" would hand the operator
+    # exactly the green light the policy withheld.
+    row["caveats"] = list(headline.caveats)
+    row["guardrail_regressed"] = any(guardrail.regressed for guardrail in headline.guardrails)
     row["comparisons"] = [
         {
             "metric": verdict.metric,
@@ -333,11 +434,16 @@ def _fill_stats(
             # the two surfaces name a pair the same way.
             "pair": {"c": verdict.name_1, "t": verdict.name_2},
             "verdict": verdict.verdict,
-            "effect": _clean(verdict.effect),
+            "effect": _num(verdict.effect),
         }
         for verdict in readout.verdicts
     ]
+    # The preset is the sparkline's x-range and nothing else — see above.
+    start = _window_start(window_preset, now)
+    windowed = rows if start is None else [r for r in rows if r["end_ts"] >= start]
     row["spark"] = _spark_series(_pair_rows(experiment, windowed, headline))
+
+    _fill_lock(row, experiment=experiment, tables=tables)
 
 
 def _fill_row(
@@ -347,7 +453,7 @@ def _fill_row(
     experiments_dir: Path,
     experiment_path: Path,
     experiment: ExperimentConfig,
-    project: ProjectConfig | None,
+    project: ProjectConfig,
     tables: InternalTablesManager,
     window_preset: str,
     now: datetime,
@@ -375,7 +481,7 @@ def build_experiment_row(
     project_root: Path,
     experiment_path: Path,
     experiment: ExperimentConfig,
-    project: ProjectConfig | None,
+    project: ProjectConfig,
     tables: InternalTablesManager,
     window_preset: str,
     now: datetime | None = None,
@@ -386,11 +492,11 @@ def build_experiment_row(
     anything the read or the readout raises; use
     :func:`build_experiment_row_safe` on any path that renders a list.
 
-    Always pass *project*: with it ``None`` and the experiment leaving
-    ``correction`` unset, ``evaluate`` degrades to stored-alpha CI
-    significance, which mis-scores a project-level ``benjamini_hochberg``.
-    *now* defaults to the wall clock and is the anchor every fixed preset
-    counts back from; it must be naive UTC (a tz-aware value is normalized).
+    Every verdict cell is the FULL series' — *window_preset* bounds the
+    sparkline only (module docstring), so the row never disagrees with what
+    ``abk run --report`` shows. *now* is the anchor that sparkline window
+    counts back from; it defaults to the wall clock and a tz-aware value is
+    converted to naive UTC rather than re-labelled.
     """
     _validate_window_preset(window_preset)
     row = _empty_row(experiment.name)
@@ -413,7 +519,7 @@ def build_experiment_row_safe(
     project_root: Path,
     experiment_path: Path,
     experiment: ExperimentConfig,
-    project: ProjectConfig | None,
+    project: ProjectConfig,
     tables: InternalTablesManager,
     window_preset: str,
     now: datetime | None = None,
@@ -452,7 +558,7 @@ def build_overview_boot_entries(
     project_root: Path,
     experiments: Sequence[tuple[Path, ExperimentConfig]],
     *,
-    project: ProjectConfig | None = None,
+    project: ProjectConfig,
 ) -> list[dict[str, Any]]:
     """The metadata-only experiment list the dashboard's ``GET /`` bakes.
 
