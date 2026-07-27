@@ -164,6 +164,36 @@ DASH-4's argv builders + `running_job_for` dedup silently diverge from what
 
 **Session estimate:** 1 session.
 
+**As built (PR #66, 2026-07-27) — what DASH-3/DASH-4 must know.** The port
+shipped with five disclosed deviations from the donor, four of them found by
+the WP's own two adversarial review rounds and all inherited-from-the-donor
+rather than introduced here. The three that change a call site:
+
+1. **`spawn()` raises `JobManagerClosed` (a `RuntimeError` subclass) once
+   `shutdown()` has run**, and `spawn_pipeline` propagates it — `None` still
+   means only "a pipeline job is already running". DASH-4's routes must
+   distinguish them: `None` → 400 "already running", `JobManagerClosed` → 503
+   "shutting down". The latch exists because the donor's snapshot-then-reap
+   `shutdown()` lets a job spawned a moment later outlive the teardown
+   (reproduced 300/300) — for abkit that is an `abk run` holding the pipeline
+   lock with nothing left to stop it.
+2. **The kind vocabulary is validated, not just documented** (`JOB_KINDS` /
+   `PIPELINE_KINDS`; unknown kind → `ValueError`), because
+   `pipeline_active()` became a whitelist. `validate`/`plan`/
+   `verify-incremental`/`test-report` are deliberately NOT job kinds — adding a
+   route for one means adding it to the vocabulary first.
+3. **`spawn_pipeline` accepts `experiment=`** (not just `spawn`), so a
+   single-experiment run/unlock/clean carries the name as a field. It stays
+   `None` for a multi-experiment selection, so DASH-5's chip must fall back to
+   `label`, which is what the donor's UI renders for every kind anyway.
+
+Also: `snapshot()` carries `dropped`/`truncated` alongside `next_offset` (a log
+drawer should say output was discarded, not infer it from a hole);
+`wait_for_line` counts absolute line indices, so a job chattier than
+`_MAX_LINES` before printing `Explore: <url>` is still matched; and the status
+vocabulary is honest on both termination paths — a clean exit reads `done` even
+after a Stop, and a job the teardown kills reads `stopped`, not `failed`.
+
 ---
 
 ### DASH-2 — `abkit/tuning/overview.py`: one-row dashboard shaper over `load_results`
