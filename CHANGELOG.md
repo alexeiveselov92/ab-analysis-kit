@@ -14,6 +14,30 @@ number change).
 ## [Unreleased]
 
 ### Added
+- **M11 DASH-2 — the dashboard's row shaper (`abkit/tuning/overview.py`).**
+  One row per experiment (the maintainer's 2026-07-27 grain decision) off the
+  persisted `_ab_results`: latest verdict, effect/CI/p-value/alpha, the SRM
+  gate, and a sparkline bucketed to at most 160 points, plus the metadata-only
+  boot list `GET /` will bake. **No user-facing surface yet** — nothing imports
+  it outside its own tests until the dashboard server lands (DASH-3) — and **no
+  statistical number moves**: every verdict is
+  `abkit.pipeline.readout.evaluate()`'s, the same function `abk run --report`
+  calls, so the two surfaces cannot drift. Worth knowing about the shape it
+  settled on: the SRM flag is read **window-independently** (through the
+  report's own `srm_summary` over all persisted rows), so switching the
+  dashboard to a `24h` window can never silence a red assignment gate; the
+  sparkline is filtered to the comparison's **current** `method_config_id`, so
+  an orphaned series left behind by an edited identity param cannot interleave
+  a second generation's points into what reads as one curve; the 20 000-look
+  cap is **display-only** and never reaches `evaluate()`, because a rendering
+  bound must not be able to move a verdict; `locked` probes the `run` lock
+  only, since the out-of-band `validate` claim does not block `abk run`; and
+  one bad experiment degrades to a full-shape row carrying an `error` string
+  (with the fields filled before the failure kept) instead of sinking the list.
+  A secondary or guardrail metric never appears in a row's per-comparison
+  verdict list — `evaluate()` only crosses **main** comparisons with treatment
+  arms — but it does appear in the boot entry's configured-comparison list, so
+  the per-metric Run button DASH-4a/DASH-5 add still has something to bind to.
 - **M11 DASH-1 — the dashboard's subprocess registry (`abkit/tuning/jobs.py`).**
   Groundwork for `abk dashboard` (M11, `0.6.0`): an in-memory registry that
   spawns the real `abk` CLI as a subprocess and pumps its merged output into a
