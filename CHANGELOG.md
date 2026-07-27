@@ -46,14 +46,33 @@ number change).
     20 000-look cap is **display-only**, like the window.
   - A verdict the readout **qualified** never renders as an unqualified one:
     under `guardrail_policy: warn` a WIN is kept *with* a mandatory loud
-    caveat, so the row carries `caveats` and `guardrail_regressed` beside it.
+    caveat, so the row carries `rationale`, `caveats` and
+    `guardrail_regressed` — each listed pair carries its own two, and the
+    row-level flag is ORed across all of them, because a regression on the
+    second arm must not leave a green flag on the row that lists it. The
+    readout's own `warnings` (renamed arms, orphaned series — the two states
+    `abk clean` exists for) ride along in `warnings`, so a renamed arm no
+    longer looks exactly like a never-run experiment.
+  - The row's per-pair list is named **`verdicts`**, matching
+    `ExperimentReadout.verdicts`; `comparisons` stays the boot entry's
+    CONFIGURED list. The dashboard client merges the two payloads by
+    experiment name, and one key holding two incompatible shapes is a trap.
+  - Both surfaces carry the experiment's **`timezone`**: every instant on them
+    is naive UTC, and since `0.5.0` "the calendar day a look covers" is a
+    timezone-sensitive contract.
   - `project` is a **required** argument, not an optional one: without it the
-    readout silently falls back to stored-alpha CI significance and mis-scores
-    a project-level `benjamini_hochberg`.
+    readout falls back to stored-alpha CI significance and mis-scores a
+    project-level `benjamini_hochberg` — loudly in its own warnings, but a
+    glanceable row is the wrong place to discover that.
   - `locked` probes the `run` lock only (the out-of-band `validate` claim does
-    not block `abk run`), and it is probed **last, inside its own `try`** — a
-    cosmetic flag must not be able to blank a row's verdict and SRM chip when
-    `_ab_tasks` is unreadable but `_ab_results` is fine.
+    not block `abk run`), and the probe is isolated in **both** directions: it
+    runs in a `finally` so a failed read cannot report "unlocked" for the
+    degraded row an operator is most likely to press Run on, and it swallows
+    its own failure so an unreadable `_ab_tasks` cannot blank a verdict and an
+    SRM chip that `_ab_results` could answer perfectly well.
+  - An unknown window preset raises **`UnknownWindowPreset`** (a `ValueError`
+    subclass), so a route can answer 400 for it and 500 for anything else —
+    every other failure is swallowed into `row["error"]`.
   - One bad experiment degrades to a full-shape row carrying an `error` string
     (with the fields filled before the failure kept) instead of sinking the
     list.

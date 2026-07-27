@@ -199,15 +199,20 @@ class TestGoldenRow:
     def test_the_golden_row(self, tables):
         experiment = make_experiment()
         seed_series(tables, experiment)
+        headline = evaluate(
+            experiment, tables.load_results(experiment.name), project=PROJECT
+        ).verdicts[0]
 
         row = row_for(tables, experiment)
 
+        assert row["rationale"] and all(isinstance(line, str) for line in row["rationale"])
         assert row == {
             "name": "dash_exp",
             "dir": "",
             "file": "experiments/dash_exp.yml",
             "tags": ["growth", "checkout"],
             "status": "running",
+            "timezone": "UTC",
             "start_ts": ms(datetime(2026, 1, 1)),
             "horizon_ts": ms(datetime(2026, 1, 15)),
             "main_metric": "revenue",
@@ -222,18 +227,22 @@ class TestGoldenRow:
             "elapsed_days": 14.0,
             "is_horizon": True,
             "weekly_cycle_pct": None,
+            "rationale": list(headline.rationale),
             "caveats": [],
             "guardrail_regressed": False,
             "last_end_ts": ms(datetime(2026, 1, 15)),
             "spark": [[ms(START + timedelta(days=d)), 0.1] for d in range(1, 15)],
-            "comparisons": [
+            "verdicts": [
                 {
                     "metric": "revenue",
                     "pair": {"c": "control", "t": "treatment"},
                     "verdict": "WIN",
                     "effect": 0.1,
+                    "caveats": [],
+                    "guardrail_regressed": False,
                 }
             ],
+            "warnings": [],
             "error": None,
         }
 
@@ -269,7 +278,7 @@ class TestGoldenRow:
         degraded = row_safe_for(tables, experiment)
 
         assert set(degraded) == set(filled), "one client renders both"
-        assert degraded["comparisons"] == []
+        assert degraded["verdicts"] == []
         assert degraded["caveats"] == []
         assert degraded["tags"] == ["growth", "checkout"]
         assert degraded["locked"] is False
@@ -283,6 +292,7 @@ class TestGoldenRow:
             "file": "",
             "tags": [],
             "status": None,
+            "timezone": None,
             "start_ts": None,
             "horizon_ts": None,
             "main_metric": None,
@@ -297,11 +307,13 @@ class TestGoldenRow:
             "elapsed_days": None,
             "is_horizon": False,
             "weekly_cycle_pct": None,
+            "rationale": [],
             "caveats": [],
             "guardrail_regressed": False,
             "last_end_ts": None,
             "spark": [],
-            "comparisons": [],
+            "verdicts": [],
+            "warnings": [],
             "error": None,
         }
 
@@ -576,11 +588,11 @@ class TestComparisonsSubList:
 
         row = row_for(tables, experiment)
 
-        assert [entry["pair"] for entry in row["comparisons"]] == [
+        assert [entry["pair"] for entry in row["verdicts"]] == [
             {"c": "control", "t": "treat_a"},
             {"c": "control", "t": "treat_b"},
         ]
-        assert [entry["effect"] for entry in row["comparisons"]] == [0.1, 0.2]
+        assert [entry["effect"] for entry in row["verdicts"]] == [0.1, 0.2]
 
     def test_the_headline_is_verdicts_zero(self, tables):
         experiment = make_experiment(
@@ -597,7 +609,7 @@ class TestComparisonsSubList:
         readout = evaluate(experiment, tables.load_results(experiment.name), project=PROJECT)
 
         assert row["effect"] == readout.verdicts[0].effect
-        assert row["comparisons"][0]["effect"] == row["effect"]
+        assert row["verdicts"][0]["effect"] == row["effect"]
 
     def test_a_secondary_metric_never_appears_in_the_sub_list(self, tables):
         """The ``evaluate()`` contract, not a bug — see the module docstring."""
@@ -618,7 +630,7 @@ class TestComparisonsSubList:
 
         row = row_for(tables, experiment)
 
-        assert [entry["metric"] for entry in row["comparisons"]] == ["revenue"]
+        assert [entry["metric"] for entry in row["verdicts"]] == ["revenue"]
 
     def test_but_the_boot_entry_carries_it_so_it_still_gets_a_run_button(self):
         experiment = make_experiment(
@@ -804,6 +816,7 @@ class TestBootEntries:
                 "file": "experiments/dash_exp.yml",
                 "tags": ["growth", "checkout"],
                 "status": "running",
+                "timezone": "UTC",
                 "start_ts": ms(datetime(2026, 1, 1)),
                 "horizon_ts": ms(datetime(2026, 1, 15)),
                 "main_metric": "revenue",
@@ -1036,32 +1049,17 @@ class TestSeveralMainMetrics:
 
         row = row_for(tables, experiment)
 
-        assert row["comparisons"] == [
-            {
-                "metric": "revenue",
-                "pair": {"c": "control", "t": "treat_a"},
-                "verdict": "WIN",
-                "effect": 0.1,
-            },
-            {
-                "metric": "revenue",
-                "pair": {"c": "control", "t": "treat_b"},
-                "verdict": "LOSE",
-                "effect": -0.1,
-            },
-            {
-                "metric": "signups",
-                "pair": {"c": "control", "t": "treat_a"},
-                "verdict": "WIN",
-                "effect": 0.1,
-            },
-            {
-                "metric": "signups",
-                "pair": {"c": "control", "t": "treat_b"},
-                "verdict": "WIN",
-                "effect": 0.1,
-            },
+        assert [
+            (entry["metric"], entry["pair"], entry["verdict"], entry["effect"])
+            for entry in row["verdicts"]
+        ] == [
+            ("revenue", {"c": "control", "t": "treat_a"}, "WIN", 0.1),
+            ("revenue", {"c": "control", "t": "treat_b"}, "LOSE", -0.1),
+            ("signups", {"c": "control", "t": "treat_a"}, "WIN", 0.1),
+            ("signups", {"c": "control", "t": "treat_b"}, "WIN", 0.1),
         ]
+        assert all(entry["caveats"] == [] for entry in row["verdicts"])
+        assert all(entry["guardrail_regressed"] is False for entry in row["verdicts"])
 
     def test_the_headline_metric_is_the_first_main_one_on_both_surfaces(self, tables):
         experiment = self._experiment()
@@ -1074,7 +1072,7 @@ class TestSeveralMainMetrics:
 
         assert row["main_metric"] == "revenue"
         assert entry["main_metric"] == "revenue"
-        assert row["comparisons"][0]["metric"] == "revenue"
+        assert row["verdicts"][0]["metric"] == "revenue"
 
 
 class TestQualifiedVerdicts:
@@ -1175,6 +1173,222 @@ class TestConfigCellsAreReadNotAssumed:
 
         assert row["tags"] is not experiment.tags
         assert entry["tags"] is not experiment.tags
+
+
+class TestRoundTwoRegressions:
+    """One gate per defect the second adversarial round reproduced."""
+
+    def test_a_reversed_arm_pair_row_never_joins_the_correction_family(self, tables):
+        """Swapping the declared variant order leaves rows whose ``name_1`` is
+        the treatment. ``combinations`` excludes them; ``permutations`` would
+        not, and they would tighten every BH threshold."""
+        experiment = make_experiment(correction="benjamini_hochberg")
+        seed_series(tables, experiment, pvalue=0.03, left_bound=0.01, right_bound=0.19)
+        reversed_rows = [
+            make_row(experiment, day=day, pvalue=0.9) | {"name_1": "treatment", "name_2": "control"}
+            for day in range(1, 15)
+        ]
+        save_rows(tables, reversed_rows)
+
+        row = row_for(tables, experiment)
+
+        assert row["verdict"] == "WIN"
+        assert len(row["spark"]) == 14
+
+    def test_a_regression_on_the_second_arm_still_flags_the_row(self, tables):
+        """The row-level flag is ORed across every listed pair: a green flag
+        must not coexist with a qualified verdict on the same row."""
+        experiment = make_experiment(
+            readout={"guardrail_policy": "warn"},
+            assignment={
+                "query": "SELECT 1",
+                "variants": ["control", "treat_a", "treat_b"],
+                "expected_split": {"control": 0.34, "treat_a": 0.33, "treat_b": 0.33},
+            },
+            comparisons=[
+                {"metric": "revenue", "is_main_metric": True, "method": {"name": "t-test"}},
+                {
+                    "metric": "latency",
+                    "is_guardrail": True,
+                    "desired_direction": "decrease",
+                    "method": {"name": "t-test"},
+                },
+            ],
+        )
+        for arm in ("treat_a", "treat_b"):
+            seed_series(tables, experiment, metric="revenue", name_2=arm)
+        seed_series(
+            tables,
+            experiment,
+            metric="latency",
+            name_2="treat_a",
+            effect=-0.3,
+            left_bound=-0.4,
+            right_bound=-0.2,
+        )
+        seed_series(
+            tables,
+            experiment,
+            metric="latency",
+            name_2="treat_b",
+            effect=0.3,
+            left_bound=0.2,
+            right_bound=0.4,
+        )
+
+        row = row_for(tables, experiment)
+
+        assert row["verdict"] == "WIN"
+        assert row["guardrail_regressed"] is True, "the headline arm is clean; treat_b is not"
+        assert row["verdicts"][0]["guardrail_regressed"] is False
+        assert row["verdicts"][1]["guardrail_regressed"] is True
+        assert any("latency" in caveat for caveat in row["verdicts"][1]["caveats"])
+
+    def test_a_bucket_mean_that_overflows_is_nulled(self, monkeypatch):
+        """Two finite effects near the float ceiling sum to ``inf``, which
+        JSON cannot express — the scrub is on the MEAN, not only the cells."""
+        monkeypatch.setattr(overview, "_MAX_SPARK_BUCKETS", 1)
+        experiment = make_experiment()
+        rows = [make_row(experiment, day=day, effect=1.7e308) for day in (1, 2)]
+
+        with np.errstate(over="ignore"):  # the overflow IS the case under test
+            spark = overview._spark_series(rows)
+
+        assert spark == [[ms(START + timedelta(days=2)), None]]
+
+    def test_last_end_ts_is_the_headlines_cutoff_not_the_latest_row(self, tables):
+        """Another metric can be ahead; the row's stat cells are as of the
+        headline pair's own last look."""
+        experiment = make_experiment(
+            comparisons=[
+                {"metric": "revenue", "is_main_metric": True, "method": {"name": "t-test"}},
+                {"metric": "signups", "method": {"name": "t-test"}},
+            ]
+        )
+        seed_series(tables, experiment, metric="revenue", days=10)
+        seed_series(tables, experiment, metric="signups", days=14)
+
+        row = row_for(tables, experiment)
+
+        assert row["last_end_ts"] == ms(START + timedelta(days=10))
+
+    def test_the_pair_series_is_sorted_even_when_the_read_is_not(self):
+        experiment = make_experiment()
+        rows = [make_row(experiment, day=day, effect=float(day)) for day in (3, 1, 2)]
+        headline = overview.PairVerdict(
+            metric="revenue",
+            name_1="control",
+            name_2="treatment",
+            verdict="WIN",
+            rationale=(),
+            caveats=(),
+            end_ts=None,
+            elapsed_days=None,
+            is_horizon=False,
+            effect=None,
+            pvalue=None,
+            left_bound=None,
+            right_bound=None,
+            alpha=None,
+            significant=False,
+            mde=None,
+            min_effect=None,
+            weekly_cycle_pct=None,
+            guardrails=(),
+        )
+
+        picked = overview._pair_rows(experiment, rows, headline)
+
+        assert [row["effect"] for row in picked] == [1.0, 2.0, 3.0]
+
+    def test_the_lock_flag_survives_a_failing_read(self, tables, monkeypatch):
+        """The degraded row is the one an operator is most likely to press Run
+        on — reporting it unlocked while a run holds the lock is the worst
+        moment to be wrong."""
+        experiment = make_experiment()
+        seed_series(tables, experiment)
+        assert tables.acquire_lock(experiment.name, "pipeline", "run") is True
+        monkeypatch.setattr(
+            type(tables),
+            "load_results",
+            lambda *a, **k: (_ for _ in ()).throw(ConnectionError("gone")),
+        )
+
+        row = row_safe_for(tables, experiment)
+
+        assert row["error"] == "ConnectionError: gone"
+        assert row["locked"] is True
+
+    def test_renamed_away_arms_leave_a_warning_not_just_an_empty_row(self, tables):
+        """Otherwise a renamed arm looks exactly like a never-run experiment."""
+        experiment = make_experiment()
+        seed_series(tables, experiment, name_2="treat_c")
+
+        row = row_for(tables, experiment)
+
+        assert row["spark"] == []
+        assert any("renamed arms" in warning for warning in row["warnings"])
+        assert any("abk clean" in warning for warning in row["warnings"])
+
+    def test_an_orphaned_series_leaves_the_readouts_own_warning(self, tables):
+        experiment = make_experiment()
+        seed_series(tables, experiment)
+        save_rows(
+            tables,
+            [
+                make_row(experiment, day=day, method_config_id="dead" + "0" * 12)
+                for day in range(1, 15)
+            ],
+        )
+
+        row = row_for(tables, experiment)
+
+        assert row["verdict"] == "WIN"
+        assert any("orphaned" in warning for warning in row["warnings"])
+
+    def test_a_healthy_row_warns_about_nothing(self, tables):
+        experiment = make_experiment()
+        seed_series(tables, experiment)
+
+        assert row_for(tables, experiment)["warnings"] == []
+
+    def test_the_experiment_timezone_rides_along_on_both_surfaces(self, tables):
+        """Instants are naive UTC; without the zone a client is off by a day."""
+        experiment = make_experiment(timezone="Europe/Moscow")
+        seed_series(tables, experiment)
+
+        row = row_for(tables, experiment)
+        entry = build_overview_boot_entries(ROOT, [(EXP_PATH, experiment)], project=PROJECT)[0]
+
+        assert row["timezone"] == "Europe/Moscow"
+        assert entry["timezone"] == "Europe/Moscow"
+
+    def test_the_rationale_is_the_readouts_own_words(self, tables):
+        experiment = make_experiment()
+        seed_series(tables, experiment)
+        headline = evaluate(
+            experiment, tables.load_results(experiment.name), project=PROJECT
+        ).verdicts[0]
+
+        assert row_for(tables, experiment)["rationale"] == list(headline.rationale)
+
+    def test_the_preset_error_is_its_own_type_so_a_route_can_answer_400(self, tables):
+        experiment = make_experiment()
+
+        with pytest.raises(overview.UnknownWindowPreset):
+            row_safe_for(tables, experiment, "1y")
+        assert issubclass(overview.UnknownWindowPreset, ValueError)
+
+    def test_the_verdict_list_and_the_boot_list_do_not_share_a_key(self, tables):
+        """DASH-5 merges the two payloads by name; one key, two shapes is a trap."""
+        experiment = make_experiment()
+        seed_series(tables, experiment)
+
+        row = row_for(tables, experiment)
+        entry = build_overview_boot_entries(ROOT, [(EXP_PATH, experiment)], project=PROJECT)[0]
+
+        assert "comparisons" not in row
+        assert "verdicts" not in entry
 
 
 class TestModuleContract:

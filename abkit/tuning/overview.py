@@ -15,7 +15,7 @@ is bounded by ``evaluate()``'s contract: ``ExperimentReadout.verdicts`` is
 ``[c for c in experiment.comparisons if c.is_main_metric]`` crossed with each
 treatment arm (``abkit/pipeline/readout.py`` ``evaluate``), so a
 secondary/guardrail comparison NEVER produces a ``PairVerdict`` and never
-appears in a row's ``comparisons`` sub-list. Surfacing secondary verdicts
+appears in a row's ``verdicts`` sub-list. Surfacing secondary verdicts
 would mean re-implementing the decision logic — M14 work, not this milestone.
 The per-metric **Run** affordance a secondary metric still needs is fed by
 :func:`build_overview_boot_entries`, which lists the configured comparisons
@@ -48,10 +48,12 @@ literal reading of the plan, each with the hazard it avoids:
   threshold. Reproduced: nine renamed-away pairs turn the report's WIN into
   the dashboard's INCONCLUSIVE on identical rows.
 * **SRM is read window-independently** through
-  :func:`abkit.pipeline.readout.srm_summary` over ALL persisted rows. "Is
-  assignment broken?" is whole-experiment health, and the report reads it the
-  same way (``reporting/builder.py`` deliberately keeps the SRM block out of
-  the window so a pinned replay never silences a failing gate).
+  :func:`abkit.pipeline.readout.srm_summary` over every declared-pair row, not
+  the windowed subset. "Is assignment broken?" is whole-experiment health, and
+  the report reads it the same way (``reporting/builder.py`` deliberately
+  keeps the SRM block out of the window so a pinned replay never silences a
+  failing gate). It is also read BEFORE the readout, so a row whose verdict
+  failed still carries a red gate.
 * **The sparkline filters by the comparison's CURRENT** ``method_config_id``.
   ``evaluate`` drops orphaned series internally; a sparkline built off raw
   rows would silently interleave one point per historical config generation —
@@ -62,25 +64,34 @@ literal reading of the plan, each with the hazard it avoids:
 * **A qualified verdict never renders as an unqualified one.** The plan's row
   shape carries the verdict word alone, but under ``guardrail_policy: warn``
   the readout KEEPS a WIN and attaches a mandatory loud caveat — the one
-  policy whose safety is the caveat. The row therefore also carries
-  ``caveats`` and ``guardrail_regressed``.
+  policy whose safety IS the caveat. The row therefore also carries
+  ``rationale``, ``caveats`` and ``guardrail_regressed``, each listed pair
+  carries its own two, and the row-level flag is ORed across all of them: a
+  regression on the second arm must not leave a green flag on the row that
+  lists it. ``readout.warnings`` rides along in ``warnings`` for the same
+  reason — a renamed arm otherwise looks exactly like a never-run experiment.
+* **The per-pair list is named ``verdicts``, not ``comparisons``.** The boot
+  entry's ``comparisons`` is the CONFIGURED list; DASH-5 merges the two
+  payloads by experiment name, and one key holding two incompatible shapes is
+  a trap worth renaming out of existence.
 * **``project`` is required, not optional.** With it absent and the experiment
   leaving ``correction`` unset, ``evaluate`` falls back to stored-alpha CI
   significance and mis-scores a project-level ``benjamini_hochberg`` — it says
   so in its own warnings, which a glanceable row has nowhere to put. A
   docstring sentence is not a defense; the signature is.
 * **``locked`` probes the ``run`` lock only**, not the out-of-band ``validate``
-  one, and it is probed LAST inside its own ``try`` — a cosmetic flag must not
-  be able to blank a row's statistics (a partially-completed ``ensure_tables``
-  or a read-only credential can leave ``_ab_tasks`` unreadable while
-  ``_ab_results`` is fine). A held ``validate`` claim does not block ``abk
-  run`` (different ``process_type``), which is the button the flag greys.
+  one (which does not block ``abk run``, the button this flag greys), and the
+  probe runs in a ``finally`` inside its own ``try``: neither direction may
+  cost the other. An unreadable ``_ab_tasks`` (a partially-completed
+  ``ensure_tables``, a narrow read-only grant) must not blank the statistics,
+  and a failed read must not report "unlocked" for the degraded row an
+  operator is most likely to press Run on.
 * ``±inf`` is scrubbed to ``null`` alongside ``NaN`` (the donor filters only
-  NaN, and JSON has no ``Infinity``). This is defence in depth, not a live
-  hazard: ``pipeline/enrich`` already NULLs every non-finite value on the
-  WRITE path, so a stored ``±inf`` means a hand-written or externally loaded
-  row — and the bucket mean is scrubbed too, since summing large finite
-  effects can overflow where no single one did.
+  NaN, and JSON has no ``Infinity``). Mostly defence in depth —
+  ``pipeline/enrich`` NULLs non-finite values on the WRITE path, though only
+  for real ``float`` cells, so a numpy or ``Decimal`` NaN from an external
+  writer still arrives — and the bucket mean is scrubbed too, since summing
+  large finite effects can overflow where no single one did.
 """
 
 from __future__ import annotations
@@ -129,12 +140,15 @@ _LOCK_PROCESS_TYPE = DEFAULT_PROCESS_TYPE
 def _num(value: Any) -> float | None:
     """A stored number, JSON-safe: ``None``/NaN/±inf all become ``None``.
 
-    A local copy on purpose. The codebase already keeps three of these
+    A local copy, matching the three the codebase already keeps
     (``pipeline/enrich``, ``stats/result``, ``tuning/recompute``) rather than
-    one shared import, and the dashboard's read side must not depend on the
-    explore recompute engine — DASH-3 imports this module to stay independent
-    of it, and a private import would drag ~1300 lines and its statistics
-    surface back in.
+    one shared import — and the widest of the four: a driver can hand back a
+    string, ``bytes`` or ``Decimal`` cell, where ``recompute._clean`` raises.
+    Keeping it local also stops the dashboard's read side from importing the
+    explore recompute engine directly. That independence is only partial
+    today (``abkit/tuning/__init__`` imports the engine eagerly, so any
+    ``abkit.tuning`` import pays for it) — it becomes real if DASH-3 imports
+    this module by path.
     """
     if value is None:
         return None
@@ -183,6 +197,16 @@ def resolve_experiment_location(
     return dir_str, file_str
 
 
+class UnknownWindowPreset(ValueError):
+    """Raised for a ``window_preset`` outside :data:`ALL_WINDOW_PRESETS`.
+
+    A ``ValueError`` subclass so existing handlers keep working, but named so
+    a server can answer 400 for it and 500 for anything else — the safe row
+    builder swallows every other failure into ``row["error"]``, so this is the
+    one exception that reaches a route.
+    """
+
+
 def _validate_window_preset(window_preset: str) -> None:
     """Reject an unknown preset loudly, before any per-row work.
 
@@ -191,7 +215,9 @@ def _validate_window_preset(window_preset: str) -> None:
     """
     if window_preset not in ALL_WINDOW_PRESETS:
         allowed = ", ".join(sorted(ALL_WINDOW_PRESETS))
-        raise ValueError(f"Unknown window preset {window_preset!r}. Choose one of: {allowed}.")
+        raise UnknownWindowPreset(
+            f"Unknown window preset {window_preset!r}. Choose one of: {allowed}."
+        )
 
 
 def _window_start(window_preset: str, now: datetime) -> datetime | None:
@@ -262,6 +288,7 @@ def _empty_row(name: str) -> dict[str, Any]:
         "file": "",
         "tags": [],
         "status": None,
+        "timezone": None,
         "start_ts": None,
         "horizon_ts": None,
         "main_metric": None,
@@ -276,11 +303,13 @@ def _empty_row(name: str) -> dict[str, Any]:
         "elapsed_days": None,
         "is_horizon": False,
         "weekly_cycle_pct": None,
+        "rationale": [],
         "caveats": [],
         "guardrail_regressed": False,
         "last_end_ts": None,
         "spark": [],
-        "comparisons": [],
+        "verdicts": [],
+        "warnings": [],
         "error": None,
     }
 
@@ -306,6 +335,10 @@ def _fill_config_fields(
     row["file"] = file_str
     row["tags"] = list(experiment.tags) if experiment.tags else []
     row["status"] = experiment.status
+    # Every instant on the row is naive UTC; without the experiment's own zone
+    # a client renders it in the browser's, and m10 made "the calendar day a
+    # look covers" a timezone-sensitive contract.
+    row["timezone"] = experiment.timezone
     row["start_ts"] = _ms(experiment.start_instant())
     row["horizon_ts"] = _ms(experiment.horizon_instant())
     main_metrics = experiment.main_metrics()
@@ -351,17 +384,33 @@ def _declared_pairs_only(experiment: ExperimentConfig, rows: Sequence[dict]) -> 
     return [row for row in rows if (str(row["name_1"]), str(row["name_2"])) in declared]
 
 
+def _declared_pair_warning(experiment: ExperimentConfig, dropped: int) -> tuple[str, ...]:
+    """The report's own wording for rows dropped by :func:`_declared_pairs_only`.
+
+    Mirroring the filter without mirroring its loudness would make a renamed
+    arm look exactly like a never-run experiment on the one surface an
+    operator watches.
+    """
+    if dropped <= 0:
+        return ()
+    return (
+        f"{experiment.name}: ignored {dropped} persisted rows for variant pairs "
+        "outside the declared variants (renamed arms?) — run `abk clean`",
+    )
+
+
 def _fill_lock(
     row: dict[str, Any], *, experiment: ExperimentConfig, tables: InternalTablesManager
 ) -> None:
-    """Probe the pipeline lock — last, and isolated from every statistic.
+    """Probe the pipeline lock, isolated in both directions.
 
-    ``locked`` only greys a button; the verdict, the SRM gate and the
-    sparkline must not depend on ``_ab_tasks`` being readable (a
-    partially-completed ``ensure_tables()`` leaves ``_ab_results`` created and
-    ``_ab_tasks`` absent, and a read-only dashboard credential can be granted
-    one and not the other). Failing to ``False`` leaves Run enabled, which is
-    safe: the spawned ``abk run`` takes the real lock itself and refuses.
+    Called from a ``finally``, so it runs on the degrade path too, and
+    swallowing its own failure so the statistics survive an unreadable
+    ``_ab_tasks`` (a partially-completed ``ensure_tables()`` leaves
+    ``_ab_results`` created and ``_ab_tasks`` absent; a read-only dashboard
+    credential can be granted one and not the other). Failing to ``False``
+    leaves Run enabled, which is safe: the spawned ``abk run`` takes the real
+    lock itself and refuses.
     """
     try:
         row["locked"] = (
@@ -388,10 +437,11 @@ def _fill_stats(
     precedent — a read-only surface never creates schema).
     """
     if not tables.results_table_exists():
-        _fill_lock(row, experiment=experiment, tables=tables)
         return
 
-    rows = _declared_pairs_only(experiment, tables.load_results(experiment.name))
+    loaded = tables.load_results(experiment.name)
+    rows = _declared_pairs_only(experiment, loaded)
+    warnings = list(_declared_pair_warning(experiment, len(loaded) - len(rows)))
 
     # Whole-experiment health, deliberately NOT windowed (module docstring).
     srm_flag, srm_pvalue = srm_summary(experiment, rows)
@@ -419,15 +469,26 @@ def _fill_stats(
     row["elapsed_days"] = _num(headline.elapsed_days)
     row["is_horizon"] = bool(headline.is_horizon)
     row["weekly_cycle_pct"] = _num(headline.weekly_cycle_pct)
-    # The cutoff every stat cell above is as of — the headline pair's latest look.
+    # The cutoff every stat cell above is as of — the headline pair's latest
+    # look, NOT the experiment's latest row (another metric can be ahead).
     row["last_end_ts"] = None if headline.end_ts is None else _ms(headline.end_ts)
     # A verdict the readout QUALIFIED must never render as an unqualified one:
     # under ``guardrail_policy: warn`` a WIN is kept with a mandatory loud
     # caveat, and a row carrying only the word "WIN" would hand the operator
-    # exactly the green light the policy withheld.
+    # exactly the green light the policy withheld. ``rationale``/``caveats``
+    # describe the HEADLINE (they explain the cells beside them), while
+    # ``guardrail_regressed`` is ORed across every listed pair — a safety flag
+    # must not go green because the regression happened on another arm.
+    row["rationale"] = list(headline.rationale)
     row["caveats"] = list(headline.caveats)
-    row["guardrail_regressed"] = any(guardrail.regressed for guardrail in headline.guardrails)
-    row["comparisons"] = [
+    row["guardrail_regressed"] = any(
+        guardrail.regressed for verdict in readout.verdicts for guardrail in verdict.guardrails
+    )
+    # Named `verdicts`, matching ``ExperimentReadout.verdicts`` — deliberately
+    # NOT `comparisons`, which is the boot entry's CONFIGURED list. DASH-5
+    # merges the two payloads by experiment name, and one key holding two
+    # incompatible shapes is a trap.
+    row["verdicts"] = [
         {
             "metric": verdict.metric,
             # The report payload's arm vocabulary (`_verdict_to_payload`), so
@@ -435,15 +496,20 @@ def _fill_stats(
             "pair": {"c": verdict.name_1, "t": verdict.name_2},
             "verdict": verdict.verdict,
             "effect": _num(verdict.effect),
+            "caveats": list(verdict.caveats),
+            "guardrail_regressed": any(guardrail.regressed for guardrail in verdict.guardrails),
         }
         for verdict in readout.verdicts
     ]
+    # The two states `abk clean` exists for are invisible unless the row says
+    # so: the report warns about them and this surface is the one an operator
+    # actually watches.
+    row["warnings"] = warnings + list(readout.warnings)
+
     # The preset is the sparkline's x-range and nothing else — see above.
     start = _window_start(window_preset, now)
     windowed = rows if start is None else [r for r in rows if r["end_ts"] >= start]
     row["spark"] = _spark_series(_pair_rows(experiment, windowed, headline))
-
-    _fill_lock(row, experiment=experiment, tables=tables)
 
 
 def _fill_row(
@@ -458,7 +524,10 @@ def _fill_row(
     window_preset: str,
     now: datetime,
 ) -> None:
-    """Config fields first, then stats — the order the degrade path relies on."""
+    """Config fields, then stats, then the lock probe — which runs on BOTH
+    paths, in a ``finally``. Probed only after a successful read it would
+    report "unlocked" for every degraded row, and a degraded row is exactly
+    the one an operator is most likely to press Run on."""
     _fill_config_fields(
         row,
         project_root=project_root,
@@ -466,14 +535,17 @@ def _fill_row(
         experiment_path=experiment_path,
         experiment=experiment,
     )
-    _fill_stats(
-        row,
-        experiment=experiment,
-        project=project,
-        tables=tables,
-        window_preset=window_preset,
-        now=now,
-    )
+    try:
+        _fill_stats(
+            row,
+            experiment=experiment,
+            project=project,
+            tables=tables,
+            window_preset=window_preset,
+            now=now,
+        )
+    finally:
+        _fill_lock(row, experiment=experiment, tables=tables)
 
 
 def build_experiment_row(
@@ -580,6 +652,7 @@ def build_overview_boot_entries(
                 "file": file_str,
                 "tags": list(experiment.tags) if experiment.tags else [],
                 "status": experiment.status,
+                "timezone": experiment.timezone,
                 "start_ts": _ms(experiment.start_instant()),
                 "horizon_ts": _ms(experiment.horizon_instant()),
                 "main_metric": main_metrics[0] if main_metrics else None,
