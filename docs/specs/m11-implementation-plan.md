@@ -274,7 +274,11 @@ changes); `tests/tuning/test_overview.py` (new).
 7. `def build_overview_boot_entries(project_root, experiments) -> list[dict]`:
    the **metadata-only** list for `GET /` (name/dir/file/tags/status/
    start_ts/horizon_ts/main_metric — **no** stats, **no** DB read), mirroring
-   `detektkit/detectkit/ui/server.py`'s `metric_entries()`.
+   `detektkit/detectkit/ui/server.py`'s `metric_entries()`. It also carries
+   `comparisons: [{metric, is_main_metric}]` straight off the config (still no
+   DB read): the per-metric Run affordance (§3, DASH-4a) must exist for a
+   secondary metric too, and those never appear in `readout.verdicts` — so the
+   button list cannot be derived from the stats reply.
 
 **Tests & gates:**
 - `tests/tuning/test_overview.py`: a golden row against a fixture-seeded
@@ -387,6 +391,65 @@ constraint), worth a comment, not a fix, in this WP.
 
 ---
 
+### DASH-4a — `abk run --metric`: the CLI capability the per-metric Run spawns
+
+**Goal:** let an operator recompute ONE comparison of an experiment instead of
+all of them (§3, decided 2026-07-27). This is a **pipeline/CLI** work package,
+not a dashboard one — the dashboard is a launcher and cannot offer what the CLI
+cannot do — but it is scheduled here because DASH-4's route and DASH-5's button
+are its only planned callers. `abk run` is today the sole per-comparison
+command without the flag: `validate`, `plan`, `explore` and
+`verify-incremental` all take `--metric`, so the vocabulary already exists and
+this WP makes `run` consistent with it.
+
+**Files touched:** `abkit/cli/main.py` (the option), `abkit/cli/commands/run.py`
+(passthrough), `abkit/pipeline/driver.py` (the filter, LOAD/STATE/COMPUTE),
+`tests/pipeline/test_pipeline.py` + `tests/cli/test_run_command.py`,
+`docs/reference/cli.md` + `docs/guides/*` as the three-way sync requires,
+`CHANGELOG.md`.
+
+**Steps:**
+1. `--metric` on `abk run`, single-valued, matching `validate`'s spelling and
+   help text. It filters **comparisons by metric name**, so an experiment
+   running the same metric under two method configs recomputes both — the same
+   granularity `validate --metric` already has.
+2. Filter the driver's `for comparison in experiment.comparisons` loop, and the
+   metric loop of the STATE stage, so a filtered run neither loads nor
+   materializes what it will not compute. The cohort resolve and the SRM gate
+   stay unfiltered: they are experiment-level and the gate must still block.
+3. **The alphas must not move.** `analyze.effective_alphas()` derives the
+   two-tier scheme from the CONFIG (`experiment.comparisons`, counting non-main
+   entries), never from what a given run happens to compute — so filtering is
+   alpha-invariant by construction. Pin it: a run with `--metric` writes rows
+   whose `alpha` is byte-identical to the same rows written by an unfiltered
+   run. This is the WP's #1 assertion; without it a per-metric recompute would
+   silently re-alpha a series.
+4. `--full-refresh --metric m` is the real "recompute this metric" (after a SQL
+   edit). No new deletion path is needed: `delete_results` already takes
+   `metric=`/`method_config_id=`, so the filtered loop deletes only that
+   metric's rows. `--resync-cohort` stays experiment-level (the cohort is not
+   per-metric) and a `--metric` combined with it must say so rather than imply
+   a narrower rebuild.
+5. Selector semantics: `--metric` that matches no comparison in ANY selected
+   experiment is a loud error (the repo idiom), not a silent no-op; matching in
+   some experiments and not others skips the others with a printed line.
+
+**Tests & gates:**
+- The alpha-invariance assertion above, plus: a filtered run computes exactly
+  the targeted comparison's cutoffs and leaves the others' `_ab_results` rows
+  byte-identical; `--full-refresh --metric` deletes and rebuilds only that
+  metric's series; the no-match error; STATE materializes only the filtered
+  metric's day state.
+- Zero statistical numbers move (M7–M12 posture): no `ALGORITHM_VERSION` bump.
+
+**Risks / hotspots:** step 3 is the whole risk. The second one is scope creep
+into "recompute a single arm pair", which is NOT part of this decision — arms
+are what a comparison already spans.
+
+**Session estimate:** 1 session.
+
+---
+
 ### DASH-4 — Job-spawning routes: open / explore / run / edit-stub, wired through `JobManager`
 
 **Goal:** POST routes that spawn the real `abk` CLI as a subprocess (never
@@ -414,10 +477,16 @@ add argv builders + `_handle_run`/`_handle_explore`/`_handle_unlock`/
    returned URL, so the spawned explore must not also try to open one —
    reuse the existing `--no-open` flag from `abkit/cli/main.py:165`).
 2. `POST /api/run`: validate `select` against `srv.experiments` (400 on
-   unknown); `job = srv.jobs.spawn_pipeline('run', f'run --select
-   {select}', _run_argv(...), cwd=srv.project_root, env=_subprocess_env())`;
+   unknown); an optional `metric` in the body is validated against that
+   experiment's comparisons (400 on unknown) and appended as `--metric`
+   (DASH-4a) — the §3 per-metric requirement, same route, same gate;
+   `job = srv.jobs.spawn_pipeline('run', f'run --select
+   {select}', _run_argv(...), cwd=srv.project_root, env=_subprocess_env(),
+   experiment=select_if_single)`;
    `None` → 400 "a pipeline job is already running" (the donor's exact
-   one-at-a-time UX, `detektkit/detectkit/ui/server.py:614-620`).
+   one-at-a-time UX, `detektkit/detectkit/ui/server.py:614-620`);
+   `JobManagerClosed` → 503 (DASH-1 as-built: `None` means busy, which a
+   teardown is not).
 3. `POST /api/unlock`, `POST /api/clean`: same `spawn_pipeline` shape as
    `/api/run` (`abk unlock`/`clean` already exist as CLI commands per
    `abkit/cli/main.py` — confirm exact flag names before wiring, e.g.
@@ -533,7 +602,11 @@ mirrors `web/src/explore/payload.ts`'s role); `web/test/fixtures-dashboard.mjs`
    emits, served as a new `GET /experiment/<name>` route added to DASH-3's
    server in this WP if not already stubbed); **Explore** → `POST
    /api/explore` then `window.open(reply.url)`; **Run** → `POST /api/run`
-   then switch the job chip to running and open the drawer.
+   then switch the job chip to running and open the drawer. The expanded row
+   additionally renders one **Run** per configured comparison (from the boot
+   entry's `comparisons` list, DASH-2 step 7), posting `metric` alongside
+   `select` — the §3 per-metric requirement. Both spawn the same
+   one-at-a-time pipeline job, so the gate's 400 handling is shared.
 8. Full-window reload **never** happens for the list (boot payload is
    fetched exactly once per page load) — only Open (report) and Explore
    trigger a full reload, and only for that **one** row/tab, matching the
@@ -737,18 +810,30 @@ From the design JSON `open_questions` (DASH-relevant only — the NTF-relevant
 ones live in [m12-implementation-plan.md](m12-implementation-plan.md)) and
 the source plan's "Перед стартом" line for M11:
 
-- **Dashboard row grain: one row per EXPERIMENT, or one row per (experiment ×
-  comparison)?** This plan's assumption — and the plan's stated
-  recommendation — is **one row per experiment**, matching the
-  experiment-scoped open/explore/run/edit buttons (REPORT's "the list of
-  experiments AND their metrics" phrasing could also mean row-per-comparison).
-  This changes DASH-2's row key and DASH-5's list rendering if reversed,
-  though not DASH-1/3/4's button plumbing (buttons stay experiment-scoped
-  either way). Either grain is still bounded by the `evaluate()` contract
-  (DASH-2 Goal): only main-metric × treatment pairs carry verdicts —
-  row-per-comparison would NOT unlock secondary-metric verdicts without the
-  M14 decision-layer readout work. **Decide before DASH-2 starts** —
-  reversing it later reshapes the row schema DASH-3/4/5 all consume.
+- **~~Dashboard row grain: one row per EXPERIMENT, or one row per (experiment ×
+  comparison)?~~ RESOLVED by the maintainer 2026-07-27: one row per
+  EXPERIMENT** (the plan's recommendation, accepted). The row carries the
+  headline main-metric verdict; expanding it lists the comparisons. The
+  question was real because REPORT's "the list of experiments AND their
+  metrics" phrasing admits both readings, but either grain is bounded by the
+  same `evaluate()` contract (DASH-2 Goal): only main-metric × treatment pairs
+  carry verdicts, so row-per-comparison would NOT have unlocked
+  secondary-metric verdicts without the M14 decision-layer readout work.
+  DASH-2's row key is therefore the experiment name, and DASH-5 renders one
+  list entry per experiment.
+
+- **~~Can an operator recompute ONE metric of an experiment from the
+  dashboard?~~ RESOLVED by the maintainer 2026-07-27: yes, this must be
+  possible** — where the affordance lives (a per-metric button inside the
+  expanded row, or a metric picker on the experiment's Run) is a UI choice, the
+  capability is not. This is a **CLI gap, not a UI gap**: `abk run` is the only
+  per-comparison command with no `--metric` (`validate`, `plan`, `explore` and
+  `verify-incremental` all have one), and the dashboard is a launcher — it can
+  never offer what the CLI cannot do. Hence the new **DASH-4a** work package
+  below, which DASH-4/DASH-5 then wire. Two consequences elsewhere: DASH-2's
+  boot entries must carry the experiment's full comparison list (step 7), since
+  a metric with no verdict still needs a button, and DASH-5's expanded row is
+  where that button goes (step 7).
 
 No other open questions from the shared design JSON apply to the DASH track;
 the remaining four (default channel selection, cooldown-vs-dedup semantics,
@@ -762,8 +847,13 @@ own `--notify` flag) are all NTF-* and belong to M12.
 ```
 DASH-1 (JobManager port) ─┐
                            ├─▶ DASH-3 (server skeleton) ─▶ DASH-4 (job routes) ─▶ DASH-5 (dashboard.ts) ─▶ DASH-6 (build+CLI+docs) ─▶ DASH-7 (exit gate)
-DASH-2 (overview.py)      ─┘
+DASH-2 (overview.py)      ─┘                                    ▲
+DASH-4a (`abk run --metric`, pipeline/CLI) ─────────────────────┘
 ```
+
+DASH-4a is independent of DASH-1/2/3 (it touches the pipeline and the CLI, not
+the dashboard) and can be taken in any earlier slot; it only has to land before
+DASH-4 wires the route that spawns it.
 
 DASH-1 and DASH-2 are parallel (no shared files — DASH-1 touches
 `abkit/tuning/jobs.py`, DASH-2 touches `abkit/tuning/overview.py`); DASH-3
