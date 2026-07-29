@@ -45,7 +45,17 @@ behind the Open button) belongs to DASH-5, which owns the button.
 
 There is deliberately **no caching layer**: every ``/api/stats`` call re-reads
 the DB, matching the donor. DASH-5's fixed-concurrency-3 client pool is what
-bounds the load, not a server-side cache.
+bounds the load, not a server-side cache — and since ``db_lock`` serializes
+those reads, a project of very long experiments loads its list in about the
+sum of its reads, not the slowest one. Acceptable per the donor's own
+one-connection-per-manager precedent (§DASH-3 "Risks / hotspots"): a comment,
+not a fix, in this WP.
+
+Two snapshots taken at boot and never refreshed, both matching the donor: the
+served **selection** (its configs are read once, so an experiment added or a
+YAML edited while the cockpit runs needs a restart to be reflected — including
+after DASH-4's read-only "open in your editor" affordance) and the baked page.
+A "reload configs" affordance is a named follow-up, not a phase-1 gap.
 """
 
 from __future__ import annotations
@@ -69,6 +79,7 @@ from abkit.tuning.jobs import JobManager
 from abkit.tuning.overview import (
     ALL_WINDOW_PRESETS,
     WINDOW_PRESETS,
+    UnknownWindowPreset,
     build_experiment_row_safe,
     build_overview_boot_entries,
     validate_window_preset,
@@ -92,7 +103,10 @@ _MAX_DRAIN = 32_000_000  # how much of an oversized body to drain before the 413
 _STATS_PREFIX = "/api/stats/"
 _JOB_PREFIX = "/api/job/"
 
-_INT_RE = re.compile(r"^\d+$")
+#: A poll offset: a line index, so 15 digits is already absurd — and bounding
+#: the length keeps ``int()`` from raising on a 5000-digit query value (CPython
+#: refuses str→int conversions past 4300 digits), which would surface as a 500.
+_OFFSET_RE = re.compile(r"^\d{1,15}$")
 
 
 def window_preset_order() -> list[str]:
@@ -151,6 +165,12 @@ class _DashboardServer(ThreadingHTTPServer):
         can only arrive from a hand-built caller — and it would be invisible:
         the boot list would show two identical rows while every
         ``/api/stats/<name>`` answered from one of them forever.
+
+        Boot-only: called by :func:`build_dashboard_server` before the socket is
+        ever served, which is why the list and its index are written unlocked.
+        A mid-serve reload (the named follow-up in the module docstring) would
+        have to pair them under a lock, exactly like the explore session's
+        cache.
         """
         by_name: dict[str, tuple[Path, ExperimentConfig]] = {}
         for path, experiment in experiments:
@@ -175,11 +195,19 @@ class _DashboardServer(ThreadingHTTPServer):
         on Ctrl-C, or a browser abandoning the boot burst, that is a wall of
         BrokenPipe noise. Client disconnects are swallowed; anything else is
         echoed as one compact line, so a real bug is still visible.
+
+        The echo itself is suppressed, and that is not defensiveness for its own
+        sake: ``socketserver`` calls this from inside its own ``except``, so an
+        exception raised HERE propagates out of ``_handle_request_noblock`` and
+        kills ``serve_forever``. ``abk dashboard | head`` closing stdout would
+        otherwise take the whole cockpit down through its logger (the donor
+        leaves this unguarded).
         """
         exc = sys.exc_info()[1]
         if isinstance(exc, (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)):
             return
-        self.echo(f"  [dashboard] request error: {type(exc).__name__}: {exc}")
+        with contextlib.suppress(Exception):
+            self.echo(f"  [dashboard] request error: {type(exc).__name__}: {exc}")
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -202,17 +230,23 @@ class _Handler(BaseHTTPRequestHandler):
         )
 
     def do_GET(self) -> None:
+        """Every GET: authorize, route, and answer even on a defect.
+
+        Only ``UnknownWindowPreset`` maps to 400 — every other query argument a
+        GET route takes is already validated by the route itself (the experiment
+        name by a lookup, ``offset`` by a regex), so a stray ``ValueError`` here
+        means a server defect and gets a 500 rather than being dressed up as a
+        bad request. That is DASH-2's stated reason for naming the exception:
+        "so DASH-3 can answer 400 for it and 500 for anything else instead of
+        guessing which ``ValueError`` it caught."
+        """
         srv = self._srv()
         if not self._authorized(srv):
             self._reply_error(403, "bad token")
             return
         try:
             self._route_get(srv)
-        except ValueError as exc:
-            # UnknownWindowPreset (and any other request-level ValueError) is
-            # the caller's mistake: 400. build_experiment_row_safe swallows
-            # everything else into row["error"], so a 500 here means a genuine
-            # server defect and must not be dressed up as a bad request.
+        except UnknownWindowPreset as exc:
             self._reply_error(400, f"{exc}")
         except Exception as exc:  # noqa: BLE001 — never kill the serving thread
             self._reply_error(500, f"{type(exc).__name__}: {exc}")
@@ -222,6 +256,12 @@ class _Handler(BaseHTTPRequestHandler):
 
         The token check comes first here too, so DASH-4 inherits it by
         extending ``_route_post`` rather than by remembering to gate.
+
+        Here ``ValueError`` DOES map to 400, unlike ``do_GET``: a POST body is
+        arbitrary client-supplied JSON, ``json.JSONDecodeError`` *is* a
+        ``ValueError``, and "malformed request" is what the explore server
+        answers 400 for. The asymmetry is the difference between an argument the
+        route parses and one it looks up.
         """
         srv = self._srv()
         if not self._authorized(srv):
@@ -253,8 +293,13 @@ class _Handler(BaseHTTPRequestHandler):
         except ValueError:
             self._reply_error(400, "bad Content-Length header")
             return None
-        if length < 0 or length > _MAX_BODY:
-            if 0 < length <= _MAX_DRAIN:
+        if length < 0:
+            # Not "too large": a negative length is a malformed header, and
+            # calling it 413 would send the client looking for a body it shrank.
+            self._reply_error(400, "bad Content-Length header")
+            return None
+        if length > _MAX_BODY:
+            if length <= _MAX_DRAIN:
                 with contextlib.suppress(OSError):
                     self.rfile.read(length)
             self._reply_error(413, "request body too large")
@@ -277,6 +322,12 @@ class _Handler(BaseHTTPRequestHandler):
         with contextlib.suppress(BrokenPipeError, ConnectionResetError):
             self.send_response(code)
             self.send_header("Content-Type", "application/json")
+            # Unlike the explore cockpit, whose answers are all POST replies,
+            # every dynamic answer here is a GET at a URL that never changes
+            # between polls — and a response with no validators is heuristically
+            # cacheable. A cached row would show a verdict from before the run
+            # the operator just launched.
+            self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(resp)))
             self.end_headers()
             self.wfile.write(resp)
@@ -315,6 +366,14 @@ class _Handler(BaseHTTPRequestHandler):
             self._handle_stats(srv, unquote(path[len(_STATS_PREFIX) :]), window)
             return
         if path == "/api/jobs":
+            # Two registry reads, so the flag can disagree with the list it
+            # ships with by one job that finished in between. Deliberate: the
+            # alternative is re-deriving `pipeline_active`'s rule (kind ∈
+            # PIPELINE_KINDS ∧ running) over the snapshots, which is the exact
+            # divergence DASH-1's validated vocabulary exists to prevent. The
+            # flag only drives an advisory chip that is re-polled — the
+            # authoritative gate is `spawn_pipeline`'s atomic check, so a client
+            # acting on a stale chip still gets DASH-4's 400.
             self._reply_json(
                 {"jobs": srv.jobs.list_snapshots(), "pipeline_active": srv.jobs.pipeline_active()}
             )
@@ -364,8 +423,10 @@ class _Handler(BaseHTTPRequestHandler):
         to 0: silently rewinding a log drawer to the top of the buffer is the
         kind of "works, wrongly" the repo prefers loud.
         """
-        if not _INT_RE.match(raw_offset):
-            self._reply_error(400, f"offset must be a non-negative integer, got {raw_offset!r}")
+        if not _OFFSET_RE.match(raw_offset):
+            self._reply_error(
+                400, f"offset must be a non-negative integer of ≤15 digits, got {raw_offset!r}"
+            )
             return
         job = srv.jobs.get(job_id)
         if job is None:
@@ -439,29 +500,36 @@ def build_dashboard_server(
     rows later — and ``ValueError`` for a selection with a duplicated
     experiment name.
     """
-    validate_window_preset(initial_window)
+    validate_window_preset(initial_window)  # before a socket exists to leak
     server = _DashboardServer(("127.0.0.1", 0), _Handler)
-    token = secrets.token_urlsafe(16)
-    port = int(server.server_address[1])
-    server.token = token
-    server.project = project
-    server.project_root = project_root
-    server.tables = tables
-    server.initial_window = initial_window
-    server.profile = profile
-    server.echo = echo
-    if jobs is not None:
-        server.jobs = jobs
-    server.set_experiments(experiments)
-    server.html = render_dashboard_html(
-        _boot_payload(
-            project=project,
-            project_root=project_root,
-            experiments=server.experiments,
-            initial_window=initial_window,
-            profile=profile,
+    try:
+        token = secrets.token_urlsafe(16)
+        port = int(server.server_address[1])
+        server.token = token
+        server.project = project
+        server.project_root = project_root
+        server.tables = tables
+        server.initial_window = initial_window
+        server.profile = profile
+        server.echo = echo
+        if jobs is not None:
+            server.jobs = jobs
+        server.set_experiments(experiments)
+        server.html = render_dashboard_html(
+            _boot_payload(
+                project=project,
+                project_root=project_root,
+                experiments=server.experiments,
+                initial_window=initial_window,
+                profile=profile,
+            )
         )
-    )
+    except BaseException:
+        # The port is already bound by now, so every post-bind failure — a
+        # duplicated name, a config whose window will not resolve, a bundle read
+        # — would otherwise leave a listening socket nobody holds a handle to.
+        server.server_close()
+        raise
     return server, f"http://127.0.0.1:{port}/?token={token}"
 
 
@@ -486,6 +554,13 @@ def serve_dashboard(
     ``finally`` tears the job registry down — a spawned ``abk run`` must not
     outlive the cockpit that started it, untracked and still holding the
     pipeline lock.
+
+    ``daemon_threads`` means ``server_close()`` does not join handler threads,
+    so a Ctrl-C landing mid-read returns while that read is still running: the
+    caller closing its DB manager can then make the thread fail, which
+    :meth:`_DashboardServer.handle_error` reports as one line. Waiting the read
+    out instead would trade a rare cosmetic line for a Ctrl-C that hangs for as
+    long as the slowest query — the wrong trade for a cockpit.
     """
     server, url = build_dashboard_server(
         project=project,

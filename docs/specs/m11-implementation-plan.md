@@ -496,6 +496,85 @@ constraint), worth a comment, not a fix, in this WP.
 
 **Session estimate:** 1 session.
 
+**As built (PR #69, 2026-07-29) — what DASH-4/DASH-5 must know.** Both deltas
+shipped as specified and are pinned by tests that were each proven to fail on
+the `tuning/server.py` shape (25 mutation probes, all caught). The wiring facts
+a later WP would otherwise have to rediscover:
+
+1. **`build_dashboard_server(*, project, project_root, experiments, tables,
+   initial_window=DEFAULT_WINDOW_PRESET, profile=None, jobs=None, echo=print)`
+   → `(server, url)`**, and `serve_dashboard(...)` adds `open_browser`,
+   `on_ready` and returns `None`. Two fields from the plan's step-2 list are
+   deliberately absent: **`manager_factory`** (the dashboard has no write path
+   needing a per-request connection — the one manager under `db_lock` is the
+   donor's shape, and a factory nothing calls is a seam that rots) and
+   **`profiles: ProfilesConfig`** (nothing in DASH-3..6 reads it; the profile
+   *string* is what DASH-4's argv needs, and it rides along). `jobs=` is
+   injectable so DASH-4's tests and DASH-7's e2e can watch the registry.
+2. **The boot payload carries no token** — the client reads it from
+   `location.search`, the dtk-ui contract, so the served page is not a
+   credential at rest and works whatever port was bound. It is
+   `{project, profile, version, initial_window, window_presets, generated_at,
+   experiments: BootEntry[]}`; `window_presets` is derived from
+   `WINDOW_PRESETS`' day counts (shortest first, `all` last) so DASH-5's
+   selector does not hardcode a second copy of the list.
+3. **`GET /api/jobs` replies `{jobs, pipeline_active}`**, not the donor's bare
+   `{jobs}`: the client's idle/running chip must not re-derive
+   `pipeline_active`'s rule (`kind ∈ PIPELINE_KINDS ∧ running`) in JS, which is
+   the divergence DASH-1's validated vocabulary exists to prevent. The flag is
+   advisory by construction (two registry reads, so it can lag its own list by
+   one finished job) — the authoritative gate is `spawn_pipeline`'s atomic
+   check, so a client acting on a stale chip still gets DASH-4's 400.
+4. **Status-code map, so DASH-4 extends it rather than inventing one:** 403 for
+   a bad/absent token on EVERY route, checked before routing (a 403 is not a
+   path oracle); 404 for an unknown experiment, an unknown job id, and any
+   unrouted path or POST; 400 for an unknown window preset (the named
+   `UnknownWindowPreset` only — a stray `ValueError` on a GET is a 500, since a
+   GET's arguments are looked up or regex-checked, while on POST `ValueError`
+   *is* 400 because a body is arbitrary JSON and `JSONDecodeError` is one);
+   413 for a body over 5 MB (drained first, so the client reads the status);
+   400 for a malformed *or negative* `Content-Length`. `do_POST` already
+   carries the gate and the bounded body read — DASH-4 fills in `_route_post`.
+5. **A blank query value is a value.** The query is parsed with
+   `keep_blank_values=True`, so `?window=`/`?offset=` are 400s rather than
+   silently reading as absent (the boot window, offset 0). The offset regex is
+   length-bounded (`\d{1,15}`) because past 4300 digits `int()` itself raises,
+   which would surface as a 500 on a bad request.
+6. **JSON replies send `Cache-Control: no-store`.** Every dynamic answer here is
+   a GET at a URL that repeats between polls, and a response with no validators
+   is heuristically cacheable — a cached row would show a verdict from before
+   the run the operator just launched. The explore server needs none of this:
+   its answers are all POST replies.
+7. **Two donor hazards fixed rather than inherited** (the DASH-1 precedent):
+   `handle_error`'s echo is suppressed, because socketserver calls it from
+   inside its own `except` and a raise there ends `serve_forever` — `abk
+   dashboard | head` would take the cockpit down through a closed stdout; and a
+   post-bind construction failure (a duplicated experiment name, a config whose
+   window will not resolve) closes the socket instead of leaking a listener
+   nobody holds a handle to.
+8. **`abkit/tuning/assets/dashboard.js` is deliberately NOT committed here.**
+   `render_dashboard_html` degrades to an honest "the client bundle is not
+   installed, run `cd web && npm run build`" note, because a placeholder file
+   would have to smuggle the three `abk-*` marker classes past the CI gate that
+   greps every `abkit/*/assets/*.js` for them — the M3 precedent (a committed
+   placeholder `explore.js`) predates that gate. A missing `explore.js` still
+   raises: that bundle is committed and wheel-asserted, so its absence is a
+   packaging bug. **DASH-5/DASH-6 should decide whether the degradation stays**
+   once the real bundle ships and the wheel namelist asserts it (step 3a).
+9. Two boot-time snapshots, both matching the donor and both worth knowing
+   before DASH-4 adds the read-only "open in your editor" affordance: the
+   served **selection** (configs read once — an edited YAML needs a restart to
+   change a verdict) and the baked page. A "reload configs" affordance is a
+   named follow-up. `set_experiments` is boot-only for the same reason: it
+   writes the list and its name index unlocked.
+10. Also as-built: `validate_window_preset` is now **public** in
+   `overview.py` (was `_validate_window_preset`), so the boot check and the
+   `?window=` check raise the same message with no second copy to drift; and
+   `serve_dashboard`'s Ctrl-C returns without joining handler threads
+   (`daemon_threads`), so a read in flight may print one `[dashboard] request
+   error` line if the caller closes its manager under it — deliberately not
+   traded for a Ctrl-C that hangs for as long as the slowest query.
+
 ---
 
 ### DASH-4a — `abk run --metric`: the CLI capability the per-metric Run spawns

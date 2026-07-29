@@ -481,14 +481,16 @@ class TestJobRoutes:
         assert status == 404
         assert "unknown job: deadbeef" in detail
 
-    @pytest.mark.parametrize("offset", ["abc", "-1", "1.5", "", "undefined"])
+    @pytest.mark.parametrize("offset", ["abc", "-1", "1.5", "", "undefined", "9" * 16, "9" * 4400])
     def test_a_non_integer_offset_is_a_400(self, dash, offset):
         """Loud, unlike the donor's silent fallback to 0 (which rewinds a drawer).
 
         The empty case is why the query is parsed with ``keep_blank_values``:
         ``?offset=`` would otherwise be dropped and read as "no offset given",
         so a client bug would quietly resend the whole buffer. ``undefined`` is
-        the same bug's other spelling.
+        the same bug's other spelling. The two long cases are why the regex is
+        length-bounded rather than ``\\d+``: past 4300 digits ``int()`` itself
+        raises, and that would surface as a 500 on a bad request.
         """
         status, detail = dash.get("/api/job/deadbeef", offset=offset)
         assert status == 400
@@ -511,12 +513,15 @@ class TestTransport:
         assert "too large" in detail
         assert dash.thread.is_alive()
 
-    def test_a_malformed_content_length_is_a_400(self, dash):
+    @pytest.mark.parametrize("length", ["abc", "-5"])
+    def test_a_malformed_content_length_is_a_400_not_a_413(self, dash, length):
+        """A negative length is a broken header, not an oversized body — calling
+        it 413 would send the client looking for a body it shrank."""
         parsed = urllib.parse.urlparse(dash.tokened("/api/run"))
         conn = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=10)
         try:
             conn.putrequest("POST", f"{parsed.path}?{parsed.query}")
-            conn.putheader("Content-Length", "abc")
+            conn.putheader("Content-Length", length)
             conn.endheaders()
             response = conn.getresponse()
             assert response.status == 400
@@ -531,13 +536,23 @@ class TestTransport:
         assert "/api/run" in detail
 
     @pytest.mark.parametrize(
-        ("raised", "code"), [(ValueError("bad input"), 400), (RuntimeError("boom"), 500)]
+        ("raised", "get_code", "post_code"),
+        [
+            (UnknownWindowPreset("Unknown window preset '9d'"), 400, 400),
+            (ValueError("bad input"), 500, 400),
+            (RuntimeError("boom"), 500, 500),
+        ],
     )
     def test_a_raising_route_replies_instead_of_killing_the_thread(
-        self, dash, monkeypatch, raised, code
+        self, dash, monkeypatch, raised, get_code, post_code
     ):
-        """The insurance DASH-4's routes inherit: a request-level ``ValueError``
-        is a 400, anything else a 500, and the server keeps serving either way.
+        """The insurance DASH-4's routes inherit — with the GET/POST asymmetry.
+
+        A GET's arguments are looked up or regex-checked, so only the NAMED
+        window-preset error is a 400 there and a stray ``ValueError`` is the
+        defect it actually is (DASH-2 named the exception for exactly this).
+        A POST body is arbitrary JSON — and ``json.JSONDecodeError`` is a
+        ``ValueError`` — so there it stays a 400.
         """
 
         def raiser(self, *_args, **_kwargs):
@@ -545,10 +560,19 @@ class TestTransport:
 
         monkeypatch.setattr(dashboard_server._Handler, "_route_get", raiser)
         monkeypatch.setattr(dashboard_server._Handler, "_route_post", raiser)
-        assert dash.get("/")[0] == code
-        assert dash.post("/api/run", {})[0] == code
+        assert dash.get("/")[0] == get_code
+        assert dash.post("/api/run", {})[0] == post_code
         monkeypatch.undo()
         assert dash.get("/")[0] == 200
+
+    def test_json_replies_are_never_cached(self, dash):
+        """Every dynamic answer is a GET at a URL that repeats between polls; a
+        heuristically cached row would show a pre-run verdict."""
+        with urllib.request.urlopen(
+            dash.tokened("/api/stats/dash_exp", window="all"), timeout=10
+        ) as resp:
+            assert resp.headers["Cache-Control"] == "no-store"
+            assert resp.headers["Content-Type"] == "application/json"
 
     def test_a_client_disconnect_is_silent_and_a_real_error_is_one_line(self, dash):
         """``handle_error``: the stdlib default would dump a traceback per
@@ -563,6 +587,21 @@ class TestTransport:
         except RuntimeError:
             dash.server.handle_error(None, None)
         assert dash.echo_lines == ["  [dashboard] request error: RuntimeError: boom"]
+
+    def test_a_broken_echo_cannot_take_the_cockpit_down(self, dash):
+        """``handle_error`` runs inside socketserver's own ``except``, so raising
+        here escapes ``_handle_request_noblock`` and ends ``serve_forever`` —
+        which is what `abk dashboard | head` would do through a closed stdout."""
+
+        def broken(_line: str) -> None:
+            raise BrokenPipeError("stdout is gone")
+
+        dash.server.echo = broken
+        try:
+            raise RuntimeError("boom")
+        except RuntimeError:
+            dash.server.handle_error(None, None)  # must not raise
+        assert dash.get("/")[0] == 200
 
     def test_json_default_covers_numpy_and_refuses_the_rest(self):
         import numpy as np
@@ -712,6 +751,37 @@ class TestBuildValidation:
                 experiments=[(EXP_PATH, experiment), (EXP_PATH_TWO, experiment)],
                 tables=InternalTablesManager(FakeDatabaseManager()),
             )
+
+    def test_a_failed_construction_does_not_leak_the_bound_socket(self, monkeypatch):
+        """The port is bound before the selection is indexed or the page baked,
+        so every post-bind failure has to close it — nobody else has a handle."""
+        closed: list[int] = []
+        original = dashboard_server._DashboardServer.server_close
+        monkeypatch.setattr(
+            dashboard_server._DashboardServer,
+            "server_close",
+            lambda self: closed.append(id(self)) or original(self),
+        )
+        experiment = make_experiment()
+        with pytest.raises(ValueError):
+            build_dashboard_server(
+                project=PROJECT,
+                project_root=ROOT,
+                experiments=[(EXP_PATH, experiment), (EXP_PATH_TWO, experiment)],
+                tables=InternalTablesManager(FakeDatabaseManager()),
+            )
+        assert len(closed) == 1
+        # …and a bad boot window never binds a socket at all
+        closed.clear()
+        with pytest.raises(UnknownWindowPreset):
+            build_dashboard_server(
+                project=PROJECT,
+                project_root=ROOT,
+                experiments=[],
+                tables=InternalTablesManager(FakeDatabaseManager()),
+                initial_window="7days",
+            )
+        assert closed == []
 
     def test_an_empty_selection_serves_an_empty_list(self):
         served = Dashboard(experiments=[], seed=False)
