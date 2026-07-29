@@ -200,7 +200,8 @@ release per milestone** (M7→`0.2.0` … M17→`0.12.0`), each published to PyP
 polished library, 2.0 = the finished product; both come later. The plan itself
 passed a 3-critic adversarial review (11 findings, incl. 1 blocker — folded in
 below and in the milestone docs). Core (M7–M12): ~42 sessions; extension
-(M13–M17): ~22–27.
+(M13–M17): ~22–27; plus the **PLAN-1/PLAN-2 interstitial** below (~2, added
+2026-07-29 — it rides a `0.6.x` patch and renumbers nothing).
 
 - **Discipline (unchanged from M1–M6):** one WP = one session = one PR (tests +
   CHANGELOG + conventional commit); milestone exit gate = e2e + ≥2 adversarial
@@ -374,6 +375,39 @@ token on ALL routes, never self-shutdown (DASH-3), job routes (DASH-4),
 `dashboard.ts` written from scratch — the donor has no TS sources (DASH-5),
 the third build entry + `abk dashboard` CLI (DASH-6), and the exit gate
 (DASH-7). CRUD editing is explicitly phase 2, out of the milestone.
+
+### Interstitial — `abk plan` sizing gaps (PLAN-1/PLAN-2) → `0.6.x` 📋
+Design contract: [cli-and-dx.md §1 "`abk plan` sizing gaps"](docs/specs/cli-and-dx.md).
+Added 2026-07-29 (maintainer request). Two small, independent WPs that make
+pre-launch planning answer the questions the architecture already has the data
+for. **Deliberately NOT a milestone**: it renumbers nothing (M12–M17 keep their
+numbers and their minor versions), moves no `_ab_results` number, needs no
+schema change, and ships as a **patch on top of M11's `0.6.0`**. Sequenced after
+M11 so the dashboard release is not held up; either WP can also be pulled
+forward — they touch only `abkit/planning/` + `abkit/cli/commands/plan.py`.
+
+- **PLAN-1 — size CUPED on the persisted covariate correlation.** `abk plan`
+  sizes a `cuped-t-test` comparison on the **raw** variance and prints
+  "sized on RAW variance — CUPED (ρ not persisted) lowers required-N further".
+  That parenthetical stopped being true in M9 WP1, which persists
+  `corr_coef_1/2` on every `_ab_results` row, and `stats/power.py` has shipped
+  `cuped_adjusted_std` + `get_cuped_ttest_{sample_size,mde,power}` since M1
+  (`validate/scoring.py` already uses the first). So the planner leaves a
+  tested solve and a persisted input unused, and every CUPED plan line
+  over-states required-N. ~1 session.
+- **PLAN-2 — `abk plan --from-history <interval>`: baseline moments for an
+  experiment that has never run.** Today a greenfield experiment is either
+  SKIPPED ("no baseline") or needs hand-supplied `--baseline
+  <metric>:mean=..,std=..,n=..`. The render it needs already exists: the CUPED
+  covariate's pre-period path (`ab_apply_exposure_filter=False`) renders a
+  metric's own SQL over a whole-day window that precedes exposure by
+  construction. ~1 session.
+
+Two neighbouring gaps stay where they are, on purpose: a **power formula for
+ratio metrics / bootstrap methods** is a statistical addition under full change
+control (M13 design session, or M15 with the new methods — `abk plan` refuses
+them today rather than inventing math, D10), and **multi-arm sizing** (the
+planner sizes the first declared pair only) belongs to M14's decision layer.
 
 ### M12 — notifications → `0.7.0` 📋
 Design contract: [m12-implementation-plan.md](docs/specs/m12-implementation-plan.md).
