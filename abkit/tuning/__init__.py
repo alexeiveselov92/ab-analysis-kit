@@ -12,6 +12,9 @@ package — it has no session, no DB and no statistics of its own.
 ``overview`` (DASH-2) is the same cockpit's read side: one row per experiment
 off the persisted ``_ab_results``, with every verdict sourced from
 ``pipeline.readout.evaluate`` — it computes no statistic and holds no session.
+``dashboard_server`` (DASH-3) serves those two: the metadata-only boot page
+plus one lazily-fetched row per experiment, token-gated on EVERY request and
+never shutting itself down — a launcher that takes no pipeline lock.
 """
 
 from abkit.tuning.config_writer import (
@@ -20,7 +23,12 @@ from abkit.tuning.config_writer import (
     TunedComparison,
     apply_tuned_config,
 )
-from abkit.tuning.html import render_explore_html
+from abkit.tuning.dashboard_server import (
+    DEFAULT_WINDOW_PRESET,
+    build_dashboard_server,
+    serve_dashboard,
+)
+from abkit.tuning.html import render_dashboard_html, render_explore_html
 from abkit.tuning.jobs import Job, JobManager, JobManagerClosed
 from abkit.tuning.overview import (
     ALL_WINDOW_PRESETS,
@@ -30,6 +38,7 @@ from abkit.tuning.overview import (
     build_experiment_row,
     build_experiment_row_safe,
     build_overview_boot_entries,
+    validate_window_preset,
 )
 from abkit.tuning.payload import build_explore_payload
 from abkit.tuning.recompute import (
@@ -54,6 +63,7 @@ from abkit.tuning.session import (
 
 __all__ = [
     "ALL_WINDOW_PRESETS",
+    "DEFAULT_WINDOW_PRESET",
     "EXPLORE_CACHE_BUDGET",
     "MAX_STAT_POINTS",
     "WINDOW_PRESETS",
@@ -75,6 +85,7 @@ __all__ = [
     "UnknownWindowPreset",
     "apply_tuned_config",
     "backend_cutoff_loader",
+    "build_dashboard_server",
     "build_experiment_row",
     "build_experiment_row_safe",
     "build_explore_payload",
@@ -82,7 +93,10 @@ __all__ = [
     "build_overview_boot_entries",
     "find_calibration",
     "load_session",
+    "render_dashboard_html",
     "render_explore_html",
     "resolve_fpr_budget",
+    "serve_dashboard",
     "serve_explore",
+    "validate_window_preset",
 ]

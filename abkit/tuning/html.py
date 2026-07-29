@@ -1,15 +1,31 @@
-"""Render the explore payload into one self-contained HTML page (WP6).
+"""Render the cockpit payloads into self-contained HTML pages (WP6, DASH-3).
 
 The same delivery model — and the same WP3-hardened template mechanics — as
-``reporting/html_report.py``: one document, the committed ``assets/explore.js``
+``reporting/html_report.py``: one document, the committed ``assets/*.js``
 bundle inlined, the data baked as a JS literal. One-pass regex substitution
 (never ``.format``, never sequential ``str.replace``), every ``<`` in the baked
 JSON escaped as ``\\u003c``, no webfonts, no network (CLAUDE.md invariant 6).
 
-The bundle assigns ``window.__ABK_EXPLORE__``; the page mounts it on
-``#abk-explore``. The committed bundle is built from ``web/src/explore/`` by
-``web/build.mjs`` (WP7 — until it lands, a minimal placeholder bundle renders
-an honest pending note).
+Two pages, one mechanism:
+
+* ``render_explore_html`` — the per-experiment explore cockpit. The bundle
+  assigns ``window.__ABK_EXPLORE__``; the page mounts it on ``#abk-explore``.
+  Built from ``web/src/explore/`` by ``web/build.mjs``.
+* ``render_dashboard_html`` — the project-level dashboard
+  (``docs/specs/m11-implementation-plan.md`` DASH-3), assigning
+  ``window.__ABK_DASHBOARD__`` on ``#abk-dashboard``, with the SAME favicon
+  and page shell as explore, so no new hex enters the CI hex-containment scan.
+
+Both read their bundle from ``abkit/tuning/assets/``, and they differ in one
+disclosed way: a missing ``explore.js`` raises (it is committed and
+wheel-gated, so its absence is a packaging bug that must be loud), while a
+missing ``dashboard.js`` degrades to :data:`_PENDING_DASHBOARD_JS`, an honest
+"the client bundle is not built" note. DASH-5 authors
+``web/src/dashboard/dashboard.ts`` and DASH-6 wires it into ``build.mjs`` +
+the wheel namelist gate; until then the file does not exist, and committing a
+stub in its place would have to smuggle the three ``abk-*`` marker classes CI
+greps out of every ``abkit/*/assets/*.js`` past a gate they exist to enforce.
+The M3 precedent (a committed placeholder ``explore.js``) predates that gate.
 """
 
 from __future__ import annotations
@@ -65,9 +81,86 @@ html,body{margin:0;background:#f5f1e8;color:#1b1916;
 """
 
 
+_DASHBOARD_TEMPLATE = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>abkit dashboard — __PROJECT__</title>
+<link rel="icon" href="__FAVICON__" />
+<style>
+/* Page shell only — the renderer injects its own scoped styles under the
+   abk-dashboard root. System fonts: zero network requests. The two hexes are
+   explore's, unchanged: the CI hex-containment gate scans this file. */
+html,body{margin:0;background:#f5f1e8;color:#1b1916;
+  font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;}
+*{box-sizing:border-box;}
+</style>
+</head>
+<body>
+<div id="abk-dashboard"></div>
+<script>window.__ABK_DASHBOARD_PAYLOAD__ = __PAYLOAD__;</script>
+<script>__DASHBOARD_JS__</script>
+<script>
+(function(){
+  var mount = document.getElementById('abk-dashboard');
+  try { window.__ABK_DASHBOARD__.render(window.__ABK_DASHBOARD_PAYLOAD__, mount); }
+  catch (e) { mount.textContent = 'Failed to render dashboard: ' + e; }
+})();
+</script>
+</body>
+</html>
+"""
+
+#: What the dashboard page renders while ``assets/dashboard.js`` does not exist
+#: (DASH-5 authors it, DASH-6 commits the built bundle). It names the build
+#: command rather than pretending the cockpit is loading: an operator reading
+#: this note is looking at a source checkout whose ``web/`` build never ran.
+_PENDING_DASHBOARD_JS = """window.__ABK_DASHBOARD__ = {
+  render: function (payload, mount) {
+    var count = payload && payload.experiments ? payload.experiments.length : 0;
+    var note = document.createElement('div');
+    note.className = 'abk-dashboard';
+    note.style.cssText = 'max-width:720px;margin:15vh auto;padding:24px;font:15px/1.5 system-ui;';
+    var title = document.createElement('h1');
+    title.style.cssText = 'font-size:20px;margin:0 0 8px;';
+    title.textContent = 'abkit dashboard';
+    var body = document.createElement('p');
+    body.textContent =
+      'The dashboard client bundle is not installed. Build it with ' +
+      '`cd web && npm run build` (it is committed to ' +
+      'abkit/tuning/assets/dashboard.js). The server behind this page is ' +
+      'live: ' + count + ' experiment(s) are selected, and their rows are ' +
+      'served from /api/stats/<experiment>.';
+    note.appendChild(title);
+    note.appendChild(body);
+    mount.appendChild(note);
+  },
+};
+"""
+
+
+def _read_bundle(name: str) -> str | None:
+    """One committed browser bundle's text, or ``None`` when it is not there."""
+    try:
+        return (files("abkit.tuning") / "assets" / name).read_text(encoding="utf-8")
+    except (OSError, KeyError):  # missing file; KeyError = a zip-imported wheel
+        return None
+
+
 def _explore_js() -> str:
-    """Read the committed explore renderer bundle shipped in the wheel."""
+    """Read the committed explore renderer bundle shipped in the wheel.
+
+    Deliberately NOT degrading: this bundle is committed and asserted in the
+    wheel namelist, so a missing one is a packaging failure to surface, not to
+    paper over.
+    """
     return (files("abkit.tuning") / "assets" / "explore.js").read_text(encoding="utf-8")
+
+
+def _dashboard_js() -> str:
+    """The dashboard bundle, or the honest pending note (module docstring)."""
+    return _read_bundle("dashboard.js") or _PENDING_DASHBOARD_JS
 
 
 def _bake_payload_json(payload: dict) -> str:
@@ -76,6 +169,7 @@ def _bake_payload_json(payload: dict) -> str:
 
 
 _PLACEHOLDER_RE = re.compile(r"__(EXPERIMENT|FAVICON|PAYLOAD|EXPLORE_JS)__")
+_DASHBOARD_PLACEHOLDER_RE = re.compile(r"__(PROJECT|FAVICON|PAYLOAD|DASHBOARD_JS)__")
 
 
 def render_explore_html(payload: dict) -> str:
@@ -91,3 +185,22 @@ def render_explore_html(payload: dict) -> str:
         "EXPLORE_JS": _explore_js(),
     }
     return _PLACEHOLDER_RE.sub(lambda m: values[m.group(1)], _TEMPLATE)
+
+
+def render_dashboard_html(payload: dict) -> str:
+    """Build the self-contained dashboard HTML document for one boot payload.
+
+    Pure, like :func:`render_explore_html`: no DB, no filesystem writes, no
+    clock (``generated_at`` is stamped by the caller that builds the payload).
+    The boot payload is metadata-only — every statistic arrives later over
+    ``GET /api/stats/<experiment>`` — and carries no token: the client reads it
+    from ``location.search``, the donor's contract, so the served page is not a
+    credential at rest.
+    """
+    values = {
+        "PROJECT": escape(str(payload.get("project", "project"))),
+        "FAVICON": _FAVICON,
+        "PAYLOAD": _bake_payload_json(payload),
+        "DASHBOARD_JS": _dashboard_js(),
+    }
+    return _DASHBOARD_PLACEHOLDER_RE.sub(lambda m: values[m.group(1)], _DASHBOARD_TEMPLATE)
