@@ -346,11 +346,19 @@ class TestStatsRoute:
         assert "24h" in detail and "all" in detail
         assert dash.thread.is_alive()
 
-    def test_a_bad_window_is_rejected_before_the_db_is_touched(self, dash):
-        """A request-level mistake must not queue behind a slow read."""
+    def test_a_bad_window_is_rejected_without_waiting_for_the_db_lock(self, dash):
+        """A request-level mistake must not queue behind a slow read.
+
+        Holding ``db_lock`` is what makes this falsifiable: the safe row builder
+        validates the preset before touching the DB either way, so "the read
+        never happened" cannot tell a route-level pre-check from the builder's
+        own. Waiting for the lock can — with the pre-check gone this request
+        blocks until the ``with`` block ends and the client has timed out.
+        """
         calls: list[str] = []
         dash.tables.load_results = lambda *a, **k: calls.append("read") or []  # type: ignore[method-assign]
-        status, _ = dash.get("/api/stats/dash_exp", window="7days")
+        with dash.server.db_lock:
+            status, _ = dash.get("/api/stats/dash_exp", window="7days")
         assert status == 400
         assert calls == []
 
@@ -837,8 +845,13 @@ class TestBundleBake:
     def test_the_explore_bundle_read_stays_undegraded(self, monkeypatch):
         """A missing explore.js is a packaging bug to surface, not to paper over.
 
-        The degradation is the dashboard's alone: neutering ``_read_bundle``
-        must leave ``render_explore_html`` reading the committed bundle.
+        The degradation is the dashboard's alone. Asserting "still returns
+        something" would not say that — a fallback returns something too — so
+        the law is that ``_explore_js`` does not go through ``_read_bundle`` at
+        all: with the reader hijacked, it still returns the committed file.
         """
-        monkeypatch.setattr(html, "_read_bundle", lambda name: None)
-        assert html._explore_js().strip()
+        committed = (Path(html.__file__).parent / "assets" / "explore.js").read_text(
+            encoding="utf-8"
+        )
+        monkeypatch.setattr(html, "_read_bundle", lambda name: "HIJACKED")
+        assert html._explore_js() == committed
