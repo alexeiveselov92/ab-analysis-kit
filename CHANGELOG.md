@@ -14,6 +14,39 @@ number change).
 ## [Unreleased]
 
 ### Added
+- **M11 DASH-3 — the dashboard's localhost server (`abkit/tuning/dashboard_server.py`).**
+  The transport that joins DASH-1's job registry to DASH-2's row shaper: a
+  stdlib `ThreadingHTTPServer` on `127.0.0.1` with a one-shot token, serving
+  the metadata-only boot page (`GET /`) plus one lazily-fetched row per
+  experiment (`GET /api/stats/<experiment>`, `?window=` bounding the sparkline)
+  and the job-poll routes (`GET /api/jobs`, `GET /api/job/<id>?offset=`).
+  **No command reaches it yet** — `abk dashboard` lands in DASH-6, and the
+  client bundle in DASH-5, so until then the page renders an honest "the
+  dashboard client bundle is not installed" note — and **no statistical number
+  moves**: every verdict is DASH-2's, i.e. `readout.evaluate()`'s.
+  - **The dashboard is a launcher, never a worker.** No route acquires the
+    pipeline lock, runs a pipeline step or computes a statistic; the only
+    mutation any button can cause is a real `abk` subprocess (DASH-4). The one
+    `InternalTablesManager` is serialized by a `db_lock`, because a DB-API
+    connection is not thread-safe.
+  - **The token gates every request, GET included** — unlike `abk explore`'s
+    server, which serves its page to an unauthenticated GET and gates only the
+    POSTs. Here `GET /` enumerates every experiment in the project and
+    `GET /api/stats/…` reads the warehouse. Authorization runs *before*
+    routing, so a 403 is not an oracle for which paths exist, and the token is
+    compared as bytes (`compare_digest` refuses non-ASCII `str`) so
+    `?token=α` is answered rather than dropped.
+  - **The server never shuts itself down.** `abk explore`'s Apply is terminal
+    and stops its server; the dashboard has no terminal action and serves until
+    Ctrl-C, at which point it terminates every job it spawned — a source-level
+    test gate keeps the pattern from being copy-pasted back in.
+  - A row that fails to build is still a **200** carrying `error` (DASH-2's
+    isolation contract), an unknown experiment a 404, and an unknown window
+    preset a 400. A blank `?window=`/`?offset=` is a 400 too, rather than
+    silently reading as "absent", and every JSON reply carries
+    `Cache-Control: no-store` — these are GETs at URLs that repeat between
+    polls, and a heuristically cached row would show a verdict from before the
+    run the operator just launched.
 - **M11 DASH-2 — the dashboard's row shaper (`abkit/tuning/overview.py`).**
   One row per experiment (the maintainer's 2026-07-27 grain decision) off the
   persisted `_ab_results`: latest verdict, effect/CI/p-value/alpha, the SRM

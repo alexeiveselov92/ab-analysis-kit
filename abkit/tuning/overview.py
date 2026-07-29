@@ -207,11 +207,14 @@ class UnknownWindowPreset(ValueError):
     """
 
 
-def _validate_window_preset(window_preset: str) -> None:
+def validate_window_preset(window_preset: str) -> None:
     """Reject an unknown preset loudly, before any per-row work.
 
     A request-level mistake must raise, never masquerade as N broken rows
-    (the donor validates identically in both of its public entries).
+    (the donor validates identically in both of its public entries). Public so
+    the dashboard server (DASH-3) can reject its ``--window`` boot value and a
+    bad ``?window=`` query with the SAME message the row builders raise —
+    a second copy of the wording would drift.
     """
     if window_preset not in ALL_WINDOW_PRESETS:
         allowed = ", ".join(sorted(ALL_WINDOW_PRESETS))
@@ -570,7 +573,7 @@ def build_experiment_row(
     counts back from; it defaults to the wall clock and a tz-aware value is
     converted to naive UTC rather than re-labelled.
     """
-    _validate_window_preset(window_preset)
+    validate_window_preset(window_preset)
     row = _empty_row(experiment.name)
     _fill_row(
         row,
@@ -607,7 +610,7 @@ def build_experiment_row_safe(
     and reporting it as N broken experiments would point the operator at the
     wrong thing.
     """
-    _validate_window_preset(window_preset)
+    validate_window_preset(window_preset)
     row = _empty_row(experiment.name)
     try:
         _fill_row(
