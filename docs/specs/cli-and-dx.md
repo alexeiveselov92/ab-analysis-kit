@@ -49,8 +49,9 @@ sizes a greenfield experiment; without either, that comparison is reported as
 un-sizable, not guessed). The target MDE defaults to the comparison's `min_effect`. Only
 the closed-form power families are sized: **ratio** metrics and **bootstrap/resampling**
 methods have no versioned power formula and are refused (SKIPPED, never invented math);
-CUPED is sized on the raw persisted variance (the covariate correlation is not persisted
-per row) as a flagged conservative upper bound. A by-design refusal exits zero; a genuine
+CUPED is sized on the raw persisted variance as a flagged conservative upper bound —
+its reason ("the covariate correlation is not persisted per row") expired in M9 WP1 and
+the fix is PLAN-1 below. A by-design refusal exits zero; a genuine
 harness failure (bad selection / `--baseline` / warehouse error) exits non-zero.
 
 A transcript over the scaffolded example (after one `abk run` has persisted the moments):
@@ -122,6 +123,95 @@ resampling design reports `sequential ASN: n/a` with the reason.
   │     runtime ≈ 0.8d to required-N @ 2,000 units/day/arm (assignment source over 30.0 observed days) · horizon 14.0d
   │     sequential ASN ≈ 2,400/arm (≈ 1.2d) at target effect · P(win by horizon) 100% · null ASN ≈ 27,800/arm
 ```
+
+#### `abk plan` sizing gaps — PLAN-1 / PLAN-2 (as designed, NOT built)
+
+Two gaps the architecture already has the inputs for, scheduled as the `0.6.x`
+interstitial in [ROADMAP.md](../../ROADMAP.md) (added 2026-07-29 at the maintainer's
+request). Both are read-only, touch only `abkit/planning/` + `abkit/cli/commands/plan.py`,
+and move **no** `_ab_results` number — so neither is an `ALGORITHM_VERSION` event. PLAN-1
+does change a *planner output* (required-N gets smaller), which is a CHANGELOG-and-docs
+change, not a silent one.
+
+**PLAN-1 — size CUPED on the persisted covariate correlation.**
+
+*Why it is a gap, not a design choice.* `_plan_comparison` flags every
+`requires_covariate` method with "sized on RAW variance — CUPED (ρ not persisted) lowers
+required-N further", and `planning/sizing.py`'s docstring gives the same reason. **M9 WP1
+made that false**: `_ab_results` persists `corr_coef_1/2` (nullable) on every row, and
+`abkit/stats/power.py` has shipped `cuped_adjusted_std(std, ρ)` +
+`get_cuped_ttest_{sample_size,mde,power}` since M1 — `validate/scoring.py` already sizes
+its achieved-MDE column through the first. So a tested solve and a persisted input sit
+unused while every CUPED plan line over-states required-N by the deflation factor
+`1/√(1−ρ²)`.
+
+*As designed.*
+1. `BaselineMoments` gains an optional `corr_coef: float | None`; `_moments_from_results`
+   reads `corr_coef_1` off the SAME latest-usable row it already picks (first declared
+   pair, `insufficient_data` skipped), and `--baseline <metric>:mean=..,std=..,n=..,corr=..`
+   accepts it for the greenfield path (`parse_baseline_overrides` validates `|ρ| < 1`).
+2. `size_comparison` dispatches on `(kind == SAMPLE and corr_coef is not None)` to the
+   CUPED solves — **never re-deriving the deflation inline**, so the planner and
+   `validate/scoring.py` keep sharing one formula.
+3. **`asn_for`/`runtime_for` must consume the same deflated variance** (`_base_variance`),
+   or a plan line becomes internally inconsistent: a deflated required-N beside an
+   ASN computed on raw variance. This is the one non-obvious step.
+4. Fallbacks stay honest and are each a test: a NULL `corr_coef` (a pre-M9 row, or a
+   non-CUPED method) keeps the raw-variance bound **and** the note; a persisted `ρ` of 0
+   is a legitimate "no reduction", not a missing value; the note's wording changes to
+   name the ρ it used, and the stale parenthetical goes.
+5. Docs: this section, [docs/guides/plan.md](../guides/plan.md), and the `sizing.py`
+   docstring's expired rationale.
+
+*DoD:* a CUPED comparison with a persisted ρ sizes strictly below its raw-variance
+required-N and matches `get_cuped_ttest_sample_size` exactly; ρ=NULL reproduces today's
+number byte-for-byte (the regression gate); the transcript in this spec and in the guide
+is regenerated; no `_ab_results` write anywhere in the diff.
+
+**PLAN-2 — `abk plan --from-history <interval>`: a baseline for an experiment that has
+never run.**
+
+*Why it is a gap.* Sizing needs per-unit moments, and today they come only from a
+previous `abk run` of that same experiment or from hand-typed `--baseline`. The
+pre-launch case — the one planning is actually for — therefore reads
+`SKIPPED: no baseline`.
+
+*The seam already exists.* The CUPED covariate's pre-period load is exactly this render:
+`metric_loader.load_covariate_from_preperiod` + `RecomputeBackend.preperiod_covariate`
+render the metric's own SQL over a whole-day window with
+`ab_apply_exposure_filter=False` (the loader **refuses** the render if that flag is not
+false), which is cohort-free by construction — a pre-period precedes exposure. Reaching
+it goes through `build_cohort_backend` like every other cohort-adjacent read (the binding
+M8→M9 contract).
+
+*As designed.*
+1. `--from-history <interval>` (an `N{d,w}` interval, whole days only — the same
+   parser `covariate_lookback` uses) renders each **sizable** metric over
+   `[tz_midnight(start_ts − interval), tz_midnight(start_ts))` and derives moments from
+   the returned `{unit: value}` map. Ratio/bootstrap comparisons stay refused —
+   this WP adds a baseline SOURCE, never a power formula.
+2. **Moments are computed through the same `SufficientStats` path the pipeline uses**, not
+   a hand-rolled `np.std`: `_ab_results.std_1` carries the legacy mixed-ddof convention,
+   and two baseline sources that disagree by a ddof would make `--from-history` and the
+   persisted path quietly incomparable.
+3. Precedence and provenance: explicit `--baseline` > `--from-history` > persisted, and
+   the plan line names which one it used (the existing `baseline … (persisted @ …)`
+   suffix gains a `(history 14d @ …)` form) — a planning number whose origin is
+   invisible is the thing to avoid.
+4. **Disclosed limitation, printed as a note:** a cohort-free render measures the whole
+   population the metric SQL yields, not the cohort the experiment will actually enroll
+   — so an experiment narrowed by `assignment.added_filters` or a segment gets a
+   plausible variance, not its own. That is a strictly better input than a hand-typed
+   guess and strictly worse than a pilot run; the note says so rather than the plan
+   implying precision it does not have.
+5. Read-only like the rest of `abk plan`: no lock, no write, and a render failure refuses
+   that comparison (SKIPPED with the reason) instead of failing the command.
+
+*DoD:* a never-run experiment plans end-to-end from `--from-history`; the derived
+moments equal the pipeline's own for the same window (rel-1e-9, computed through
+`SufficientStats`); precedence is pinned in all three combinations; the cohort-free note
+appears whenever `added_filters` is set; `abk plan` still takes no lock and writes
+nothing (spy-asserted).
 
 ## 2. The explore cockpit (priority interface)
 
