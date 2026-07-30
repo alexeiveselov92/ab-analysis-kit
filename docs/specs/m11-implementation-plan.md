@@ -634,7 +634,7 @@ are what a comparison already spans.
 
 **Session estimate:** 1 session.
 
-**As built (PR #71, 2026-07-29) — what DASH-4/DASH-5 must know.** All five
+**As built (PR #71, 2026-07-30) — what DASH-4/DASH-5 must know.** All five
 steps shipped as specified; the plumbing is one optional `metric_filter`
 threaded CLI → `run_experiments` → `run_experiment` → `materialize_state`, and
 `abkit/pipeline/analyze.py` was not touched at all. What a later WP would
