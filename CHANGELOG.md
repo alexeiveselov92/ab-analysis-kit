@@ -14,6 +14,90 @@ number change).
 ## [Unreleased]
 
 ### Added
+- **M11 DASH-4 — the dashboard's job routes: every button is a real `abk`
+  subprocess.** `POST /api/run` (optionally one `metric`, DASH-4a),
+  `/api/unlock`, `/api/clean`, `/api/explore` and `/api/job/<id>/stop`, plus
+  `GET /api/experiment-source/<name>` for the read-only "open in your editor"
+  affordance. The dashboard stays a **launcher**: no route computes a statistic,
+  reads a knob, writes a config or takes the pipeline lock — the spawned child
+  does all of that in its own process, exactly as if the command had been typed
+  (pinned by a spy over every job route, not just the module-level AST gate).
+  Run/unlock/clean are one at a time (the atomic `spawn_pipeline` gate → the
+  donor's `400 a pipeline job is already running`); explore is not gated but
+  **deduped per experiment**, so a second click reopens the live cockpit's tab.
+  - **`--select` is the experiment's YAML path, and the route proves it resolves
+    before spawning** — a name alone is not safe to spawn. `select_configs`
+    resolves a bare name by trying `experiments/<name>.yml` *before* searching the
+    `name:` fields, so a file named after another experiment shadows it and the
+    cockpit would have run, unlocked, cleaned or explored something other than the
+    row that was clicked, with nothing anywhere saying so. A path resolves to
+    exactly one file (and satisfies `abk explore`'s "exactly ONE" by
+    construction), with `*`, `?` and `[` in a file name escaped rather than
+    abandoned — `experiments/star*.yml` left raw would also match a sibling.
+    Every job route then re-resolves that selector through `select_experiments`,
+    the child's own resolver, and answers **400** unless it lands on exactly the
+    clicked experiment: the served selection is read once at boot, and `abk
+    run`/`unlock`/`clean` meet an unmatched selector with a warning, "Nothing
+    selected." and **exit 0** — so a renamed or deleted YAML would otherwise show
+    a green, successful Run in the drawer that computed nothing.
+  - **The spawned command runs this interpreter's abkit with the project
+    directory NOT importable.** A bare `abk` off `PATH` would be a different
+    abkit than the one serving the page in an unactivated venv — but pinning
+    `sys.executable -m abkit.cli.main` has its own defect: `-m` puts the child's
+    CWD on `sys.path[0]`, and a job spawns in the operator's project root. A file
+    there named after anything abkit imports (`click.py`, `yaml.py`,
+    `statistics.py`, …) then breaks every button with a traceback nobody can
+    connect to the click, and an `abkit/` directory there runs a different abkit
+    than the one just pinned — neither of which happens when you type `abk` in a
+    terminal. The child is therefore started through a bootstrap that drops the
+    CWD from `sys.path` before the first import and names itself `abk` in usage
+    errors. **Every spawned job consequently needs an installed abkit** (`pip
+    install -e .` or a wheel); a bare source checkout fails each job with a
+    `ModuleNotFoundError` in its own output.
+    Every flag the argv builders pass is test-checked against the click command's
+    own declared options, so a renamed option fails a test rather than surfacing
+    as an exit-2 job in the drawer. `/api/clean` spawns the `--execute` form (a
+    dry run would be a button that does nothing) and never the prompting
+    `--orphaned-experiments`; the job label is derived from the argv that actually
+    ran, so the drawer shows `--execute` instead of hiding it.
+  - **The explore URL scrape requires the scheme.** `abk explore` prints
+    `Explore: <experiment name>` before the server prints `Explore: <url>`, so a
+    literal port of the donor's `"Tuner:" in line` predicate matched the header
+    and handed the client an experiment name as a URL. One function is both the
+    wait predicate and the extractor.
+  - **`POST /api/explore` is a long request by design** — it holds the response
+    until the cockpit prints its URL (90 s cap), so a client needs a long fetch
+    timeout there and nowhere else. A repeat click on a starting cockpit waits on
+    the same job but only briefly (10 s), because every waiter holds a request
+    thread; when no URL arrives the 400 distinguishes "exited without serving"
+    from "our deadline lapsed" from "another tab's cockpit is still starting",
+    and only a job that request spawned is stopped.
+  - **An unknown body field is a 400, not a silent drop.** A client posting
+    `{"full_refresh": true}` to `/api/run` would otherwise get a plain run and no
+    hint that the flag went nowhere. Same discipline as `?window=` on the GET
+    side: a blank `metric` is refused. A `null` value is the one exemption — it
+    asks for nothing, so a helper that always emits `{select, metric}` and spells
+    "the whole experiment" as `metric: null` works on the routes that take no
+    metric too.
+  - Status codes extend DASH-3's map positionally: a bad **body** is a 400 (an
+    unserved experiment, a selector that no longer resolves, an undeclared
+    metric, malformed JSON — including a body nested deeply enough to raise
+    `RecursionError`, which is a `RuntimeError` and would otherwise read as a
+    server defect — and a bodyless POST), a bad **path** stays a 404 (unknown job
+    id, unknown experiment source), a registry teardown racing a route is a
+    **503** (`None` means "busy", which a teardown is not), a job that is no
+    longer running is a 400 while an unknown id is a 404 (the donor conflates
+    both), and a spawn that cannot start at all is a 500 naming the project root
+    it tried to run in.
+- **`abkit.tuning.jobs`: `spawn_deduped()` + `url_for()`, and children no longer
+  inherit the cockpit's stdin.** The per-experiment dedup is now atomic under the
+  same gate the pipeline gate uses — `running_job_for()` followed by `spawn()` is
+  check-then-act across request threads, and a double-clicked Explore button
+  would start two sessions on one experiment, each writing the whole YAML from
+  its own startup snapshot on Apply. `stdin=DEVNULL` because a child that ever
+  prompts (only `abk clean --orphaned-experiments` today, which no route spawns)
+  would silently consume the terminal the dashboard was launched from; on a
+  closed stdin it aborts loudly instead, with the reason in its own output.
 - **M11 DASH-4a — `abk run --metric <m>`: recompute ONE metric of an
   experiment.** `run` was the last per-comparison command without the metric
   axis (`explore`, `validate`, `plan` and `verify-incremental` all had it), and

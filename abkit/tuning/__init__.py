@@ -14,7 +14,11 @@ off the persisted ``_ab_results``, with every verdict sourced from
 ``pipeline.readout.evaluate`` — it computes no statistic and holds no session.
 ``dashboard_server`` (DASH-3) serves those two: the metadata-only boot page
 plus one lazily-fetched row per experiment, token-gated on EVERY request and
-never shutting itself down — a launcher that takes no pipeline lock.
+never shutting itself down — a launcher that takes no pipeline lock. Its job
+routes (DASH-4) spawn the real ``abk`` CLI through ``jobs`` — run / unlock /
+clean one at a time, explore deduped per experiment — and read an experiment's
+YAML back out for the read-only "open in your editor" affordance; none of them
+writes a config or computes anything.
 """
 
 from abkit.tuning.config_writer import (

@@ -62,6 +62,21 @@ the DASH-1 review reproduced in the donor's own shape):
   :meth:`JobManager.shutdown` marks the jobs it kills as stop-requested for the
   same reason — a teardown is deliberate, so those read ``stopped``, not
   ``failed`` (the donor left them indistinguishable from a crash).
+* **A spawned job never shares the cockpit's stdin** (``stdin=DEVNULL``; DASH-4).
+  The donor leaves it inherited, so a child that ever prompts reads the
+  operator's terminal out from under the dashboard — invisibly, since the child's
+  prompt goes to the pumped pipe and the keystrokes never reach the shell the
+  cockpit was launched from. abkit has one prompting path today (``abk clean
+  --orphaned-experiments``, which no route spawns), and on a closed stdin
+  ``click.confirm`` aborts loudly: the job reads ``failed`` with the reason in
+  its own output, which is the outcome a launcher wants.
+* **Per-experiment dedup is atomic** (:meth:`JobManager.spawn_deduped`; DASH-4).
+  ``running_job_for`` on its own is a check-then-act across request threads, so
+  a double-clicked Explore button starts two cockpits on one experiment — the
+  exact Apply-rewrites-the-YAML race the dedup exists to prevent (each session
+  writes the whole file from its own startup snapshot). The check and the spawn
+  now happen under the same gate :meth:`spawn_pipeline` uses, which is the
+  DASH-1 TOCTOU fix applied to the other spawn entry point.
 """
 
 from __future__ import annotations
@@ -199,10 +214,13 @@ class JobManager:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        # Serializes the check-and-spawn of pipeline jobs (run/unlock/clean) so
-        # two near-simultaneous POSTs can't both pass the single-job gate
-        # (spawn_pipeline). Separate from _lock: spawn() acquires _lock
-        # internally, so holding _gate around it must not self-deadlock.
+        # Serializes every check-and-spawn: the one-at-a-time pipeline gate
+        # (spawn_pipeline, run/unlock/clean) and the per-experiment explore
+        # dedup (spawn_deduped), so two near-simultaneous POSTs can't both
+        # observe "nothing running" and each start a subprocess. Separate from
+        # _lock: spawn() acquires _lock internally, so holding _gate around it
+        # must not self-deadlock. Held only for the microseconds of a check plus
+        # a Popen — never while a job runs.
         self._gate = threading.Lock()
         self._jobs: list[Job] = []
         # Latched by shutdown() under _lock, in the same critical section that
@@ -241,6 +259,10 @@ class JobManager:
             argv,
             cwd=str(cwd),
             env=env,
+            # Never the cockpit's own stdin (module docstring): a prompting child
+            # would silently eat the operator's terminal input. EOF makes it
+            # fail loudly instead.
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -371,9 +393,11 @@ class JobManager:
         across the server's request threads).
 
         Raises ``ValueError`` for a *kind* outside :data:`PIPELINE_KINDS` —
-        ``explore`` is not gated one-at-a-time and must go through
-        :meth:`spawn`, so accepting it here would return a job the gate never
-        actually protected.
+        ``explore`` is not gated one-at-a-time and belongs to
+        :meth:`spawn_deduped`, so accepting it here would return a job the gate
+        never actually protected. (Not :meth:`spawn`: that is the ungated
+        primitive, and reaching for it directly is the check-then-act race
+        :meth:`spawn_deduped` exists to close.)
 
         *experiment* is optional here (a run may span a whole selection) but
         pass it whenever the job targets exactly one, so the registry can label
@@ -385,19 +409,72 @@ class JobManager:
         if kind not in PIPELINE_KINDS:
             raise ValueError(
                 f"{kind!r} is not a pipeline job kind "
-                f"(expected one of {sorted(PIPELINE_KINDS)}); use spawn() instead"
+                f"(expected one of {sorted(PIPELINE_KINDS)}); use spawn_deduped() instead"
             )
         with self._gate:
             if self.pipeline_active():
                 return None
             return self.spawn(kind, label, argv, cwd=cwd, env=env, experiment=experiment)
 
+    def spawn_deduped(
+        self,
+        kind: str,
+        label: str,
+        argv: list[str],
+        *,
+        cwd: Path,
+        env: dict[str, str],
+        experiment: str,
+    ) -> tuple[Job, bool]:
+        """The live *kind* job for *experiment*, or a newly spawned one.
+
+        Returns ``(job, created)`` — ``created=False`` means the caller got the
+        job that was already running, which is what makes a second Explore click
+        reopen the live cockpit instead of racing it.
+
+        The lookup and the spawn happen under the SAME gate
+        :meth:`spawn_pipeline` uses, because :meth:`running_job_for` followed by
+        :meth:`spawn` is a check-then-act across the server's request threads: a
+        double-clicked button (browsers do fire both) would pass the check twice
+        and start two ``abk explore`` sessions on one experiment — each holding
+        its own startup snapshot of the YAML, so whichever Applies second
+        silently drops the other's changes. That is the hazard the dedup exists
+        for, so the dedup has to be atomic.
+
+        Raises ``ValueError`` for a *kind* in :data:`PIPELINE_KINDS`: those are
+        gated one-at-a-time and must go through :meth:`spawn_pipeline`, so
+        deduping one here would hand back a job that gate never saw. Propagates
+        :class:`JobManagerClosed` from :meth:`spawn`.
+        """
+        if kind in PIPELINE_KINDS:
+            raise ValueError(
+                f"{kind!r} is a pipeline job kind (one at a time, not deduped "
+                f"per experiment); use spawn_pipeline() instead"
+            )
+        with self._gate:
+            existing = self.running_job_for(kind, experiment)
+            if existing is not None:
+                return existing, False
+            job = self.spawn(kind, label, argv, cwd=cwd, env=env, experiment=experiment)
+            return job, True
+
+    def url_for(self, job: Job) -> str | None:
+        """*job*'s recorded cockpit URL, read under its lock.
+
+        The read half of :meth:`set_url`, so a caller never has to reach into
+        ``job.lock`` itself (the pump thread writes these fields).
+        """
+        with job.lock:
+            return job.url
+
     def running_job_for(self, kind: str, experiment: str) -> Job | None:
         """The still-running *kind* job for *experiment*, if any.
 
         The abkit analog of the donor's ``running_tune_for(metric)``: dedup for
         ``POST /api/explore``, keyed on ``(kind='explore', experiment=name)``
-        so a second click reopens the live cockpit instead of racing it.
+        so a second click reopens the live cockpit instead of racing it. Call it
+        through :meth:`spawn_deduped` when the answer decides whether to spawn —
+        on its own it is a TOCTOU check.
         """
         with self._lock:
             jobs = list(self._jobs)

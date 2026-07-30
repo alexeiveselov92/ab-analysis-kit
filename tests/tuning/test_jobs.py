@@ -200,6 +200,32 @@ class TestSpawnAndPump:
             )
         assert manager.list_snapshots() == []  # the job never came into being
 
+    def test_a_child_never_inherits_the_cockpits_stdin(self, manager, tmp_path, monkeypatch):
+        """DASH-4: ``stdin=DEVNULL``, so a prompting child cannot eat the terminal.
+
+        Asserted at the ``Popen`` call because the child cannot report it: under
+        pytest fd 0 is already ``/dev/null``, so an inherited stdin looks exactly
+        like a closed one from inside the subprocess. The behavioural half is the
+        second spawn — a read returns EOF *promptly*, which is what an inherited
+        interactive terminal would not do.
+        """
+        seen: dict[str, object] = {}
+        original = jobs_module.subprocess.Popen
+
+        def spy(argv, **kwargs):
+            seen.update(kwargs)
+            return original(argv, **kwargs)
+
+        monkeypatch.setattr(jobs_module.subprocess, "Popen", spy)
+        _spawn(manager, "pass", tmp_path=tmp_path)
+        assert seen["stdin"] is subprocess.DEVNULL
+
+        job = _spawn(
+            manager, "import sys; print('READ ' + repr(sys.stdin.read()))", tmp_path=tmp_path
+        )
+        assert _await_status(manager, job, expected={"done"}) == "done"
+        assert manager.snapshot(job)["lines"] == ["READ ''"]
+
     def test_cwd_is_the_spawn_directory(self, manager, tmp_path):
         job = _spawn(manager, "import os; print(os.getcwd(), flush=True)", tmp_path=tmp_path)
         _await_status(manager, job, expected={"done"})
@@ -414,6 +440,101 @@ class TestExploreDedup:
         manager.set_url(job, "http://127.0.0.1:9/?token=x")
         assert manager.snapshot(job)["url"] == "http://127.0.0.1:9/?token=x"
         assert manager.list_snapshots()[0]["url"] == "http://127.0.0.1:9/?token=x"
+
+    def test_url_for_is_the_read_half_of_set_url(self, manager, tmp_path):
+        job = _spawn(manager, SLEEPER, kind="explore", experiment="exp_a", tmp_path=tmp_path)
+        assert manager.url_for(job) is None
+        manager.set_url(job, "http://127.0.0.1:9/?token=x")
+        assert manager.url_for(job) == "http://127.0.0.1:9/?token=x"
+
+    def _dedup(self, manager, code: str, tmp_path: Path, experiment: str = "exp_a"):
+        return manager.spawn_deduped(
+            "explore",
+            f"explore --select {experiment}",
+            [sys.executable, "-u", "-c", code],
+            cwd=tmp_path,
+            env=dict(os.environ),
+            experiment=experiment,
+        )
+
+    def test_spawn_deduped_starts_a_cockpit_when_none_is_running(self, manager, tmp_path):
+        job, created = self._dedup(manager, SLEEPER, tmp_path)
+        assert created is True
+        assert manager.running_job_for("explore", "exp_a") is job
+
+    def test_a_second_call_hands_back_the_live_cockpit(self, manager, tmp_path):
+        first, _ = self._dedup(manager, SLEEPER, tmp_path)
+        second, created = self._dedup(manager, SLEEPER, tmp_path)
+        assert second is first
+        assert created is False
+        assert len(manager.list_snapshots()) == 1
+
+    def test_a_finished_cockpit_is_replaced_rather_than_reused(self, manager, tmp_path):
+        first, _ = self._dedup(manager, "pass", tmp_path)
+        _await_status(manager, first, expected={"done"})
+        second, created = self._dedup(manager, SLEEPER, tmp_path)
+        assert created is True
+        assert second is not first
+
+    def test_the_dedup_is_per_experiment(self, manager, tmp_path):
+        first, _ = self._dedup(manager, SLEEPER, tmp_path, experiment="exp_a")
+        second, created = self._dedup(manager, SLEEPER, tmp_path, experiment="exp_b")
+        assert created is True
+        assert second is not first
+
+    def test_spawn_deduped_refuses_a_pipeline_kind(self, manager, tmp_path):
+        for kind in ("run", "unlock", "clean"):
+            with pytest.raises(ValueError, match="is a pipeline job kind"):
+                manager.spawn_deduped(
+                    kind,
+                    kind,
+                    [sys.executable, "-c", SLEEPER],
+                    cwd=tmp_path,
+                    env=dict(os.environ),
+                    experiment="exp_a",
+                )
+        assert manager.list_snapshots() == []
+
+    def test_two_concurrent_calls_start_exactly_one_cockpit(self, manager, tmp_path, monkeypatch):
+        """The dedup has to be ATOMIC, not a check followed by a spawn.
+
+        A double-clicked Explore button is the realistic trigger, and two
+        sessions on one experiment is the Apply-rewrites-the-YAML race the dedup
+        exists to prevent. ``spawn`` is slowed so the window is guaranteed open
+        rather than merely likely: with the gate the second caller waits and
+        observes the first job, without it both spawn.
+        """
+        original = JobManager.spawn
+
+        def slow_spawn(self, *args, **kwargs):
+            time.sleep(0.3)
+            return original(self, *args, **kwargs)
+
+        monkeypatch.setattr(JobManager, "spawn", slow_spawn)
+        barrier = threading.Barrier(2)
+        results: list[tuple[object, bool]] = []
+        results_lock = threading.Lock()
+
+        def attempt() -> None:
+            barrier.wait()
+            outcome = self._dedup(manager, SLEEPER, tmp_path)
+            with results_lock:
+                results.append(outcome)
+
+        threads = [threading.Thread(target=attempt) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=20)
+        assert sorted(created for _job, created in results) == [False, True]
+        assert len({job.id for job, _created in results}) == 1
+        assert len(manager.list_snapshots()) == 1
+
+    def test_a_dedup_racing_the_teardown_refuses_instead_of_orphaning(self, manager, tmp_path):
+        manager.shutdown()
+        with pytest.raises(JobManagerClosed):
+            self._dedup(manager, SLEEPER, tmp_path)
+        assert manager.list_snapshots() == []
 
 
 class TestStop:
