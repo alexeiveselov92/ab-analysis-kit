@@ -313,6 +313,19 @@ class TestComparisons:
         with pytest.raises(ValidationError, match="duplicate metric references"):
             ExperimentConfig.model_validate(payload)
 
+    def test_declares_metric_is_the_shared_per_metric_predicate(self):
+        """m11 DASH-4a: `abk run --metric` narrows the selection with this, and
+        DASH-4's per-metric Run route validates its body field with the SAME
+        function — so the CLI and the dashboard cannot drift on what a valid
+        target is. Because duplicate bindings are rejected (above), a true
+        answer means exactly one comparison."""
+        experiment = ExperimentConfig.model_validate(base_payload())
+        declared = experiment.comparisons[0].metric
+        assert experiment.declares_metric(declared) is True
+        assert experiment.declares_metric("no_such_metric") is False
+        assert experiment.declares_metric("") is False
+        assert experiment.get_comparison(declared).metric == declared
+
     def test_main_and_guardrail_exclusive(self):
         payload = base_payload()
         payload["comparisons"][0]["is_guardrail"] = True

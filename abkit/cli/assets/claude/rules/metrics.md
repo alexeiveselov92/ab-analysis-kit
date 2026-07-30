@@ -161,7 +161,10 @@ validate` colours **this** metric's FPR against, overriding the project-wide
 
 - **Changing the SQL** changes what is loaded but not stored history; recompute
   the window with `abk run --select <exp> --full-refresh --from <start> --to <end>`
-  (`--full-refresh` requires both bounds).
+  (`--full-refresh` requires both bounds). Add `--metric <this metric>` (0.6.0) to
+  reprocess only this series: the experiment's other metrics keep their results
+  (their day state is truncated from the first day the window touches onward,
+  so a later run re-derives it from the current facts).
 - Metric results are keyed by the method identity (`method_config_id`), which
   lives on the **experiment's comparison**, not here — see `methods.md`. Editing
   an identity param orphans the prior result series (`abk clean` prunes).

@@ -185,6 +185,7 @@ def run_experiment(
     force: bool = False,
     full_refresh_window: tuple[datetime, datetime] | None = None,
     resync_cohort: bool = False,
+    metric_filter: str | None = None,
     log: Logger = _noop_log,
 ) -> RunOutcome:
     """Run the recompute pipeline for one experiment. Returns the outcome.
@@ -194,6 +195,19 @@ def run_experiment(
     recovery for a copy poisoned by the watermark's late-arrival limitation);
     a no-op in direct mode. Never overloads ``--full-refresh``, which keeps
     its results-window semantics.
+
+    ``metric_filter`` (m11 DASH-4a — ``abk run --metric``) narrows the STATE
+    stage and the COMPUTE loop to the comparisons of ONE metric, so a
+    per-metric recompute neither materializes nor loads what it will not
+    compute. It filters by metric NAME — the same grain ``abk validate
+    --metric`` uses — which inside one experiment resolves to exactly one
+    comparison, because the config binds each metric at most once
+    (``ExperimentConfig.validate_comparisons``). Three things stay deliberately
+    unfiltered: the cohort resolve and the SRM gate (both experiment-level —
+    and the gate must still block), and the alpha scheme, which
+    ``effective_alphas`` derives from the CONFIG's comparison list rather than
+    from what a given run happens to compute — so a filtered run writes
+    byte-identical ``alpha`` values (this WP's #1 assertion).
     """
     outcome = RunOutcome(experiment=experiment.name)
     steps = list(steps)
@@ -205,6 +219,16 @@ def run_experiment(
         and PipelineStep.COMPUTE not in steps
     ):
         outcome.status = "skipped"
+        return outcome
+
+    if metric_filter is not None and not experiment.declares_metric(metric_filter):
+        # `abk run` filters the selection before it reaches here (a loud error
+        # when NOTHING matches, a printed skip when only some experiments do);
+        # this is the same answer for any other API caller — never a lock, a
+        # cohort render and an SRM gate for an experiment with nothing to
+        # compute.
+        outcome.status = "skipped"
+        outcome.error = f"no '{metric_filter}' comparison"
         return outcome
 
     try:
@@ -397,6 +421,14 @@ def run_experiment(
                     project_root=project_root,
                     full_refresh_window=full_refresh_window,
                     force_rebuild=copy_enabled and resync_cohort,
+                    # --metric narrows the write side with the read side — with
+                    # ONE exception: --resync-cohort rebuilt a cohort EVERY
+                    # series was derived from, so its force-rebuild stays
+                    # experiment-wide. Narrowing it would leave the other
+                    # metrics' day state derived from the copy this run just
+                    # declared poisoned, and stale-in-place state is exactly
+                    # what the WP4 gap check cannot detect.
+                    metric_filter=None if (copy_enabled and resync_cohort) else metric_filter,
                     log=log,
                 )
             outcome.state_days_materialized = state_outcome.days_materialized
@@ -453,6 +485,11 @@ def run_experiment(
 
         # ── PLAN + COMPUTE per comparison (backend built by the WP4 factory) ─
         for comparison in experiment.comparisons:
+            # m11 DASH-4a: `--metric` recomputes one metric's series. Filtering
+            # the LOOP (never `experiment.comparisons` itself) is what keeps the
+            # two-tier alphas invariant — they are derived from the config above.
+            if metric_filter is not None and comparison.metric != metric_filter:
+                continue
             metric = metrics_by_name[comparison.metric]
             method_config_id = comparison.method.method_config_id
             metric_sql = metric.get_query_text(project_root)
@@ -637,6 +674,7 @@ def run_experiments(
     force: bool = False,
     full_refresh_window: tuple[datetime, datetime] | None = None,
     resync_cohort: bool = False,
+    metric_filter: str | None = None,
     log: Logger = _noop_log,
 ) -> list[RunOutcome]:
     """Run many experiments, optionally on a worker pool (§5.7).
@@ -689,6 +727,7 @@ def run_experiments(
                 force=force,
                 full_refresh_window=full_refresh_window,
                 resync_cohort=resync_cohort,
+                metric_filter=metric_filter,
                 log=log,
             )
         finally:

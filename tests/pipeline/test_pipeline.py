@@ -997,3 +997,134 @@ class TestIncrementalCopySeam:
         later = run(warehouse, tables, experiment=experiment, now_utc=t0 + timedelta(days=3))
         assert later.status == "completed", later.error
         assert any(r["unit_id"] == "freshA" for r in warehouse._rows["_ab_exposures"])
+
+
+class TestMetricFilter:
+    """m11 DASH-4a: ``abk run --metric`` recomputes ONE metric's series.
+
+    The WP's #1 assertion is **alpha invariance**: ``effective_alphas`` derives
+    the two-tier budget from the CONFIG's comparison list, so narrowing what a
+    run computes must never re-alpha the series it writes. The fixture is built
+    to catch exactly that leak — 1 main + 2 secondary metrics over 2 variants,
+    so the secondary tier is α/2 = 0.025 and a filter that reached
+    ``effective_alphas`` would write 0.05 instead.
+    """
+
+    METHOD = {"name": "t-test", "params": {"test_type": "relative"}}
+
+    @classmethod
+    def _experiment(cls) -> ExperimentConfig:
+        return make_experiment(
+            comparisons=[
+                {"metric": "arpu", "is_main_metric": True, "method": cls.METHOD},
+                {"metric": "arpu2", "method": cls.METHOD},
+                {"metric": "arpu3", "method": cls.METHOD},
+            ]
+        )
+
+    @staticmethod
+    def _metrics() -> dict[str, MetricConfig]:
+        return {
+            "arpu": ARPU,
+            "arpu2": ARPU.model_copy(update={"name": "arpu2"}),
+            "arpu3": ARPU.model_copy(update={"name": "arpu3"}),
+        }
+
+    @staticmethod
+    def _stable(rows: list[dict]) -> list[dict]:
+        """Rows minus ``created_at`` — the LWW version stamp, volatile by design."""
+        return [{k: v for k, v in row.items() if k != "created_at"} for row in rows]
+
+    @staticmethod
+    def _fresh_store() -> tuple[SyntheticWarehouse, InternalTablesManager]:
+        warehouse = SyntheticWarehouse()
+        seed_cohort(warehouse)
+        seed_events(warehouse)
+        return warehouse, InternalTablesManager(warehouse)
+
+    def test_filtered_rows_are_byte_identical_to_an_unfiltered_run(self, warehouse, tables):
+        """The #1 assertion, on the metric where a leak would show: a
+        SECONDARY one, whose tier is divided by the number of non-main
+        comparisons the CONFIG declares."""
+        experiment, metrics = self._experiment(), self._metrics()
+        run(warehouse, tables, experiment=experiment, metrics=metrics)
+        unfiltered = self._stable(tables.load_results("signup_test", metric="arpu2"))
+        assert unfiltered, "the unfiltered run must have written the secondary series"
+        assert sorted({row["alpha"] for row in unfiltered}) == [pytest.approx(0.05 / 2)]
+
+        second, tables2 = self._fresh_store()
+        outcome = run(
+            second, tables2, experiment=experiment, metrics=metrics, metric_filter="arpu2"
+        )
+        assert outcome.status == "completed", outcome.error
+
+        filtered = self._stable(tables2.load_results("signup_test", metric="arpu2"))
+        assert filtered == unfiltered  # alpha included: the two-tier scheme is config-derived
+        # and nothing else was computed
+        assert tables2.load_results("signup_test", metric="arpu") == []
+        assert tables2.load_results("signup_test", metric="arpu3") == []
+        assert outcome.cutoffs_planned == 5  # one metric's looks, not three metrics'
+
+    def test_a_second_filtered_run_leaves_the_first_series_untouched(self, warehouse, tables):
+        experiment, metrics = self._experiment(), self._metrics()
+        run(warehouse, tables, experiment=experiment, metrics=metrics, metric_filter="arpu")
+        first = tables.load_results("signup_test", metric="arpu")
+        assert len(first) == 5
+
+        outcome = run(
+            warehouse, tables, experiment=experiment, metrics=metrics, metric_filter="arpu2"
+        )
+        assert outcome.status == "completed", outcome.error
+        # untouched INCLUDING created_at: the row was never even re-written
+        assert tables.load_results("signup_test", metric="arpu") == first
+        assert len(tables.load_results("signup_test", metric="arpu2")) == 5
+        assert tables.load_results("signup_test", metric="arpu3") == []
+
+    def test_full_refresh_metric_reopens_only_that_series(self, warehouse, tables):
+        experiment, metrics = self._experiment(), self._metrics()
+        run(warehouse, tables, experiment=experiment, metrics=metrics)
+        untouched = tables.load_results("signup_test", metric="arpu2")
+
+        outcome = run(
+            warehouse,
+            tables,
+            experiment=experiment,
+            metrics=metrics,
+            metric_filter="arpu",
+            full_refresh_window=(datetime(2024, 7, 2), datetime(2024, 7, 4)),
+        )
+        assert outcome.status == "completed", outcome.error
+        assert outcome.cutoffs_planned == 2  # the window's two looks of ONE metric
+        # the sibling series was neither deleted nor re-written (created_at included)
+        assert tables.load_results("signup_test", metric="arpu2") == untouched
+        assert len(tables.load_results("signup_test")) == 15  # LWW, no duplicates
+
+    def test_an_unmatched_filter_skips_before_the_lock(self, warehouse, tables):
+        outcome = run(warehouse, tables, metric_filter="nope")
+        assert outcome.status == "skipped"
+        assert "nope" in (outcome.error or "")
+        assert tables.load_results("signup_test") == []
+        # never locked, never rendered a cohort: the guard sits above ensure_tables
+        assert warehouse._rows.get("_ab_tasks", []) == []
+        assert outcome.exposures_loaded == 0
+
+    def test_the_worker_pool_passes_the_filter_through(self, warehouse, tables):
+        experiment, metrics = self._experiment(), self._metrics()
+        second = experiment.model_copy(update={"name": "second_test"})
+        outcomes = run_experiments(
+            [(None, experiment), (None, second)],
+            metrics,
+            PROJECT,
+            manager_factory=lambda: warehouse,
+            # >1 so the ThreadPoolExecutor branch is the one under test: this
+            # function's OTHER keyword (`ensure_tables`) needed a second call
+            # site on exactly that branch (see driver.py), so "the pool path
+            # forgot the parameter" is a lived bug class here
+            max_workers=2,
+            now_utc=NOW,
+            metric_filter="arpu3",
+        )
+        assert all(o.status == "completed" for o in outcomes), [o.error for o in outcomes]
+        for name in ("signup_test", "second_test"):
+            assert len(tables.load_results(name, metric="arpu3")) == 5
+            assert tables.load_results(name, metric="arpu") == []

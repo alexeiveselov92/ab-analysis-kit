@@ -329,7 +329,11 @@ sums.
 - **Changing the SQL** changes what is loaded but not the stored history.
   Recompute the window with
   `abk run --select <exp> --full-refresh --from <start> --to <end>`
-  (`--full-refresh` requires both bounds).
+  (`--full-refresh` requires both bounds). Add `--metric <this metric>` (since
+  0.6.0) to reprocess only this series — the experiment's other metrics keep the
+  rows they already have (their `_ab_unit_state` day state is truncated from the
+  first day the window touches onward rather than kept, so a later run re-derives
+  it from the current facts instead of trusting a possibly stale day).
 - **Result identity is the method's**, not the metric's — results are keyed by
   `method_config_id`, which lives on the experiment's comparison (see
   [methods](compute-methods.md)). Editing an identity-bearing method param (including

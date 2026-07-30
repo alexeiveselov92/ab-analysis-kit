@@ -14,6 +14,58 @@ number change).
 ## [Unreleased]
 
 ### Added
+- **M11 DASH-4a — `abk run --metric <m>`: recompute ONE metric of an
+  experiment.** `run` was the last per-comparison command without the metric
+  axis (`explore`, `validate`, `plan` and `verify-incremental` all had it), and
+  the dashboard is a launcher — it can only offer what the CLI can do, so the
+  per-metric Run button DASH-4/DASH-5 wire needed this first. It filters
+  comparisons by metric **name** — the grain `abk validate --metric` already
+  uses: inside one experiment that is exactly one comparison (a metric binds at
+  most once per experiment), and across a broader `--select` every experiment
+  declaring that metric.
+  **No statistical number moves** (M7–M12 posture; no `ALGORITHM_VERSION` bump).
+  - **The alphas do not move — the milestone's #1 assertion for this WP.**
+    `effective_alphas()` derives the two-tier Bonferroni scheme from the
+    *config's* comparison list, never from what a given run happens to compute,
+    so the filter is alpha-invariant by construction. Pinned: a filtered run's
+    rows are byte-identical (`alpha` included) to the same rows written by an
+    unfiltered run, on a fixture where a leak would halve the divisor.
+  - **`--full-refresh --metric <m>` is the real "reprocess this metric"** after a
+    SQL or method-param edit: `delete_results` is already metric-keyed, so the
+    filtered loop deletes and rebuilds only that series and leaves every other
+    series' **results** untouched (not merely equal: never re-written).
+  - **Day state is the one thing a narrowed run may still touch elsewhere.** A
+    stale-but-contiguous `_ab_unit_state` day is invisible to the M9 reader's gap
+    check, which only detects ABSENCE — so a scoped `--full-refresh`
+    **truncates** the withheld metrics' day state (from the first day the window
+    touches through the end of that series, the same tail semantics an unfiltered
+    refresh has) rather than leaving it: not re-rendered (the operator scoped that
+    cost away), contiguity preserved as a shorter prefix, reads past it falling
+    back to full-window recompute, and the next run that includes the metric
+    re-deriving those days from the current facts. Leaving it alone was a reviewed
+    defect — with `compute.incremental_reads` on, healing a fact backfill for one
+    metric only made a later routine run sum the stale day and silently persist an
+    undercount (reproduced at 3334.5 vs 3434.5 before the fix; regression-pinned
+    end to end).
+  - **The run says which of those outcomes applies, per experiment** — rebuilt
+    (copy-mode `--resync-cohort`), truncated (a refresh window), untouched, or
+    "the `state` step is not selected, so day state is not touched at all" — and
+    names the experiments when one selection mixes them. Both day-state effects
+    live inside the STATE stage, so both follow `--steps`.
+  - The **cohort load and the SRM gate stay experiment-level** (the gate must
+    still block), and so does `--resync-cohort` **in copy mode**: it rebuilds the
+    whole cohort and therefore re-materializes day state for **every** eligible
+    metric even under `--metric`, because narrowing that would leave the other
+    metrics' day state derived from the copy the resync just declared poisoned —
+    and stale-in-place state is exactly what the M9 gap check cannot detect. Only
+    compute narrows, and the run prints a line saying so. In the direct (no-copy)
+    default the flag is a no-op and day state narrows with everything else, so
+    that line is not printed — the disclosure is mode-aware, not unconditional.
+  - Selector semantics follow the repo idiom: an experiment in the selection
+    that does not declare the metric is **skipped with a printed line**; a value
+    matching no comparison in *any* selected experiment is a **loud error**
+    naming what is declared, never a silent exit-0. `--steps validate` with
+    `--metric` is rejected (the config lint is project-wide by construction).
 - **M11 DASH-3 — the dashboard's localhost server (`abkit/tuning/dashboard_server.py`).**
   The transport that joins DASH-1's job registry to DASH-2's row shaper: a
   stdlib `ThreadingHTTPServer` on `127.0.0.1` with a one-shot token, serving

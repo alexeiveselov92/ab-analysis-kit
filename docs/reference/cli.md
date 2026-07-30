@@ -35,8 +35,8 @@ validate-only method axis:
   to **all experiments** when `--select` is omitted; `explore` requires the selection
   to resolve to **exactly one**.
 - **`--metric <name>` selects a LIBRARY metric** within the chosen experiment(s) — a
-  single metric name, never a glob. It narrows a command to one comparison (`explore`,
-  `validate`, `plan`).
+  single metric name, never a glob. It narrows a command to that metric's comparison(s)
+  (`run`, `explore`, `validate`, `plan`, `verify-incremental`).
 - **`--method <name>` (validate only) is the method-grid axis** — an extra registered
   method to score *beyond* the declared comparison. It is not a selector; do not
   confuse it with `--select`.
@@ -104,7 +104,8 @@ Run the pipeline for the selected experiments: validate → plan → load → SR
 state → compute → persist.
 
 ```bash
-abk run [--select <exp>]... [--exclude <sel>]... [--steps validate,plan,load,state,compute] \
+abk run [--select <exp>]... [--exclude <sel>]... [--metric <m>] \
+        [--steps validate,plan,load,state,compute] \
         [--from TS] [--to TS] [--full-refresh] [--resync-cohort] [--workers N] \
         [--report [PATH]] [--force] [--profile NAME]
 ```
@@ -113,6 +114,7 @@ abk run [--select <exp>]... [--exclude <sel>]... [--steps validate,plan,load,sta
 |---|---|---|
 | `--select`, `-s` | all experiments | Experiment selector (repeatable) |
 | `--exclude` | — | Selectors to remove from the selection (same forms) |
+| `--metric` | every declared comparison | Recompute only this metric's comparison(s) |
 | `--steps` | `validate,plan,load,state,compute` | Comma-separated pipeline steps |
 | `--from` | — | Full-refresh window start (with `--full-refresh`) |
 | `--to` | — | Full-refresh window end, exclusive (with `--full-refresh`) |
@@ -141,6 +143,43 @@ still-open or maturing bucket return on a later run, never half-fresh). It
 never touches results windows (`--full-refresh` keeps that job) and is a no-op
 in the direct (no-copy) default.
 
+**`--metric` narrows the run to one metric** (since 0.6.0) — the same metric axis
+`explore`/`validate`/`plan`/`verify-incremental` already take. It filters comparisons by
+metric *name*: inside one experiment that resolves to exactly one comparison (a metric
+binds at most once per experiment), and across a broader `--select` every experiment
+declaring that metric is recomputed. The cohort load and the SRM gate stay
+experiment-level (the gate must still block). `--full-refresh --metric <m>` is the
+"recompute just this metric" path after a SQL or method-param edit: it deletes and
+rebuilds only that metric's series and leaves every other series' **results** exactly as
+they were. Three properties are worth knowing:
+
+- **The alphas do not move.** The two-tier scheme is derived from the config's
+  comparison list, not from what one invocation computes, so a filtered run writes
+  byte-identical `alpha` values (a pinned test).
+- **Day state is the one thing a narrowed run may still touch elsewhere**, because a
+  stale-but-contiguous `_ab_unit_state` day is invisible to the reader's gap check (it
+  only detects absence). So a scoped `--full-refresh` **truncates** the other eligible
+  metrics' day state — from the first day the window touches *through the end of that
+  series* (the same tail semantics an unfiltered refresh has) — instead of leaving it. The
+  truncated days are not re-rendered (you scoped that cost away): reads past the
+  truncation fall back to full-window recompute, and the next run that includes the metric
+  re-derives them from the current facts. Without this, a fact backfill healed for one
+  metric only would make a later routine run silently persist an undercount for the others
+  whenever `compute.incremental_reads` is on. It follows the `state` step: a run whose
+  `--steps` omits `state` touches no day state at all, and the run says which of the three
+  outcomes applies (naming the experiments when a selection mixes them).
+- **In copy mode, `--resync-cohort` is not per-metric.** The cohort belongs to the
+  experiment, so it is rebuilt whole and day state is re-materialized for *every*
+  eligible metric (the run prints a line saying so) — narrowing that would leave the
+  other metrics' day state derived from the copy the resync just declared poisoned. Only
+  the compute stays narrow. In the direct (no-copy) default the flag is a no-op, so day
+  state narrows with everything else.
+- An experiment in the selection that does not declare the metric is **skipped with a
+  printed line**; a value matching nowhere is an error naming what is declared. The run
+  also prints which comparisons it is withholding. Since the readout reads persisted
+  rows, a `--report` after a filtered run still covers every metric — the untargeted ones
+  simply show the numbers they already had.
+
 **`--steps` tokens** are `validate`, `plan`, `load`, `state`, `compute` (any unknown
 token errors with the valid list). The `state` step (M9) materializes per-unit,
 per-day moments for closed-form metrics into `_ab_unit_state`; with the default
@@ -152,8 +191,9 @@ skipping `state` there just means the reads fall back to full recompute
 parses the YAML, lints every metric SQL for the one-row-per-unit contract and the
 cohort macro, and instantiates each method, all with no database and no lock. This is
 the only meaning of "validate" on `run`; it is a *config* gate and is **not**
-`abk validate` (the A/A matrix). Because the lint never touches the DB, combining
-`--steps validate` with `--report` is rejected.
+`abk validate` (the A/A matrix). Because the lint never touches the DB — and lints the
+whole project by construction — combining `--steps validate` with `--report` or
+`--metric` is rejected.
 
 **`--report` is tri-state** (the donor's flag shape): omit it for no report; a bare
 `--report` writes `reports/<experiment>.html`; a directory value writes
@@ -425,6 +465,10 @@ abk run --select example_signup_test --report
 
 # Reprocess after changing a metric query or a method param, then prune orphans
 abk run --select example_signup_test --full-refresh --from 2024-07-01 --to 2024-07-15
+
+# ...or reprocess only the metric whose SQL changed (the others keep their rows)
+abk run --select example_signup_test --metric example_arpu \
+        --full-refresh --from 2024-07-01 --to 2024-07-15
 abk clean --select example_signup_test            # dry-run preview
 abk clean --select example_signup_test --execute  # prune the old series
 

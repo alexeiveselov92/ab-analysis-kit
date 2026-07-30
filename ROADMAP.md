@@ -371,7 +371,9 @@ The `dtk ui` architecture ported: metadata-only boot, lazy per-row stats
 the server **never takes the pipeline lock**; verdicts via
 `readout.evaluate()`. `JobManager` port (DASH-1), `overview.py` (DASH-2), the
 server skeleton with the two test-pinned deltas from the tune-server pattern —
-token on ALL routes, never self-shutdown (DASH-3), job routes (DASH-4),
+token on ALL routes, never self-shutdown (DASH-3), the `abk run --metric`
+capability a per-metric Run button needs (DASH-4a — a pipeline/CLI WP, not a
+dashboard one), job routes (DASH-4),
 `dashboard.ts` written from scratch — the donor has no TS sources (DASH-5),
 the third build entry + `abk dashboard` CLI (DASH-6), and the exit gate
 (DASH-7). CRUD editing is explicitly phase 2, out of the milestone.

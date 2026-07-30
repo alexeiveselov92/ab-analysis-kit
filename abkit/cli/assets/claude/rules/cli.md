@@ -32,8 +32,8 @@ experiment references reusable metrics:
   `"*"` for all. Repeatable. `run`/`validate`/`plan`/`unlock`/`clean` default to
   **all experiments** when `--select` is omitted; `explore` requires exactly one.
 - **`--metric <name>` selects a LIBRARY metric** within the chosen experiment(s)
-  — a single metric name, never a glob. It narrows `run`-adjacent commands to one
-  comparison (`explore`, `validate`, `plan`).
+  — a single metric name, never a glob. It narrows a command to that metric's
+  comparison(s) (`run`, `explore`, `validate`, `plan`, `verify-incremental`).
 - **`--method <name>` (validate only) is the method-grid axis** — an extra
   registered method to score *beyond* the declared comparison. It is NOT a
   selector; do not confuse it with `--select`.
@@ -70,7 +70,8 @@ to refresh this context.
 ## `abk run`
 
 ```bash
-abk run [--select <exp>] [--exclude <sel>] [--steps validate,plan,load,state,compute] \
+abk run [--select <exp>] [--exclude <sel>] [--metric <m>] \
+        [--steps validate,plan,load,state,compute] \
         [--from TS] [--to TS] [--full-refresh] [--resync-cohort] [--workers N] \
         [--report [PATH]] [--force] [--profile NAME]
 ```
@@ -85,6 +86,22 @@ It is incremental by
 an anti-join — only cutoffs past the `data_lag` watermark and not already computed
 are (re)computed, so re-running is idempotent.
 
+- `--metric <m>` (0.6.0) — recompute only that metric's comparison(s); the same
+  metric axis `explore`/`validate`/`plan`/`verify-incremental` take. Other
+  metrics' **results** are left exactly as they are, and the **alphas do not
+  move** (the two-tier scheme comes from the config, not from what one run
+  computes). `--full-refresh --metric <m>` is the "reprocess just this metric"
+  path. Day state is the one thing a narrowed run may still touch elsewhere,
+  because a stale-but-contiguous day is invisible to the reader's gap check: a
+  scoped `--full-refresh` TRUNCATES the other eligible metrics' day state from
+  the first day the window touches through the end of that series (not
+  re-rendered — reads fall back to recompute until a run that includes them
+  re-derives it), and in copy mode `--resync-cohort` rebuilds the whole cohort so
+  day state is re-materialized for every eligible metric. Both follow the `state`
+  step (omit it from `--steps` and no day state is touched), both are decided PER
+  EXPERIMENT, and the run prints which applies. Only compute ever narrows them. The cohort load and the SRM gate stay
+  experiment-level. An experiment without that comparison is skipped with a
+  printed line; a metric matching nowhere is an error.
 - `--steps` (default `validate,plan,load,state,compute`) — comma-separated steps.
   **`--steps validate` alone is the config lint** (no DB, no lock): it parses the
   YAML, lints every metric SQL for the one-row-per-unit contract and the cohort
@@ -264,6 +281,9 @@ abk run --select example_signup_test --report
 
 # Reprocess after changing a metric query or a method param
 abk run --select example_signup_test --full-refresh --from 2024-07-01 --to 2024-07-15
+# ...or only the metric that changed (the other series keep their rows)
+abk run --select example_signup_test --metric example_arpu \
+        --full-refresh --from 2024-07-01 --to 2024-07-15
 abk clean --select example_signup_test              # dry-run: preview orphaned rows
 abk clean --select example_signup_test --execute    # then prune them
 

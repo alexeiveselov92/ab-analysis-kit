@@ -348,6 +348,7 @@ def materialize_state(
     project_root: Path | None = None,
     full_refresh_window: tuple[datetime, datetime] | None = None,
     force_rebuild: bool = False,
+    metric_filter: str | None = None,
     log: Logger = _noop_log,
 ) -> StateOutcome:
     """Materialize every pending closed day for the eligible metrics.
@@ -363,6 +364,17 @@ def materialize_state(
     must not outlive it — every eligible series is dropped and re-rendered
     from the rebuilt cohort.
 
+    ``metric_filter`` (``abk run --metric``, m11 DASH-4a) narrows the stage to
+    ONE metric's series, so a per-metric recompute neither renders nor writes
+    what it will not read. Every series is independent (its own
+    ``(source_table, column_set_id)`` key and its own contiguous day range), so
+    narrowing cannot break another metric's contiguity invariant — the withheld
+    series simply keeps the days it already had, and the next run that includes
+    the metric advances it. Two exceptions, both about a withheld series that
+    must not be trusted afterwards: the driver passes ``None`` alongside
+    ``force_rebuild`` (see its call site), and a ``full_refresh_window``
+    TRUNCATES the withheld series over the refreshed window (see below).
+
     In copy mode the caller passes ``watermark_ts`` CLAMPED to the copy's
     coverage: the day render joins the persisted copy, and a day
     materialized from a partial cohort would freeze that way (state days,
@@ -373,7 +385,55 @@ def materialize_state(
     if not days:
         return outcome
 
-    for metric, metric_sql in state_eligible_metrics(experiment, metrics_by_name, project_root):
+    eligible = state_eligible_metrics(experiment, metrics_by_name, project_root)
+    withheld: list[tuple[MetricConfig, str]] = []
+    if metric_filter is not None:
+        withheld = [item for item in eligible if item[0].name != metric_filter]
+        eligible = [item for item in eligible if item[0].name == metric_filter]
+
+    if withheld and full_refresh_window is not None:
+        # A SCOPED --full-refresh must not leave a withheld series
+        # stale-in-place. The flag exists for facts that changed inside an
+        # already-materialized window, and those facts are shared by every
+        # metric that reads them — while the WP4 gap check only sees ABSENCE,
+        # never wrong content. So the withheld series are TRUNCATED over the
+        # refreshed window and deliberately NOT re-rendered here: the operator
+        # scoped the render cost away, contiguity survives (a shorter prefix —
+        # the delete runs from the first touched day through the END of the
+        # series, the same tail semantics the unfiltered truncate-then-advance
+        # below has),
+        # reads past the new last day fall back to full recompute (correct, and
+        # warned by the reader), and the next run that does include the metric
+        # re-materializes those days from the current facts. Doing nothing
+        # instead was a reviewed defect: with compute.incremental_reads on, a
+        # later routine run summed the stale days and silently persisted an
+        # undercount (m11 DASH-4a review).
+        refresh_from, refresh_to = full_refresh_window
+        for metric, metric_sql in withheld:
+            source_id, series_id = state_series_key(experiment, metric, metric_sql, project_root)
+            last_day = tables.get_last_state_day(source_id, series_id)
+            if last_day is None:
+                continue
+            touched = [
+                sd.day
+                for sd in days
+                if sd.day <= last_day
+                and sd.window.start_ts < refresh_to
+                and sd.window.end_ts > refresh_from
+            ]
+            if not touched:
+                continue
+            tables.delete_state_days_from(source_id, series_id, min(touched))
+            outcome.warnings.append(
+                f"{experiment.name}/{metric.name}: day state truncated from "
+                f"{min(touched)} through the end of the series — a "
+                "--full-refresh window this metric was not selected for may have "
+                "changed facts it reads; a later run that includes this metric "
+                "re-derives those days (reads in between fall back to "
+                "full-window recompute)"
+            )
+
+    for metric, metric_sql in eligible:
         source_id, series_id = state_series_key(experiment, metric, metric_sql, project_root)
 
         # The identity invalidation (WP3 step 2 + the R1 cohort fix): an

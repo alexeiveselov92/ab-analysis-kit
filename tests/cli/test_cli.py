@@ -265,3 +265,201 @@ class TestClean:
         assert result.exit_code == 0, result.output
         assert "purged" in result.output
         assert warehouse._rows["_ab_results"] == []
+
+
+SECOND_METRIC_YML = METRIC_YML.replace("name: arpu", "name: visits")
+SECOND_EXPERIMENT_YML = EXPERIMENT_YML.replace("name: signup_test", "name: second_test").replace(
+    "metric: arpu", "metric: visits"
+)
+#: signup_test with BOTH metrics — the only fixture shape that can prove the
+#: flag reaches the pipeline. With one comparison per experiment, "only arpu was
+#: written" is already true of the experiment-level selection narrowing, so the
+#: assertion cannot fail (a review finding: deleting the CLI's `metric_filter=`
+#: passthrough left the whole suite green).
+TWO_COMPARISON_EXPERIMENT_YML = (
+    EXPERIMENT_YML
+    + """  - metric: visits
+    method: {name: t-test, params: {test_type: relative}}
+"""
+)
+#: a second experiment, DIRECT mode, declaring the same two comparisons — the
+#: shape that proves the day-state disclosure is decided per experiment and not
+#: once per run (a round-2 review finding: a run-level `any()` printed the
+#: copy-mode sentence on behalf of direct-mode experiments).
+DIRECT_TWIN_EXPERIMENT_YML = None  # set below
+COPY_MODE_EXPERIMENT_YML = TWO_COMPARISON_EXPERIMENT_YML.replace(
+    'query: "SELECT user_id, variant, exposure_ts FROM assignments"',
+    'query: "SELECT user_id, variant, exposure_ts FROM assignments '
+    'WHERE 1 = 1 {{ ab_added_filters }}"\n  cohort_copy: {enabled: true}',
+)
+
+
+DIRECT_TWIN_EXPERIMENT_YML = TWO_COMPARISON_EXPERIMENT_YML.replace(
+    "name: signup_test", "name: direct_test"
+)
+
+
+class TestMetricOption:
+    """m11 DASH-4a: `abk run --metric` — the selector semantics (step 5)."""
+
+    @staticmethod
+    def _add_second_experiment() -> None:
+        (Path("metrics") / "visits.yml").write_text(SECOND_METRIC_YML)
+        (Path("experiments") / "second_test.yml").write_text(SECOND_EXPERIMENT_YML)
+
+    @staticmethod
+    def _make_signup_test_two_comparison() -> None:
+        (Path("metrics") / "visits.yml").write_text(SECOND_METRIC_YML)
+        (Path("experiments") / "signup_test.yml").write_text(TWO_COMPARISON_EXPERIMENT_YML)
+
+    def test_the_flag_reaches_the_pipeline_inside_one_experiment(self, project, warehouse):
+        """The CLI→driver passthrough, on the only fixture that can fail: ONE
+        experiment declaring TWO comparisons."""
+        self._make_signup_test_two_comparison()
+        result = runner.invoke(cli, ["run", "--metric", "arpu"])
+        assert result.exit_code == 0, result.output
+        assert {row["metric"] for row in warehouse._rows["_ab_results"]} == {"arpu"}
+
+        # the sibling series arrives only when it is the one asked for
+        assert runner.invoke(cli, ["run", "--metric", "visits"]).exit_code == 0
+        by_metric: dict[str, int] = {}
+        for row in warehouse._rows["_ab_results"]:
+            by_metric[row["metric"]] = by_metric.get(row["metric"], 0) + 1
+        assert by_metric == {"arpu": 5, "visits": 5}
+
+    def test_matching_some_experiments_skips_the_others(self, project, warehouse):
+        self._add_second_experiment()
+        result = runner.invoke(cli, ["run", "--metric", "arpu"])
+        assert result.exit_code == 0, result.output
+        assert "second_test: no 'arpu' comparison — skipped by --metric" in result.output
+        metrics = {row["metric"] for row in warehouse._rows["_ab_results"]}
+        assert metrics == {"arpu"}
+        assert {row["experiment"] for row in warehouse._rows["_ab_results"]} == {"signup_test"}
+
+    def test_matching_nowhere_is_a_loud_error(self, project, warehouse):
+        self._add_second_experiment()
+        result = runner.invoke(cli, ["run", "--metric", "nope"])
+        assert result.exit_code != 0
+        assert "--metric 'nope' is not a comparison of any selected experiment" in result.output
+        assert "arpu" in result.output and "visits" in result.output  # what IS declared
+        assert warehouse._rows.get("_ab_results", []) == []
+
+    def test_validate_only_rejects_the_filter(self, project):
+        result = runner.invoke(cli, ["run", "--steps", "validate", "--metric", "arpu"])
+        assert result.exit_code != 0
+        assert "--metric" in result.output
+
+    def test_the_notice_names_what_was_withheld(self, project, warehouse):
+        self._make_signup_test_two_comparison()
+        result = runner.invoke(cli, ["run", "--metric", "arpu"])
+        assert result.exit_code == 0, result.output
+        assert "--metric arpu: not recomputed this run: visits" in result.output
+        assert "their results and day state stay exactly as they are" in result.output
+
+    def test_a_single_comparison_experiment_withholds_nothing_and_says_nothing(
+        self, project, warehouse
+    ):
+        """The generic wording described comparisons that do not exist."""
+        result = runner.invoke(cli, ["run", "--metric", "arpu"])
+        assert result.exit_code == 0, result.output
+        assert "not recomputed this run" not in result.output
+
+    def test_copy_mode_resync_says_the_cohort_is_not_per_metric(self, project, warehouse):
+        (Path("metrics") / "visits.yml").write_text(SECOND_METRIC_YML)
+        (Path("experiments") / "signup_test.yml").write_text(COPY_MODE_EXPERIMENT_YML)
+        result = runner.invoke(cli, ["run", "--metric", "arpu", "--resync-cohort"])
+        assert result.exit_code == 0, result.output
+        assert "--resync-cohort rebuilds the whole cohort" in result.output
+        assert "day state IS re-materialized for every eligible metric" in result.output
+        # ...and the clause this run would contradict is not printed
+        assert "day state stay exactly as they are" not in result.output
+        # one homogeneous selection ⇒ no experiment names needed on the line
+        assert "signup_test: --resync-cohort rebuilds" not in result.output
+
+    def test_direct_mode_resync_claims_no_state_rebuild(self, project, warehouse):
+        """The default mode: `--resync-cohort` is a no-op, so day state narrows
+        with everything else and the copy-mode disclosure must NOT be printed."""
+        self._make_signup_test_two_comparison()
+        result = runner.invoke(cli, ["run", "--metric", "arpu", "--resync-cohort"])
+        assert result.exit_code == 0, result.output
+        assert "--resync-cohort rebuilds the whole cohort" not in result.output
+        assert "their results and day state stay exactly as they are" in result.output
+        assert "no effect in direct mode" in result.output  # the driver's own line
+
+    def test_scoped_full_refresh_discloses_the_withheld_truncation(self, project, warehouse):
+        self._make_signup_test_two_comparison()
+        assert runner.invoke(cli, ["run"]).exit_code == 0
+        result = runner.invoke(
+            cli,
+            [
+                "run",
+                "--metric",
+                "arpu",
+                "--full-refresh",
+                "--from",
+                "2024-07-02",
+                "--to",
+                "2024-07-04",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert "truncated from the first day the refresh window touches" in result.output
+        assert "not re-rendered" in result.output
+
+    def test_a_mixed_mode_selection_discloses_each_experiment_separately(self, project, warehouse):
+        """Round-2 finding: one copy-mode experiment in the selection must not
+        make the run claim a whole-cohort day-state rebuild for the direct-mode
+        ones — whose withheld series are TRUNCATED by the same command."""
+        (Path("metrics") / "visits.yml").write_text(SECOND_METRIC_YML)
+        (Path("experiments") / "signup_test.yml").write_text(COPY_MODE_EXPERIMENT_YML)
+        (Path("experiments") / "direct_test.yml").write_text(DIRECT_TWIN_EXPERIMENT_YML)
+        assert runner.invoke(cli, ["run"]).exit_code == 0
+
+        result = runner.invoke(
+            cli,
+            [
+                "run",
+                "--metric",
+                "arpu",
+                "--resync-cohort",
+                "--full-refresh",
+                "--from",
+                "2024-07-02",
+                "--to",
+                "2024-07-04",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        # both outcomes are stated, each naming the experiments it applies to
+        assert "signup_test: --resync-cohort rebuilds the whole cohort" in result.output
+        assert "direct_test: results stay as they are" in result.output
+        assert "truncated from the first day the refresh window touches" in result.output
+
+    def test_without_the_state_step_no_day_state_claim_is_made(self, project, warehouse):
+        """The day-state sentences describe `materialize_state`, which a run that
+        omits the step never calls."""
+        self._make_signup_test_two_comparison()
+        assert runner.invoke(cli, ["run"]).exit_code == 0
+        result = runner.invoke(
+            cli,
+            [
+                "run",
+                "--metric",
+                "arpu",
+                "--steps",
+                "plan,load,compute",
+                "--full-refresh",
+                "--from",
+                "2024-07-02",
+                "--to",
+                "2024-07-04",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert "the 'state' step is not selected" in result.output
+        assert "truncated" not in result.output
+
+    def test_the_option_is_documented_in_help(self):
+        result = runner.invoke(cli, ["run", "--help"])
+        assert result.exit_code == 0
+        assert "--metric" in result.output

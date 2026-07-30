@@ -769,6 +769,18 @@ class ExperimentConfig(BaseModel):
     def main_metrics(self) -> list[str]:
         return [c.metric for c in self.comparisons if c.is_main_metric]
 
+    def declares_metric(self, metric: str) -> bool:
+        """Does a comparison of this experiment bind ``metric``? (m11 DASH-4a)
+
+        THE predicate behind ``abk run --metric``'s selection narrowing — and
+        the one DASH-4's ``POST /api/run`` validates its optional ``metric``
+        body field with, so the CLI and the dashboard cannot drift on what a
+        valid per-metric target is. A metric binds at most once per experiment
+        (:meth:`validate_comparisons`), so a true answer means exactly one
+        comparison.
+        """
+        return any(comparison.metric == metric for comparison in self.comparisons)
+
     def get_comparison(self, metric: str) -> ComparisonConfig:
         for comparison in self.comparisons:
             if comparison.metric == metric:

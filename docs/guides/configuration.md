@@ -263,8 +263,8 @@ selector forms:
 | `tag:actual` | every experiment whose YAML `tags:` list contains `actual` |
 | `*` | everything (also the default when no `--select` is given) |
 
-`--select` resolves the **experiment** namespace only. Commands that operate on a
-single comparison (`explore`, `validate`, `plan`) narrow to one metric with a
+`--select` resolves the **experiment** namespace only. Commands that narrow to one
+comparison (`run`, `explore`, `validate`, `plan`, `verify-incremental`) take a
 separate `--metric` flag. A selector that matches nothing produces a warning that
 reminds you of this split.
 
