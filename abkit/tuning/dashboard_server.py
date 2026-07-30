@@ -1,11 +1,12 @@
-"""The dashboard localhost server (``docs/specs/m11-implementation-plan.md`` DASH-3).
+"""The dashboard localhost server (``docs/specs/m11-implementation-plan.md``
+DASH-3 + DASH-4).
 
 The project-level cockpit's transport: a pure-stdlib ``ThreadingHTTPServer``
 bound to ``127.0.0.1`` with a one-shot token, serving the metadata-only boot
 page and, per row, one lazily-fetched statistics reply built by
 ``tuning/overview.py`` (DASH-2). Every job route — Run / Explore / Unlock /
-Clean — lands in DASH-4 on top of the :class:`~abkit.tuning.jobs.JobManager`
-this server already holds (DASH-1).
+Clean (DASH-4) — sits on top of the :class:`~abkit.tuning.jobs.JobManager` this
+server holds (DASH-1).
 
 **The dashboard is a launcher, never a worker** (§0.5(d)). Nothing here
 acquires the pipeline lock, runs a pipeline step, or computes a statistic: the
@@ -36,12 +37,26 @@ deltas from dtk" phrasing was measured against the wrong donor file):
    warns about). ``server.jobs.shutdown()`` in :func:`serve_dashboard`'s
    ``finally`` is the *job registry*'s teardown, not the HTTP server's.
 
-Routes in this WP are read-only: ``GET /`` (the baked page), ``GET
-/api/stats/<experiment>``, ``GET /api/jobs``, ``GET /api/job/<id>?offset=``.
-``do_POST`` exists with the same authorization discipline and answers 404 —
-DASH-4 fills in its routing table, and its transport (bounded body read,
-413/400) is already here. ``GET /experiment/<name>`` (the full report render
-behind the Open button) belongs to DASH-5, which owns the button.
+Read routes (DASH-3): ``GET /`` (the baked page), ``GET
+/api/stats/<experiment>``, ``GET /api/jobs``, ``GET /api/job/<id>?offset=``,
+plus ``GET /api/experiment-source/<name>`` (DASH-4 — the experiment's raw YAML
+for the read-only "open in your editor" affordance). Job routes (DASH-4): ``POST
+/api/run`` (optionally one ``metric``), ``POST /api/unlock``, ``POST
+/api/clean``, ``POST /api/explore`` and ``POST /api/job/<id>/stop``. Every one
+of them spawns — or stops — a real ``abk`` subprocess; none of them computes,
+reads the warehouse, or writes a file. Run / Unlock / Clean answer as soon as the
+child exists (a selector resolve, then ``Popen``), but **``/api/explore`` is a
+long request by design**: it holds the response until the spawned cockpit prints
+its URL, up to ``explore_url_timeout`` (90 s), so a client must give that one
+route a long fetch timeout and a spinner. ``GET /experiment/<name>`` (the full
+report render behind the Open button) belongs to DASH-5, which owns the button.
+
+Two things a job route deliberately does NOT do. It never mutates a config:
+"edit" is a read of the YAML text (§0.5(g) — validate-before-write plus the
+``.history`` archive, the donor's ``metric_files.py`` shape, is phase 2), so
+there is no save endpoint in this milestone. And it never takes the pipeline
+lock, not even briefly: the one process that does is the spawned child, in its
+own OS process, exactly as if the command had been typed.
 
 There is deliberately **no caching layer**: every ``/api/stats`` call re-reads
 the DB, matching the donor. DASH-5's fixed-concurrency-3 client pool is what
@@ -54,14 +69,18 @@ not a fix, in this WP.
 Two snapshots taken at boot and never refreshed, both matching the donor: the
 served **selection** (its configs are read once, so an experiment added or a
 YAML edited while the cockpit runs needs a restart to be reflected — including
-after DASH-4's read-only "open in your editor" affordance) and the baked page.
-A "reload configs" affordance is a named follow-up, not a phase-1 gap.
+after the read-only "open in your editor" affordance, and including the
+``metric`` gate on ``POST /api/run``) and the baked page. The YAML *text* the
+source route returns is read live off disk, so it can legitimately disagree with
+the parsed config every other route uses. A "reload configs" affordance is a
+named follow-up, not a phase-1 gap.
 """
 
 from __future__ import annotations
 
 import contextlib
 import json
+import os
 import re
 import secrets
 import sys
@@ -75,13 +94,15 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from abkit import __version__
 from abkit.tuning.html import render_dashboard_html
-from abkit.tuning.jobs import JobManager
+from abkit.tuning.jobs import JobManager, JobManagerClosed
 from abkit.tuning.overview import (
     ALL_WINDOW_PRESETS,
     WINDOW_PRESETS,
     UnknownWindowPreset,
     build_experiment_row_safe,
     build_overview_boot_entries,
+    experiments_base_dir,
+    resolve_experiment_location,
     validate_window_preset,
 )
 from abkit.tuning.payload import _ms
@@ -102,6 +123,35 @@ _MAX_DRAIN = 32_000_000  # how much of an oversized body to drain before the 413
 
 _STATS_PREFIX = "/api/stats/"
 _JOB_PREFIX = "/api/job/"
+_SOURCE_PREFIX = "/api/experiment-source/"
+_STOP_SUFFIX = "/stop"
+
+#: Cap on a posted string field (an experiment or metric name). Both are looked
+#: up rather than parsed, so the cap is not about parsing: an unbounded value
+#: would be echoed back inside the "unknown …" 400, turning a 5 MB body into a
+#: 5 MB error.
+_MAX_FIELD = 200
+
+#: Cap on the YAML text ``GET /api/experiment-source`` returns. A config is a
+#: few kB; the bound is what keeps a pathological file out of a JSON reply
+#: (``truncated`` says so on the wire, the house discipline of ``_MAX_LINES`` /
+#: ``MAX_STAT_POINTS``).
+_MAX_SOURCE_BYTES = 512_000
+
+#: How long ``POST /api/explore`` waits for the spawned cockpit to print its
+#: URL. The donor's 90 s, and its risk too: a legitimately slow session load
+#: (large project, cold DB) surfaces as "did not start in time" with the child's
+#: own output attached. Per-server so a test can shrink it; a CLI override is a
+#: named follow-up, not this WP.
+_EXPLORE_URL_TIMEOUT = 90.0
+
+#: How long a caller that did NOT spawn the cockpit waits for its URL. Every
+#: waiter holds a request thread, and repeat clicks all land on the one deduped
+#: job — so only the caller that started it pays the full timeout, and the rest
+#: are told "still starting" in seconds instead of piling up 90 s deep. (A
+#: bounded admission semaphore, the shape ``tuning/server.py`` uses for its own
+#: long route since m10 WP4, is the follow-up if that ever proves too generous.)
+_EXPLORE_DEDUP_WAIT = 10.0
 
 #: A poll offset: a line index, so 15 digits is already absurd — and bounding
 #: the length keeps ``int()`` from raising on a 5000-digit query value (CPython
@@ -118,6 +168,320 @@ def window_preset_order() -> list[str]:
     """
     fixed = sorted(WINDOW_PRESETS, key=lambda preset: WINDOW_PRESETS[preset])
     return [*fixed, *sorted(ALL_WINDOW_PRESETS - set(fixed))]
+
+
+# ── the spawned CLI (DASH-4) ────────────────────────────────────────────────
+#
+# Every mutation the cockpit offers is one of these argv lists in a subprocess.
+# They are module-level so a test can point a route at a stub without a fake
+# server (the donor's reason too, `detectkit/ui/server.py:142-219`).
+
+#: Three things the spawn form has to get right, and why it is neither a bare
+#: ``abk`` nor a plain ``-m``:
+#:
+#: 1. **This interpreter's abkit, not a ``PATH`` lookup.** A bare ``abk`` is a
+#:    different install whenever the dashboard runs from a venv that was never
+#:    activated (``python -m abkit …``, an editor's interpreter, a Prefect
+#:    worker), so the cockpit would launch a DIFFERENT abkit version than the one
+#:    serving the page. Pinning ``sys.executable`` pins the install with it.
+#: 2. **The project directory must not be importable.** Both ``-m`` and ``-c``
+#:    put the child's CWD on ``sys.path[0]`` — and a job spawns with
+#:    ``cwd=<project root>``, the operator's directory, not ours. A file there
+#:    named after anything abkit imports (``click.py``, ``yaml.py``,
+#:    ``statistics.py``, …) would break every button with a traceback nobody can
+#:    connect to the click, and an ``abkit/`` directory there would run a
+#:    different abkit than the one (1) just pinned. Typing ``abk run`` in a
+#:    terminal does no such thing — a console script puts its own bin directory
+#:    on the path, never the CWD — so the bootstrap drops the CWD before
+#:    importing anything. That is what makes "exactly as if typed" true.
+#: 3. **The child should name itself ``abk``.** ``sys.argv[0]`` is what click
+#:    prints in a usage error: under ``-m`` it is ``main.py``, under ``-c`` it is
+#:    ``-c``. Neither is a command an operator could retype.
+#:
+#: What this pins is the interpreter, hence that interpreter's INSTALLED abkit:
+#: with the CWD dropped, a bare source checkout that was never ``pip install
+#: -e .``'d cannot import abkit at all, and every job fails with a
+#: ``ModuleNotFoundError`` in its own output. Warning about that once at startup
+#: belongs to the command that starts the cockpit (DASH-6), not to a route.
+_CLI_BOOTSTRAP = (
+    "import sys, os; "
+    "sys.path[:] = [p for p in sys.path if p not in ('', os.getcwd())]; "
+    "sys.argv[0] = 'abk'; "
+    "from abkit.cli.main import cli; cli()"
+)
+_CLI_PREFIX = (sys.executable, "-c", _CLI_BOOTSTRAP)
+
+#: The URL line ``serve_explore`` echoes (``"  Explore: http://127.0.0.1:…"``).
+#: The scheme is part of the pattern on purpose: ``abk explore`` ALSO prints a
+#: ``"Explore: <experiment name>"`` header first (``cli/commands/explore.py``),
+#: so the donor's bare ``"Tuner:" in line`` predicate ported literally would
+#: match the header and hand the client an experiment name as a URL.
+_EXPLORE_URL_RE = re.compile(r"Explore:\s*(https?://\S+)")
+
+
+def _subprocess_env() -> dict[str, str]:
+    """The spawned CLI's environment: the dashboard's own, plus unbuffered I/O.
+
+    Without ``PYTHONUNBUFFERED`` a child whose stdout is a pipe block-buffers it,
+    so the job drawer would sit empty for minutes and then print everything at
+    once — the pump can only stream what the child flushes.
+    """
+    env = dict(os.environ)
+    env["PYTHONUNBUFFERED"] = "1"
+    return env
+
+
+def _run_argv(*, select: str, metric: str | None, profile: str | None) -> list[str]:
+    """``abk run --select … [--metric …] [--profile …]`` (DASH-4a's flag)."""
+    argv = [*_CLI_PREFIX, "run", "--select", select]
+    if metric:
+        argv += ["--metric", metric]
+    if profile:
+        argv += ["--profile", profile]
+    return argv
+
+
+def _unlock_argv(*, select: str, profile: str | None) -> list[str]:
+    """``abk unlock --select … [--profile …]``."""
+    argv = [*_CLI_PREFIX, "unlock", "--select", select]
+    if profile:
+        argv += ["--profile", profile]
+    return argv
+
+
+def _clean_argv(*, select: str, profile: str | None) -> list[str]:
+    """``abk clean --select … --execute [--profile …]``.
+
+    ``--execute`` is what makes the button do anything (``abk clean`` is a dry
+    run by default), so the route is the destructive form and DASH-5 owns the
+    confirmation — which is also why the flag rides in the job LABEL rather than
+    only in the argv: the drawer must show what actually ran. ``--orphaned-
+    experiments`` is deliberately not offered: purging an experiment's whole
+    history is not a one-click action, and it is the only ``clean`` path that
+    prompts.
+    """
+    argv = [*_CLI_PREFIX, "clean", "--select", select, "--execute"]
+    if profile:
+        argv += ["--profile", profile]
+    return argv
+
+
+def _explore_argv(*, select: str, profile: str | None) -> list[str]:
+    """``abk explore --select … --no-open [--profile …]``.
+
+    ``--no-open`` because the DASHBOARD opens the tab, from the URL the child
+    prints: without it the operator gets two.
+    """
+    argv = [*_CLI_PREFIX, "explore", "--select", select, "--no-open"]
+    if profile:
+        argv += ["--profile", profile]
+    return argv
+
+
+def _label_for(argv: Sequence[str]) -> str:
+    """The job label: the command an operator would have typed.
+
+    Derived from the argv that actually ran rather than formatted a second time,
+    so the drawer cannot show a command that differs from the process — which
+    matters most for the flags a caller does not choose (``--execute``,
+    ``--no-open``, the profile).
+    """
+    return " ".join(["abk", *argv[len(_CLI_PREFIX) :]])
+
+
+def _escape_glob(pattern: str) -> str:
+    """Make ``*``, ``?`` and ``[`` in a real file name match themselves.
+
+    ``pathlib`` has no escape API, but a one-character class is one:
+    ``[`` → ``[[]``, ``*`` → ``[*]``, ``?`` → ``[?]``. A bare ``]`` needs
+    nothing — outside a class it is already literal. ``[`` is escaped FIRST, or
+    the brackets introduced for ``*``/``?`` would be escaped in turn.
+    """
+    return pattern.replace("[", "[[]").replace("*", "[*]").replace("?", "[?]")
+
+
+def _selector_for(experiment_path: Path, experiment: ExperimentConfig, project_root: Path) -> str:
+    """The ``--select`` value naming EXACTLY the clicked experiment.
+
+    The YAML path relative to the project root, not the experiment name — and
+    that is not cosmetic. ``config.discovery.select_configs`` resolves a bare
+    name by trying ``<experiments>/<name>.yml`` FIRST and only then searching the
+    ``name:`` fields, so in a project where one file is named after ANOTHER
+    experiment (``experiments/alpha.yml`` declaring ``name: beta``, with ``alpha``
+    declared in some other file) a name selector resolves to the wrong
+    experiment. The dashboard would then run, unlock, clean or explore something
+    other than the row that was clicked, with nothing anywhere saying so. A path
+    contains a ``/``, which takes ``select_configs``' glob branch and resolves to
+    exactly one file, and it also satisfies ``abk explore``'s "must match exactly
+    ONE" by construction.
+
+    A glob metacharacter in the file name is ESCAPED rather than made a reason to
+    fall back (see :func:`_escape_glob`): the fallback is a name, and a name is
+    the hazard this function exists to avoid — ``checkout[v2].yml`` is a legal,
+    unremarkable file name, and ``experiments/star*.yml`` left raw would match a
+    SIBLING as well. Only two cases genuinely have no path form: a file outside
+    the project root, and one with no directory part (neither is something
+    discovery produces). Those do fall back to the name, and a project whose
+    ``paths.experiments`` is not the default ``experiments/`` cannot be selected
+    by either form (``select_experiments`` hard-codes the directory) — which is
+    why the routes never use this function directly: :func:`_verified_selector`
+    re-resolves whatever comes out of it and refuses to spawn unless it lands on
+    the clicked experiment.
+    """
+    try:
+        relative = experiment_path.relative_to(project_root).as_posix()
+    except ValueError:
+        return experiment.name
+    if "/" not in relative:
+        return experiment.name
+    return _escape_glob(relative)
+
+
+def _verified_selector(srv: _DashboardServer, entry: tuple[Path, ExperimentConfig]) -> str:
+    """The ``--select`` value for *entry*, proven to still name that experiment.
+
+    :func:`_selector_for` derives it; this re-resolves it through
+    ``select_experiments`` — **the child's own resolver** — and refuses to spawn
+    unless it lands on exactly the clicked experiment. Two failures need that,
+    and neither is loud on its own:
+
+    * **A boot snapshot outliving the file.** The served selection is read once
+      (module docstring), so after a YAML is renamed, moved or deleted the row is
+      still there and the selector still points at the old path — and
+      ``abk run``/``unlock``/``clean`` answer an unmatched selector with a
+      warning line, "Nothing selected." and **exit 0**. The job would land in the
+      drawer green, having computed nothing. A 400 naming the drift is the honest
+      answer, and it is the reason the plan's step-4 second resolution exists.
+    * **The name fallback re-opening the shadow.** Where a path cannot be a
+      selector (a glob metacharacter in the file name, see
+      :func:`_selector_for`), the fallback is a name — which resolves file-first
+      and can therefore land on a DIFFERENT experiment. Refusing beats running
+      the wrong one: for ``clean --execute`` or an explore Apply, "the wrong
+      experiment" means the wrong rows deleted or the wrong YAML rewritten.
+
+    The residual window (the file moves between this check and ``Popen``) is
+    microseconds, and its outcome is the old exit-0 "Nothing selected." — the
+    check narrows the hazard rather than pretending to close it.
+    """
+    experiment_path, experiment = entry
+    selector = _selector_for(experiment_path, experiment, srv.project_root)
+    # Imported here, not at module scope: this is the CLI's selection seam, and
+    # the module otherwise stays clear of the config package (the `_json_default`
+    # lazy-import precedent).
+    from abkit.config import select_experiments
+
+    resolved, _warnings = select_experiments(srv.project_root, (selector,))
+    names = [config.name for _path, config in resolved]
+    if names != [experiment.name]:
+        landed = ", ".join(names) if names else "nothing"
+        raise ValueError(
+            f"'{selector}' no longer resolves to {experiment.name} (it now matches "
+            f"{landed}) — the dashboard reads its selection once at boot, so "
+            "restart it after moving, renaming or removing an experiment"
+        )
+    return selector
+
+
+def _explore_url(line: str) -> str | None:
+    """The cockpit URL in *line*, or ``None`` — the predicate AND the extractor.
+
+    One function for both so the wait and the parse cannot drift onto different
+    patterns (the donor kept a loose ``in`` predicate beside a strict regex,
+    which is what let its header line qualify).
+    """
+    match = _EXPLORE_URL_RE.search(line)
+    return match.group(1) if match else None
+
+
+# ── posted-body validation (every failure is a ValueError → 400) ─────────────
+
+
+def _load_json(body: bytes) -> dict[str, Any]:
+    """The posted JSON object.
+
+    Raises ``ValueError`` for anything else — including a bodyless POST, which
+    read as ``{}`` would land on ``'select' is required`` and send the client
+    looking for a field it did send (in a body that never arrived, or arrived
+    empty because a fetch dropped its payload). Same status either way; the
+    guard exists so the message names the actual fault. ``UnicodeDecodeError``
+    and ``JSONDecodeError`` are both ``ValueError`` subclasses, so ``do_POST``'s
+    handler answers 400 for all three.
+    """
+    if not body.strip():
+        raise ValueError("a JSON body is required")
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except RecursionError as exc:
+        # 30 kB of `[[[[…` exhausts the decoder's stack, and RecursionError is a
+        # RuntimeError — so without this it lands in do_POST's generic handler
+        # and a malformed BODY is reported as a 500 naming an internal class.
+        raise ValueError("the JSON body is nested too deeply") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"the body must be a JSON object, got {type(payload).__name__}")
+    return payload
+
+
+def _reject_unknown_fields(payload: dict[str, Any], allowed: set[str]) -> None:
+    """Refuse a body carrying a field this route does not act on.
+
+    Ignoring it (the donor's shape) is the silent half of a feature that does not
+    exist: a client posting ``{"full_refresh": true}`` to ``/api/run`` would get
+    a plain run and no hint that the flag went nowhere. Adding a knob stays a
+    deliberate act on both sides.
+
+    A ``null`` value is exempt, because it asks for nothing: ``metric`` is
+    allowed on ``/api/run`` only, and a client whose request helper always emits
+    ``{select, metric}`` spells "the whole experiment" as ``metric: null`` —
+    exactly the convention :func:`_string_field` blesses. Refusing that on the
+    other three routes would fail Unlock/Clean/Explore for a client that followed
+    the documented rule; a non-null unknown field is still refused.
+    """
+    named = {key for key, value in payload.items() if value is not None}
+    unknown = sorted(str(key)[:_MAX_FIELD] for key in named - allowed)
+    if unknown:
+        raise ValueError(
+            f"unknown field(s) {', '.join(repr(key) for key in unknown[:5])} — "
+            f"this route accepts {', '.join(sorted(allowed))}"
+        )
+
+
+def _string_field(payload: dict[str, Any], field: str, *, required: bool = True) -> str | None:
+    """A posted string field, validated; ``None`` only for an absent optional one.
+
+    A JSON ``null`` reads as absent (clients spell "no metric" that way), but an
+    EMPTY string does not: a blank is a client bug, and answering it with the
+    whole-experiment run it does not mean is the ``keep_blank_values`` lesson
+    from the GET side.
+    """
+    value = payload.get(field)
+    if value is None:
+        if required:
+            raise ValueError(f"'{field}' is required")
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"'{field}' must be a non-empty string")
+    if len(value) > _MAX_FIELD:
+        raise ValueError(f"'{field}' is longer than {_MAX_FIELD} characters")
+    return value
+
+
+def _resolve_target(
+    srv: _DashboardServer, payload: dict[str, Any]
+) -> tuple[Path, ExperimentConfig]:
+    """The served ``(path, config)`` a job route's ``select`` names.
+
+    The boot index is the authority — a job route can only act on an experiment
+    the page is showing. Unknown is a 400, not the 404 an unknown ``GET
+    /api/stats/<name>`` gets: the resource here is the route, which exists, and
+    the fault is in the body (DASH-3's status map reads 404 for a name in the
+    PATH, and the donor answers 400 for a name in a body).
+    """
+    name = _string_field(payload, "select")
+    assert name is not None  # required=True never returns None
+    entry = srv.experiment_entry(name)
+    if entry is None:
+        raise ValueError(f"unknown experiment: {name} is not in this dashboard's selection")
+    return entry
 
 
 class _DashboardServer(ThreadingHTTPServer):
@@ -151,6 +515,8 @@ class _DashboardServer(ThreadingHTTPServer):
         self.initial_window: str = DEFAULT_WINDOW_PRESET
         self.profile: str | None = None
         self.echo: Callable[[str], None] = print
+        # How long POST /api/explore waits for the spawned cockpit's URL line.
+        self.explore_url_timeout: float = _EXPLORE_URL_TIMEOUT
         # Every spawned `abk` subprocess (DASH-4's routes; DASH-1's registry).
         self.jobs: JobManager = JobManager()
         # The one InternalTablesManager holds a single connection — serialize
@@ -252,16 +618,22 @@ class _Handler(BaseHTTPRequestHandler):
             self._reply_error(500, f"{type(exc).__name__}: {exc}")
 
     def do_POST(self) -> None:
-        """Authorization + transport for DASH-4's job routes; no routes yet.
+        """Authorization + transport for the job routes.
 
-        The token check comes first here too, so DASH-4 inherits it by
+        The token check comes first here too, so a new route inherits it by
         extending ``_route_post`` rather than by remembering to gate.
 
         Here ``ValueError`` DOES map to 400, unlike ``do_GET``: a POST body is
         arbitrary client-supplied JSON, ``json.JSONDecodeError`` *is* a
         ``ValueError``, and "malformed request" is what the explore server
         answers 400 for. The asymmetry is the difference between an argument the
-        route parses and one it looks up.
+        route parses and one it looks up — and it is why every body validator in
+        this module signals by raising ``ValueError``.
+
+        ``JobManagerClosed`` is the one status the routes cannot express as a
+        reply: it means the cockpit is tearing down (Ctrl-C), so the spawn was
+        refused and its child already killed. 503, not the busy 400 — "try
+        later" would be a lie about a server that is going away.
         """
         srv = self._srv()
         if not self._authorized(srv):
@@ -272,8 +644,20 @@ class _Handler(BaseHTTPRequestHandler):
             return  # already replied 400/413
         try:
             self._route_post(srv, body)
+        except JobManagerClosed as exc:
+            self._reply_error(503, f"{exc}")
         except ValueError as exc:
             self._reply_error(400, f"{exc}")
+        except OSError as exc:
+            # A spawn that could not even start: the project root moved out from
+            # under the running cockpit, or the OS refused a fork. Server-side,
+            # so 500 — but say WHERE it tried to run, because a bare errno on a
+            # POST reads like a routing bug.
+            self._reply_error(
+                500,
+                f"could not start a subprocess in {srv.project_root}: "
+                f"{type(exc).__name__}: {exc}",
+            )
         except Exception as exc:  # noqa: BLE001 — never kill the serving thread
             self._reply_error(500, f"{type(exc).__name__}: {exc}")
 
@@ -378,6 +762,9 @@ class _Handler(BaseHTTPRequestHandler):
                 {"jobs": srv.jobs.list_snapshots(), "pipeline_active": srv.jobs.pipeline_active()}
             )
             return
+        if path.startswith(_SOURCE_PREFIX):
+            self._handle_experiment_source(srv, unquote(path[len(_SOURCE_PREFIX) :]))
+            return
         if path.startswith(_JOB_PREFIX):
             job_id = unquote(path[len(_JOB_PREFIX) :]).strip("/")
             self._handle_job(srv, job_id, query.get("offset", ["0"])[0])
@@ -385,8 +772,29 @@ class _Handler(BaseHTTPRequestHandler):
         self._reply_error(404, f"not found: {path}")
 
     def _route_post(self, srv: _DashboardServer, body: bytes) -> None:
-        """DASH-4's job routes hang here; until then every POST is a 404."""
-        self._reply_error(404, f"not found: {urlparse(self.path).path}")
+        """The job routes (DASH-4): spawn an ``abk`` subprocess, or stop one.
+
+        Unrouted paths keep DASH-3's honest 404 — including ``/api/job/<id>``
+        without the ``/stop`` suffix, which is a GET route.
+        """
+        path = urlparse(self.path).path
+        if path == "/api/run":
+            self._handle_run(srv, body)
+            return
+        if path == "/api/unlock":
+            self._handle_pipeline_job(srv, body, "unlock", _unlock_argv)
+            return
+        if path == "/api/clean":
+            self._handle_pipeline_job(srv, body, "clean", _clean_argv)
+            return
+        if path == "/api/explore":
+            self._handle_explore(srv, body)
+            return
+        if path.startswith(_JOB_PREFIX) and path.endswith(_STOP_SUFFIX):
+            job_id = unquote(path[len(_JOB_PREFIX) : -len(_STOP_SUFFIX)]).strip("/")
+            self._handle_stop(srv, job_id)
+            return
+        self._reply_error(404, f"not found: {path}")
 
     # -- GET handlers ----------------------------------------------------------
 
@@ -433,6 +841,215 @@ class _Handler(BaseHTTPRequestHandler):
             self._reply_error(404, f"unknown job: {job_id}")
             return
         self._reply_json(srv.jobs.snapshot(job, int(raw_offset)))
+
+    def _handle_experiment_source(self, srv: _DashboardServer, name: str) -> None:
+        """One experiment's raw YAML — the read-only "open in your editor" route.
+
+        No DB, no config parse: the text on disk as the operator would see it,
+        plus the root-relative path the row already carries as ``file`` (one
+        vocabulary — the client can show either without a second derivation).
+
+        The route addresses an experiment by NAME and takes the path from the
+        boot index, so no client-supplied string ever reaches the filesystem: a
+        ``?path=`` parameter would be a traversal seam on a server whose whole
+        job is to hand out file contents.
+
+        A file that disappeared since boot is a 404 (the boot snapshot is not
+        refreshed — module docstring), while a permission or I/O failure escapes
+        to ``do_GET``'s 500: "not found" would be a wrong diagnosis, and this
+        route has nothing to degrade to.
+        """
+        entry = srv.experiment_entry(name)
+        if entry is None:
+            self._reply_error(404, f"unknown experiment: {name}")
+            return
+        experiment_path, experiment = entry
+        _dir, relative = resolve_experiment_location(
+            experiment_path, srv.project_root, experiments_base_dir(srv.project_root, srv.project)
+        )
+        try:
+            with experiment_path.open("rb") as handle:
+                # One byte past the cap distinguishes "exactly at the cap" from
+                # "truncated" without a stat() race.
+                raw = handle.read(_MAX_SOURCE_BYTES + 1)
+        except FileNotFoundError:
+            self._reply_error(
+                404,
+                f"{relative} is gone — the dashboard reads its selection once at "
+                "boot, so restart it after moving or deleting an experiment",
+            )
+            return
+        self._reply_json(
+            {
+                "name": experiment.name,
+                "path": relative,
+                # errors="replace" also covers a cut mid-codepoint: the slice is
+                # by bytes, and a mojibake tail beats a 500 on a legal file.
+                "yaml_text": raw[:_MAX_SOURCE_BYTES].decode("utf-8", errors="replace"),
+                "truncated": len(raw) > _MAX_SOURCE_BYTES,
+            }
+        )
+
+    # -- POST handlers: spawn `abk`, never do the work ------------------------
+
+    def _handle_run(self, srv: _DashboardServer, body: bytes) -> None:
+        """``POST /api/run`` — the whole experiment, or ONE of its metrics.
+
+        The optional ``metric`` is validated with
+        :meth:`~abkit.config.experiment_config.ExperimentConfig.declares_metric`,
+        the predicate ``abk run --metric``'s own selection narrowing uses
+        (DASH-4a as-built (1)), so the route's 400 and the CLI's idea of a valid
+        target cannot drift. There is no per-comparison or per-arm-pair
+        addressing to expose: a metric binds at most once per experiment.
+        """
+        payload = _load_json(body)
+        _reject_unknown_fields(payload, {"select", "metric"})
+        experiment_path, experiment = _resolve_target(srv, payload)
+        metric = _string_field(payload, "metric", required=False)
+        if metric is not None and not experiment.declares_metric(metric):
+            declared = ", ".join(comparison.metric for comparison in experiment.comparisons)
+            raise ValueError(
+                f"'{metric}' is not a configured comparison of "
+                f"'{experiment.name}' (have: {declared})"
+            )
+        argv = _run_argv(
+            select=_verified_selector(srv, (experiment_path, experiment)),
+            metric=metric,
+            profile=srv.profile,
+        )
+        self._spawn_pipeline(srv, "run", argv, experiment.name)
+
+    def _handle_pipeline_job(
+        self,
+        srv: _DashboardServer,
+        body: bytes,
+        kind: str,
+        build_argv: Callable[..., list[str]],
+    ) -> None:
+        """``POST /api/unlock`` and ``POST /api/clean`` — same shape as run."""
+        payload = _load_json(body)
+        _reject_unknown_fields(payload, {"select"})
+        experiment_path, experiment = _resolve_target(srv, payload)
+        argv = build_argv(
+            select=_verified_selector(srv, (experiment_path, experiment)),
+            profile=srv.profile,
+        )
+        self._spawn_pipeline(srv, kind, argv, experiment.name)
+
+    def _spawn_pipeline(
+        self, srv: _DashboardServer, kind: str, argv: list[str], experiment: str
+    ) -> None:
+        """Spawn a one-at-a-time job, or answer the donor's busy 400.
+
+        ``spawn_pipeline`` decides that atomically, so the advisory
+        ``pipeline_active`` chip a client polls can be stale without letting two
+        runs start. ``JobManagerClosed`` deliberately passes through to
+        ``do_POST``'s 503: ``None`` means busy, which a teardown is not.
+        """
+        job = srv.jobs.spawn_pipeline(
+            kind,
+            _label_for(argv),
+            argv,
+            cwd=srv.project_root,
+            env=_subprocess_env(),
+            experiment=experiment,
+        )
+        if job is None:
+            self._reply_error(400, "a pipeline job is already running")
+            return
+        self._reply_json({"job_id": job.id})
+
+    def _handle_explore(self, srv: _DashboardServer, body: bytes) -> None:
+        """``POST /api/explore`` — spawn a cockpit and hand back its URL.
+
+        Not a pipeline job: two cockpits on DIFFERENT experiments are fine (an
+        explore takes no pipeline lock), so this route is deduped per experiment
+        instead of gated one-at-a-time — atomically, through
+        :meth:`~abkit.tuning.jobs.JobManager.spawn_deduped`, because a
+        double-clicked button would otherwise start two sessions on one
+        experiment and each Apply would write the YAML from its own snapshot.
+
+        A second call for a live cockpit answers with the SAME job and URL (the
+        client reopens that tab). If the URL has not been printed yet it waits for
+        it too, rather than taking the donor's immediate "already starting"
+        refusal — one fewer error a quick double-click can produce — but on a
+        SHORTER budget (:data:`_EXPLORE_DEDUP_WAIT`), because every waiter holds a
+        request thread and repeat clicks all land on the one deduped job.
+
+        When no URL arrives, only a job THIS request spawned is stopped: the other
+        caller's session may simply be slower than our own deadline, and killing
+        it would turn one slow tab into two failures. The 400 says which of the
+        three things happened — the child exited without serving, our deadline
+        lapsed, or someone else's cockpit is still starting — and carries the
+        child's last lines either way, which is where "no computed results yet —
+        run `abk run` first" shows up: the D2 noop exits 0 without ever serving.
+        """
+        payload = _load_json(body)
+        _reject_unknown_fields(payload, {"select"})
+        experiment_path, experiment = _resolve_target(srv, payload)
+        argv = _explore_argv(
+            select=_verified_selector(srv, (experiment_path, experiment)),
+            profile=srv.profile,
+        )
+        job, created = srv.jobs.spawn_deduped(
+            "explore",
+            _label_for(argv),
+            argv,
+            cwd=srv.project_root,
+            env=_subprocess_env(),
+            experiment=experiment.name,
+        )
+        url = srv.jobs.url_for(job)
+        if url is None:
+            # Only the caller that started it pays the full timeout; a repeat
+            # click waits seconds, because every waiter holds a request thread.
+            budget = (
+                srv.explore_url_timeout
+                if created
+                else min(srv.explore_url_timeout, _EXPLORE_DEDUP_WAIT)
+            )
+            line = srv.jobs.wait_for_line(job, lambda text: _explore_url(text) is not None, budget)
+            url = None if line is None else _explore_url(line)
+        if url is None:
+            # Snapshot BEFORE the stop, or the stop's own status change races the
+            # message: the wait ends for two different reasons and only the job
+            # knows which — the deadline lapsed (still running) or the child
+            # exited first (`wait_for_line` returns None for that too). Inferring
+            # it from `created` would tell a second caller that a dead cockpit
+            # "is still starting".
+            snapshot = srv.jobs.snapshot(job, 0)
+            if created:
+                srv.jobs.stop(job.id)
+            if snapshot["status"] != "running":
+                what = f"exited without serving ({snapshot['status']})"
+            elif created:
+                what = "did not start in time"
+            else:
+                what = "is still starting (another tab launched it)"
+            tail = "\n".join(snapshot["lines"][-20:])
+            self._reply_error(
+                400, f"the explore cockpit for {experiment.name} {what} — output:\n{tail}"
+            )
+            return
+        srv.jobs.set_url(job, url)
+        self._reply_json({"job_id": job.id, "url": url})
+
+    def _handle_stop(self, srv: _DashboardServer, job_id: str) -> None:
+        """``POST /api/job/<id>/stop`` — SIGTERM now, SIGKILL after the grace.
+
+        Unknown id is a 404 (the id is in the path, like ``GET
+        /api/job/<id>``); a job that is no longer running is a 400. The donor
+        conflates the two into one 400, which reads as "your id is wrong" for a
+        job that simply finished a moment earlier — including the honest race
+        where it exits between the lookup and the stop.
+        """
+        if srv.jobs.get(job_id) is None:
+            self._reply_error(404, f"unknown job: {job_id}")
+            return
+        if not srv.jobs.stop(job_id):
+            self._reply_error(400, f"job {job_id} is not running")
+            return
+        self._reply_json({"ok": True})
 
 
 def _json_default(o: Any) -> Any:

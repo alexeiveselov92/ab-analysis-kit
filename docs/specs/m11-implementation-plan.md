@@ -812,6 +812,187 @@ follow-up, not solved here.
 
 **Session estimate:** 1 session.
 
+**As built (PR #72, 2026-07-30) — what DASH-5/DASH-6/DASH-7 must know.** All six
+steps shipped, plus the read route the "edit" affordance needs. The routes are
+`POST /api/run` (`{select, metric?}`), `POST /api/unlock`, `POST /api/clean`,
+`POST /api/explore` (`{select}`), `POST /api/job/<id>/stop` and `GET
+/api/experiment-source/<name>`. What a later WP would otherwise have to
+rediscover:
+
+1. **The client posts a NAME; the server derives the selector (the PATH) and then
+   PROVES it.** `--select <name>` is not safe to spawn: `select_configs` resolves
+   a bare name by trying `<experiments>/<name>.yml` FIRST and only then searching
+   the `name:` fields, so a file named after ANOTHER experiment
+   (`experiments/alpha.yml` declaring `name: beta`, with `alpha` declared
+   elsewhere) shadows it and the cockpit would run, unlock, clean or explore
+   something other than the row that was clicked, silently. `_selector_for()`
+   therefore passes the YAML path relative to the project root, which takes the
+   glob branch and resolves to exactly one file — which also satisfies `abk
+   explore`'s "must match exactly ONE" by construction. A glob metacharacter in
+   the file name (`checkout[v2].yml` is legal and unremarkable) is **escaped**
+   rather than made a reason to fall back — `[`→`[[]`, `*`→`[*]`, `?`→`[?]`,
+   pathlib's only escape — because raw `experiments/star*.yml` would match a
+   SIBLING too, and the name fallback is the very hazard the path form exists to
+   avoid. Only a path outside the project root or one with no directory part
+   still falls back.
+   Then **`_verified_selector()` re-resolves it through `select_experiments` —
+   the child's own resolver — on every job POST, and refuses (400) unless it
+   lands on exactly the clicked experiment.** This IS the plan's step-4 second
+   resolution, and the review that put it there measured why an earlier draft's
+   "not needed" was wrong: `abk run`/`unlock`/`clean` answer an unmatched
+   selector with a warning line, "Nothing selected." and **exit 0**, so with the
+   boot snapshot outliving a renamed or deleted YAML the drawer would show a
+   green, successful Run that computed nothing. The check also covers the
+   remaining name fallback and a project whose `paths.experiments` is not the
+   default `experiments/`, which the CLI's selector cannot reach at all
+   (`select_experiments` hard-codes the directory — a pre-existing project-wide
+   gap, a named follow-up). Its costs, both accepted: one config-discovery scan
+   per click, and a broken sibling YAML surfaces as a 400 naming the file (a
+   `select_experiments` `ValueError`). One consequence for DASH-5: the job label
+   reads `abk run --select experiments/growth/checkout.yml`.
+2. **Scraping the explore URL needs the scheme in the pattern.** `abk explore`
+   prints `Explore: <experiment name>` (`cli/commands/explore.py`) BEFORE
+   `serve_explore` prints `  Explore: <url>`, so the donor's `"Tuner:" in line`
+   predicate ported literally matches the header and hands the client an
+   experiment name as a URL. `_EXPLORE_URL_RE` is `r"Explore:\s*(https?://\S+)"`,
+   and one function (`_explore_url`) is both the wait predicate and the
+   extractor so the two cannot drift onto different patterns.
+3. **Three DASH-1 amendments ship here, all in `jobs.py`:**
+   `spawn_deduped(kind, …, experiment)` → `(job, created)` makes the explore
+   dedup ATOMIC under the same `_gate` the pipeline gate uses (`running_job_for`
+   alone is check-then-act, and a double-clicked button — browsers do fire both
+   — would start two sessions on one experiment, which is the
+   Apply-rewrites-the-YAML race the dedup exists for; the test widens the window
+   by slowing `spawn`, so it is deterministic rather than lucky); `url_for(job)`
+   is the read half of `set_url` so no caller reaches into `job.lock`; and every
+   child is spawned with **`stdin=DEVNULL`** — the donor leaves stdin inherited,
+   so a prompting child (only `abk clean --orphaned-experiments` today, which no
+   route spawns) would eat the operator's terminal input invisibly. Under pytest
+   fd 0 is already `/dev/null`, so that one is asserted at the `Popen` call.
+4. **`POST /api/explore` is a LONG request, and the only one.** It holds the
+   response until the spawned cockpit prints its URL — up to
+   `server.explore_url_timeout` (90 s) — so DASH-5 must give that one route a
+   long fetch timeout and a spinner; Run/Unlock/Clean answer as soon as `Popen`
+   returns. A second click on a live cockpit gets the SAME job and URL, and if
+   the URL has not been printed yet it waits too (the donor answers an immediate
+   400 "a tuner for X is already starting", which a quick double-click hits
+   routinely) — but on a shorter budget, `_EXPLORE_DEDUP_WAIT = 10 s`, because
+   every waiter holds a request thread and repeat clicks all land on the one
+   deduped job. Measured under review: ~25 waiters block nothing else (every
+   other route still answered in milliseconds), so a bounded admission
+   semaphore — the shape `tuning/server.py` uses for its own long route since
+   m10 WP4 — stays a named follow-up rather than a fix here.
+   When no URL arrives, only a job **this** request spawned is stopped (someone
+   else's session may simply be slower than our deadline), and the 400 says which
+   of three things happened — the child exited without serving, our deadline
+   lapsed, or another tab's cockpit is still starting. Read the status for that,
+   never infer it from "did I spawn this?": the wait also ends when the child
+   exits, so a second caller would be told a dead cockpit "is still starting".
+   The child's last 20 lines ride along either way, which is where the D2 noop
+   ("no computed results yet — run `abk run` first", exit 0 without ever serving)
+   surfaces.
+5. **Status codes, extending DASH-3's map:** 400 for every body-level fault —
+   a missing/blank/oversized `select`, an experiment not in the served
+   selection, a **selector that no longer resolves to it** (item 1), a metric the
+   experiment does not declare, malformed JSON (including a body nested deeply
+   enough to raise `RecursionError`, which is a `RuntimeError` and would
+   otherwise reach the generic 500), a bodyless POST, **and an unknown field** —
+   while a name in the PATH keeps
+   404 (`GET /api/experiment-source/<unknown>`, `POST /api/job/<unknown>/stop`).
+   404 vs 400 for "unknown experiment" is therefore positional, not
+   inconsistent: DASH-3's map is about path-addressed resources. Also: 400 (the
+   donor's exact "a pipeline job is already running") when `spawn_pipeline`
+   returns `None`, **503** for `JobManagerClosed` (a teardown is not "try
+   later"), 400 for a job that is no longer running vs 404 for an unknown id
+   (the donor conflates both into one 400, which reads as "your id is wrong" for
+   a job that finished a moment earlier), and **500 naming the project root**
+   when the spawn itself raises `OSError`.
+6. **An unknown body field is refused, not ignored — unless it is `null`.** The
+   donor drops extras silently, which is the invisible half of a feature that
+   does not exist: a client posting `{"full_refresh": true}` to `/api/run` would
+   get a plain run and no hint. So DASH-5 sends `{select}` / `{select, metric?}`
+   and adding a knob stays a deliberate act on both sides. The exemption matters
+   for exactly one convention this WP also documents: `metric: null` means "the
+   whole experiment", `metric` is allowed on `/api/run` only, and a request
+   helper that always emits both keys would otherwise fail the other three
+   buttons — so an unknown field whose value is `null` asks for nothing and is
+   ignored, while a non-null one is refused. A blank or whitespace `metric` is a
+   400 (the `keep_blank_values` discipline from the GET side).
+7. **The spawned command is neither `abk` nor `python -m abkit.cli.main`** —
+   it is `sys.executable -c "<bootstrap>"` (`_CLI_BOOTSTRAP`), and each half of
+   that is load-bearing. Pinning `sys.executable` pins the INSTALL: a bare `abk`
+   is whatever `PATH` says, which in an unactivated venv is a different abkit
+   than the one serving the page. But `-m` (and a plain `-c`) then puts the
+   child's CWD on `sys.path[0]`, and a job spawns with `cwd=<project root>` —
+   the OPERATOR's directory. **A file there named after anything abkit imports
+   (`click.py`, `yaml.py`, `statistics.py`, …) breaks every button** with a
+   traceback nobody can connect to the click, and an `abkit/` directory there
+   runs a different abkit than the one just pinned — reproduced in review, and a
+   real console script (what typing `abk` runs) does neither, so "exactly as if
+   typed" was false. The bootstrap therefore drops `''`/`os.getcwd()` from
+   `sys.path` before the first import and sets `sys.argv[0] = 'abk'` so click's
+   usage errors name a command an operator could retype (`-m` would say
+   `main.py`, `-c` would say `-c`). Consequence, unchanged by the fix and now
+   sharper: **every job needs an INSTALLED abkit** (`pip install -e .` or a
+   wheel), because the directory a bare checkout would be importable from is
+   exactly the one that gets dropped; the test that runs the bootstrap from an
+   unrelated directory asserts in CI and skips in a bare checkout, **DASH-7's
+   e2e must run under an installed abkit for the same reason**, and warning about
+   it once at startup belongs to DASH-6's `abk dashboard`, not to a route.
+   Also: every flag each builder passes is checked against the click command's
+   own declared options, so a renamed `--metric` / `--no-open` / `--execute`
+   fails a test instead of an exit-2 job in the drawer; `/api/clean` spawns the
+   **`--execute`** form (a dry run would be a button that does nothing) and never
+   `--orphaned-experiments` (the one prompting path, and not a one-click action)
+   — DASH-5 owns the confirmation.
+8. **The job label is derived from the argv that ran** (`_label_for`), not
+   formatted a second time, so the drawer cannot show a command that differs
+   from the process — which matters most for the flags the caller never chose
+   (`--execute`, `--no-open`, the profile). Snapshots still carry no `argv`.
+9. **`server.explore_url_timeout`** (default 90 s) is a per-server attribute, so
+   a test can shrink it; a CLI/`--timeout` override remains the named follow-up
+   the plan's risk note asked for. `GET /api/experiment-source` caps the body at
+   512 kB with a `truncated` flag and decodes with `errors="replace"`, replies
+   `{name, path, yaml_text, truncated}` where `path` is the **same string the
+   row carries as `file`**, and addresses the experiment by NAME with the path
+   taken from the boot index — a `?path=` parameter would be a traversal seam. A
+   YAML that vanished since boot is a 404 that says to restart (the boot
+   snapshot is never refreshed).
+10. **Test-harness facts DASH-7's e2e will reuse:** the job routes need a REAL
+   project root (they spawn with `cwd=project_root`, read YAML off disk, and now
+   re-resolve the selector), which `test_overview`'s hermetic `/proj` cannot be,
+   so `tests/tuning/test_dashboard_server.py` gained `write_experiment()` (writes
+   the fixture YAML, returns the config parsed FROM that file) and a stub `abk`
+   installed by pointing **`_CLI_PREFIX`** at it — deliberately not by
+   monkeypatching the argv builders, so the real verb/flag composition and
+   `_label_for`'s slice stay under test and the stub can echo the argv it actually
+   received. `$ABK_STUB` selects its behaviour (echo-and-exit, hang, exit
+   briefly, fail, print an explore URL after the CLI's own `Explore: <name>`
+   header).
+11. **Review record.** 16 author-side mutation probes (all caught) plus a
+   five-lens adversarial pass (concurrency, HTTP security, CLI-contract,
+   test-quality, claims-vs-code) with independent skeptic verification of each
+   finding. What it changed, all above: the `-m`→bootstrap spawn form (the
+   `sys.path[0]` injection — the pass's one CONFIRMED finding, reproduced twice),
+   `_verified_selector` (the exit-0 "Nothing selected." silent-green), glob
+   escaping (the metacharacter fallback ran the wrong experiment through the
+   child's own resolver), the `RecursionError` 400, the `null`-field exemption,
+   the three-way explore failure message + the dedup wait cap, the false "returns
+   immediately" docstring claim, `spawn_pipeline`'s stale "use `spawn()`"
+   pointer, and four test defects — the new GET route missing from the
+   token-gate parametrize (an ungated file-content route would have shipped
+   green), an unfalsifiable "a copy, not `os.environ`" assertion, an unobserved
+   `_MAX_FIELD` cap, and a bodyless-POST test that passed with the guard removed.
+   The lenses' negative results are worth as much: a lock-order audit plus
+   barrier-synchronised run/explore races, a 7392-request 12-thread chaos fuzz
+   (no 5xx, no hang, no orphaned child), teardown-racing spawns (no orphan, no
+   zombie), traversal/argv-injection/header-injection probes on every new route,
+   and 25 concurrent explore waiters starving nothing.
+   Final: 233 tests across the two files (1 skipped where abkit is not installed),
+   **100% coverage of `dashboard_server.py`**, 2781 passed / 7 skipped overall,
+   mypy 111 = baseline, ruff/black clean, `ALGORITHM_VERSION` absent from the
+   diff.
+
 ---
 
 ### DASH-5 — `dashboard.ts`: client bundle — boot render, lazy stats pool, sparkline, verdict chip, job drawer
