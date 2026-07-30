@@ -80,6 +80,10 @@ server or a bake pipeline from scratch. Verified reuse surface
 `abkit/cli/commands/dashboard.py`, the registered `abk dashboard` command, and
 `docs/guides/dashboard.md`. None of these are stubbed today.
 
+*(Progress against that list, as of PR #73: everything above exists except
+`abkit/cli/commands/dashboard.py`, the registered `abk dashboard` command and
+`docs/guides/dashboard.md` — DASH-6's remainder.)*
+
 ### 0.4 Scope: DASH-1..7 only
 
 This document covers **only** the DASH-* work packages (DASH-1 through
@@ -1094,6 +1098,96 @@ before assuming the existing API fits unchanged.
 
 **Session estimate:** 2 sessions.
 
+**As built (PR #73, 2026-07-31) — what DASH-6/DASH-7 must know.** All eight steps
+shipped in one session, plus the two decisions DASH-2 delegated and the report
+route step 7 asked for. The bundle is
+`abkit/tuning/assets/dashboard.js` (31.7 KB), committed. What a later WP would
+otherwise have to rediscover:
+
+1. **The two DASH-2 decisions, decided.** (a) The `abk-insufficient` chip reads a
+   NEW row field — `insufficient`, the HEADLINE look's own persisted
+   `insufficient_data` cell, added to `overview.py`'s row (the plan's "either
+   reads it (a persisted column, not a re-derived decision) or drops the chip").
+   The alternative was matching the readout's English rationale in JS, which a
+   wording edit would silently break. It goes through the readout's OWN `_flag`
+   (imported, not copied: `reporting/builder._flag01` is plain `bool(value)`
+   while the readout is `bool(int(value))`, and they disagree on a `"0"` string
+   cell — the chip must side with the branch that decided the verdict). No
+   display window can move it: the flag is read off the headline's cutoff in the
+   UNwindowed pair series, and `_pair_rows` is now called before the window
+   filter (a suffix of a suffix is the same suffix, so the sparkline is
+   byte-identical). (b) `verdict: null` + `error: null` renders "no data — press
+   Run"; with an `error` it renders the error chip. **Deviation from step 5:** an
+   errored row does NOT reuse `abk-insufficient`. The plan suggested it because
+   no insufficiency field existed; now that one does, the marker keeps the
+   report's meaning ("this look was demoted, counts only") instead of also
+   meaning "this row failed to build", which is a different state with its own
+   `abk-v-error` class.
+2. **`GET /experiment/<name>` is the Open button's target** (step 7's route, and
+   the one route that answers HTML). It renders the SAME
+   `build_report_payload` → `render_report_html` pair `abk run --report` writes,
+   for one experiment, on demand — never a `reports/` file off disk, which exists
+   only if someone passed `--report` and would be as old as that run. It needed
+   two optional server fields, both defaulted and both **DASH-6's to wire from
+   `abk dashboard`** (which already holds them): `metrics=` (the project's
+   `MetricConfig`s → the report's metric descriptions) and `manager=` (the raw
+   manager `tables` wraps → the no-copy default's live cohort snapshot for the
+   SRM chip's observed counts). Without them the page still renders: no
+   descriptions, and zero observed units with the reason in the payload's
+   warnings — a silent "0 / 0" beside a green chip would read as a broken
+   cohort. A cohort source that raises (the m8 direct-mode validation, which
+   `abk explore` turns into a CLI error) also costs only the counts: the render
+   falls back to the manager-less build and names the exception. A failure the
+   retry reproduces is a genuinely broken read and stays a 500. The DB half runs
+   under `db_lock`; the bake does not (the lock guards the connection, not CPU).
+3. **Both HTML replies now send `Cache-Control: no-store`**, which only the JSON
+   ones did. Same reason, and it bites harder here: a heuristically cached
+   report would show the readout from before the Run the operator just launched.
+4. **The build wiring moved up from DASH-6 (step 1 of it), because DASH-5's own
+   test gate needs the artifact**: `web/build.mjs` has the third `BUNDLES` entry
+   (global `__ABK_DASHBOARD__`, the same three marker strings), `npm test`'s
+   `pretest` builds it, and `web/test/smoke-dashboard.mjs` loads the COMMITTED
+   file the way `smoke-explore.mjs` does. DASH-6 still owns the CI **wheel
+   namelist** tuple (`ci.yml`'s hardcoded two-bundle literal — the marker/hex
+   gates already glob), the `abk dashboard` command, and the docs. The
+   `render_dashboard_html` degradation to `_PENDING_DASHBOARD_JS` is now
+   unreachable in a built checkout; **DASH-6 should decide whether it stays**
+   once the namelist asserts the bundle (the explore precedent raises instead).
+5. **`chart.ts` needed no new preset** (the plan's risk note asked): a local
+   `SPARK_MARGINS = {l:3,r:3,t:5,b:5}` plus `makeScales`/`plotRect`/
+   `drawSeriesDecimated`/`drawHLine` compose a row-height sparkline as-is. Zero
+   is always in the value domain (an effect reads against it, and a floating
+   baseline makes a tiny series look huge), a null bucket is a NaN so a gap
+   stays a gap, and the x axis is the emitted TIMESTAMP, never the index —
+   the server buckets by stride, so buckets are time-irregular by construction.
+6. **jsdom hangs `node --test` unless each window is closed.** The dashboard
+   polls `/api/jobs` forever (an 8 s idle re-arm; it is a live cockpit), so a
+   window left open keeps a pending timer and the runner never exits — the suite
+   closes every window in an `afterEach`. That is also what exercises the
+   client's teardown (`render` is idempotent: it drops the prior page's timers,
+   aborts its fetches and bumps the fill epoch, so an in-flight reply cannot
+   paint into a torn-down page).
+7. **Two client contracts worth not re-deriving.** The `≤3 concurrent` assertion
+   counts in-flight STATS requests only — the job-chip poll is its own single
+   request, and folding it in makes the bound read as 4. And `pipeline_active`
+   comes off the reply: the chip's TEXT names running jobs from their own
+   `status` field, but nothing in JS re-derives `kind ∈ PIPELINE_KINDS ∧
+   running`, and the Run button is only *hinted* as busy (dashed border, still
+   clickable) because the flag is advisory and the route's 400 is the authority.
+8. **Review record.** A self-review pass over the new client found four defects,
+   all fixed before this note: a stats repaint rebuilt the whole expanded detail
+   (collapsing an open YAML pane, dismissing a confirm box mid-read, and
+   dropping an in-flight source reply into a detached node — the detail is now a
+   persistent shell plus a refreshable readout block, and the smoke test that
+   caught it asserts the YAML survives a repaint); the drawer's poll timer was
+   closure-local and survived a re-render (it has a `dispose()` now, in the
+   disposer list); `jobStatus` grew one entry per job ever seen (pruned to the
+   registry's own list, safe because a running job is never evicted); an empty
+   sparkline kept the previous window's tooltip; and one dead `RowView.note`
+   seam nothing called was removed. Final: 37 jsdom tests over the committed
+   bundle, 2819 Python tests (+38), `tsc --noEmit` clean, ruff/black clean, mypy
+   111 = baseline, `ALGORITHM_VERSION` absent from the diff.
+
 ---
 
 ### DASH-6 — Build wiring, CI gates, CLI command, docs
@@ -1110,15 +1204,15 @@ command); `docs/guides/dashboard.md` (new); `.claude/rules/` +
 invariant 6); `CHANGELOG.md`.
 
 **Steps:**
-1. `web/build.mjs`: add `{ entry: path.join(here,'src','dashboard',
-   'dashboard.ts'), outFile: path.join(REPO,'abkit','tuning','assets',
-   'dashboard.js'), global: '__ABK_DASHBOARD__', markers: ['abk-prehorizon',
-   'abk-insufficient','abk-srm-fail'] }` to `BUNDLES` — the same 3 markers as
-   `report.ts`/`explore.ts` since DASH-5 deliberately reuses them.
-2. Run `cd web && npm run build` and commit the resulting
-   `abkit/tuning/assets/dashboard.js` in **this** PR (the CI freshness gate
-   fails the build otherwise — this repo's committed-asset discipline
-   applies unconditionally via the glob pathspec).
+1. ~~`web/build.mjs`: add the third `BUNDLES` entry.~~ **Shipped in DASH-5**
+   (PR #73): its own test gate loads the COMMITTED bundle, exactly like
+   `smoke-explore.mjs`, so the entry had to exist a WP earlier. Verify it is
+   still there (global `__ABK_DASHBOARD__`, the same 3 markers as
+   `report.ts`/`explore.ts`) rather than adding a second one.
+2. ~~Commit `abkit/tuning/assets/dashboard.js`.~~ **Shipped in DASH-5** for the
+   same reason. This WP still re-runs `cd web && npm run build` and commits any
+   drift, because the freshness gate applies unconditionally via the glob
+   pathspec.
 3. **Verify** the two glob-based `ci.yml` gates need zero edits for the new
    bundle: the marker-grep loop already iterates `abkit/*/assets/*.js` —
    `dashboard.js` is auto-covered; the hex-containment gate only scans

@@ -9,10 +9,13 @@ Clean (DASH-4) — sits on top of the :class:`~abkit.tuning.jobs.JobManager` thi
 server holds (DASH-1).
 
 **The dashboard is a launcher, never a worker** (§0.5(d)). Nothing here
-acquires the pipeline lock, runs a pipeline step, or computes a statistic: the
-verdicts come from ``readout.evaluate()`` through ``overview.py``, and every
-mutation is a real ``abk`` subprocess spawned by DASH-4's routes, exactly as if
-typed at a terminal. The single ``InternalTablesManager`` is serialized by
+acquires the pipeline lock, runs a pipeline step, or computes a statistic: every
+verdict comes from ``readout.evaluate()`` — through ``overview.py`` for a row,
+through ``reporting.build_report_payload`` for the Open button's report page —
+and every mutation is a real ``abk`` subprocess spawned by DASH-4's routes,
+exactly as if typed at a terminal. The two reads that do touch the warehouse are
+the row fill and (in the no-copy default) that report page's cohort snapshot;
+both go through the single ``InternalTablesManager``/manager pair serialized by
 ``db_lock`` — a DB-API connection is not thread-safe.
 
 Two deltas from ``abkit/tuning/server.py`` — that is, from **the dtk-tune
@@ -40,7 +43,9 @@ deltas from dtk" phrasing was measured against the wrong donor file):
 Read routes (DASH-3): ``GET /`` (the baked page), ``GET
 /api/stats/<experiment>``, ``GET /api/jobs``, ``GET /api/job/<id>?offset=``,
 plus ``GET /api/experiment-source/<name>`` (DASH-4 — the experiment's raw YAML
-for the read-only "open in your editor" affordance). Job routes (DASH-4): ``POST
+for the read-only "open in your editor" affordance) and ``GET
+/experiment/<name>`` (DASH-5 — the full report page behind the Open button, the
+one route that answers HTML rather than JSON). Job routes (DASH-4): ``POST
 /api/run`` (optionally one ``metric``), ``POST /api/unlock``, ``POST
 /api/clean``, ``POST /api/explore`` and ``POST /api/job/<id>/stop``. Every one
 of them spawns — or stops — a real ``abk`` subprocess; none of them computes,
@@ -48,8 +53,7 @@ reads the warehouse, or writes a file. Run / Unlock / Clean answer as soon as th
 child exists (a selector resolve, then ``Popen``), but **``/api/explore`` is a
 long request by design**: it holds the response until the spawned cockpit prints
 its URL, up to ``explore_url_timeout`` (90 s), so a client must give that one
-route a long fetch timeout and a spinner. ``GET /experiment/<name>`` (the full
-report render behind the Open button) belongs to DASH-5, which owns the button.
+route a long fetch timeout and a spinner.
 
 Two things a job route deliberately does NOT do. It never mutates a config:
 "edit" is a read of the YAML text (§0.5(g) — validate-before-write plus the
@@ -86,7 +90,7 @@ import secrets
 import sys
 import threading
 import webbrowser
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -111,8 +115,10 @@ from abkit.utils.datetime_utils import now_utc_naive
 
 if TYPE_CHECKING:
     from abkit.config.experiment_config import ExperimentConfig
+    from abkit.config.metric_config import MetricConfig
     from abkit.config.project_config import ProjectConfig
     from abkit.database.internal_tables import InternalTablesManager
+    from abkit.database.manager import BaseDatabaseManager
 
 #: The window preset a dashboard boots with (``abk dashboard --window``'s
 #: default, DASH-6 — exported so the CLI never spells a second copy).
@@ -124,6 +130,7 @@ _MAX_DRAIN = 32_000_000  # how much of an oversized body to drain before the 413
 _STATS_PREFIX = "/api/stats/"
 _JOB_PREFIX = "/api/job/"
 _SOURCE_PREFIX = "/api/experiment-source/"
+_REPORT_PREFIX = "/experiment/"
 _STOP_SUFFIX = "/stop"
 
 #: Cap on a posted string field (an experiment or metric name). Both are looked
@@ -515,6 +522,15 @@ class _DashboardServer(ThreadingHTTPServer):
         self.initial_window: str = DEFAULT_WINDOW_PRESET
         self.profile: str | None = None
         self.echo: Callable[[str], None] = print
+        # The report route's two optional collaborators (DASH-5) — defaulted,
+        # unlike `project`/`tables`, because every OTHER route works without
+        # them and both degradations are honest (see `_report_payload`): the
+        # metric configs supply the report's metric descriptions, and the raw
+        # manager lets the no-copy default snapshot the live cohort for the SRM
+        # chip's observed counts. `abk dashboard` (DASH-6) passes both — it
+        # already holds them.
+        self.metrics: Mapping[str, MetricConfig] = {}
+        self.manager: BaseDatabaseManager | None = None
         # How long POST /api/explore waits for the spawned cockpit's URL line.
         self.explore_url_timeout: float = _EXPLORE_URL_TIMEOUT
         # Every spawned `abk` subprocess (DASH-4's routes; DASH-1's registry).
@@ -697,6 +713,11 @@ class _Handler(BaseHTTPRequestHandler):
         with contextlib.suppress(BrokenPipeError, ConnectionResetError):
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
+            # `no-store` for the same reason the JSON replies carry it, and it
+            # matters on both HTML routes: a report reopened after a Run must not
+            # be the pre-run render, and the shell reloaded after a restart must
+            # not be the previous selection's.
+            self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
@@ -764,6 +785,9 @@ class _Handler(BaseHTTPRequestHandler):
             return
         if path.startswith(_SOURCE_PREFIX):
             self._handle_experiment_source(srv, unquote(path[len(_SOURCE_PREFIX) :]))
+            return
+        if path.startswith(_REPORT_PREFIX):
+            self._handle_report(srv, unquote(path[len(_REPORT_PREFIX) :]).strip("/"))
             return
         if path.startswith(_JOB_PREFIX):
             job_id = unquote(path[len(_JOB_PREFIX) :]).strip("/")
@@ -889,6 +913,38 @@ class _Handler(BaseHTTPRequestHandler):
                 "truncated": len(raw) > _MAX_SOURCE_BYTES,
             }
         )
+
+    def _handle_report(self, srv: _DashboardServer, name: str) -> None:
+        """``GET /experiment/<name>`` — the full report page, behind Open (DASH-5).
+
+        The SAME payload + bundle ``abk run --report`` writes
+        (``build_report_payload`` → ``render_report_html``), rendered on demand
+        for ONE experiment rather than read off disk: a `reports/` file exists
+        only if someone passed ``--report``, and it would be as old as that run.
+        Nothing is written; the page is built and streamed.
+
+        This is the one place the dashboard reaches for ``build_report_payload``,
+        and it does not weaken ``overview.py``'s rule against it — a ROW must be
+        the readout's own cheap verdict, while this route's whole job is to be
+        byte-for-byte the report an operator would otherwise generate.
+
+        Two costs, both deliberate and both paid only on a click: the payload
+        re-reads every persisted look of every comparison, and in the no-copy
+        default it executes the assignment source once for the SRM chip's
+        observed counts (``build_report_payload``'s ``manager`` seam). Both run
+        under ``db_lock``, so a slow render queues the row fills behind it
+        instead of sharing the one DB connection — but the BAKE (reading the
+        committed report bundle, one regex pass) is outside it: the lock guards
+        the connection, not the CPU.
+        """
+        entry = srv.experiment_entry(name)
+        if entry is None:
+            self._reply_error(404, f"unknown experiment: {name}")
+            return
+        _experiment_path, experiment = entry
+        with srv.db_lock:
+            payload = _report_payload(srv, experiment)
+        self._reply_html(render_report_html(payload))
 
     # -- POST handlers: spawn `abk`, never do the work ------------------------
 
@@ -1052,6 +1108,78 @@ class _Handler(BaseHTTPRequestHandler):
         self._reply_json({"ok": True})
 
 
+def render_report_html(payload: dict[str, Any]) -> str:
+    """The report bake — the ONE renderer ``abk run --report`` uses.
+
+    A thin re-export so the route (and its tests) never hold a second import
+    path, and so the bake stays outside ``db_lock``.
+    """
+    from abkit.reporting import render_report_html as bake
+
+    return bake(payload)
+
+
+def _report_payload(srv: _DashboardServer, experiment: ExperimentConfig) -> dict[str, Any]:
+    """Build the §5.3 report payload for one experiment (the DB half).
+
+    Imported here rather than at module scope for the reason the selector import
+    has: the dashboard's read path is otherwise reporting-free, and this is the
+    one seam that deliberately is not.
+
+    ``metrics`` and ``manager`` are optional on the server, so this degrades
+    honestly rather than pretending: without the metric configs the report
+    simply carries no metric descriptions, and without a manager the no-copy
+    default has no live cohort to count — which would otherwise read as a real
+    "0 / 0" split beside a green SRM chip, so it is said out loud in the
+    payload's own warnings instead.
+
+    **A cohort source that fails to validate costs the counts, not the page.**
+    In the no-copy default the builder executes the assignment SQL for those
+    counts, and a source that emptied or corrupted since the last run raises
+    (``abk explore`` turns the same failure into a clean CLI error). Here the
+    page is the whole point of the click, so the render falls back to the
+    manager-less build and names the failure in the payload's warnings —
+    ``abk run``'s "never fail the run on a report" discipline, applied to a
+    route. A failure the retry reproduces is a genuinely broken read and
+    propagates to ``do_GET``'s 500.
+    """
+    from abkit.reporting import build_report_payload
+
+    def build(manager: BaseDatabaseManager | None) -> dict[str, Any]:
+        return build_report_payload(
+            experiment,
+            srv.tables,
+            project=srv.project,
+            metric_configs=srv.metrics or None,
+            # The builder never reads the clock (determinism) — the caller formats.
+            generated_at=now_utc_naive().strftime("%Y-%m-%d %H:%M UTC"),
+            manager=manager,
+            project_root=srv.project_root,
+        )
+
+    note: str | None = None
+    if srv.manager is None and not experiment.assignment.cohort_copy.enabled:
+        note = (
+            "the dashboard was started without a database manager, so this "
+            "no-copy experiment's SRM chip shows ZERO observed units — the flag "
+            "and p-value are still the persisted gate's own"
+        )
+        payload = build(None)
+    else:
+        try:
+            payload = build(srv.manager)
+        except Exception as exc:  # noqa: BLE001 — the counts are not worth the page
+            note = (
+                f"the cohort source could not be read ({type(exc).__name__}: {exc}), so "
+                "the SRM chip shows ZERO observed units — the flag and p-value are "
+                "still the persisted gate's own"
+            )
+            payload = build(None)
+    if note is not None:
+        payload["warnings"] = [*payload["warnings"], note]
+    return payload
+
+
 def _json_default(o: Any) -> Any:
     """JSON fallback for a stats row carrying numpy scalars from the warehouse.
 
@@ -1104,6 +1232,8 @@ def build_dashboard_server(
     initial_window: str = DEFAULT_WINDOW_PRESET,
     profile: str | None = None,
     jobs: JobManager | None = None,
+    metrics: Mapping[str, MetricConfig] | None = None,
+    manager: BaseDatabaseManager | None = None,
     echo: Callable[[str], None] = print,
 ) -> tuple[_DashboardServer, str]:
     """Construct (without running) the dashboard server; return ``(server, url)``.
@@ -1111,6 +1241,12 @@ def build_dashboard_server(
     The bound port is known only after construction, so the page is rendered
     ONCE post-bind, exactly like ``build_explore_server`` — but no URLs are
     baked into the payload (see :func:`_boot_payload`).
+
+    *metrics* and *manager* feed ``GET /experiment/<name>`` alone (DASH-5's Open
+    button): the metric configs become the report's metric descriptions, and the
+    manager — the SAME one *tables* wraps, used only under ``db_lock`` — lets the
+    no-copy default snapshot the live cohort for the SRM chip's observed counts.
+    Both are optional and both degrade in the open (:func:`_report_payload`).
 
     Raises :class:`~abkit.tuning.overview.UnknownWindowPreset` for an unknown
     *initial_window* — at boot, where the operator typed it, never as N broken
@@ -1129,6 +1265,9 @@ def build_dashboard_server(
         server.initial_window = initial_window
         server.profile = profile
         server.echo = echo
+        if metrics is not None:
+            server.metrics = metrics
+        server.manager = manager
         if jobs is not None:
             server.jobs = jobs
         server.set_experiments(experiments)
@@ -1159,6 +1298,8 @@ def serve_dashboard(
     initial_window: str = DEFAULT_WINDOW_PRESET,
     profile: str | None = None,
     jobs: JobManager | None = None,
+    metrics: Mapping[str, MetricConfig] | None = None,
+    manager: BaseDatabaseManager | None = None,
     open_browser: bool = True,
     echo: Callable[[str], None] = print,
     on_ready: Callable[[str], None] | None = None,
@@ -1187,6 +1328,8 @@ def serve_dashboard(
         initial_window=initial_window,
         profile=profile,
         jobs=jobs,
+        metrics=metrics,
+        manager=manager,
         echo=echo,
     )
     if on_ready is not None:

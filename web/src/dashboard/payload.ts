@@ -1,0 +1,236 @@
+// Contract for the abkit dashboard's baked boot payload + every wire reply the
+// dashboard server (abkit/tuning/dashboard_server.py) answers.
+//
+// Keep this file in documented lockstep with the three Python modules it
+// mirrors — same keys, same units:
+//   * abkit/tuning/dashboard_server.py `_boot_payload`  → DashboardPayload
+//   * abkit/tuning/overview.py `_empty_row` / `build_overview_boot_entries`
+//                                                      → ExperimentRow / BootEntry
+//   * abkit/tuning/jobs.py `JobManager.snapshot` / `list_snapshots`
+//                                                      → JobSnapshot / JobSummary
+//
+// Two vocabularies that must never be mixed (the DASH-2 as-built rename):
+// a BOOT entry carries `comparisons` — the CONFIGURED comparison list, which is
+// where a secondary metric's per-metric Run button comes from — while a STATS
+// row carries `verdicts`, the readout's per-pair verdict list, which only ever
+// holds main-metric × treatment pairs. The client merges the two by experiment
+// name, so one key holding two shapes would be a trap.
+//
+// All timestamps are integer ms-epoch UTC (naive-UTC instants on the Python
+// side); NaN/±inf are scrubbed to null before they reach the wire.
+
+// ----------------------------------------------------------------------------
+// GET / — the baked, metadata-only boot payload (no statistics, no token)
+// ----------------------------------------------------------------------------
+
+/** One configured comparison of an experiment (boot entry, `is_main_metric`
+ * straight off the config — a secondary metric appears HERE and never in a
+ * row's `verdicts`). */
+export interface BootComparison {
+  metric: string;
+  is_main_metric: boolean;
+}
+
+/** One experiment as the boot shell knows it: config metadata only. */
+export interface BootEntry {
+  name: string;
+  /** parent directory relative to `paths.experiments` ("" = top level) — the
+   * grouping key; posix-separated on every platform */
+  dir: string;
+  /** the YAML path relative to the project root (the "open in your editor"
+   * target, and the same string `GET /api/experiment-source` echoes as `path`) */
+  file: string;
+  tags: string[];
+  status: string | null;
+  /** the experiment's OWN timezone — every instant below is naive UTC */
+  timezone: string | null;
+  start_ts: number | null;
+  /** the EXCLUSIVE right edge (m10 D6) */
+  horizon_ts: number | null;
+  main_metric: string | null;
+  comparisons: BootComparison[];
+}
+
+/** The payload baked into the dashboard page by `render_dashboard_html`. */
+export interface DashboardPayload {
+  project: string;
+  profile: string | null;
+  version: string;
+  /** the preset `abk dashboard --window` booted with */
+  initial_window: string;
+  /** every accepted preset, shortest first with "all" last (server-derived, so
+   * the selector never spells a second copy of the list) */
+  window_presets: string[];
+  generated_at: number;
+  experiments: BootEntry[];
+}
+
+// ----------------------------------------------------------------------------
+// GET /api/stats/<experiment> — one row, lazily fetched (DASH-2)
+// ----------------------------------------------------------------------------
+
+/** One (main metric × treatment arm) verdict inside a row's `verdicts`. */
+export interface RowVerdict {
+  metric: string;
+  /** the report payload's arm vocabulary: control / treatment */
+  pair: { c: string; t: string };
+  verdict: string;
+  effect: number | null;
+  caveats: string[];
+  guardrail_regressed: boolean;
+}
+
+/**
+ * One experiment's statistics row.
+ *
+ * Every stat cell is the FULL series' — the window preset bounds `spark` and
+ * nothing else (DASH-2 as-built (1)), so a row can never disagree with what
+ * `abk run --report` shows. The client tests VALUES, never key existence: a
+ * degraded row carries every key at its "no data" default plus `error`.
+ */
+export interface ExperimentRow {
+  name: string;
+  dir: string;
+  file: string;
+  tags: string[];
+  status: string | null;
+  timezone: string | null;
+  start_ts: number | null;
+  horizon_ts: number | null;
+  main_metric: string | null;
+  /** the pipeline ("run") lock is held — Run would refuse */
+  locked: boolean;
+  /** WIN | LOSE | FLAT | INCONCLUSIVE; null = no results yet (when `error` is
+   * null) or the row degraded (when it is not) */
+  verdict: string | null;
+  srm_flag: boolean;
+  srm_pvalue: number | null;
+  effect: number | null;
+  ci: [number | null, number | null];
+  pvalue: number | null;
+  /** the EFFECTIVE post-correction per-comparison alpha */
+  alpha: number | null;
+  elapsed_days: number | null;
+  is_horizon: boolean;
+  weekly_cycle_pct: number | null;
+  /** the headline look's persisted `insufficient_data` cell — inference
+   * withheld, counts only (the §4 `abk-insufficient` state) */
+  insufficient: boolean;
+  rationale: string[];
+  caveats: string[];
+  /** ORed across every listed pair */
+  guardrail_regressed: boolean;
+  /** the cutoff every stat cell above is as of (the HEADLINE pair's latest
+   * look, not the experiment's latest row) */
+  last_end_ts: number | null;
+  /** ≤160 `[ms-epoch, mean effect | null]` buckets over the window */
+  spark: Array<[number, number | null]>;
+  verdicts: RowVerdict[];
+  warnings: string[];
+  /** `"<ExcType>: <message>"` when this ONE row degraded; null otherwise */
+  error: string | null;
+}
+
+// ----------------------------------------------------------------------------
+// The job registry (DASH-1) — GET /api/jobs, GET /api/job/<id>?offset=
+// ----------------------------------------------------------------------------
+
+export type JobKind = 'run' | 'unlock' | 'clean' | 'explore';
+export type JobStatus = 'running' | 'done' | 'failed' | 'stopped';
+
+/** One job's chip summary (`list_snapshots` — no `lines`). */
+export interface JobSummary {
+  id: string;
+  kind: JobKind;
+  /** the command an operator would have typed, derived from the argv that ran */
+  label: string;
+  /** null whenever the spawn named no single experiment — fall back to `label` */
+  experiment: string | null;
+  status: JobStatus;
+  returncode: number | null;
+  /** an explore job's scraped cockpit URL */
+  url: string | null;
+  started_at: number;
+  finished_at: number | null;
+}
+
+/** `GET /api/jobs` — the list PLUS the server's own one-at-a-time flag, which
+ * the client must never re-derive (DASH-3 as-built (3)). */
+export interface JobsReply {
+  jobs: JobSummary[];
+  pipeline_active: boolean;
+}
+
+/**
+ * One job's poll reply (`snapshot`). `offset`/`next_offset` are ABSOLUTE line
+ * indices over the job's whole lifetime, so a job chattier than the server's
+ * 5000-line buffer keeps streaming; lines that already fell off the front are
+ * gone, and `dropped`/`truncated` say so rather than leaving the client to
+ * infer it from a hole.
+ */
+export interface JobSnapshot {
+  id: string;
+  kind: JobKind;
+  label: string;
+  experiment: string | null;
+  status: JobStatus;
+  returncode: number | null;
+  url: string | null;
+  next_offset: number;
+  dropped: number;
+  truncated: boolean;
+  lines: string[];
+}
+
+// ----------------------------------------------------------------------------
+// The job routes (DASH-4) — every one of them spawns a real `abk` subprocess
+// ----------------------------------------------------------------------------
+
+/** `POST /api/run` — `{select}` runs the whole experiment; `metric` narrows it
+ * to ONE configured comparison (DASH-4a). A field this route does not act on is
+ * REFUSED unless it is null, so nothing else may ride along. */
+export interface RunRequest {
+  select: string;
+  metric?: string | null;
+}
+
+/** `POST /api/unlock` | `/api/clean` | `/api/explore` — `{select}` only. */
+export interface SelectRequest {
+  select: string;
+}
+
+/** `POST /api/run` | `/api/unlock` | `/api/clean` — 200 as soon as the child
+ * exists (400 "a pipeline job is already running" when one is). */
+export interface SpawnReply {
+  job_id: string;
+}
+
+/** `POST /api/explore` — a LONG request: it holds the response until the
+ * spawned cockpit prints its URL (up to 90 s). */
+export interface ExploreReply {
+  job_id: string;
+  url: string;
+}
+
+/** `POST /api/job/<id>/stop`. */
+export interface StopReply {
+  ok: true;
+}
+
+/** `GET /api/experiment-source/<name>` — the raw YAML text for the read-only
+ * "open in your editor" affordance (there is no save endpoint in this
+ * milestone). Read live off disk, so it can legitimately disagree with the
+ * parsed config every other route uses. */
+export interface SourceReply {
+  name: string;
+  /** the same root-relative string the row carries as `file` */
+  path: string;
+  yaml_text: string;
+  /** the file exceeded the server's 512 kB cap */
+  truncated: boolean;
+}
+
+/** The dashboard renderer's global entry, exposed by the bundled IIFE. */
+export interface AbkDashboardGlobal {
+  render(payload: DashboardPayload, mount: HTMLElement): void;
+}

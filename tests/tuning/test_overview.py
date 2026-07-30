@@ -227,6 +227,7 @@ class TestGoldenRow:
             "elapsed_days": 14.0,
             "is_horizon": True,
             "weekly_cycle_pct": None,
+            "insufficient": False,
             "rationale": list(headline.rationale),
             "caveats": [],
             "guardrail_regressed": False,
@@ -307,6 +308,7 @@ class TestGoldenRow:
             "elapsed_days": None,
             "is_horizon": False,
             "weekly_cycle_pct": None,
+            "insufficient": False,
             "rationale": [],
             "caveats": [],
             "guardrail_regressed": False,
@@ -754,6 +756,99 @@ class TestSrmIsWindowIndependent:
         row = row_for(tables, experiment, "7d")
 
         assert (row["srm_flag"], row["srm_pvalue"]) == expected
+
+
+class TestInsufficientFlag:
+    """DASH-5's §4 ``abk-insufficient`` substrate: the HEADLINE look's own
+    persisted demotion cell, read (never re-derived) so the chip cannot
+    disagree with the rationale printed beside it."""
+
+    def test_a_clean_series_is_not_insufficient(self, tables):
+        experiment = make_experiment()
+        seed_series(tables, experiment)
+
+        assert row_for(tables, experiment)["insufficient"] is False
+
+    def test_a_demoted_headline_look_sets_the_flag_and_the_readout_agrees(self, tables):
+        experiment = make_experiment()
+        seed_series(tables, experiment, days=13)
+        save_rows(
+            tables,
+            [
+                make_row(
+                    experiment,
+                    day=14,
+                    insufficient_data=True,
+                    effect=None,
+                    left_bound=None,
+                    right_bound=None,
+                    pvalue=None,
+                    reject=None,
+                )
+            ],
+        )
+
+        row = row_for(tables, experiment)
+
+        assert row["insufficient"] is True
+        assert row["verdict"] == "INCONCLUSIVE", "the readout withheld inference"
+        assert any("insufficient data" in line for line in row["rationale"])
+
+    def test_an_earlier_demoted_look_does_not_flag_the_row(self, tables):
+        """The flag is the headline look's, not "any look in the series"."""
+        experiment = make_experiment()
+        save_rows(
+            tables,
+            [make_row(experiment, day=1, insufficient_data=True, effect=None)]
+            + [make_row(experiment, day=day) for day in range(2, 15)],
+        )
+
+        row = row_for(tables, experiment)
+
+        assert row["insufficient"] is False
+        assert row["verdict"] == "WIN"
+
+    @pytest.mark.parametrize("preset", sorted(ALL_WINDOW_PRESETS))
+    def test_no_window_preset_can_move_the_flag(self, tables, preset):
+        """The demotion is read off the headline's own look, and the headline is
+        always the FULL series' — so a preset showing no looks at all still
+        reports it (the ``24h``-preset hazard DASH-2 as-built (1) describes)."""
+        experiment = make_experiment()
+        seed_series(tables, experiment, days=13)
+        save_rows(tables, [make_row(experiment, day=14, insufficient_data=True, effect=None)])
+
+        row = row_for(tables, experiment, preset, now=NOW + timedelta(days=120))
+
+        if preset != "all":
+            assert row["spark"] == [], "every fixed preset is genuinely empty here"
+        assert row["insufficient"] is True
+
+    def test_a_never_run_experiment_is_not_insufficient(self, tables):
+        """No looks at all is the "no data yet" state, not a demotion."""
+        experiment = make_experiment()
+
+        row = row_for(tables, experiment)
+
+        assert row["verdict"] == "INCONCLUSIVE"
+        assert row["insufficient"] is False
+        assert row["last_end_ts"] is None
+
+    def test_a_degraded_row_reports_the_documented_default(self, tables, monkeypatch):
+        experiment = make_experiment()
+        seed_series(tables, experiment)
+        monkeypatch.setattr(
+            overview, "evaluate", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x"))
+        )
+
+        assert row_safe_for(tables, experiment)["insufficient"] is False
+
+    def test_the_flag_reads_the_cell_the_readout_reads(self, tables):
+        """A ``"0"`` string cell is falsy to ``bool(int(...))`` and TRUTHY to a
+        plain ``bool()`` — the row must side with the readout (whose demotion
+        branch decides the verdict), not with the report's looser flag."""
+        assert overview._flag("0") is False
+        assert overview._flag(1) is True
+        assert overview._flag(None) is False
 
 
 class TestLock:
