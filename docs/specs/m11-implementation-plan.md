@@ -634,6 +634,94 @@ are what a comparison already spans.
 
 **Session estimate:** 1 session.
 
+**As built (PR #71, 2026-07-30) — what DASH-4/DASH-5 must know.** All five
+steps shipped as specified; the plumbing is one optional `metric_filter`
+threaded CLI → `run_experiments` → `run_experiment` → `materialize_state`, and
+`abkit/pipeline/analyze.py` was not touched at all. What a later WP would
+otherwise have to rediscover:
+
+1. **The route's contract is just the metric NAME.** `POST /api/run`'s optional
+   `metric` (DASH-4 step 2) maps 1:1 onto `--metric <name>`; validate it with
+   **`ExperimentConfig.declares_metric(metric)`** — the predicate this WP put on
+   the config model precisely so the route's 400 gate and the CLI's selection
+   narrowing cannot drift (a review finding: the first cut kept it private in
+   `abkit/cli/commands/run.py`, which `abkit/tuning/**` does not import). There is no
+   per-comparison or per-arm-pair addressing to expose — and step 1's stated
+   reason for the name grain ("an experiment running the same metric under two
+   method configs recomputes both") **is not reachable in this config model**:
+   `ExperimentConfig.validate_comparisons` rejects duplicate metric bindings
+   ("bind each metric at most once per experiment"), so inside one experiment a
+   metric name IS one comparison. The grain still matters for the other axis —
+   `--metric` applies to the whole SELECTION, so a broad `--select` recomputes
+   that metric in every experiment declaring it — and `abk validate --metric`
+   remains the true multi-method analogue, because its `--method` flag scores
+   extra methods for the same metric. The plan sentence was carried into the
+   CHANGELOG/docs and then corrected in review; do not re-introduce it.
+2. **Step 3 held without new code.** `effective_alphas()` reads
+   `experiment.comparisons` (config), so the filter — applied to the driver's
+   *loop*, never to the config object — is alpha-invariant by construction. The
+   pinning test is built to catch the leak rather than assert a tautology: 1
+   main + 2 secondary metrics over 2 variants, so the secondary tier is α/2, and
+   a filter reaching `effective_alphas` would write α instead. It compares the
+   whole row dict (minus the volatile `created_at`) against an unfiltered run on
+   a second warehouse.
+3. **Day state is where a narrowed run still has to reach beyond the filter, and
+   getting that wrong is a NUMBER bug.** A withheld series that stays
+   materialized-but-stale is invisible to M9's gap check (it detects absence
+   only), so with `compute.incremental_reads: true` a later routine run sums it
+   and silently persists an undercount. Two mechanisms, both reviewed:
+   - under a copy-mode `--resync-cohort` the driver passes `metric_filter=None`,
+     keeping the force-rebuild experiment-wide (the rebuilt cohort re-shaped
+     EVERY series). The exception is keyed off `copy_enabled and resync_cohort`
+     — the SAME predicate as `force_rebuild` — so in the direct default, where
+     the flag is a no-op, day state narrows with everything else. The CLI
+     disclosure is therefore **mode-aware**; an unconditional line was false in
+     the default mode and contradicted the notice above it in copy mode;
+   - under a scoped `--full-refresh` the STATE stage **truncates** the withheld
+     eligible series over the refreshed window (`delete_state_days_from`, no
+     re-render). The refreshed window's facts are shared by every metric reading
+     them, and `--full-refresh` is the documented heal for exactly that, so
+     declining to touch the siblings turned the heal into a trap: the review
+     reproduced 3334.5 vs a true 3434.5 on a two-metric fixture. Truncating
+     keeps contiguity (a shorter prefix), the operator does not pay a render
+     they scoped away, and the next run that includes the metric re-derives
+     those days.
+   Round 2 of review then corrected the DISCLOSURE of both: the first cut decided
+   it once per run with `any(cohort_copy.enabled …)` and ignored `--steps`, so a
+   selection mixing a copy-mode with a direct-mode experiment printed the
+   copy-mode sentence on behalf of the direct one — and suppressed the truncation
+   line that was the true one for it — while a run omitting the `state` step
+   claimed a truncation it never performed. The disclosure now classifies each
+   matching experiment (rebuilt / truncated / untouched / no-state-step) and
+   prints one line per outcome, naming experiments only when the selection is
+   heterogeneous; both branches are mutation-pinned.
+   Both mechanisms are pinned in `tests/pipeline/test_state_stage.py::TestMetricFilter`,
+   including an end-to-end backfill regression that fails (numerically, not just
+   structurally) without the truncation. Note the two stamps are different
+   columns: `_ab_results` rows carry `created_at`, `_ab_unit_state` rows carry
+   `version` — the results-level "never re-written" assertions live in
+   `tests/pipeline/test_pipeline.py::TestMetricFilter`.
+4. **An unmatched filter is answered at two levels.** The CLI resolves the
+   selector semantics (skip line per experiment, loud error when nothing
+   matches, `--steps validate` + `--metric` rejected as a `BadParameter`
+   because the config lint is project-wide); the driver additionally returns
+   `status="skipped"` with `error="no '<m>' comparison"` for any non-CLI caller
+   — **above** `ensure_tables()`, so such a call takes no lock, renders no
+   cohort and runs no SRM gate. `abk run` now prints `outcome.error` for a
+   skipped experiment instead of the hardcoded "nothing to do for the selected
+   steps".
+5. Tests landed in `tests/pipeline/test_pipeline.py::TestMetricFilter` (5),
+   `tests/pipeline/test_state_stage.py::TestMetricFilter` (6) and
+   `tests/cli/test_cli.py::TestMetricOption` (10) — the plan's guessed
+   `tests/cli/test_run_command.py` does not exist in this repo; `abk run`'s CLI
+   tests live in `tests/cli/test_cli.py`. **The CLI fixture had to gain a
+   two-comparison experiment**: with one comparison per experiment, "only the
+   filtered metric was written" is already true of the experiment-level selection
+   narrowing, so the assertion could not fail — deleting the CLI's one
+   `metric_filter=` keyword left all 2670 tests green (a review finding; now
+   mutation-verified to fail). Same class of gap as M10's `interval_anchor`
+   reaching none of eight call sites.
+
 ---
 
 ### DASH-4 — Job-spawning routes: open / explore / run / edit-stub, wired through `JobManager`

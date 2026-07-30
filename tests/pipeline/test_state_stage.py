@@ -16,6 +16,7 @@ from datetime import date, datetime, timedelta
 import numpy as np
 import pytest
 from synthetic_ab import (
+    CONVERSION,
     METRICS,
     NOW,
     PROJECT,
@@ -29,7 +30,7 @@ from synthetic_ab import (
     seed_cohort,
 )
 
-from abkit.config import ExperimentConfig, MetricConfig
+from abkit.config import ExperimentConfig, MetricConfig, ProjectConfig
 from abkit.database.internal_tables import (
     InternalTablesManager,
     compute_metric_state_id,
@@ -833,3 +834,233 @@ class TestClosedDays:
         experiment = make_experiment("exp_none", "arpu", T_TEST)
         grid = experiment.grid()
         assert closed_state_days(experiment, grid, datetime(2024, 7, 1, 23, 0)) == []
+
+
+def _without_created_at(rows: list[dict]) -> list[dict]:
+    """Rows minus the LWW version stamp (wall-clock, volatile by design)."""
+    return [{k: v for k, v in row.items() if k != "created_at"} for row in rows]
+
+
+class TestMetricFilter:
+    """m11 DASH-4a: ``abk run --metric`` narrows the STATE write side too —
+    with one deliberate exception, ``--resync-cohort``."""
+
+    Z_TEST = {"name": "z-test", "params": {"test_type": "relative"}}
+
+    @classmethod
+    def _two_metric_payload(cls, name: str) -> dict:
+        payload = experiment_payload(name, "arpu", T_TEST)
+        payload["comparisons"].append({"metric": "conversion", "method": cls.Z_TEST})
+        return payload
+
+    def test_only_the_filtered_series_is_materialized(self, warehouse, tables):
+        experiment = ExperimentConfig.model_validate(self._two_metric_payload("exp_filter"))
+        outcome = run_experiment(
+            experiment, METRICS, PROJECT, warehouse, tables, now_utc=NOW, metric_filter="arpu"
+        )
+        assert outcome.status == "completed", outcome.error
+        assert outcome.state_days_materialized == 4  # one metric's closed days, not two
+
+        arpu_source, _ = series_key(experiment, REVENUE)
+        conversion_source, _ = series_key(experiment, CONVERSION)
+        assert {r["source_table"] for r in state_rows(warehouse)} == {arpu_source}
+        assert (
+            tables.get_last_state_day(conversion_source, series_key(experiment, CONVERSION)[1])
+            is None
+        )
+
+    def test_resync_cohort_rebuilds_every_series_even_under_the_filter(self, warehouse, tables):
+        """The cohort a resync rebuilt shaped EVERY series, so day state must
+        not outlive it per-metric: stale-in-place state is exactly what the
+        WP4 gap check cannot see."""
+        payload = self._two_metric_payload("exp_filter_resync")
+        payload["assignment"][
+            "query"
+        ] = "SELECT user_id, variant, exposure_ts FROM assignments WHERE 1 = 1 {{ ab_added_filters }}"
+        payload["assignment"]["cohort_copy"] = {"enabled": True}
+        experiment = ExperimentConfig.model_validate(payload)
+
+        first = run_experiment(experiment, METRICS, PROJECT, warehouse, tables, now_utc=NOW)
+        assert first.status == "completed", first.error
+        assert first.state_days_materialized == 8  # both eligible metrics
+        before = {
+            (r["source_table"], r["unit_id"], str(r["day"])): r["version"]
+            for r in state_rows(warehouse)
+        }
+        conversion_rows = tables.load_results(experiment.name, metric="conversion")
+        assert conversion_rows
+
+        outcome = run_experiment(
+            experiment,
+            METRICS,
+            PROJECT,
+            warehouse,
+            tables,
+            now_utc=NOW,
+            resync_cohort=True,
+            metric_filter="arpu",
+        )
+        assert outcome.status == "completed", outcome.error
+        assert outcome.state_days_materialized == 8  # NOT narrowed to the filtered metric
+        after = {
+            (r["source_table"], r["unit_id"], str(r["day"])): r["version"]
+            for r in state_rows(warehouse)
+        }
+        assert set(after) == set(before)
+        assert all(after[key] > before[key] for key in before)
+        # ...while COMPUTE stayed narrow: the sibling's rows were not re-written
+        assert tables.load_results(experiment.name, metric="conversion") == conversion_rows
+
+    def test_scoped_full_refresh_truncates_the_withheld_series(self, warehouse, tables):
+        """A review finding: leaving the withheld series alone made a scoped
+        heal a silent-undercount path under ``compute.incremental_reads``. The
+        refreshed window's facts are shared, so the withheld series is
+        TRUNCATED (never re-rendered here) — contiguity survives as a shorter
+        prefix, later reads fall back to recompute, and the next run that
+        includes the metric re-materializes it."""
+        experiment = ExperimentConfig.model_validate(self._two_metric_payload("exp_filter_refresh"))
+        run_pipeline(warehouse, tables, experiment)
+        conversion_source, conversion_series = series_key(experiment, CONVERSION)
+        arpu_source, arpu_series = series_key(experiment, REVENUE)
+        assert tables.get_last_state_day(conversion_source, conversion_series) == DAYS[-1]
+
+        outcome = run_experiment(
+            experiment,
+            METRICS,
+            PROJECT,
+            warehouse,
+            tables,
+            now_utc=NOW,
+            metric_filter="arpu",
+            full_refresh_window=(datetime(2024, 7, 2), datetime(2024, 7, 3)),
+        )
+        assert outcome.status == "completed", outcome.error
+        # the withheld series lost every day from the touched one on...
+        assert tables.get_last_state_day(conversion_source, conversion_series) == DAYS[0]
+        assert any(
+            "conversion" in w and "day state truncated from" in w for w in outcome.warnings
+        ), outcome.warnings
+        # ...while the filtered series was truncated AND re-advanced
+        assert tables.get_last_state_day(arpu_source, arpu_series) == DAYS[-1]
+
+        # self-healing: the next run without --metric re-materializes the tail
+        healed = run_pipeline(warehouse, tables, experiment)
+        assert healed.state_days_materialized == 3  # DAYS[1:] of the withheld series
+        assert tables.get_last_state_day(conversion_source, conversion_series) == DAYS[-1]
+
+    def test_a_routine_filtered_run_leaves_the_withheld_series_intact(self, warehouse, tables):
+        """No refresh window ⇒ nothing shared changed ⇒ nothing is truncated."""
+        experiment = ExperimentConfig.model_validate(self._two_metric_payload("exp_filter_routine"))
+        run_pipeline(warehouse, tables, experiment)
+        conversion_source, conversion_series = series_key(experiment, CONVERSION)
+        before = {
+            (r["unit_id"], str(r["day"])): r["version"]
+            for r in state_rows(warehouse)
+            if r["source_table"] == conversion_source
+        }
+        assert before
+
+        outcome = run_experiment(
+            experiment, METRICS, PROJECT, warehouse, tables, now_utc=NOW, metric_filter="arpu"
+        )
+        assert outcome.status == "completed", outcome.error
+        after = {
+            (r["unit_id"], str(r["day"])): r["version"]
+            for r in state_rows(warehouse)
+            if r["source_table"] == conversion_source
+        }
+        assert after == before
+        assert tables.get_last_state_day(conversion_source, conversion_series) == DAYS[-1]
+
+    def test_a_scoped_heal_cannot_leave_the_withheld_series_undercounting(self, warehouse, tables):
+        """The reproduced hazard, end to end (the reason the truncation exists).
+
+        Facts land late in an already-materialized day; the operator heals only
+        the metric they were asked about. The withheld metric's day state must
+        NOT keep summing the pre-backfill day — with
+        ``compute.incremental_reads`` on that is a silent undercount the gap
+        check cannot see, because the stale series is perfectly contiguous.
+        """
+        incremental = ProjectConfig.model_validate(
+            {"name": "p", "default_profile": "dev", "compute": {"incremental_reads": True}}
+        )
+        experiment = ExperimentConfig.model_validate(self._two_metric_payload("exp_backfill"))
+        arpu_source, arpu_series = series_key(experiment, REVENUE)
+
+        # a partial run: only 2024-07-01 and 07-02 are closed at this point
+        early = run_experiment(
+            experiment,
+            METRICS,
+            incremental,
+            warehouse,
+            tables,
+            now_utc=datetime(2024, 7, 3),
+        )
+        assert early.status == "completed", early.error
+        assert tables.get_last_state_day(arpu_source, arpu_series) == DAYS[1]
+        stale_total = tables.sum_moments(arpu_source, arpu_series, DAYS[0], DAYS[-1])["sum_value"]
+
+        # a late batch lands INSIDE the already-materialized opening day
+        for unit, variant, _ in warehouse.cohort[:20]:
+            warehouse.events["user_revenue"].append(
+                (unit, variant, START + timedelta(hours=13), {"gross_usd": 5.0})
+            )
+
+        # the operator heals the OTHER metric only
+        scoped = run_experiment(
+            experiment,
+            METRICS,
+            incremental,
+            warehouse,
+            tables,
+            now_utc=NOW,
+            metric_filter="conversion",
+            full_refresh_window=(datetime(2024, 7, 1), datetime(2024, 7, 2)),
+        )
+        assert scoped.status == "completed", scoped.error
+        # the withheld series lost the backfilled day (here: the whole prefix)
+        assert tables.get_last_state_day(arpu_source, arpu_series) is None
+
+        # the next run that includes it re-derives every day from CURRENT facts
+        healed = run_experiment(experiment, METRICS, incremental, warehouse, tables, now_utc=NOW)
+        assert healed.status == "completed", healed.error
+        healed_total = tables.sum_moments(arpu_source, arpu_series, DAYS[0], DAYS[-1])["sum_value"]
+        assert healed_total == pytest.approx(
+            event_total(warehouse, "user_revenue", "gross_usd"), rel=1e-9
+        )
+        # ...and the backfill really did move the number, so this can fail
+        assert healed_total > stale_total
+
+    def test_filtered_run_under_incremental_reads_matches_the_unfiltered_run(
+        self, warehouse, tables
+    ):
+        """The WP's own risk story, pinned: with the M9 read path ON, a filtered
+        run reads its own freshly-materialized day state — same numbers as an
+        unfiltered run, and no gap fallback."""
+        incremental = ProjectConfig.model_validate(
+            {"name": "p", "default_profile": "dev", "compute": {"incremental_reads": True}}
+        )
+        experiment = ExperimentConfig.model_validate(self._two_metric_payload("exp_filter_incr"))
+
+        baseline = run_experiment(experiment, METRICS, incremental, warehouse, tables, now_utc=NOW)
+        assert baseline.status == "completed", baseline.error
+        expected = _without_created_at(tables.load_results(experiment.name, metric="arpu"))
+        assert expected
+
+        second = SyntheticWarehouse()
+        seed_cohort(second)
+        seed_all_events(second)
+        tables2 = InternalTablesManager(second)
+        outcome = run_experiment(
+            experiment,
+            METRICS,
+            incremental,
+            second,
+            tables2,
+            now_utc=NOW,
+            metric_filter="arpu",
+        )
+        assert outcome.status == "completed", outcome.error
+        assert _without_created_at(tables2.load_results(experiment.name, metric="arpu")) == expected
+        assert not [w for w in outcome.warnings if "fell back" in w], outcome.warnings
+        assert tables2.load_results(experiment.name, metric="conversion") == []

@@ -86,6 +86,7 @@ def init_claude(target_dir: str) -> None:
     help="Experiment selector: name, path glob, tag:<tag>, or * (repeatable; default all)",
 )
 @click.option("--exclude", multiple=True, help="Selectors to exclude (same forms)")
+@click.option("--metric", help="Run only this metric (default: every declared comparison)")
 @click.option(
     "--steps",
     default="validate,plan,load,state,compute",
@@ -142,6 +143,7 @@ def init_claude(target_dir: str) -> None:
 def run(
     select: tuple[str, ...],
     exclude: tuple[str, ...],
+    metric: str | None,
     steps: str,
     profile: str | None,
     from_ts: str | None,
@@ -169,6 +171,7 @@ def run(
         report_path,
         resync_cohort=resync_cohort,
         cost_report=cost_report,
+        metric=metric,
     )
 
 

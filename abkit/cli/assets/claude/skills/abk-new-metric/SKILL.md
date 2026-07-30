@@ -192,7 +192,10 @@ abk run --select <experiment> --steps load
 Editing a metric's SQL later changes what is loaded but not stored history —
 recompute the affected cutoffs with `abk run --select <experiment>
 --full-refresh --from <start> --to <end>` (`--full-refresh` requires both
-`--from` and an exclusive `--to`).
+`--from` and an exclusive `--to`). Since 0.6.0, add `--metric <this metric>` to
+reprocess only this series: the experiment's other metrics keep their rows (their
+day state is truncated from the first day the window touches onward, so a later
+run re-derives it), and the two-tier alphas are unchanged either way.
 
 ## Step 7 — Report and hand off
 

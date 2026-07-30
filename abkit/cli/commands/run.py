@@ -6,6 +6,12 @@ SRM failures print the loud red gate line (data-contract §6). Any failed
 experiment or validation error exits NON-ZERO (the CLI is the Prefect unit of
 automation).
 
+``--metric`` (m11 DASH-4a) narrows the run to one metric's comparison(s): the
+selection drops experiments that do not declare it (a printed skip line), and a
+value matching NOWHERE is a loud error, never a silent no-op. The alphas below
+are echoed — and persisted — unfiltered: the two-tier scheme is a property of
+the config, not of what one invocation recomputes.
+
 ``--report`` (tri-state: absent / bare / path — the donor's flag shape) emits
 one self-contained HTML readout per experiment after its pipeline, inside
 try/except: a report failure yellow-skips and NEVER fails the run — the one
@@ -126,6 +132,7 @@ def run_run(
     report_path: str | None = None,
     resync_cohort: bool = False,
     cost_report: bool = False,
+    metric: str | None = None,
 ) -> None:
     try:
         parsed_steps = PipelineStep.parse(steps)
@@ -137,6 +144,14 @@ def run_run(
         raise click.BadParameter(
             "--report needs pipeline steps (validate-only runs never touch the DB)",
             param_hint="--report",
+        )
+    if validate_only and metric is not None:
+        # The config lint is whole-project by construction (every metric SQL,
+        # every method): accepting a narrowing flag it cannot honour would read
+        # as "only this metric was linted".
+        raise click.BadParameter(
+            "--metric needs pipeline steps (the config lint is project-wide)",
+            param_hint="--metric",
         )
     context = load_project_context(require_profiles=not validate_only)
     click.echo(f"Project root: {context.root}")
@@ -167,6 +182,88 @@ def run_run(
     if not selected:
         echo_done("Nothing selected.")
         return
+
+    # ── --metric: narrow the selection to experiments declaring it ───────────
+    # Repo idiom (the `abk plan`/`verify-incremental` precedent): a filter that
+    # matches nothing is an error, not a quiet exit-0 that reads as success.
+    if metric is not None:
+        # ONE predicate, shared with DASH-4's per-metric Run route
+        matching = [item for item in selected if item[1].declares_metric(metric)]
+        for _, experiment in selected:
+            if not experiment.declares_metric(metric):
+                echo_noop(experiment.name, f"no '{metric}' comparison — skipped by --metric")
+        if not matching:
+            configured = sorted({c.metric for _, e in selected for c in e.comparisons})
+            raise click.ClickException(
+                f"--metric '{metric}' is not a comparison of any selected experiment "
+                f"(have: {', '.join(configured)})"
+            )
+        selected = matching
+        # What the run withholds, named — a generic "the other comparisons" line
+        # describes comparisons that may not exist (a single-comparison
+        # experiment withholds nothing), and the day-state half of the sentence
+        # is only true in one of three modes (review finding). So: print the
+        # names, and let the mode decide what happens to their day state.
+        withheld = sorted(
+            {
+                comparison.metric
+                for _, experiment in matching
+                for comparison in experiment.comparisons
+                if comparison.metric != metric
+            }
+        )
+        if withheld:
+            click.echo(
+                click.style(
+                    f"  ⚠ --metric {metric}: not recomputed this run: " + ", ".join(withheld),
+                    fg="yellow",
+                )
+            )
+            # What happens to the WITHHELD metrics' day state is a
+            # per-experiment property of three inputs — is the `state` step even
+            # selected, is this experiment in copy mode with `--resync-cohort`
+            # (then the driver keeps the rebuild experiment-wide), is there a
+            # refresh window (then the withheld series are truncated). Round 2 of
+            # review caught a run-level `any()` here printing the copy-mode
+            # sentence on behalf of direct-mode experiments — and suppressing the
+            # truncation line that was the true one for them. So: classify each
+            # experiment, then print one line per distinct outcome, naming
+            # experiments only when the selection is heterogeneous.
+            state_selected = PipelineStep.STATE in parsed_steps
+            day_state_groups: dict[str, list[str]] = {}
+            for _, experiment in matching:
+                if not state_selected:
+                    kind = "no_state_step"
+                elif resync_cohort and experiment.assignment.cohort_copy.enabled:
+                    kind = "rebuilt"
+                elif full_refresh:
+                    kind = "truncated"
+                else:
+                    kind = "untouched"
+                day_state_groups.setdefault(kind, []).append(experiment.name)
+            explanations = {
+                "rebuilt": (
+                    "--resync-cohort rebuilds the whole cohort — it is not "
+                    "per-metric — so day state IS re-materialized for every "
+                    "eligible metric (each series was derived from that copy); "
+                    "only compute is narrowed"
+                ),
+                "truncated": (
+                    "results stay as they are; any day state the withheld metrics "
+                    "hold is truncated from the first day the refresh window "
+                    "touches through the end of the series (not re-rendered) — a "
+                    "later run that includes them re-derives it from current facts"
+                ),
+                "untouched": "their results and day state stay exactly as they are",
+                "no_state_step": (
+                    "the 'state' step is not selected, so day state is not touched "
+                    "at all — a refresh window does NOT truncate it here"
+                ),
+            }
+            for kind, names in day_state_groups.items():
+                prefix = f"{', '.join(sorted(names))}: " if len(day_state_groups) > 1 else ""
+                click.echo(click.style(f"    ⚠ {prefix}{explanations[kind]}", fg="yellow"))
+
     if (
         report_path is not None
         and report_path != ""
@@ -221,6 +318,7 @@ def run_run(
         force=force,
         full_refresh_window=full_refresh_window,
         resync_cohort=resync_cohort,
+        metric_filter=metric,
         log=log,
     )
 
@@ -257,7 +355,11 @@ def run_run(
             elif outcome.status == "locked":
                 echo_noop(outcome.experiment, outcome.error or "locked")
             elif outcome.status == "skipped":
-                echo_noop(outcome.experiment, "nothing to do for the selected steps")
+                # the driver may name the reason (an unmatched --metric filter
+                # reaching it from a non-CLI caller); otherwise it is the steps
+                echo_noop(
+                    outcome.experiment, outcome.error or "nothing to do for the selected steps"
+                )
             else:
                 failed += 1
                 echo_error(outcome.experiment, outcome.error or "failed")
