@@ -596,8 +596,11 @@ two-process lock race) is deferred to a Docker-equipped environment.
   path oracle) and compares **bytes**: `compare_digest` refuses a non-ASCII
   `str`, so `?token=α` would raise before the handler's wrapper and never be
   answered. The token is never baked into the page (the client reads
-  `location.search`), and a new GET route MUST be added to the token gate's
-  `parametrize` list — that list is a fixture that rots silently.
+  `location.search`). The gate's own coverage is machine-checked: the
+  `parametrize` list is asserted against an **AST extraction of what
+  `_route_get` actually dispatches on** (DASH-4's review found that list rotted
+  once already — a new file-serving route was simply missing from it and would
+  have shipped ungated), so the list is only as honest as that extraction.
 - **The server never shuts itself down** (AST-gated over the module, the gate
   itself proven to bite on the explore server's copy-paste shape — and to
   ALLOW `server.jobs.shutdown()`, the registry teardown): `abk explore`'s
