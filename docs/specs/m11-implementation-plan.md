@@ -17,9 +17,11 @@
 > sharply for DASH-7's own risks note, whose premise (that a Docker-free real
 > manager exists to point a spawned child at) turned out to be false.
 >
-> Still open, deliberately, and NOT part of this document: the `0.6.0` release
-> step — the `.claude/rules/{architecture,contributing}.md` + root `CLAUDE.md`
-> M11-shipped flip, the ROADMAP 📋→✅, the version bump and the tag.
+> The `0.6.0` release cut has since landed too — `__version__ = 0.6.0`, the
+> `CHANGELOG` `[Unreleased]` section dated, and the M11-shipped flip across
+> `.claude/rules/{architecture,contributing}.md`, the root `CLAUDE.md`, the
+> `README` and the ROADMAP (📋→✅). **Only the `v0.6.0` tag/publish is left,
+> and that is the maintainer's step** (tag → `publish.yml` → PyPI).
 >
 > Governing specs: [cli-and-dx.md](cli-and-dx.md) (the CLI surface + skill
 > conventions the new `abk dashboard` command joins),
@@ -43,6 +45,21 @@
 > subpackage (`jobs.py` 335 lines, `overview.py` 600 lines, `html.py` 84
 > lines, `metric_files.py` 271 lines, `server.py` 1215 lines, ~2295 lines
 > total incl. the compiled `assets/ui.js`).
+
+## Status — all work packages shipped (the "done" table)
+
+| WP | Landed as | Load-bearing as-built delta (details in the per-WP notes) |
+|---|---|---|
+| DASH-1 — the subprocess registry (`abkit/tuning/jobs.py`) | PR #66 (`2f8e85c`) | five disclosed divergences from the donor, and **all five hazards existed in the donor verbatim** — the kind vocabulary became a validated whitelist (a blacklist puts a typo UNDER the gate), `wait_for_line` counts ABSOLUTE line indices (the donor's buffer position stops moving at saturation and the watcher goes blind forever), the `_closed` latch shares the registry snapshot's critical section, a refused spawn kills **and reaps** its child, and the status vocabulary is honest on both termination paths |
+| (decisions) — the maintainer's two DASH answers, and the CLI gap one exposed | PR #67 (`8ea9a91`), docs-only | a dashboard row = ONE experiment; recomputing ONE metric must be possible — which turned out to be a **CLI** gap, not a UI one (`abk run` was the last per-comparison command without `--metric`), so DASH-4a was added to the plan ahead of DASH-4 |
+| DASH-2 — the one-row-per-experiment shaper (`overview.py`) | PR #68 (`0350812`) | **the plan's step 3 was wrong for this data model**: `_ab_results` rows are cumulative looks from a fixed start, so windowing them before `evaluate()` feeds the readout a truncated stabilization history (a 14-day daily WIN read INCONCLUSIVE at 24h; a 6h series inverted into a WIN the full readout refuses). The window now bounds only the sparkline; rows for undeclared arm pairs are dropped before the lookup (they inflate the BH family) |
+| DASH-3 — the localhost server + page bake (`dashboard_server.py`) | PR #69 (`3eca3e9`) | both dtk-tune deltas shipped test-pinned — the token gates EVERY request (compared as BYTES: `compare_digest` refuses a non-ASCII `str`) and the server never stops itself (AST gate, proven to bite on the explore server's shape). No `manager_factory` (no write path needs one); `dashboard.js` deliberately not committed yet, since a placeholder would smuggle the marker classes past the CI grep |
+| DASH-4a — `abk run --metric <m>` | PR #71 (`4680f5d`) | alphas are invariant **by construction** (`effective_alphas()` reads the CONFIG); the one thing a narrowed run must still touch outside its filter is **day state** — a stale-but-contiguous `_ab_unit_state` day is invisible to the M9 gap check, so a scoped `--full-refresh` TRUNCATES the withheld metrics' series (reproduced as a silent 3334.5-vs-3434.5 undercount) |
+| DASH-4 — the job-spawning routes | PR #72 (`e7c9f12`) | four decisions the plan did not have, each because the obvious form is silently wrong: `--select` is the YAML **path** (globs escaped) re-resolved through the child's own resolver (a CLI that exits 0 on an empty selection would show a green job that computed nothing), the child is bootstrapped with the CWD dropped from `sys.path` (`-m` injects the operator's project root), the explore URL scrape requires the scheme, and an unknown body field is a 400 |
+| DASH-5 — the client bundle (`web/src/dashboard/` → `dashboard.js`) | PR #73 (`993bf8a`) | the third committed bundle + the third `build.mjs` entry, moved here from DASH-6 so its smoke gate loads the committed artifact; both DASH-2 forks resolved (a new `insufficient` row field read through the readout's own `_flag`; `verdict: null` + `error` distinguishes "no data" from an error, so the `abk-insufficient` marker is not overloaded); a repaint refreshes only the readout half of an expanded row |
+| DASH-6 — `abk dashboard`, the wheel gate, the docs | PR #74 (`3db5913`) | three deliberate divergences from `abk explore`'s shell (the WHOLE selection; a never-run project is SERVED, its rows are the "press Run" state; no startup orphan scan); the pending-bundle degradation deleted (one reader that RAISES); **two** hardcoded wheel namelists needed editing, only one of which the plan named |
+| DASH-7 — the exit gate (`tests/e2e/test_dashboard_session.py`) | PR #75 (`b6b48c2`) | the risks note's premise was FALSE — no Docker-free real manager exists for a spawned child to reach — so the gate splits the claim (launcher contract end-to-end + a real `abk run --steps validate` to a green terminal status). It found **two real defects in already-merged code**: a never-computed experiment claiming INCONCLUSIVE, and the install warning suppressed by stale dist-info |
+| the `0.6.0` release cut | this PR | the M11-shipped flip across `.claude/rules/`, `CLAUDE.md`, `README.md` and the ROADMAP (📋→✅), `__version__ = 0.6.0`, the dated CHANGELOG section — completing §2's three-way docs-sync line, which DASH-6 deliberately left for the release (the rules describe the system as SHIPPED) |
 
 ## 0. Scope, posture & decisions
 

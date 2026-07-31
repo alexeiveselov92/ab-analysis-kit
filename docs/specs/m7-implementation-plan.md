@@ -1,8 +1,8 @@
 # M7 Implementation Plan — validate: vectorization + iteration policy
 
 > **Implementation record — M7 shipped in full (WP0–WP7 including the
-> stretch), 2026-07-19/20; version bumped to `0.2.0`, release-ready pending
-> the maintainer's `v0.2.0` tag/publish (G1) step.** Written 2026-07-18 as the
+> stretch), 2026-07-19/20; released as `0.2.0` —
+> tagged `v0.2.0` and published to PyPI.** Written 2026-07-18 as the
 > as-designed contract for M7 (part of the approved polish track M7–M17,
 > [ROADMAP.md "The polish track"](../../ROADMAP.md)), in the shape of
 > [m6-implementation-plan.md](m6-implementation-plan.md) /

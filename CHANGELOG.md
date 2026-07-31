@@ -11,7 +11,20 @@ recorded here alongside an `ALGORITHM_VERSION` bump and a
 [`statistics-changes.md`](docs/specs/statistics-changes.md) entry (never a silent
 number change).
 
-## [Unreleased]
+## [0.6.0] - 2026-08-01
+
+**M11 — `abk dashboard`, the project-level cockpit** (the implementation record
+is
+[docs/specs/m11-implementation-plan.md](docs/specs/m11-implementation-plan.md)).
+One row per experiment over the whole selection: headline verdict, effect + CI,
+p/α, a sparkline of the cumulative series, and buttons that spawn real `abk`
+subprocesses (Run — whole experiment or one metric — Unlock, Clean, Explore,
+Open report) and stream their logs. The server is
+a **launcher** — it computes no statistic, writes no config and never takes the
+pipeline lock; every verdict on the page is `readout.evaluate()`'s, the same one
+`abk run --report` bakes. **No statistical numbers changed** anywhere in this
+release: no `ALGORITHM_VERSION` bump, no `statistics-changes.md` entry, the
+golden tests untouched at rel-1e-9.
 
 ### Added
 - **M11 DASH-7 — the dashboard exit gate: a real session, end to end.**

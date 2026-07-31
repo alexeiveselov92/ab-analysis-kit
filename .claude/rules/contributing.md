@@ -112,10 +112,14 @@ the PR rather than silently diverging.
   packaged `init-claude` operator assets `abkit/cli/assets/claude/` (the managed
   block + 9 rules + 7 skills). The drift gate `tests/docs/test_docs_single_source.py`
   asserts every packaged operator rule has a published `docs/` home.
-- **Packaging DoD**: the built wheel ships `report.js` + `explore.js` + every
-  `abkit/cli/assets/claude/**` asset (the CI wheel-namelist gate), and the
+- **Packaging DoD**: the built wheel ships `report.js` + `explore.js` +
+  `dashboard.js` (M11) + every `abkit/cli/assets/claude/**` asset, and the
   `pip install`-smoke job proves `abk --version` + `abk init-claude` resolve from
   a clean-venv install across Py 3.10/3.11/3.12. `web/` never ships in the wheel.
+  A new bundle must be added to **two** hand-maintained namelists —
+  `.github/workflows/ci.yml` (the wheel gate) and
+  `tests/e2e/test_release_readiness.py` (the self-contained-bundles check) —
+  neither of which is derived from the build config.
 - Layout to keep in mind when touching a release: `cli/assets/claude/` (init-claude
   payload), `abkit/notify/` (`abk test-report` channels), `website/` (the Astro site,
   auto-redeploys on `website/**` push to `main`).
