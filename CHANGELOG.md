@@ -14,6 +14,36 @@ number change).
 ## [Unreleased]
 
 ### Added
+- **M11 DASH-7 — the dashboard exit gate: a real session, end to end.**
+  `tests/e2e/test_dashboard_session.py` drives the server `abk dashboard` builds
+  over live HTTP — token-gated on every route, a boot payload asserted
+  metadata-only field by field, three distinct row states in one list (computed /
+  warehouse-raises / never-computed) proving row isolation, the on-demand report
+  route, a real `abk` subprocess spawned through `/api/run` and polled to a
+  terminal status on absolute offsets, the one-at-a-time refusal against a
+  long-lived occupant, `/api/job/<id>/stop`, and a whole-session spy proving **no
+  pipeline lock** is ever taken. **No statistical numbers changed.**
+
+  The gate found two real defects in already-merged code, both fixed here:
+  - **A never-computed experiment claimed a verdict.** An experiment with no rows
+    of its own — in a project where others had run — reached `evaluate()` over
+    zero rows and rendered **INCONCLUSIVE**. That is a verdict about *data*: on a
+    row nobody computed it says "we looked and could not tell" where "nothing has
+    run yet — press Run" is the truth, and it made the dashboard's third row
+    state unreachable per experiment. It now reads the same "no data" state a
+    never-run project does; the lock probe still runs, since a crashed first run
+    leaves a lock on an experiment with no rows at all.
+  - **The "abkit is not installed" warning was suppressed by stale packaging
+    metadata.** A checkout whose install was *removed* keeps its dist-info, so
+    the probe reported "installed" while every spawned job died with
+    `ModuleNotFoundError` — exactly the case the warning exists for. It now asks
+    the child's own question through both import mechanisms (a `sys.path` search
+    with the CWD dropped, then the `sys.meta_path` finders that answer for a
+    strict editable install) and ignores metadata entirely.
+
+  Also hardened: the payload point caps were only ever tested under a
+  monkeypatched small cap; a 50 000-look series now exercises the shipped
+  constants, so the per-row reply stays bounded however long an experiment peeks.
 - **M11 DASH-6 — `abk dashboard`: the project-level cockpit is a command.** The
   DASH-1..5 server, rows and client get their entry point:
   `abk dashboard [--select <sel>]... [--exclude <sel>]... [--window

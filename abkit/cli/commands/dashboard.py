@@ -24,8 +24,9 @@ dashboard being a **launcher, not a reader**:
   (``abk run``, ``abk explore``, ``abk clean``).
 
 It also owns the one startup warning DASH-4 deferred here: a job is a spawned
-``abk`` process, so an abkit that was never installed makes EVERY button fail
-identically — said once, before the page opens, instead of N times in the drawer
+``abk`` process with the CWD dropped from ``sys.path``, so an abkit that is not
+installed makes EVERY button fail identically — said once, before the page
+opens, instead of N times in the drawer
 (:func:`_spawned_jobs_can_import_abkit`).
 
 Failures raise ``click.ClickException`` → non-zero exit (the house rule).
@@ -36,8 +37,6 @@ from __future__ import annotations
 import importlib.machinery
 import os
 import sys
-from importlib.metadata import PackageNotFoundError
-from importlib.metadata import version as dist_version
 from pathlib import Path
 
 import click
@@ -59,26 +58,37 @@ def _spawned_jobs_can_import_abkit(project_root: Path) -> bool:
     ``ModuleNotFoundError`` in its own drawer — N identical failures nobody can
     read a cause out of. Warn ONCE, here, before the cockpit opens.
 
-    Two signals, and only their conjunction warns, because either alone lies:
-    installed metadata alone misses a ``PYTHONPATH`` install (no dist-info, jobs
-    work fine), and a ``sys.path`` probe alone misses a *strict* editable install
-    (setuptools installs a meta-path finder, so nothing on ``sys.path`` resolves
-    ``abkit``). Probed in-process rather than by spawning ``abk --version``: same
-    answer, no process per startup.
+    It asks the child's own question — *does ``abkit`` resolve without the
+    CWD?* — through both import mechanisms, because either alone answers wrong:
+    a ``sys.path`` search misses a **strict editable** install (setuptools puts
+    a finder in ``sys.meta_path``, so nothing on ``sys.path`` resolves
+    ``abkit``), and the meta-path finders alone miss an ordinary site-packages
+    or ``PYTHONPATH`` install. Distribution *metadata* is deliberately NOT a
+    signal: it is present and stale in a checkout whose install was removed, and
+    trusting it there suppresses the warning in exactly the environment that
+    needs it (found by the DASH-7 exit gate, whose own spawning legs skip in
+    such a checkout). Probed in-process rather than by spawning
+    ``abk --version``: same answer, no process per startup.
     """
-    try:
-        dist_version("ab-analysis-kit")
-        return True
-    except PackageNotFoundError:
-        pass
-    except Exception:  # noqa: BLE001 — a broken metadata dir must not block a cockpit
-        return True
     dropped = {"", os.getcwd(), str(project_root)}
     paths = [entry for entry in sys.path if entry not in dropped]
     try:
-        return importlib.machinery.PathFinder.find_spec("abkit", paths) is not None
-    except (ImportError, ValueError):
-        return False
+        if importlib.machinery.PathFinder.find_spec("abkit", paths) is not None:
+            return True
+    except (ImportError, ValueError, AttributeError):
+        pass
+    for finder in sys.meta_path:
+        if finder is importlib.machinery.PathFinder:
+            continue  # already asked, over the REDUCED path
+        find_spec = getattr(finder, "find_spec", None)
+        if find_spec is None:
+            continue
+        try:
+            if find_spec("abkit", None) is not None:
+                return True
+        except Exception:  # noqa: BLE001 — a third-party finder must not break a cockpit
+            continue
+    return False
 
 
 def run_dashboard(

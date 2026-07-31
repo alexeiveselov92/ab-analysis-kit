@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import os
 from datetime import datetime
-from importlib.metadata import PackageNotFoundError
 from pathlib import Path
 
 import pytest
@@ -183,15 +182,13 @@ class TestInstalledAbkitWarning:
         assert result.exit_code == 0, result.output
         assert "not installed in this interpreter" not in result.output
 
-    def test_warned_once_when_neither_signal_finds_abkit(self, computed, serve, monkeypatch):
-        """Both probes must fail: no dist metadata AND nothing on a `sys.path`
-        stripped of the CWD (what the spawned child actually imports from)."""
-        monkeypatch.setattr(
-            dashboard_cmd,
-            "dist_version",
-            lambda _name: (_ for _ in ()).throw(PackageNotFoundError("ab-analysis-kit")),
-        )
+    def test_warned_once_when_abkit_resolves_only_through_the_cwd(
+        self, computed, serve, monkeypatch
+    ):
+        """The bare-checkout case: `abkit` is importable ONLY from the directory
+        the spawned child drops, and no meta-path finder offers it either."""
         monkeypatch.setattr(dashboard_cmd.sys, "path", ["", os.getcwd()])
+        monkeypatch.setattr(dashboard_cmd.sys, "meta_path", [])
         result = runner.invoke(cli, ["dashboard", "--select", EXP, "--no-open"])
         assert result.exit_code == 0, result.output
         assert result.output.count("not installed in this interpreter") == 1
@@ -199,28 +196,39 @@ class TestInstalledAbkitWarning:
         # a warning, not a refusal: the page and its read-only rows still work
         assert len(serve.calls) == 1
 
-    def test_the_probed_distribution_name_resolves(self):
-        """The metadata probe hardcodes `ab-analysis-kit`. A rename would make it
-        raise `PackageNotFoundError` forever — silently degrading the conjunction
-        to its `sys.path` half — so pin the NAME here, where a rename fails.
-
-        Resolvability only, deliberately not equality with ``abkit.__version__``:
-        an editable install's dist-info is written once and does not track a
-        later source bump, so equality would fail on a stale-but-working install
-        (it reads 0.1.0 in a checkout installed before the bumps).
-        """
-        assert dashboard_cmd.dist_version("ab-analysis-kit")
+    def test_stale_distribution_metadata_does_not_suppress_the_warning(
+        self, computed, serve, monkeypatch
+    ):
+        """The DASH-7 finding. A checkout whose install was REMOVED keeps its
+        dist-info, so a metadata signal reports "installed" while every job dies
+        — the warning must not be suppressed by it. Asserted by leaving the real
+        (present) metadata alone and hiding only the import paths."""
+        monkeypatch.setattr(dashboard_cmd.sys, "path", ["", os.getcwd()])
+        monkeypatch.setattr(dashboard_cmd.sys, "meta_path", [])
+        result = runner.invoke(cli, ["dashboard", "--select", EXP, "--no-open"])
+        assert result.exit_code == 0, result.output
+        assert "not installed in this interpreter" in result.output
 
     def test_a_pythonpath_install_is_not_warned_about(self, computed, serve, monkeypatch):
-        """No dist-info, but abkit IS importable without the CWD — jobs work, so
-        warning would be a false alarm (the reason for the conjunction)."""
-        monkeypatch.setattr(
-            dashboard_cmd,
-            "dist_version",
-            lambda _name: (_ for _ in ()).throw(PackageNotFoundError("ab-analysis-kit")),
-        )
+        """abkit IS importable without the CWD through `sys.path` — jobs work, so
+        warning would be a false alarm."""
         pkg_parent = str(Path(dashboard_cmd.__file__).resolve().parents[3])
         monkeypatch.setattr(dashboard_cmd.sys, "path", ["", os.getcwd(), pkg_parent])
+        monkeypatch.setattr(dashboard_cmd.sys, "meta_path", [])
+        result = runner.invoke(cli, ["dashboard", "--select", EXP, "--no-open"])
+        assert result.exit_code == 0, result.output
+        assert "not installed in this interpreter" not in result.output
+
+    def test_a_strict_editable_install_is_not_warned_about(self, computed, serve, monkeypatch):
+        """Nothing on `sys.path` resolves abkit, but a meta-path finder does —
+        the modern `pip install -e .` shape. Jobs work; no warning."""
+
+        class EditableFinder:
+            def find_spec(self, name, path=None, target=None):
+                return object() if name == "abkit" else None
+
+        monkeypatch.setattr(dashboard_cmd.sys, "path", ["", os.getcwd()])
+        monkeypatch.setattr(dashboard_cmd.sys, "meta_path", [EditableFinder()])
         result = runner.invoke(cli, ["dashboard", "--select", EXP, "--no-open"])
         assert result.exit_code == 0, result.output
         assert "not installed in this interpreter" not in result.output
