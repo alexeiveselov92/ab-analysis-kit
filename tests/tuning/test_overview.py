@@ -371,6 +371,26 @@ class TestGoldenRow:
         assert row["main_metric"] == "revenue"
         assert (row["verdict"], row["last_end_ts"], row["spark"]) == (None, None, [])
 
+    def test_an_experiment_with_no_rows_of_its_own_is_no_data_not_inconclusive(self, tables):
+        """The DASH-7 finding. The table EXISTS (another experiment ran), but this
+        experiment was never computed — so it must read the same "no data — press
+        Run" state a never-run project does, NOT the ``INCONCLUSIVE`` that
+        ``evaluate()`` answers over zero rows. INCONCLUSIVE is a verdict about
+        DATA; printed for an experiment that never ran it says "we looked and
+        could not tell" where "nothing has run yet" is the truth.
+        """
+        experiment = make_experiment(name="never_run_exp")
+
+        row = row_safe_for(tables, experiment)
+
+        assert row["error"] is None
+        assert row["verdict"] is None, "a never-computed experiment claimed a verdict"
+        assert (row["effect"], row["pvalue"], row["last_end_ts"]) == (None, None, None)
+        assert row["spark"] == [] and row["verdicts"] == []
+        # the lock probe still runs (it is in a `finally`): a first run that
+        # crashed leaves a lock on an experiment with no rows at all
+        assert row["locked"] is False
+
     def test_a_tz_aware_now_is_normalized_not_compared_raw(self, tables):
         experiment = make_experiment()
         seed_series(tables, experiment)
@@ -492,6 +512,29 @@ class TestSpark:
 
     def test_the_default_cap_is_the_documented_twenty_thousand(self):
         assert MAX_STAT_POINTS == 20_000
+
+    def test_a_fifty_thousand_look_series_is_bounded_at_real_scale(self, tables):
+        """DASH-7 round 2 (perf/memory, not correctness): the caps must hold at
+        the REAL constants, not only under a monkeypatched small one.
+
+        A 50k-look experiment is past every bound at once — `MAX_STAT_POINTS`
+        truncates the input and `_spark_series` buckets the remainder — so the
+        reply a browser gets stays a fixed size no matter how long an experiment
+        has been peeking. Asserted on the shipped values: a test that lowers the
+        cap first proves only that the lowered cap works.
+        """
+        experiment = make_experiment()
+        rows = [make_row(experiment, day=i, effect=0.01 + i * 1e-6) for i in range(50_000)]
+        save_rows(tables, rows)
+
+        row = row_for(tables, experiment, "all")
+
+        assert row["error"] is None if "error" in row else True
+        assert len(row["spark"]) <= overview._MAX_SPARK_BUCKETS
+        assert len(row["spark"]) > 0
+        # each point is [ms, effect|None] — the shape the renderer plots
+        assert all(len(point) == 2 for point in row["spark"])
+        assert row["verdict"] is not None, "the verdict is the full series', uncapped"
 
 
 class TestWindowPresets:
@@ -824,12 +867,17 @@ class TestInsufficientFlag:
         assert row["insufficient"] is True
 
     def test_a_never_run_experiment_is_not_insufficient(self, tables):
-        """No looks at all is the "no data yet" state, not a demotion."""
+        """No looks at all is the "no data yet" state, not a demotion.
+
+        Since the DASH-7 fix that state is also not a VERDICT: it used to read
+        the ``INCONCLUSIVE`` ``evaluate()`` answers over zero rows, which claimed
+        an inference nobody made.
+        """
         experiment = make_experiment()
 
         row = row_for(tables, experiment)
 
-        assert row["verdict"] == "INCONCLUSIVE"
+        assert row["verdict"] is None
         assert row["insufficient"] is False
         assert row["last_end_ts"] is None
 

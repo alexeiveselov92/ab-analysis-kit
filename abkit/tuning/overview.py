@@ -472,12 +472,20 @@ def _fill_stats(
     A project that has never run has no ``_ab_results`` table; that is the
     honest "no data yet" state, not an error, so the stats stay at their
     ``_empty_row`` defaults (the reporting builder's ``results_table_exists``
-    precedent — a read-only surface never creates schema).
+    precedent — a read-only surface never creates schema). An experiment with no
+    rows of its OWN is the same state and must read the same way, even in a
+    project where other experiments have run: ``evaluate()`` over zero rows
+    answers ``INCONCLUSIVE``, which is a verdict about DATA, and rendering it for
+    an experiment that was never computed would put "we looked and could not
+    tell" where "nothing has run yet — press Run" is the truth (found by the
+    DASH-7 exit gate).
     """
     if not tables.results_table_exists():
         return
 
     loaded = tables.load_results(experiment.name)
+    if not loaded:
+        return
     rows = _declared_pairs_only(experiment, loaded)
     warnings = list(_declared_pair_warning(experiment, len(loaded) - len(rows)))
 

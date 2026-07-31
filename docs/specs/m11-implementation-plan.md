@@ -1,16 +1,25 @@
 # M11 Implementation Plan — abk dashboard (the flagship overview UI)
 
-> **Status: as-designed contract for M11** (polish track approved 2026-07-18,
-> [ROADMAP.md](../../ROADMAP.md) "The polish track — M7–M17"). Targets release
-> **`0.6.0`**. **Not yet implemented** — this doc is the contract the
-> implementation sessions execute, in the shape of
-> [m6-implementation-plan.md](m6-implementation-plan.md) /
-> [m4-implementation-plan.md](m4-implementation-plan.md). It becomes the
-> implementation record at the DASH-7 exit gate (the m4–m6 pattern: WPs get
-> ticked off, an adversarial-review record is appended, nothing here is
-> retracted). It must never be read as claiming any of `abkit/tuning/jobs.py`,
-> `overview.py`, `dashboard_server.py`, `dashboard.ts`, or `abk dashboard`
-> exist yet — they don't.
+> **Status: IMPLEMENTATION RECORD — all DASH work packages shipped** (polish
+> track approved 2026-07-18, [ROADMAP.md](../../ROADMAP.md) "The polish track —
+> M7–M17"). Targets release **`0.6.0`**, which is the maintainer's step. Every
+> module the plan called unbuilt now exists — `abkit/tuning/jobs.py` (DASH-1,
+> PR #66), `overview.py` (DASH-2, #68), `dashboard_server.py` (DASH-3 #69 +
+> DASH-4 #72), `abk run --metric` (DASH-4a, #71), `web/src/dashboard/` +
+> the committed `dashboard.js` (DASH-5, #73), `abk dashboard` + the docs
+> (DASH-6, #74) — and the DASH-7 exit gate
+> (`tests/e2e/test_dashboard_session.py`, #75) closed the milestone.
+>
+> Read it the m4–m6 way: the as-designed prose stands as written and **nothing
+> is retracted**; each WP carries an "As built" note recording what actually
+> shipped, every deliberate deviation, and the defects review found. Where a
+> note and the prose above it disagree, **the note is the truth** — most
+> sharply for DASH-7's own risks note, whose premise (that a Docker-free real
+> manager exists to point a spawned child at) turned out to be false.
+>
+> Still open, deliberately, and NOT part of this document: the `0.6.0` release
+> step — the `.claude/rules/{architecture,contributing}.md` + root `CLAUDE.md`
+> M11-shipped flip, the ROADMAP 📋→✅, the version bump and the tag.
 >
 > Governing specs: [cli-and-dx.md](cli-and-dx.md) (the CLI surface + skill
 > conventions the new `abk dashboard` command joins),
@@ -80,10 +89,9 @@ server or a bake pipeline from scratch. Verified reuse surface
 `abkit/cli/commands/dashboard.py`, the registered `abk dashboard` command, and
 `docs/guides/dashboard.md`. None of these are stubbed today.
 
-*(Progress against that list, as of PR #74: everything above exists. What is
-left of the milestone is DASH-7 — the e2e session gate
-`tests/e2e/test_dashboard_session.py`, the two adversarial review rounds, and
-this file's amendment into the implementation record.)*
+*(Progress against that list, as of PR #75: everything above exists, and
+DASH-7's `tests/e2e/test_dashboard_session.py` closed the gate. All that
+remains of M11 is the release step — see the status banner.)*
 
 ### 0.4 Scope: DASH-1..7 only
 
@@ -1427,6 +1435,81 @@ manager, if any) — reuse `tests/e2e/test_explore_session.py`'s manager
 fixture rather than inventing a new one.
 
 **Session estimate:** 1 session.
+
+**As built (PR #75, 2026-07-31) — the exit-gate record.** All four steps
+shipped; the gate found **two real defects in already-merged code**, which is
+what it exists for. What a reader of this record needs:
+
+1. **`tests/e2e/test_dashboard_session.py` (7 tests)** drives the REAL server
+   built the way `abk dashboard` builds it (`build_dashboard_server` with the
+   scaffolded configs, an injected `JobManager`, served in a thread) over live
+   HTTP: token-gated on every route including `GET /`; the boot payload asserted
+   **metadata-only field by field** (no `verdict`/`effect`/`pvalue`/`spark`/
+   `srm_flag`/`insufficient`, and no `token` — the page is not a credential at
+   rest); three DISTINCT row states in one list (computed, warehouse-raises,
+   never-computed) proving isolation; `GET /experiment/<name>`; the job legs; and
+   a whole-session `acquire_lock`/`release_lock` spy (§0.5(d)) plus "still
+   serving" (§0.5(b) delta 2).
+2. **The risks note's premise was false, and the honest boundary is disclosed
+   instead of papered over.** There is no Docker-free *real* manager to point
+   `profiles.yml` at — `SeedMirrorWarehouse` is an **in-process fake**, so a
+   spawned child (its own OS process) can never reach it and a real `abk run`
+   ends in a connection failure. The gate therefore splits the claim: the
+   `/api/run` leg proves the **launcher contract** end-to-end (spawn → pump →
+   poll on absolute offsets → terminal status → `/api/jobs`), and the green half
+   is a real `abk run --steps validate` — the config lint, no DB and no lock —
+   driven through the same routes to `done` with `returncode == 0`.
+3. **The one-at-a-time gate is asserted against a long-lived REAL occupant**, not
+   by posting `/api/run` twice quickly. The child dies on the connection in under
+   a second, so "post twice" is a race, and a gate test that passes because it
+   lost a race is not a gate test.
+4. **Both spawning legs skip without an installed abkit** (the DASH-4 note 7
+   consequence: the bootstrap drops the CWD, which is the only place a bare
+   checkout lives) — the `tests/tuning/test_dashboard_server.py:715` precedent.
+   They were **not** left unverified on that skip: `PYTHONPATH=<repo> pytest`
+   makes `abkit` resolve without the CWD, which is how both were run green
+   locally before the PR.
+5. **Round-1 defect (DASH-6 code): the install warning was suppressed by stale
+   distribution metadata.** `_spawned_jobs_can_import_abkit` trusted
+   `importlib.metadata`, which is present-and-stale in a checkout whose install
+   was REMOVED — precisely the environment where every job dies with
+   `ModuleNotFoundError`, i.e. the one the warning exists for. Found by this
+   gate's own skips (they proved abkit unimportable while the warning stayed
+   silent). Fixed by asking the child's actual question through both import
+   mechanisms and dropping metadata as a signal: `PathFinder` over the REDUCED
+   `sys.path`, then the `sys.meta_path` finders (which is what catches a *strict*
+   editable install). Pinned by three tests — bare checkout, `PYTHONPATH`
+   install, strict-editable install — plus a stale-metadata regression test.
+6. **Round-1 defect (DASH-2 code): a never-computed experiment claimed a
+   verdict.** `_fill_stats` early-returned only when the `_ab_results` TABLE was
+   absent, so an experiment with no rows of its own — in a project where others
+   had run — reached `evaluate()` over zero rows and rendered **INCONCLUSIVE**.
+   That is a verdict about DATA: printed for a row that was never computed it
+   says "we looked and could not tell" where "nothing has run yet — press Run"
+   is the truth, and it made DASH-5's third row state unreachable per
+   experiment. Fixed with a second early return (`if not loaded: return`), which
+   keeps the lock probe — it lives in `_fill_row`'s `finally`, and a first run
+   that crashed leaves a lock on an experiment with no rows at all. One existing
+   test pinned the old value while its own docstring argued for the new one
+   ("no looks at all is the 'no data yet' state"); it now pins `None`.
+7. **Round 2 checked the three items §2 names.** (a) The `JobManager`
+   kind-vocabulary fork is consistent across DASH-1/4/5: `JOB_KINDS = {run,
+   unlock, clean, explore}`, `PIPELINE_KINDS = {run, unlock, clean}`, the TS
+   `JobKind` union is identical, and `/api/explore` is the one route on the
+   non-pipeline `jobs.spawn` path. (b) The point caps were tested only under a
+   *monkeypatched* small cap, which proves the lowered cap works — a 50 000-look
+   series now exercises the SHIPPED constants (`MAX_STAT_POINTS = 20 000`
+   truncating the input, `_MAX_SPARK_BUCKETS = 160` bucketing the remainder), so
+   the reply size is bounded however long an experiment peeks, with the verdict
+   still the uncapped series'. (c) The no-pipeline-lock invariant is spied across
+   a whole session in the e2e (every read route), on top of DASH-4's per-route
+   spy; the no-self-shutdown AST gate already lives in
+   `tests/tuning/test_dashboard_server.py`.
+8. **Mutation-probed, not just green:** replacing `build_experiment_row_safe`
+   with the raising builder turns the isolated row into a 500 (leg fails), and
+   reverting the never-computed fix fails 5 tests including the e2e leg. Local:
+   2851 Python tests pass (6 skipped), and with `PYTHONPATH` set both spawning
+   legs run green.
 
 ---
 
