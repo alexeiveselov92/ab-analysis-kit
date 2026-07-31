@@ -31,9 +31,9 @@ validate-only method axis:
 - **`--select` / `-s` selects an EXPERIMENT** (`experiments/<name>.yml`). Accepted
   forms: a bare **name** (`example_signup_test` — do not add `.yml`), a **path or
   glob** (`"experiments/checkout/*.yml"`, `"signup_*"`), a **tag** (`tag:actual`), and
-  `"*"` for all. Repeatable. `run`, `validate`, `plan`, `unlock`, and `clean` default
-  to **all experiments** when `--select` is omitted; `explore` requires the selection
-  to resolve to **exactly one**.
+  `"*"` for all. Repeatable. `run`, `validate`, `plan`, `unlock`, `clean`, and
+  `dashboard` default to **all experiments** when `--select` is omitted; `explore`
+  requires the selection to resolve to **exactly one**.
 - **`--metric <name>` selects a LIBRARY metric** within the chosen experiment(s) — a
   single metric name, never a glob. It narrows a command to that metric's comparison(s)
   (`run`, `explore`, `validate`, `plan`, `verify-incremental`).
@@ -43,7 +43,7 @@ validate-only method axis:
 
 Experiment and metric names share one global namespace and are the database key, so
 selection and uniqueness errors name the namespace and the colliding file. `--exclude`
-(on `run`) removes matches from a broad selection
+(on `run` and `dashboard`) removes matches from a broad selection
 (`--select "*" --exclude "experiments/staging/*"`).
 
 See [experiments](../guides/experiments.md) and
@@ -243,6 +243,53 @@ configured comparison of the experiment.
 non-zero error naming the matches). A never-run project is a friendly no-op (exit 0)
 telling you to `abk run` first. Other failures exit non-zero. Full guide:
 [explore](../guides/explore.md).
+
+## `abk dashboard`
+
+Serve the project-level cockpit — one row per experiment, buttons that spawn `abk`
+commands (m11 plan DASH-6).
+
+```bash
+abk dashboard [--select <sel>]... [--exclude <sel>]... [--window 24h|7d|30d|90d|all] \
+              [--no-open] [--profile NAME]
+```
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--select`, `-s` | all experiments | Experiment selector (repeatable) |
+| `--exclude` | — | Selector(s) to remove from `--select` |
+| `--window` | `30d` | Initial sparkline window: `24h`, `7d`, `30d`, `90d`, `all` |
+| `--no-open` | off | Do not launch a browser (the URL still prints) |
+| `--profile` | `default_profile` | Connection profile — and the one every spawned command inherits |
+
+The page boots on **metadata only** and fills each row on demand (three requests in
+flight at a time) from the persisted `_ab_results`, so the verdicts are the same
+`readout.evaluate()` decisions `abk run --report` bakes. `--window` bounds the
+**sparkline only** — every verdict, effect and p-value is always the full cumulative
+series', and can be switched on the page without a restart.
+
+**The dashboard is a launcher, not a worker.** It runs no pipeline step, computes no
+statistic, takes **no pipeline lock**, and writes no config: the Run / Explore /
+Unlock / Clean buttons each spawn a real `abk` subprocess (inheriting `--profile`) and
+stream its log into a job drawer. `run`/`unlock`/`clean` are one-at-a-time across the
+project (a second request is refused); `explore` is exempt and deduped per experiment.
+Ctrl-C terminates every job the dashboard spawned. Editing YAML is read-only in this
+version (`Show YAML` + the file path) — the config-writing surface is `abk explore`'s
+Apply.
+
+Configs are read once at boot (restart to pick up an edited YAML). Nothing here creates
+internal schema: a project that has never run serves fine, with every row reading
+`no data — press Run`.
+
+**Security:** binds `127.0.0.1` only, with a fresh token per start that authorizes
+**every** request, `GET` included (the row reads hit your warehouse; the boot page
+enumerates your experiments). The token rides in the URL, not in the page. Treat that
+URL as a credential — whoever holds it can spawn `abk run` / `abk clean`.
+
+**Exit behavior:** an empty selection prints the unmatched-selector warning and exits 0
+without serving; an unknown `--window` is a non-zero error raised at startup, before the
+port is bound. Ctrl-C is the normal exit (0). Full guide:
+[dashboard](../guides/dashboard.md).
 
 ## `abk validate`
 
@@ -476,6 +523,9 @@ abk clean --select example_signup_test --execute  # prune the old series
 abk plan     --select example_signup_test --mde 0.05
 abk validate --select example_signup_test
 abk explore  --select example_signup_test
+
+# Watch the whole portfolio, and drive it from one page
+abk dashboard --select tag:actual
 
 # Scheduled recompute of every experiment whose tags list contains "actual"
 abk run --select tag:actual

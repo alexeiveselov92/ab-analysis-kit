@@ -14,6 +14,59 @@ number change).
 ## [Unreleased]
 
 ### Added
+- **M11 DASH-6 — `abk dashboard`: the project-level cockpit is a command.** The
+  DASH-1..5 server, rows and client get their entry point:
+  `abk dashboard [--select <sel>]... [--exclude <sel>]... [--window
+  24h|7d|30d|90d|all] [--no-open] [--profile NAME]`. **No statistical numbers
+  changed** (no `ALGORITHM_VERSION` bump; this WP adds a launcher, a CI gate and
+  documentation — the compute path is untouched).
+  - **The whole selection, not one experiment.** `--select`/`--exclude` resolve
+    exactly as they do on `abk run` (all experiments when omitted); the one-match
+    restriction is `abk explore`'s alone. `--window` sets the INITIAL sparkline
+    window and is validated at startup, before a port is bound, where the
+    operator typed it — the page switches it afterwards without a restart, and
+    every verdict is always the full cumulative series' either way.
+  - **Three deliberate divergences from `abk explore`'s shell**, each following
+    from the dashboard being a launcher rather than a reader: a project that has
+    never run **serves** (explore no-ops — here that is the first case, every row
+    reads "no data — press Run", and nothing creates internal schema); there is
+    no startup orphan scan (one `list_method_config_ids` per row would put N
+    warehouse queries in front of a metadata-only boot); and an empty selection
+    warns and exits 0 without serving, the `abk run`/`abk validate` idiom.
+  - **One startup warning, so N jobs cannot fail identically.** Every button
+    spawns `python -c` with `''` and the project root dropped from `sys.path`
+    (deliberately — a `click.py` in the operator's project must not shadow the
+    real one), so an abkit that was never installed makes every job die with the
+    same `ModuleNotFoundError` inside its own log drawer. `abk dashboard` now
+    says so once, before the page opens, and only when BOTH probes agree —
+    installed-distribution metadata alone false-alarms on a `PYTHONPATH` install,
+    and a `sys.path` probe alone false-alarms on a strict editable install. It
+    warns, never refuses: the read-only rows work either way.
+  - **The Open button's two server fields are wired here**, as DASH-5 left them:
+    the project's `MetricConfig`s become the on-demand report's metric
+    descriptions, and the raw manager (the same one `InternalTablesManager`
+    wraps, used under the server's `db_lock`) lets the no-copy default snapshot
+    the live cohort for the SRM chip's observed counts. Without them the page
+    still renders — with no descriptions and a silent "0 / 0" beside a green
+    chip, which reads as a broken cohort.
+  - **`dashboard.js` is now asserted in the wheel.** The CI packaging-DoD job's
+    bundle namelist is a hardcoded tuple (a source-tree glob would pass on a
+    wheel that shipped none of them); `abkit/tuning/assets/dashboard.js` joins
+    `report.js`/`explore.js` there and in the release-readiness e2e's
+    self-contained (zero external host) check. The marker-grep, hex-containment
+    and freshness gates needed no edit — verified by re-running all three
+    locally against the new file rather than assumed.
+  - **The pending-bundle degradation is gone.** `render_dashboard_html` used to
+    fall back to a "run `cd web && npm run build`" note, because between DASH-3
+    and DASH-5 the bundle could not exist. Now that it is committed AND
+    wheel-asserted — the exact condition `explore.js`'s undegrading read was
+    always keyed to — both go through one reader that RAISES: a missing bundle is
+    a packaging bug, and a page telling a `pip install` user to run a build step
+    blames them for something they cannot fix.
+  - Documented in [docs/guides/dashboard.md](docs/guides/dashboard.md) (what it
+    is, the row anatomy, the buttons, the job discipline, and the URL-is-a-
+    credential warning) + the CLI reference, with the packaged `init-claude`
+    operator rules and the docs site nav in the same PR.
 - **M11 DASH-5 — `dashboard.js`: the dashboard's client bundle (the third
   committed renderer).** `web/src/dashboard/dashboard.ts` renders the baked boot
   payload as one row per experiment — name, tags, verdict, effect/CI, p/α,

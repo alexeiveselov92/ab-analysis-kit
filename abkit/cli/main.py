@@ -7,7 +7,8 @@ driver is required until a command actually needs one. Failures exit NON-ZERO
 from the detectkit donor's swallow-and-return-0 behaviour).
 
 Surface: ``init``, ``run``, ``unlock``, ``clean`` (M2) + ``explore`` (M3) +
-``validate`` (M4) + ``plan`` (M5) + ``init-claude`` / ``test-report`` (M6).
+``validate`` (M4) + ``plan`` (M5) + ``init-claude`` / ``test-report`` (M6) +
+``verify-incremental`` (M9) + ``dashboard`` (M11).
 """
 
 from __future__ import annotations
@@ -207,6 +208,42 @@ def explore(
     from abkit.cli.commands.explore import run_explore
 
     run_explore(select, metric, profile, no_serve, no_open)
+
+
+@cli.command()
+@click.option(
+    "--select",
+    "-s",
+    multiple=True,
+    help="Experiment selector — name, path glob, tag:<tag>, or * (repeatable; default all)",
+)
+@click.option("--exclude", multiple=True, help="Selector(s) to remove from --select")
+@click.option("--profile", help="Profile name (default: profiles.yml default_profile)")
+@click.option(
+    "--window",
+    default="30d",
+    show_default=True,
+    help="Sparkline window per row: 24h, 7d, 30d, 90d or all (verdicts always use the full series)",
+)
+@click.option("--no-open", is_flag=True, help="Do not launch a browser (the URL still prints)")
+def dashboard(
+    select: tuple[str, ...],
+    exclude: tuple[str, ...],
+    profile: str | None,
+    window: str,
+    no_open: bool,
+) -> None:
+    """Serve the project-level dashboard for every selected experiment.
+
+    One row per experiment — verdict, effect and a sparkline, each fetched on
+    demand from the persisted results. The buttons spawn real `abk` commands
+    (run / explore / unlock / clean) as subprocesses and stream their logs, so
+    the dashboard itself never computes, never takes the pipeline lock, and
+    never edits a config. Serves until Ctrl-C.
+    """
+    from abkit.cli.commands.dashboard import run_dashboard
+
+    run_dashboard(select, exclude, profile, window, no_open)
 
 
 @cli.command()

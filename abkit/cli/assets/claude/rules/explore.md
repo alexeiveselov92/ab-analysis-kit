@@ -146,5 +146,8 @@ serve normally to tune.
   identity-param change, or BI shows duplicate stabilization lines.
 - **SRM still gates.** A tuned significant effect on an SRM-failed experiment is
   not trustworthy — the flag rides on the windshield; fix the assignment first.
+- **One experiment at a time.** For the project-wide view — one row per
+  experiment, with a button that launches this cockpit — use `abk dashboard`
+  (`cli.md`). It tunes nothing itself.
 
 > Installed by `abk init-claude`; tracks the installed abkit version.

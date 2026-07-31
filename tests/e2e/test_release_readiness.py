@@ -15,8 +15,8 @@ Journey: ``abk --version`` (the real, non-placeholder release version) → ``abk
 init`` → ``abk run --select <example>`` yields a real ``_ab_results`` row →
 ``abk run --report`` bakes a self-contained, zero-network readout → ``abk
 init-claude -d <tmp>`` materializes the managed ``CLAUDE.md`` block + the 9
-operator rules + the 7 skills → the committed report/explore bundles are
-self-contained. Fully offline (no wheel build, no network); no Docker. The
+operator rules + the 7 skills → the committed report/explore/dashboard bundles
+are self-contained. Fully offline (no wheel build, no network); no Docker. The
 *wheel packaging* DoD — that a built wheel ships every bundle + ``init-claude``
 asset and resolves in a clean venv — is owned authoritatively by CI's dedicated
 ``lint`` wheel-namelist gate and the ``install-smoke`` job (across the Python
@@ -152,7 +152,11 @@ class TestBundlesAreSelfContained:
 
     def test_committed_bundles_reference_no_external_host(self):
         pkg_root = Path(abkit.__file__).resolve().parent
-        for rel in ("reporting/assets/report.js", "tuning/assets/explore.js"):
+        for rel in (
+            "reporting/assets/report.js",
+            "tuning/assets/explore.js",
+            "tuning/assets/dashboard.js",
+        ):
             src = (pkg_root / rel).read_text(encoding="utf-8")
             # the only tolerated absolute URI is the SVG namespace in inline markup
             stripped = src.replace("http://www.w3.org", "")

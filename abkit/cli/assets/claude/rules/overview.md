@@ -38,7 +38,8 @@ Every `abk run` executes three stages per experiment:
    skipped (anti-join on `end_ts`, honoring `data_lag`).
 3. **readout** — recomputes the WIN / LOSE / FLAT / INCONCLUSIVE verdict at
    render time from `_ab_results` (never persisted), applies two-tier alpha and
-   the SRM/horizon gates. Emitted by `abk run --report`, `abk explore`.
+   the SRM/horizon gates. Emitted by `abk run --report`, `abk explore`, and
+   `abk dashboard` (one row per experiment, plus the same report on demand).
 
 Run a subset of stages with `--steps` (e.g. `abk run --steps validate` is the
 **config lint** — do not confuse it with `abk validate`, the A/A matrix).

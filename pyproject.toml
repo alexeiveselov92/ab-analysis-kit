@@ -103,7 +103,9 @@ exclude = ["tests*", "docs*", "website*"]
 # Pre-built self-contained HTML-report renderer bundle (shared with the website
 # landing demo), inlined by `abk run --report`.
 "abkit.reporting" = ["assets/*.js"]
-# Pre-built interactive explore-cockpit renderer bundle, inlined by `abk explore`.
+# Pre-built cockpit renderer bundles: the explore cockpit (`abk explore`) and the
+# project-level dashboard (`abk dashboard`). The glob ships both — the wheel
+# namelist gate in CI names each one explicitly.
 "abkit.tuning" = ["assets/*.js"]
 
 [tool.pytest.ini_options]
