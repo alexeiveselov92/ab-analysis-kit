@@ -178,8 +178,11 @@ class Dashboard:
         jobs: JobManager | None = None,
         profile: str | None = None,
         project_root: Path = ROOT,
+        metrics: dict | None = None,
+        with_manager: bool = False,
     ) -> None:
-        self.tables = InternalTablesManager(FakeDatabaseManager())
+        self.manager = FakeDatabaseManager()
+        self.tables = InternalTablesManager(self.manager)
         self.tables.ensure_tables()
         self.experiment = make_experiment()
         if seed:
@@ -193,6 +196,10 @@ class Dashboard:
             initial_window=initial_window,
             profile=profile,
             jobs=jobs,
+            metrics=metrics,
+            # The report route's live-cohort seam (DASH-5): the SAME manager
+            # ``tables`` wraps, exactly as `abk dashboard` will pass it.
+            manager=self.manager if with_manager else None,
             echo=self.echo_lines.append,
         )
         self.base = self.url.split("/?")[0]
@@ -303,8 +310,44 @@ ROUTES = [
     # DASH-4's read route — the only one that returns file contents, so leaving
     # it out of this list would let an ungated version of it ship green.
     "/api/experiment-source/dash_exp",
+    # DASH-5's report page — same reasoning: it renders an experiment's whole
+    # readout, and it is the one route that answers HTML.
+    "/experiment/dash_exp",
     "/nope",
 ]
+
+
+def _routed_get_paths() -> set[str]:
+    """Every literal path (or path prefix) ``_route_get`` dispatches on.
+
+    Read off the AST rather than listed, so :data:`ROUTES` cannot silently rot
+    the moment a WP adds a route: a `path == "/x"` comparison contributes
+    ``"/x"``, and a ``path.startswith(_X_PREFIX)`` contributes that module
+    constant's value. The token gate's coverage assertion below is only as
+    honest as this extraction, which is why it resolves the constants instead of
+    matching their names.
+    """
+    source = Path(dashboard_server.__file__).read_text(encoding="utf-8")
+    body = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.FunctionDef) and node.name == "_route_get"
+    )
+    paths: set[str] = set()
+    for node in ast.walk(body):
+        if isinstance(node, ast.Compare) and isinstance(node.ops[0], ast.Eq):
+            right = node.comparators[0]
+            if isinstance(right, ast.Constant) and isinstance(right.value, str):
+                paths.add(right.value)
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "startswith"
+            and node.args
+            and isinstance(node.args[0], ast.Name)
+        ):
+            paths.add(getattr(dashboard_server, node.args[0].id))
+    return paths
 
 
 class TestTokenGate:
@@ -321,6 +364,20 @@ class TestTokenGate:
         status, detail = raw_get(f"{dash.base}{path}?token=wrong")
         assert status == 403
         assert detail == "bad token"
+
+    def test_the_parametrized_route_list_covers_every_routed_get(self):
+        """The list above is the gate; an un-listed route is an ungated route.
+
+        DASH-4's review found exactly this rot once already (its new file-content
+        route was missing from the list), so the list is now checked against what
+        ``_route_get`` actually dispatches on.
+        """
+        uncovered = [
+            routed
+            for routed in _routed_get_paths()
+            if not any(path == routed or path.startswith(routed) for path in ROUTES)
+        ]
+        assert uncovered == [], f"add these routes to ROUTES: {uncovered}"
 
     def test_the_refusal_does_not_leak_which_paths_exist(self, dash):
         """Authorization precedes routing, so a 403 is not a path oracle."""
@@ -1318,6 +1375,183 @@ class TestExperimentSourceRoute:
         assert (jobs_dash.server.project_root / "experiments" / "dash_exp.yml").read_text() != (
             "name: hacked"
         )
+
+
+def baked_report_payload(page: str) -> dict:
+    """The payload out of a rendered report page (the `__ABK_PAYLOAD__` bake).
+
+    Sliced off the assignment line and JSON-parsed, so an assertion can compare
+    the SERVED payload against an independently built one instead of grepping
+    the document for substrings.
+    """
+    marker = "window.__ABK_PAYLOAD__ = "
+    start = page.index(marker) + len(marker)
+    end = page.index(";</script>", start)
+    return json.loads(page[start:end])
+
+
+class TestReportPage:
+    """DASH-5's Open button: ``GET /experiment/<name>`` renders the SAME report
+    ``abk run --report`` writes, on demand, for one experiment."""
+
+    def test_it_serves_the_report_document_the_report_bundle_drives(self, dash):
+        status, page = dash.get("/experiment/dash_exp")
+        assert status == 200
+        assert page.startswith("<!doctype html>")
+        assert "<title>abkit report — dash_exp</title>" in page
+        # the committed report bundle + its window global, inlined verbatim
+        assert "window.__ABK_REPORT__" in page
+        assert "window.__ABK_PAYLOAD__ = " in page
+
+    def test_the_served_payload_is_the_builders_own(self, dash):
+        """Not "looks like a report" — the same dict, field for field.
+
+        ``generated_at`` is the one cell that legitimately differs (the route
+        stamps its own clock), so it is compared for shape and then dropped.
+        """
+        from abkit.reporting import build_report_payload
+
+        expected = build_report_payload(
+            dash.experiment, dash.tables, project=PROJECT, generated_at="pinned"
+        )
+        served = baked_report_payload(dash.get("/experiment/dash_exp")[1])
+
+        assert served["generated_at"].endswith(" UTC")
+        served.pop("generated_at")
+        expected.pop("generated_at")
+        # the route's no-manager disclosure rides in `warnings` (asserted below)
+        assert served.pop("warnings")[:-1] == expected.pop("warnings")
+        assert served == expected
+
+    def test_the_verdict_on_the_page_is_the_rows_verdict(self, dash):
+        """One readout, two surfaces — the row and the report cannot disagree."""
+        row = dash.get("/api/stats/dash_exp")[1]
+        payload = baked_report_payload(dash.get("/experiment/dash_exp")[1])
+
+        assert [v["verdict"] for v in payload["verdicts"]] == [row["verdict"]]
+        assert payload["srm"]["flag"] is row["srm_flag"]
+
+    def test_an_unknown_experiment_is_a_404(self, dash):
+        status, detail = dash.get("/experiment/nope")
+        assert status == 404
+        assert "unknown experiment: nope" in detail
+
+    def test_a_trailing_slash_still_resolves(self, dash):
+        """``/experiment/dash_exp/`` is the same resource, not a 404."""
+        assert dash.get("/experiment/dash_exp/")[0] == 200
+
+    def test_a_never_run_experiment_renders_the_reports_empty_state(self):
+        """Not an error: the report's own "no persisted cutoffs" page."""
+        served = Dashboard(seed=False)
+        try:
+            status, page = served.get("/experiment/dash_exp")
+            payload = baked_report_payload(page)
+        finally:
+            served.stop()
+        assert status == 200
+        assert payload["period"]["end"] == 0
+        assert payload["period"]["start"] > 0, "start/horizon are config facts"
+
+    def test_the_metric_configs_seam_reaches_the_report(self):
+        """The description D6 puts on a metric card comes from ``metrics=``."""
+        from abkit.config.metric_config import MetricConfig
+
+        metric = MetricConfig.model_validate(
+            {
+                "name": "revenue",
+                "description": "revenue per user",
+                "type": "sample",
+                "columns": {"variant": "variant", "value": "revenue"},
+                "sql": "SELECT 1",
+            }
+        )
+        served = Dashboard(metrics={"revenue": metric})
+        try:
+            payload = baked_report_payload(served.get("/experiment/dash_exp")[1])
+        finally:
+            served.stop()
+        assert payload["metrics"][0]["description"] == "revenue per user"
+
+    def test_without_a_manager_the_no_copy_srm_counts_are_zero_and_it_says_so(self, dash):
+        """A silent "0 / 0" beside a green chip would read as a broken cohort."""
+        payload = baked_report_payload(dash.get("/experiment/dash_exp")[1])
+
+        assert payload["srm"]["observed"] == {"control": 0, "treatment": 0}
+        assert any("ZERO observed units" in w for w in payload["warnings"])
+        assert any("without a database manager" in w for w in payload["warnings"])
+
+    def test_a_cohort_source_that_cannot_be_read_costs_the_counts_not_the_page(self):
+        """The manager IS passed here, and the fake cannot run assignment SQL —
+        the same shape as a source that emptied or corrupted since the last run.
+        ``abk explore`` turns that into a CLI error; a click must still get its
+        report, with the failure named."""
+        served = Dashboard(with_manager=True)
+        try:
+            status, page = served.get("/experiment/dash_exp")
+            payload = baked_report_payload(page)
+        finally:
+            served.stop()
+        assert status == 200
+        assert payload["srm"]["observed"] == {"control": 0, "treatment": 0}
+        assert any("cohort source could not be read" in w for w in payload["warnings"])
+        assert any("ValueError" in w for w in payload["warnings"]), "names the failure"
+
+    def test_a_read_that_fails_on_the_retry_too_is_a_500(self, dash, monkeypatch):
+        """The fallback is for the cohort counts, not a blanket "never fail"."""
+        monkeypatch.setattr(
+            dash.tables,
+            "load_results",
+            lambda *a, **k: (_ for _ in ()).throw(RuntimeError("warehouse gone")),
+        )
+        status, detail = dash.get("/experiment/dash_exp")
+        assert status == 500
+        assert "warehouse gone" in detail
+
+    def test_the_render_holds_the_db_lock(self, dash):
+        """One connection, one reader — the stats route's discipline.
+
+        With the lock dropped the report's reads interleave with a row fill and
+        ``peak`` reaches 2.
+        """
+        original = dash.tables.load_results
+        state = {"inflight": 0, "peak": 0}
+        guard = threading.Lock()
+
+        def slow(*args, **kwargs):
+            with guard:
+                state["inflight"] += 1
+                state["peak"] = max(state["peak"], state["inflight"])
+            try:
+                time.sleep(0.2)
+                return original(*args, **kwargs)
+            finally:
+                with guard:
+                    state["inflight"] -= 1
+
+        dash.tables.load_results = slow  # type: ignore[method-assign]
+        replies: list = []
+        threads = [
+            threading.Thread(target=lambda: replies.append(dash.get("/experiment/dash_exp")[0])),
+            threading.Thread(
+                target=lambda: replies.append(dash.get("/api/stats/dash_exp", window="all")[0])
+            ),
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=30)
+        assert replies == [200, 200]
+        assert state["peak"] == 1
+
+    @pytest.mark.parametrize("path", ["/experiment/dash_exp", "/"])
+    def test_html_replies_are_not_cacheable(self, dash, path):
+        """The JSON routes' reason applies to both HTML routes too: a report
+        reopened after a Run must not be the pre-run render, and a page reloaded
+        after a restart must not be the previous selection's shell."""
+        req = urllib.request.Request(dash.tokened(path))
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            assert resp.headers["Content-Type"] == "text/html; charset=utf-8"
+            assert resp.headers["Cache-Control"] == "no-store"
 
 
 class TestTransport:

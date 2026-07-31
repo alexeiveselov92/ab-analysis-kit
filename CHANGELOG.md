@@ -14,6 +14,61 @@ number change).
 ## [Unreleased]
 
 ### Added
+- **M11 DASH-5 — `dashboard.js`: the dashboard's client bundle (the third
+  committed renderer).** `web/src/dashboard/dashboard.ts` renders the baked boot
+  payload as one row per experiment — name, tags, verdict, effect/CI, p/α,
+  elapsed, a canvas sparkline and the Open / Explore / Run buttons — and fills
+  the statistics lazily. Authored fresh against the donor's *patterns* (it ships
+  no TypeScript for its cockpit) over abkit's own primitives: the sparkline goes
+  through the same `shared/chart.ts` scale/line code the report and explore
+  charts use, and every color resolves through the one brand-token layer, so no
+  new hex enters the CI containment scan.
+  - **The boot render touches the network zero times.** The metadata-only list
+    paints first with every verdict cell `pending`; a fixed-concurrency-3 worker
+    pool (the donor's `Vn=3`, JS-only — there is no server pool and no cache)
+    then pulls names off one shared queue through `GET
+    /api/stats/<experiment>`. A rejected fetch or a `row.error` field paints
+    THAT row's error cell and the pool keeps going, so one unreadable experiment
+    costs one row. A window change or Refresh supersedes the fill in flight by
+    epoch *and* aborts it, so a reply that lost the race can never paint over a
+    newer one.
+  - **The §4 peeking-honesty markers are per row now**, on the verdict chip and
+    a one-line note under it (not hidden in the expand): `abk-srm-fail` for a
+    failed gate, `abk-insufficient` when the headline look was demoted, and
+    `abk-prehorizon` when a fixed-CI verdict is withheld before the horizon — a
+    verdict decided early under an always-valid sequence is deliberately NOT
+    marked. `verdict: null` reads as "no data — press Run" or as an error
+    depending on `error`, which is the only thing that tells the two apart.
+  - **`_ab_results.insufficient_data` reaches the row** as a new `insufficient`
+    field on the DASH-2 shape: the chip needed the state and the alternative was
+    matching English prose in the rationale. It is the HEADLINE look's own
+    persisted cell, read through the readout's own `_flag` (the report's looser
+    `bool(value)` would disagree on a `"0"` string cell), so no display window
+    can move it and the chip cannot contradict the rationale beside it.
+  - **`GET /experiment/<name>` (new route) renders the report the Open button
+    opens** — the same `build_report_payload` → `render_report_html` pair `abk
+    run --report` writes, on demand for one experiment, never read off disk
+    (a `reports/` file exists only if someone passed `--report`, and would be as
+    old as that run). A cohort source that cannot be read costs the SRM chip's
+    observed counts and names itself in the page's warnings rather than denying
+    the page; the DB half runs under `db_lock`, the bake outside it. Both HTML
+    routes now send `Cache-Control: no-store` for the reason the JSON ones
+    already did: a report reopened after a Run must not be the pre-run render.
+  - The expanded row carries the readout's own rationale, caveats, warnings and
+    per-arm-pair verdicts, one **Run per configured comparison** (a secondary
+    metric never appears in `verdicts` and still needs its own recompute —
+    that is what DASH-4a's `--metric` is for), Unlock, a **confirmed** Clean
+    (it spawns the `--execute` form), and the read-only YAML. A repaint
+    refreshes only the readout half: rebuilding the whole panel would collapse
+    an open YAML pane, dismiss a confirm box mid-read, and drop an in-flight
+    source reply into a detached node.
+  - The job chip reads the server's own `pipeline_active` flag (the
+    `kind ∈ PIPELINE_KINDS ∧ running` rule is never re-derived in JS) and names
+    running jobs from their own status field; a click opens a log drawer that
+    polls `/api/job/<id>?offset=` on the server's **absolute** offsets, so a job
+    chattier than the 5000-line buffer keeps streaming and discarded output is
+    disclosed instead of leaving a hole. A job that finishes re-reads its OWN
+    row — never the list.
 - **M11 DASH-4 — the dashboard's job routes: every button is a real `abk`
   subprocess.** `POST /api/run` (optionally one `metric`, DASH-4a),
   `/api/unlock`, `/api/clean`, `/api/explore` and `/api/job/<id>/stop`, plus

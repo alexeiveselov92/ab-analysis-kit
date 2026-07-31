@@ -39,6 +39,15 @@ const BUNDLES = [
     // marker step greps every abkit/*/assets/*.js for all three
     markers: ['abk-prehorizon', 'abk-insufficient', 'abk-srm-fail'],
   },
+  {
+    entry: path.join(here, 'src', 'dashboard', 'dashboard.ts'),
+    outFile: path.join(REPO, 'abkit', 'tuning', 'assets', 'dashboard.js'),
+    global: '__ABK_DASHBOARD__',
+    // the project-level cockpit renders the same three §4 states per ROW —
+    // a withheld pre-horizon verdict, a demoted (insufficient-data) headline
+    // look, and the red SRM gate — so it satisfies the same marker gate
+    markers: ['abk-prehorizon', 'abk-insufficient', 'abk-srm-fail'],
+  },
 ];
 
 /**

@@ -109,7 +109,14 @@ from abkit.config.experiment_config import ExperimentConfig
 from abkit.config.project_config import ProjectConfig
 from abkit.database.internal_tables import InternalTablesManager
 from abkit.database.internal_tables._tasks import DEFAULT_PROCESS_TYPE, DEFAULT_SCOPE
-from abkit.pipeline.readout import PairVerdict, evaluate, srm_summary
+
+# ``_flag`` rides along from the readout deliberately: the ``insufficient``
+# cell it reads is the SAME persisted flag the verdict's own demotion branch
+# tests, and a second truthiness (``reporting/builder._flag01`` is plain
+# ``bool(value)``, this one is ``bool(int(value))``) could disagree with the
+# readout on a driver that hands back a ``"0"`` string — the row's chip would
+# then contradict the rationale printed beside it.
+from abkit.pipeline.readout import PairVerdict, _flag, evaluate, srm_summary
 from abkit.tuning.payload import _ms
 from abkit.utils.datetime_utils import now_utc_naive, to_naive_utc
 
@@ -306,6 +313,7 @@ def _empty_row(name: str) -> dict[str, Any]:
         "elapsed_days": None,
         "is_horizon": False,
         "weekly_cycle_pct": None,
+        "insufficient": False,
         "rationale": [],
         "caveats": [],
         "guardrail_regressed": False,
@@ -351,7 +359,11 @@ def _fill_config_fields(
 def _pair_rows(
     experiment: ExperimentConfig, rows: Sequence[dict], verdict: PairVerdict
 ) -> list[dict]:
-    """The windowed looks behind one ``PairVerdict``, ascending, capped.
+    """The looks behind one ``PairVerdict``, ascending, capped.
+
+    Callers pass the UNwindowed rows and window the result for display: the
+    demotion flag must read the headline's own look whatever preset is showing,
+    and a suffix of a suffix is the same suffix, so the sparkline is unaffected.
 
     Filtered to the comparison's CURRENT ``method_config_id`` — the same rule
     ``readout._filter_rows`` applies before the verdict is computed, so the
@@ -370,6 +382,29 @@ def _pair_rows(
     ]
     picked.sort(key=lambda row: row["end_ts"])
     return picked[-MAX_STAT_POINTS:]
+
+
+def _headline_insufficient(pair_series: Sequence[dict], verdict: PairVerdict) -> bool:
+    """Was the look the headline verdict was read off a DEMOTED one?
+
+    A read of the persisted ``insufficient_data`` cell at the headline's own
+    cutoff — never a re-derived decision (the DASH-5 §4 chip needs the
+    ``abk-insufficient`` state, and the readout already withheld inference for
+    exactly this row: "insufficient data at the latest cutoff … — inference
+    withheld"). ``verdict.end_ts`` is ``None`` only when the pair had no rows at
+    all, which is the never-run state, not a demotion.
+
+    *pair_series* is the headline pair's own looks ascending (:func:`_pair_rows`
+    over the UNwindowed rows), so the cutoff is present whenever the readout
+    found one — the display window cannot move this flag.
+    """
+    if verdict.end_ts is None:
+        return False
+    anchor = to_naive_utc(verdict.end_ts)
+    for row in reversed(pair_series):
+        if to_naive_utc(row["end_ts"]) == anchor:
+            return _flag(row.get("insufficient_data"))
+    return False
 
 
 def _declared_pairs_only(experiment: ExperimentConfig, rows: Sequence[dict]) -> list[dict]:
@@ -509,10 +544,15 @@ def _fill_stats(
     # actually watches.
     row["warnings"] = warnings + list(readout.warnings)
 
+    # The headline pair's own looks, ascending — the substrate for BOTH the
+    # demotion flag (the headline look) and the sparkline (its windowed tail).
+    pair_series = _pair_rows(experiment, rows, headline)
+    row["insufficient"] = _headline_insufficient(pair_series, headline)
+
     # The preset is the sparkline's x-range and nothing else — see above.
     start = _window_start(window_preset, now)
-    windowed = rows if start is None else [r for r in rows if r["end_ts"] >= start]
-    row["spark"] = _spark_series(_pair_rows(experiment, windowed, headline))
+    windowed = pair_series if start is None else [r for r in pair_series if r["end_ts"] >= start]
+    row["spark"] = _spark_series(windowed)
 
 
 def _fill_row(
