@@ -33,6 +33,7 @@ const PAGES = [
   { src: 'docs/guides/databases.md', dest: 'guides/databases.md' },
   { src: 'docs/guides/reading-a-readout.md', dest: 'guides/reading-a-readout.md' },
   { src: 'docs/guides/explore.md', dest: 'guides/explore.md' },
+  { src: 'docs/guides/dashboard.md', dest: 'guides/dashboard.md' },
   { src: 'docs/guides/validate.md', dest: 'guides/validate.md' },
   { src: 'docs/guides/sequential.md', dest: 'guides/sequential.md' },
   { src: 'docs/guides/plan.md', dest: 'guides/plan.md' },

@@ -80,9 +80,10 @@ server or a bake pipeline from scratch. Verified reuse surface
 `abkit/cli/commands/dashboard.py`, the registered `abk dashboard` command, and
 `docs/guides/dashboard.md`. None of these are stubbed today.
 
-*(Progress against that list, as of PR #73: everything above exists except
-`abkit/cli/commands/dashboard.py`, the registered `abk dashboard` command and
-`docs/guides/dashboard.md` — DASH-6's remainder.)*
+*(Progress against that list, as of PR #74: everything above exists. What is
+left of the milestone is DASH-7 — the e2e session gate
+`tests/e2e/test_dashboard_session.py`, the two adversarial review rounds, and
+this file's amendment into the implementation record.)*
 
 ### 0.4 Scope: DASH-1..7 only
 
@@ -1266,6 +1267,101 @@ visual tweak introduces a new hex in `html.py`, the hex-containment gate
 that's impossible.
 
 **Session estimate:** 1 session.
+
+**As built (PR #74, 2026-07-31) — what DASH-7 must know.** All seven steps
+shipped (1 and 2 were already true from DASH-5 and were re-verified, not
+re-done), plus the decision DASH-3 note 8 / DASH-5 note 4 delegated here. What
+a later WP would otherwise have to rediscover:
+
+1. **§0.5(f)'s split verdict held, and was *checked* rather than assumed.** The
+   marker-grep loop (`for bundle in abkit/*/assets/*.js`) and the
+   hex-containment scan (`html.py` is already in its file list; the dashboard
+   page shell reuses explore's two hexes and `_FAVICON`) both pass unmodified
+   against the new file — re-run locally, all 9 marker checks and all 8 hexes
+   green. The freshness gate needed nothing either (`npm run build` reproduced
+   all three bundles byte-identically). **Only the wheel namelist was
+   hardcoded**, as predicted: `dashboard.js` was added to `ci.yml`'s tuple —
+   and to `tests/e2e/test_release_readiness.py`'s self-contained-bundles tuple,
+   the second hardcoded list the plan did not name (the source-tree half of the
+   same DoD: no external host in the shipped artifact). `pyproject.toml` needed
+   no change — `"abkit.tuning" = ["assets/*.js"]` is a glob and already shipped
+   the file; the gate's value is precisely that the glob cannot prove it.
+2. **The pending-note degradation is REMOVED (the delegated decision).** Both
+   readers now go through one undegrading `html._bundle(name)`, so a missing
+   `dashboard.js` raises exactly as a missing `explore.js` does. The condition
+   the explore law was keyed to — committed AND named in the wheel namelist —
+   became true for the dashboard in this WP, and the alternative was keeping
+   ~20 lines of unreachable JS with a second contract of its own (the old test
+   asserted the *note* satisfied the window-global contract). The replacement
+   test asserts what can now be asserted: the committed file appears in the
+   page verbatim, and each reader raises when the resource root has no such
+   file — proved by pointing `html.files` at an empty directory, because a
+   hijacked-reader probe would prove nothing when the law IS "no fallback path".
+3. **`run_dashboard` is deliberately thinner than `run_explore`**, and three
+   divergences are load-bearing rather than cosmetic (all three are pinned):
+   a never-run project **serves** instead of no-opping (its rows are the "no
+   data — press Run" state, and Run is the fix); there is **no startup orphan
+   scan** (explore's is one query for its one experiment — per row here it would
+   put N warehouse queries in front of a metadata-only boot, contradicting
+   DASH-3's whole design, so the orphan warning stays on the per-experiment
+   commands); and an empty selection takes the `abk run`/`abk validate` idiom
+   (`echo_done("Nothing selected.")`, exit 0, no server built) rather than
+   explore's non-zero refusal, which exists only because explore needs exactly
+   one.
+4. **The startup "abkit is not installed" warning DASH-4 note 7 deferred here
+   shipped** (`_spawned_jobs_can_import_abkit`). Every button spawns
+   `python -c` with `''` and the project root dropped from `sys.path`, so from a
+   bare uninstalled checkout EVERY job dies with the same
+   `ModuleNotFoundError` in its own drawer — said once, before the page opens.
+   It is probed **in-process, and only a conjunction warns**: `importlib.metadata`
+   alone would false-alarm on a `PYTHONPATH` install (no dist-info, jobs work),
+   and a `sys.path` probe alone would false-alarm on a *strict* editable install
+   (setuptools registers a meta-path finder, so nothing on `sys.path` resolves
+   `abkit`). Spawning `abk --version` to ask would be the most faithful probe and
+   costs a process at every startup for the same answer. It warns, never refuses:
+   the read-only rows work regardless.
+5. **`--window` is a plain string option, not a `click.Choice`.** Choices would
+   have to be read from `WINDOW_PRESETS` at *decorator* evaluation time, i.e. at
+   `abkit.cli.main` import — which imports `tuning.overview` → `pipeline.readout`
+   → numpy, breaking the lazy-group contract that keeps `abk --version` instant.
+   Instead `build_dashboard_server`'s existing boot-time `validate_window_preset`
+   raises `UnknownWindowPreset` (before the socket is bound) and the CLI turns it
+   into a house `ClickException` naming the presets. The cost is honest: the
+   `--help` text names the presets in prose, i.e. it IS the second copy DASH-3
+   note 10 warns about — so it is **pinned in both directions** against
+   `ALL_WINDOW_PRESETS` and `DEFAULT_WINDOW_PRESET`
+   (`TestWindowHelpStaysInLockstep`), which is the project's answer to a mirror
+   that cannot be eliminated. The `UnknownWindowPreset` handler is the ONLY
+   startup translation: the server's other refusal (a duplicated experiment name)
+   is left to raise, because `select_experiments` already enforces uniqueness over
+   the one global namespace, so reaching it is an abkit bug and a bug deserves its
+   traceback rather than a tidy `Error:` line.
+6. **The `metrics=`/`manager=` wiring DASH-5 left here is asserted, not
+   assumed** (`tests/cli/test_dashboard_command.py::TestWiring`): `manager` must
+   be the SAME object `tables` wraps (one connection, `db_lock`-serialized), and
+   dropping either kwarg fails the test — mutation-probed, along with the
+   no-pipeline-lock spy, the no-schema-created assertion and the job-registry
+   teardown. The no-schema test had to assert **table existence**, not row
+   counts: `ensure_tables()` creates empty tables, so a row-count probe passed
+   under an injected `ensure_tables()` call and was a test that could not fail.
+7. **What DASH-6 did NOT touch, on purpose:** `.claude/rules/{architecture,
+   contributing}.md`. The plan's file list names them, but those two bodies
+   describe the system **as shipped** and carry the milestone status line — M11
+   is not shipped until DASH-7's exit gate. The *operator* body (the third
+   single-source body, `abkit/cli/assets/claude/`) IS updated here, since it
+   ships in the wheel with this command: the `cli.md` rule gained an `abk
+   dashboard` section + the selector/`--exclude` lines, `explore.md` a
+   project-level pointer, `overview.md` the readout-emitter list, and
+   `CLAUDE.section.md`'s routing row now names the dashboard. No new operator
+   rule *file* was added, so `RULE_TO_DOCS` and the "9 rules" count that four
+   other files quote stay true. **DASH-7 (or the release step) owns the
+   `.claude/rules/` + root `CLAUDE.md` M11 flip.**
+8. The docs site's page list and sidebar are both manual (`website/scripts/
+   sync-docs.mjs` `PAGES`, `website/astro.config.mjs` `sidebar`) — a new
+   `docs/guides/*.md` reaches the site only by editing both, and `sync-docs`
+   reports an unresolved-link warning (not an error) for any doc that links a
+   page missing from `PAGES`. Both are edited here; `sync-docs` runs clean for
+   every dashboard link.
 
 ---
 

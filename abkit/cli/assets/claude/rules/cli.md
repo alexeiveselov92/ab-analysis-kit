@@ -13,6 +13,7 @@ task = one `abk` invocation), so a broken run fails the job instead of exiting 0
 | `abk init-claude` | (Re)install this AI context: managed `CLAUDE.md` block + `.claude/rules/ab-analysis-kit/` + `.claude/skills/` |
 | `abk run --select <exp>` | Run the load → compute → readout pipeline for an experiment |
 | `abk explore --select <exp>` | Serve the interactive cockpit — tune the method live, write it back (see `explore.md`) |
+| `abk dashboard` | Serve the project-level cockpit: one row per experiment, buttons that spawn `abk` commands |
 | `abk validate --select <exp>` | The A/A false-positive + power matrix — is a method calibrated on this data? (see `validate.md`) |
 | `abk plan --select <exp>` | Read-only pre-launch sizing: required-N / achievable-MDE / power (see `plan.md`) |
 | `abk unlock --select <exp>` | Clear a stuck pipeline / validate lock |
@@ -29,8 +30,9 @@ experiment references reusable metrics:
 - **`--select` / `-s` selects an EXPERIMENT** (`experiments/<name>.yml`). Forms:
   bare **name** (`example_signup_test` — do NOT add `.yml`), **path / glob**
   (`"experiments/checkout/*.yml"`, `"signup_*"`), **tag** (`tag:actual`), and
-  `"*"` for all. Repeatable. `run`/`validate`/`plan`/`unlock`/`clean` default to
-  **all experiments** when `--select` is omitted; `explore` requires exactly one.
+  `"*"` for all. Repeatable. `run`/`validate`/`plan`/`unlock`/`clean`/`dashboard`
+  default to **all experiments** when `--select` is omitted; `explore` requires
+  exactly one.
 - **`--metric <name>` selects a LIBRARY metric** within the chosen experiment(s)
   — a single metric name, never a glob. It narrows a command to that metric's
   comparison(s) (`run`, `explore`, `validate`, `plan`, `verify-incremental`).
@@ -40,7 +42,8 @@ experiment references reusable metrics:
 
 Experiment AND metric names share ONE global namespace and are the DB key —
 selection/uniqueness errors name the namespace and the colliding file. `--exclude`
-(on `run`) removes matches (`--select "*" --exclude "experiments/staging/*"`).
+(on `run` and `dashboard`) removes matches
+(`--select "*" --exclude "experiments/staging/*"`).
 
 ## `abk init`
 
@@ -151,6 +154,46 @@ main metric). `--no-serve` writes a static snapshot to
 without launching a browser. Takes no pipeline lock (it only edits a config file);
 re-run `abk run` afterward to recompute under the new config. Full reference:
 `explore.md`.
+
+## `abk dashboard`
+
+```bash
+abk dashboard [--select <sel>]... [--exclude <sel>]... [--window 24h|7d|30d|90d|all] \
+              [--no-open] [--profile NAME]
+```
+
+The project-level cockpit (0.6.0): one row per selected experiment — headline
+verdict, effect, p-value, last look and a sparkline — served on localhost with a
+per-start token that authorizes EVERY request, `GET` included. The page boots on
+metadata only and fills each row on demand (3 requests in flight), so a
+hundred-experiment project renders instantly.
+
+**A launcher, not a worker.** It runs no pipeline step, computes no statistic,
+takes **no pipeline lock** and writes no config: verdicts come from the same
+`readout.evaluate()` decision `abk run --report` bakes, and the Run / Explore /
+Unlock / Clean buttons each spawn a real `abk` subprocess (inheriting
+`--profile`), streaming its log into a job drawer. `run`/`unlock`/`clean` are
+one-at-a-time project-wide (a second request is refused — they contend for the
+pipeline lock); `explore` is exempt and deduped per experiment. Ctrl-C stops the
+server and terminates every job it spawned.
+
+- `--window` (default `30d`) bounds the **sparkline only** — every verdict,
+  effect and p-value is the FULL cumulative series' (dropping the oldest look
+  would truncate a stabilization history, not shorten the experiment). Switchable
+  on the page.
+- `--exclude` removes matches from a broad `--select`, as on `abk run`.
+- Configs are read ONCE at boot: restart after editing an experiment YAML.
+- A project that has never run serves fine — every row reads `no data — press
+  Run`, and nothing here creates internal schema.
+- **Read-only YAML.** `Show YAML` prints the file + its path for you to open in
+  your editor; there is no save endpoint. The config-writing surface is
+  `abk explore`'s Apply.
+- **The URL is a credential** — whoever has it can spawn `abk run`/`abk clean`
+  in your project. Localhost-bound; do not share it or forward the port.
+
+An empty selection warns and exits 0 without serving; an unknown `--window` is a
+non-zero startup error, raised before the port is bound. Full reference:
+https://abkit.pipelab.dev/guides/dashboard/.
 
 ## `abk validate`
 
@@ -291,6 +334,9 @@ abk clean --select example_signup_test --execute    # then prune them
 abk plan   --select example_signup_test --mde 0.05
 abk validate --select example_signup_test
 abk explore  --select example_signup_test
+
+# Watch the whole portfolio (and drive it) from one page
+abk dashboard --select tag:actual
 
 # Scheduled recompute of every experiment whose `tags:` list contains "actual" (cron / Prefect)
 abk run --select tag:actual

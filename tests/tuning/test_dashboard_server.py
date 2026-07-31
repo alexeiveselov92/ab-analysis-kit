@@ -873,9 +873,7 @@ class TestSelectorIsThePath:
 
     def test_a_question_mark_is_escaped_too(self, tmp_path):
         path, experiment = write_experiment(tmp_path, file_stem="q?")
-        assert (
-            dashboard_server._selector_for(path, experiment, tmp_path) == "experiments/q[?].yml"
-        )
+        assert dashboard_server._selector_for(path, experiment, tmp_path) == "experiments/q[?].yml"
 
     def test_escaping_brackets_first_keeps_the_others_intact(self):
         assert dashboard_server._escape_glob("a[1]*?.yml") == "a[[]1][*][?].yml"
@@ -1024,9 +1022,7 @@ class TestTheSelectorIsVerifiedBeforeSpawning:
     """A stale boot snapshot must not launch a green job that did nothing."""
 
     @pytest.mark.parametrize("route", ["/api/run", "/api/unlock", "/api/clean", "/api/explore"])
-    def test_a_yaml_that_moved_since_boot_is_refused_not_spawned(
-        self, jobs_dash, tmp_path, route
-    ):
+    def test_a_yaml_that_moved_since_boot_is_refused_not_spawned(self, jobs_dash, tmp_path, route):
         """`abk run --select <nomatch>` warns, prints "Nothing selected." and
         exits **0** — so without this check the drawer would show a successful
         Run that computed nothing (`unlock`/`clean` likewise)."""
@@ -2003,39 +1999,42 @@ class TestServeDashboard:
 
 
 class TestBundleBake:
-    def test_the_committed_bundle_is_inlined_verbatim_when_present(self, monkeypatch):
-        monkeypatch.setattr(
-            html, "_read_bundle", lambda name: "/*BUNDLE*/" if name == "dashboard.js" else None
-        )
-        page = render_dashboard_html({"project": "p", "experiments": []})
-        assert "/*BUNDLE*/" in page
-        assert "npm run build" not in page
+    def test_the_committed_bundle_is_inlined_verbatim(self):
+        """The real committed artifact, not a stub, is what the page ships.
 
-    def test_a_missing_bundle_degrades_to_the_pending_note(self, monkeypatch):
-        monkeypatch.setattr(html, "_read_bundle", lambda name: None)
-        page = render_dashboard_html({"project": "p", "experiments": []})
-        assert "window.__ABK_DASHBOARD__ = {" in page
-        assert "npm run build" in page
-
-    def test_the_pending_note_satisfies_the_window_global_contract(self):
-        """What ``build.mjs`` asserts of the real bundle in DASH-6, and what the
-        page's bootstrap calls — the placeholder must not be a broken page."""
-        assert "window.__ABK_DASHBOARD__" in html._PENDING_DASHBOARD_JS
-        assert "render:" in html._PENDING_DASHBOARD_JS
-
-    def test_a_missing_bundle_reads_as_none_rather_than_raising(self):
-        assert html._read_bundle("no_such_bundle.js") is None
-
-    def test_the_explore_bundle_read_stays_undegraded(self, monkeypatch):
-        """A missing explore.js is a packaging bug to surface, not to paper over.
-
-        The degradation is the dashboard's alone. Asserting "still returns
-        something" would not say that — a fallback returns something too — so
-        the law is that ``_explore_js`` does not go through ``_read_bundle`` at
-        all: with the reader hijacked, it still returns the committed file.
+        DASH-6 removed the pending-note degradation, so this is now a statement
+        about the file on disk: the whole bundle text appears in the page, and
+        the page carries the window global its bootstrap calls.
         """
-        committed = (Path(html.__file__).parent / "assets" / "explore.js").read_text(
+        committed = (Path(html.__file__).parent / "assets" / "dashboard.js").read_text(
             encoding="utf-8"
         )
-        monkeypatch.setattr(html, "_read_bundle", lambda name: "HIJACKED")
-        assert html._explore_js() == committed
+        page = render_dashboard_html({"project": "p", "experiments": []})
+        assert committed in page
+        assert "window.__ABK_DASHBOARD__" in page
+        assert "npm run build" not in page
+
+    @pytest.mark.parametrize("reader", ["_explore_js", "_dashboard_js"])
+    def test_a_missing_bundle_raises_rather_than_degrading(self, reader, monkeypatch, tmp_path):
+        """Both bundles are committed AND wheel-namelist-asserted (DASH-6 added
+        ``dashboard.js`` to that tuple), so an absent one is a packaging bug that
+        must be loud — a page telling a `pip install` user to run `npm run build`
+        blames them for something they cannot fix.
+
+        Asserting "raises" needs the file to actually be gone, so the resource
+        root is pointed at an empty directory. Testing it via a hijacked reader
+        would prove nothing: the law IS that there is no fallback path. The
+        exception TYPE is deliberately loose — a filesystem read raises
+        ``FileNotFoundError``, a zip-imported wheel raises ``KeyError``, and the
+        contract is "loud", not a particular class.
+        """
+        monkeypatch.setattr(html, "files", lambda _package: tmp_path)
+        with pytest.raises((OSError, KeyError)):
+            getattr(html, reader)()
+
+    def test_both_readers_return_their_committed_file(self):
+        """No degradation constant survives for either page (the DASH-6 decision)."""
+        assets = Path(html.__file__).parent / "assets"
+        assert html._explore_js() == (assets / "explore.js").read_text(encoding="utf-8")
+        assert html._dashboard_js() == (assets / "dashboard.js").read_text(encoding="utf-8")
+        assert not hasattr(html, "_PENDING_DASHBOARD_JS")

@@ -34,7 +34,7 @@ files are installed by `abk init-claude` and track the installed abkit version �
 | If the task is about… | Read |
 |---|---|
 | What abkit is, the `load → compute → readout` pipeline, the `_ab_*` tables, glossary | `.claude/rules/ab-analysis-kit/overview.md` |
-| `abk` commands, `--select`/`--metric`/`--method` selectors, `--from`/`--to`, `--full-refresh`, locks, `abk clean`, `abk test-report` | `.claude/rules/ab-analysis-kit/cli.md` |
+| `abk` commands, `--select`/`--metric`/`--method` selectors, `--from`/`--to`, `--full-refresh`, locks, `abk clean`, `abk test-report`, the project dashboard (`abk dashboard`) | `.claude/rules/ab-analysis-kit/cli.md` |
 | `abkit_project.yml`, `profiles.yml`, DB connections, statistical defaults, two-tier alpha, `notification_channels` | `.claude/rules/ab-analysis-kit/project.md` |
 | An experiment YAML: variants, comparisons, cadence/horizon, SRM, the sequential toggle | `.claude/rules/ab-analysis-kit/experiments.md` |
 | A reusable metric YAML: `type` (sample/fraction/ratio), column roles, one-row-per-unit SQL, CUPED covariate | `.claude/rules/ab-analysis-kit/metrics.md` |

@@ -296,8 +296,15 @@ jobs:
           import glob, pathlib, zipfile
           wheel = glob.glob("/tmp/wheelhouse/ab_analysis_kit-*.whl")[0]
           names = set(zipfile.ZipFile(wheel).namelist())
-          # the two committed self-contained renderer bundles
-          for bundle in ("abkit/reporting/assets/report.js", "abkit/tuning/assets/explore.js"):
+          # the three committed self-contained renderer bundles. Hardcoded on
+          # purpose (a glob over the source tree would pass on a wheel that
+          # shipped none of them), so a NEW bundle must be added here — M11
+          # DASH-6 added dashboard.js, the `abk dashboard` cockpit's client.
+          for bundle in (
+              "abkit/reporting/assets/report.js",
+              "abkit/tuning/assets/explore.js",
+              "abkit/tuning/assets/dashboard.js",
+          ):
               assert bundle in names, f"wheel is missing {bundle}"
           # every `abk init-claude` asset (CLAUDE.section + rules + skills). Derived
           # from the source tree so a NEW or removed asset is caught automatically
@@ -309,7 +316,7 @@ jobs:
           missing = [p for p in claude_assets if p not in names]
           assert not missing, f"wheel is missing init-claude assets: {missing}"
           print(
-              f"wheel contains the report + explore bundles and "
+              f"wheel contains the report + explore + dashboard bundles and "
               f"all {len(claude_assets)} init-claude assets"
           )
           EOF

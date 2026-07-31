@@ -16,16 +16,21 @@ Two pages, one mechanism:
   ``window.__ABK_DASHBOARD__`` on ``#abk-dashboard``, with the SAME favicon
   and page shell as explore, so no new hex enters the CI hex-containment scan.
 
-Both read their bundle from ``abkit/tuning/assets/``, and they differ in one
-disclosed way: a missing ``explore.js`` raises (it is committed and
-wheel-gated, so its absence is a packaging bug that must be loud), while a
-missing ``dashboard.js`` degrades to :data:`_PENDING_DASHBOARD_JS`, an honest
-"the client bundle is not built" note. DASH-5 authors
-``web/src/dashboard/dashboard.ts`` and DASH-6 wires it into ``build.mjs`` +
-the wheel namelist gate; until then the file does not exist, and committing a
-stub in its place would have to smuggle the three ``abk-*`` marker classes CI
-greps out of every ``abkit/*/assets/*.js`` past a gate they exist to enforce.
-The M3 precedent (a committed placeholder ``explore.js``) predates that gate.
+Both read their bundle from ``abkit/tuning/assets/`` through the same
+undegrading :func:`_bundle` reader: a missing bundle RAISES. Both files are
+committed and named in the CI wheel-namelist gate, so an absent one is a
+packaging bug, and papering over it would serve a page that blames the reader
+("run ``npm run build``") for something a ``pip install`` user cannot fix.
+
+``dashboard.js`` reached that state in DASH-6. Between DASH-3 and DASH-5 it did
+not exist — the bundle could not be committed before its sources were authored,
+because a stub would have had to smuggle the three ``abk-*`` marker classes CI
+greps out of every ``abkit/*/assets/*.js`` past a gate they exist to enforce
+(the M3 precedent, a committed placeholder ``explore.js``, predates that gate)
+— so ``render_dashboard_html`` degraded to a "the client bundle is not built"
+note. DASH-5 committed the real bundle and DASH-6 added it to the namelist
+tuple, which is the condition the explore reader's law was always keyed to; the
+note is gone rather than kept as unreachable code with its own second contract.
 """
 
 from __future__ import annotations
@@ -112,55 +117,25 @@ html,body{margin:0;background:#f5f1e8;color:#1b1916;
 </html>
 """
 
-#: What the dashboard page renders while ``assets/dashboard.js`` does not exist
-#: (DASH-5 authors it, DASH-6 commits the built bundle). It names the build
-#: command rather than pretending the cockpit is loading: an operator reading
-#: this note is looking at a source checkout whose ``web/`` build never ran.
-_PENDING_DASHBOARD_JS = """window.__ABK_DASHBOARD__ = {
-  render: function (payload, mount) {
-    var count = payload && payload.experiments ? payload.experiments.length : 0;
-    var note = document.createElement('div');
-    note.className = 'abk-dashboard';
-    note.style.cssText = 'max-width:720px;margin:15vh auto;padding:24px;font:15px/1.5 system-ui;';
-    var title = document.createElement('h1');
-    title.style.cssText = 'font-size:20px;margin:0 0 8px;';
-    title.textContent = 'abkit dashboard';
-    var body = document.createElement('p');
-    body.textContent =
-      'The dashboard client bundle is not installed. Build it with ' +
-      '`cd web && npm run build` (it is committed to ' +
-      'abkit/tuning/assets/dashboard.js). The server behind this page is ' +
-      'live: ' + count + ' experiment(s) are selected, and their rows are ' +
-      'served from /api/stats/<experiment>.';
-    note.appendChild(title);
-    note.appendChild(body);
-    mount.appendChild(note);
-  },
-};
-"""
 
+def _bundle(name: str) -> str:
+    """One committed browser bundle's text, shipped in the wheel.
 
-def _read_bundle(name: str) -> str | None:
-    """One committed browser bundle's text, or ``None`` when it is not there."""
-    try:
-        return (files("abkit.tuning") / "assets" / name).read_text(encoding="utf-8")
-    except (OSError, KeyError):  # missing file; KeyError = a zip-imported wheel
-        return None
+    Deliberately NOT degrading (module docstring): every bundle read here is
+    committed AND asserted in the CI wheel namelist, so a missing one is a
+    packaging failure to surface, not to paper over.
+    """
+    return (files("abkit.tuning") / "assets" / name).read_text(encoding="utf-8")
 
 
 def _explore_js() -> str:
-    """Read the committed explore renderer bundle shipped in the wheel.
-
-    Deliberately NOT degrading: this bundle is committed and asserted in the
-    wheel namelist, so a missing one is a packaging failure to surface, not to
-    paper over.
-    """
-    return (files("abkit.tuning") / "assets" / "explore.js").read_text(encoding="utf-8")
+    """The committed explore-cockpit renderer bundle."""
+    return _bundle("explore.js")
 
 
 def _dashboard_js() -> str:
-    """The dashboard bundle, or the honest pending note (module docstring)."""
-    return _read_bundle("dashboard.js") or _PENDING_DASHBOARD_JS
+    """The committed project-dashboard renderer bundle."""
+    return _bundle("dashboard.js")
 
 
 def _bake_payload_json(payload: dict) -> str:

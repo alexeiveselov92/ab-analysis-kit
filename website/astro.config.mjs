@@ -55,6 +55,7 @@ export default defineConfig({
             { label: 'Databases', link: '/guides/databases/' },
             { label: 'Reading a readout', link: '/guides/reading-a-readout/' },
             { label: 'Explore cockpit', link: '/guides/explore/' },
+            { label: 'Dashboard', link: '/guides/dashboard/' },
             { label: 'Validate — A/A matrix', link: '/guides/validate/' },
             { label: 'Sequential analysis', link: '/guides/sequential/' },
             { label: 'Planning', link: '/guides/plan/' },
