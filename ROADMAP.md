@@ -423,7 +423,7 @@ stale-but-contiguous `_ab_unit_state` day is invisible to the M9 gap check
 day state instead of leaving it (reproduced as a silent 3334.5-vs-3434.5
 undercount before the fix).
 
-### Interstitial — `abk plan` sizing gaps (PLAN-1 ✅ `0.6.1` / PLAN-2 ✅) → `0.6.x`
+### Interstitial — `abk plan` sizing gaps ✅ SHIPPED (PLAN-1 `0.6.1` / PLAN-2 `0.6.2`) → `0.6.x`
 Design contract: [cli-and-dx.md §1 "`abk plan` sizing gaps"](docs/specs/cli-and-dx.md).
 Added 2026-07-29 (maintainer request). Two small, independent WPs that make
 pre-launch planning answer the questions the architecture already has the data

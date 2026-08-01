@@ -1,9 +1,9 @@
 # abkit architecture — as built
 
 > The contributor/assistant condensation of the system **as it exists in code**.
-> Reflects: **M1–M11 shipped** + the `0.6.x` PLAN-1 interstitial
-> (`__version__ = 0.6.1`, release-ready — the `v0.6.1` tag/publish is the
-> maintainer's step; latest on PyPI is `0.6.0`;
+> Reflects: **M1–M11 shipped** + the WHOLE `0.6.x` `abk plan` interstitial
+> (PLAN-1 + PLAN-2; `__version__ = 0.6.2`, release-ready — the `v0.6.2`
+> tag/publish is the maintainer's step; latest on PyPI is `0.6.1`;
 > M3's WP9 testcontainers hardening deferred to a Docker-equipped
 > environment).
 > Design contracts for what is being *built next* (the M12–M17 polish track +

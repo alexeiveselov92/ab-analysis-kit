@@ -11,7 +11,7 @@ recorded here alongside an `ALGORITHM_VERSION` bump and a
 [`statistics-changes.md`](docs/specs/statistics-changes.md) entry (never a silent
 number change).
 
-## [Unreleased]
+## [0.6.2] - 2026-08-01
 
 ### Added
 - **PLAN-2 — `abk plan --from-history <N d>`: a baseline for an experiment that
