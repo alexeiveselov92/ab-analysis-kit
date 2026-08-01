@@ -64,7 +64,8 @@ $ abk plan --select example_signup_test --mde 0.05
   │     target MDE 5.00% → required 25,580/arm ✗ underpowered · power@MDE 0.06 · achievable MDE 49.26%
   │   example_arpu [secondary · cuped-t-test · relative] — baseline mean=62.86 std=42 · n=300/300 (persisted @ …)
   │     target MDE 5.00% → required 2,804/arm ✗ underpowered · power@MDE 0.15 · achievable MDE 15.31%
-  │     ⚠ sized on RAW variance — CUPED (ρ not persisted) lowers required-N further
+  │     ⚠ sized on RAW variance — ρ = 1 leaves no usable residual variance (the covariate
+  │       reproduces the metric), so a deflated required-N would be rounding noise
   └─ looks: 14 planned · cadence 1d · horizon 2024-07-15 · ~28 _ab_results rows/full-refresh
 Done. 1 experiment(s) planned
 ```
@@ -125,7 +126,7 @@ resampling design reports `sequential ASN: n/a` with the reason.
   │     sequential ASN ≈ 2,400/arm (≈ 1.2d) at target effect · P(win by horizon) 100% · null ASN ≈ 27,800/arm
 ```
 
-#### `abk plan` sizing gaps — PLAN-1 / PLAN-2 (as designed, NOT built)
+#### `abk plan` sizing gaps — PLAN-1 (✅ built) / PLAN-2 (as designed, NOT built)
 
 Two gaps the architecture already has the inputs for, scheduled as the `0.6.x`
 interstitial in [ROADMAP.md](../../ROADMAP.md) (added 2026-07-29 at the maintainer's
@@ -168,6 +169,31 @@ unused while every CUPED plan line over-states required-N by the deflation facto
 required-N and matches `get_cuped_ttest_sample_size` exactly; ρ=NULL reproduces today's
 number byte-for-byte (the regression gate); the transcript in this spec and in the guide
 is regenerated; no `_ab_results` write anywhere in the diff.
+
+**As built.** All five steps shipped as designed, plus one gate the design did not
+anticipate. `BaselineMoments` grew `corr_coef` **last** in the field order (every
+existing positional construction had to keep its meaning) and two derived properties —
+`usable_corr` (the ONE decision every consumer reads) and `sizing_std` (the shared
+deflation, so the ASN's `_base_variance` cannot re-implement it). Step 3 is a test, not
+a comment: `test_asn_consumes_the_deflated_variance`.
+
+The unanticipated gate is **`MIN_RESIDUAL_VARIANCE_SHARE = 1e-12`**: the design's
+implicit `|ρ| < 1` validity rule is not enough, because a covariate that *reproduces*
+the metric persists a ρ a hair **below** 1 (float rounding), sails through that check,
+and deflates the variance to noise. The project `abk init` scaffolds is exactly that
+shape — its synthetic pre-period value is collinear with the experiment value — and the
+first ungated implementation printed **`required 10/arm`** for the example experiment,
+whose raw-variance requirement is five orders of magnitude larger. So a deflation is
+refused once the residual variance share `1 − ρ²` falls below the threshold, on both
+paths (persisted ⇒ a note; `--baseline corr=` ⇒ a parse-time error), and the
+scaffolded example's own plan line is now the *degenerate* note rather than a fabricated
+requirement. That also settles what the notes must say: the four cases (deflated /
+no ρ persisted / ρ = 0 / no usable residual variance) are four different facts about
+the operator's covariate and each gets its own sentence.
+
+One scope refusal: `corr=` is rejected on a comparison whose method does not apply a
+covariate. Sizing a plain `t-test` on a deflated variance promises a reduction the
+analysis will never perform, and the refusal happens where the operator typed it.
 
 **PLAN-2 — `abk plan --from-history <interval>`: a baseline for an experiment that has
 never run.**

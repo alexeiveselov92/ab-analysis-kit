@@ -356,15 +356,19 @@ Reports required sample size, achievable MDE, and achieved power **at the effect
 two-tier alpha**, plus the projected look count and cost shape, per comparison.
 Baseline per-arm moments come from the latest persisted `_ab_results` row for the
 control / first-treatment pair; a `--baseline` override sizes an experiment with no
-persisted data. The override format is `<metric>:mean=..,std=..,n=..` for a sample
+persisted data. The override format is `<metric>:mean=..,std=..,n=..[,corr=..]` for a sample
 metric and `<metric>:prop=..,n=..` for a fraction metric.
 
 Only the closed-form power families are sized. **Ratio metrics and bootstrap /
 resampling methods are refused** (reported as `SKIPPED` — they have no versioned power
 formula, and abkit never invents math; measure their power empirically with
-`abk validate --inject-effect`). CUPED is sized on the raw persisted variance (the
-covariate correlation is not persisted per row) and flagged as a conservative upper
-bound. When an arrival rate is available — derived read-only from the cohort source
+`abk validate --inject-effect`). CUPED is sized on the **deflated** variance from the
+baseline row's own persisted covariate correlation (`corr_coef_1`, stored since
+`0.4.0`) — required-N is `(1 − ρ²)×` the raw-variance number — and every line names the
+variance it used; a row without a usable ρ (pre-`0.4.0`, or a correlation so close to
+±1 that the residual variance is rounding noise) keeps the raw bound and says so.
+`--baseline <metric>:…,corr=0.6` supplies ρ for an experiment that has never run, and
+is accepted only on a comparison whose method applies a covariate. When an arrival rate is available — derived read-only from the cohort source
 (the persisted `_ab_exposures` copy under `assignment.cohort_copy.enabled`, otherwise a
 live re-render of the assignment SQL at invocation time — the documented no-copy
 cost/freshness tradeoff) or supplied via `--arrival-rate` — `plan` also reports the

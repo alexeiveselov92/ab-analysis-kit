@@ -433,7 +433,7 @@ schema change, and ships as a **patch on top of M11's `0.6.0`**. Sequenced after
 M11 so the dashboard release is not held up; either WP can also be pulled
 forward — they touch only `abkit/planning/` + `abkit/cli/commands/plan.py`.
 
-- **PLAN-1 — size CUPED on the persisted covariate correlation.** `abk plan`
+- **PLAN-1 ✅ SHIPPED — size CUPED on the persisted covariate correlation.** `abk plan`
   sizes a `cuped-t-test` comparison on the **raw** variance and prints
   "sized on RAW variance — CUPED (ρ not persisted) lowers required-N further".
   That parenthetical stopped being true in M9 WP1, which persists
@@ -441,7 +441,14 @@ forward — they touch only `abkit/planning/` + `abkit/cli/commands/plan.py`.
   `cuped_adjusted_std` + `get_cuped_ttest_{sample_size,mde,power}` since M1
   (`validate/scoring.py` already uses the first). So the planner leaves a
   tested solve and a persisted input unused, and every CUPED plan line
-  over-states required-N. ~1 session.
+  over-states required-N. ~1 session — **actual: 1 session**. As built, the
+  three solves, the ASN's base variance and the plan line's note all read one
+  `usable_corr` gate, and that gate needed a rule the design did not have: a
+  covariate that *reproduces* the metric persists ρ a hair **below** 1, passes
+  an `|ρ| < 1` check, and deflates the variance to rounding noise — the project
+  `abk init` scaffolds is exactly that shape, and the first implementation
+  printed "required 10/arm" for it. Deflation is now refused below
+  `1 − ρ² = 1e-12` on both the persisted and the `--baseline corr=` path.
 - **PLAN-2 — `abk plan --from-history <interval>`: baseline moments for an
   experiment that has never run.** Today a greenfield experiment is either
   SKIPPED ("no baseline") or needs hand-supplied `--baseline

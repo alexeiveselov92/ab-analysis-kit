@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+import click
 import pytest
 from click.testing import CliRunner
 from fake_db import FakeDatabaseManager, serve_assignment_pushdown
@@ -505,3 +506,170 @@ def test_resolve_arrival_rate_direct_mode_snapshots_the_live_source():
     # a not-yet-launched source (no rows) politely skips, never fails the plan
     rate, reason = resolve([])
     assert rate is None and "assignment source returned no rows yet" in reason
+
+
+# ── PLAN-1: CUPED sized on the persisted covariate correlation ───────────────────
+
+
+class _RowTables:
+    """The one `load_results` a plan's baseline lookup makes, with a chosen row."""
+
+    def __init__(self, **overrides):
+        self.row = {
+            "name_1": "control",
+            "name_2": "treatment",
+            "insufficient_data": False,
+            "value_1": 12.5,
+            "std_1": 8.0,
+            "size_1": 5000,
+            "size_2": 5000,
+            "end_ts": datetime(2024, 7, 15),
+            "corr_coef_1": None,
+        }
+        self.row.update(overrides)
+
+    def load_results(self, *a, **kw):
+        return [self.row]
+
+
+def _cuped_experiment() -> ExperimentConfig:
+    return ExperimentConfig.model_validate(
+        {
+            "name": "cuped_exp",
+            "start_ts": "2024-07-01",
+            "horizon_ts": "2024-07-15",
+            "unit_key": "user_id",
+            "assignment": {
+                "query": "SELECT 1",
+                "variants": ["control", "treatment"],
+                "expected_split": {"control": 0.5, "treatment": 0.5},
+            },
+            "comparisons": [
+                {
+                    "metric": "arpu",
+                    "is_main_metric": True,
+                    "method": {"name": "cuped-t-test", "params": {"covariate_lookback": "14d"}},
+                },
+                {"metric": "plain", "method": {"name": "t-test"}},
+            ],
+        }
+    )
+
+
+def _cuped_plan(corr, mde=0.05):
+    exp = _cuped_experiment()
+    alphas = TwoTierAlphas(alpha=0.05, groups_count=2, metrics_count=2, main=0.05, secondary=0.025)
+    comparison = exp.comparisons[0]
+    return _plan_comparison(
+        exp, comparison, alphas, 0.8, mde, None, tables=_RowTables(corr_coef_1=corr)
+    )
+
+
+def test_plan_sizes_cuped_on_the_persisted_correlation():
+    """The gap PLAN-1 closes: `corr_coef_1` has been persisted since 0.4.0."""
+    from abkit.stats.power import get_cuped_ttest_sample_size
+
+    with_rho = _cuped_plan(0.6)
+    without = _cuped_plan(None)
+    assert with_rho.baseline is not None and with_rho.baseline.usable_corr == 0.6
+    assert with_rho.result is not None and without.result is not None
+    assert with_rho.result.required_n == get_cuped_ttest_sample_size(
+        12.5, 8.0, 0.6, 0.05, test_type="relative", alpha=0.05, power=0.8, ratio=1.0
+    )
+    assert with_rho.result.required_n < without.result.required_n
+    assert any("CUPED-deflated" in n and "0.6" in n for n in with_rho.notes)
+
+
+def test_plan_flags_a_missing_correlation_as_an_upper_bound():
+    plan = _cuped_plan(None)
+    assert any("sized on RAW variance" in n and "before 0.4.0" in n for n in plan.notes)
+
+
+def test_plan_refuses_a_degenerate_persisted_correlation():
+    """The shape the scaffolded example actually persists: a covariate collinear with
+    the metric rounds ρ to a hair under 1, which an ``abs(rho) >= 1`` gate lets
+    through and which sizes the experiment to nothing."""
+    degenerate = _cuped_plan(1.0 - 1e-16)
+    raw = _cuped_plan(None)
+    assert degenerate.result is not None and raw.result is not None
+    assert degenerate.result.required_n == raw.result.required_n
+    assert any("no usable residual variance" in n for n in degenerate.notes)
+
+
+def test_plan_reports_a_zero_correlation_as_a_measurement():
+    plan = _cuped_plan(0.0)
+    assert any("ρ = 0" in n and "reduces no variance" in n for n in plan.notes)
+
+
+def test_plan_baseline_corr_override_deflates(project):
+    result = runner.invoke(
+        cli,
+        [
+            "plan",
+            "--select",
+            EXP,
+            "--mde",
+            "0.05",
+            "--baseline",
+            "example_arpu:mean=60,std=40,n=5000,corr=0.7",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "CUPED-deflated" in result.output and "0.7" in result.output
+
+
+def test_plan_baseline_corr_on_a_non_covariate_method_is_refused():
+    """Deflating a method that will not run CUPED under-states required-N for an
+    experiment that will never see the reduction — refuse where it was typed."""
+    exp = _cuped_experiment()
+    alphas = TwoTierAlphas(alpha=0.05, groups_count=2, metrics_count=2, main=0.05, secondary=0.025)
+    plain = exp.comparisons[1]
+    with pytest.raises(click.BadParameter, match="cuped"):
+        _plan_comparison(
+            exp,
+            plain,
+            alphas,
+            0.8,
+            0.05,
+            {"mean": 12.5, "std": 8.0, "n": 5000, "corr": 0.6},
+            tables=None,
+        )
+
+
+def test_scaffolded_example_states_why_it_falls_back_to_raw(ran):
+    """The example project's synthetic covariate IS its metric (both are linear in the
+    same generator), so the honest line is the degenerate one, not a 10-unit plan."""
+    result = runner.invoke(cli, ["plan", "--select", EXP, "--mde", "0.05"])
+    assert result.exit_code == 0, result.output
+    assert "no usable residual variance" in result.output
+
+
+def test_plan_names_the_right_cause_for_a_missing_corr_on_an_override(project):
+    """A hand-typed baseline that omitted `corr=` is not a pre-0.4.0 row: naming the
+    wrong cause sends the operator to re-run an experiment that would not have helped."""
+    result = runner.invoke(
+        cli,
+        [
+            "plan",
+            "--select",
+            EXP,
+            "--mde",
+            "0.05",
+            "--baseline",
+            "example_arpu:mean=60,std=40,n=5000",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "--baseline override carries no 'corr'" in result.output
+    assert "before 0.4.0" not in result.output
+
+
+def test_plan_flags_an_implausibly_large_variance_reduction():
+    """A ρ that survives the degeneracy gate can still imply a >100× reduction, which
+    is far more often a covariate derived from the metric than a real one — the number
+    is computed (it is the measurement) but the line says to check it."""
+    plan = _cuped_plan(0.9999)
+    assert plan.result is not None
+    assert any("check that the covariate is not derived from the metric" in n for n in plan.notes)
+    # a healthy ρ says nothing of the sort
+    assert not any("derived from the metric" in n for n in _cuped_plan(0.6).notes)

@@ -94,8 +94,8 @@ Per comparison the tree prints a line like:
 
 ```
 arpu [main · cuped-t-test · relative] — baseline mean=12.5 std=8 · n=5000/5000 (persisted @ 2024-07-14…)
-  target MDE 3.00% → required 7,842/arm ✗ underpowered · power@MDE 0.62 · achievable MDE 4.10%
-  ⚠ sized on RAW variance — CUPED (ρ not persisted) lowers required-N further
+  target MDE 3.00% → required 5,885/arm ✗ underpowered · power@MDE 0.73 · achievable MDE 3.25%
+  ⚠ sized on CUPED-deflated variance (ρ = 0.42) — required-N is 0.824× the raw-variance bound
 ```
 
 Interpret it:
@@ -126,10 +126,16 @@ is omitted and only the achievable MDE is shown — pass `--mde` or set `min_eff
 | **paired design** | Paired methods aren't sized here | Size the unpaired analogue as a bound |
 | **no baseline** | No persisted rows and no `--baseline` | Run `abk run` first, or pass `--baseline` (Step 2) |
 
-**CUPED caveat:** a `cuped-t-test` is sized on the **raw** persisted variance (the
-covariate correlation ρ isn't stored per row), so its required-N is a *conservative
-upper bound* — real CUPED needs fewer units. The `⚠ sized on RAW variance` note flags
-this; tell the user the true requirement is lower.
+**CUPED sizing (0.6.x):** a `cuped-t-test` is sized on its **own** covariate
+correlation — rows have persisted `corr_coef_1/2` since `0.4.0` — so required-N is
+`(1 − ρ²)×` the raw-variance number and the note names the ρ. Read the fallback notes
+literally, they mean different things: *no ρ on the row* (a pre-`0.4.0` row ⇒ the
+number is a conservative upper bound, tell the user the true requirement is lower),
+*ρ = 0* (a real measurement — this covariate reduces nothing), and *ρ leaves no usable
+residual variance* (the covariate reproduces the metric — a leak or a synthetic
+fixture; investigate the covariate rather than trusting either number). For a never-run
+experiment you can supply it: `--baseline <metric>:mean=..,std=..,n=..,corr=0.6` —
+accepted only on a comparison whose method actually applies a covariate.
 
 ## Step 5 — Act on the result
 

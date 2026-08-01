@@ -11,6 +11,47 @@ recorded here alongside an `ALGORITHM_VERSION` bump and a
 [`statistics-changes.md`](docs/specs/statistics-changes.md) entry (never a silent
 number change).
 
+## [Unreleased]
+
+### Changed
+- **PLAN-1 — `abk plan` sizes CUPED on the covariate correlation it already has.**
+  A `cuped-t-test` comparison was sized on the **raw** persisted variance and flagged
+  "ρ not persisted"; M9 WP1 made that false in `0.4.0`, which persists `corr_coef_1/2`
+  on every `_ab_results` row, while `stats/power.py` has shipped
+  `cuped_adjusted_std` + `get_cuped_ttest_{sample_size,mde,power}` since M1. The
+  planner now routes those three solves through the **same** deflation
+  `validate/scoring.py` uses, so **required-N for a CUPED comparison drops to
+  `(1 − ρ²)×` its previous value** — a planner-output change, deliberate and
+  documented (no `_ab_results` number moves, no `ALGORITHM_VERSION` bump; `abk plan`
+  remains read-only, takes no lock and writes nothing).
+  - **The ASN and the runtime consume the same deflated variance.** A deflated
+    required-N beside an ASN simulated on the raw variance is one line contradicting
+    itself — an expected stopping size sitting above a requirement computed for a
+    lower-variance estimator, with nothing saying why.
+  - **Every line names the variance it was sized on**, because a required-N whose
+    basis is invisible is the number an operator plans a launch around. Three cases
+    keep the raw bound, each with its own note: no ρ on the row (written before
+    `0.4.0` — still a conservative upper bound), **ρ = 0** (a measurement: this
+    covariate reduces nothing, not a missing value), and a ρ that leaves no usable
+    residual variance.
+  - **A near-perfect correlation is refused, not obeyed.** `1 − ρ² < 1e-12` means the
+    deflation factor is decided by rounding noise in a Float64 ρ rather than by the
+    data — and it is the shape a *leaking* covariate takes. The project `abk init`
+    scaffolds is exactly that case (its synthetic pre-period value is collinear with
+    the metric, so ρ rounds to 1); an ungated deflation printed **"required 10/arm"**
+    for a series whose raw requirement is five orders of magnitude larger. A naive
+    `|ρ| ≥ 1` gate does not catch it — the persisted value is a hair *below* 1.
+  - **A computable-but-implausible reduction is disclosed, not hidden.** Above the
+    degeneracy floor a ρ can still imply a >100× drop in required-N (`1 − ρ² < 0.01`);
+    that is the measurement, so it is used — and the line says "check that the
+    covariate is not derived from the metric", because this is the number someone
+    sizes a launch on.
+  - **`--baseline <metric>:mean=..,std=..,n=..,corr=0.6`** supplies ρ for an
+    experiment that has never run. It is validated at the door (`|ρ| < 1` *and* a
+    usable residual variance) and **refused on a comparison whose method applies no
+    covariate** — deflating a plain `t-test` would promise a variance reduction the
+    analysis will never perform.
+
 ## [0.6.0] - 2026-08-01
 
 **M11 — `abk dashboard`, the project-level cockpit** (the implementation record
