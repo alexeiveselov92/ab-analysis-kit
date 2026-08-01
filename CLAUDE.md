@@ -22,7 +22,7 @@ The as-built condensation for contributors/assistants (detectkit-style):
 Design contracts for what is being *built next* stay in [docs/specs/](docs/specs/)
 (canonical for M2+ work — table below). Keep rules ↔ docs in sync per milestone.
 
-## Status: M1–M11 shipped + `0.6.0` released — `0.6.1` release-ready (latest on PyPI: `0.6.0`); polish track M12–M17 in flight
+## Status: M1–M11 shipped + the `0.6.x` `abk plan` interstitial — `0.6.2` release-ready (latest on PyPI: `0.6.1`); polish track M12–M17 in flight
 
 **Done — M1, the pure statistical core** (`abkit.stats`, importable standalone;
 see [ROADMAP.md](ROADMAP.md) for the deferred-cleanup list): data model with the
