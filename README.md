@@ -11,14 +11,17 @@ stabilization chart), writes them to a clean warehouse table any BI can read, an
 gives you a local cockpit to tune the analysis and a harness to prove your method is
 actually calibrated.
 
-> **Status: `0.6.0` (Alpha) — release-ready; `0.5.0` is the latest on PyPI**
-> (milestones **M1–M11** shipped — M11 adds **`abk dashboard`**, the
+> **Status: `0.6.1` (Alpha) — release-ready; `0.6.0` is the latest on PyPI**
+> (milestones **M1–M11** shipped — M11 added **`abk dashboard`**, the
 > project-level cockpit: one row per experiment with its headline verdict,
 > effect + CI, p/α and a sparkline of the cumulative series, plus buttons that
 > spawn real `abk` subprocesses (Run — for the whole experiment or one metric —
 > Unlock, Clean, Explore, Open report) and stream their logs. It is a
 > **launcher**: it computes no statistic and never takes the pipeline lock, so
-> every verdict on the page is the readout's own). The statistical core, the
+> every verdict on the page is the readout's own. `0.6.1` adds the first half of
+> the `abk plan` sizing interstitial: a CUPED comparison is sized on the
+> covariate correlation its own results row already persists, so required-N is
+> `(1 − ρ²)×` the old raw-variance bound). The statistical core, the
 > declarative config / DB / pipeline layer, the explore cockpit +
 > self-contained reports, `abk validate` (numpy-vectorized — minutes → sub-seconds),
 > opt-in sequential analysis + `abk plan`, and the DX layer (`abk init-claude`, docs site,
@@ -31,10 +34,9 @@ pip install ab-analysis-kit          # Python 3.10+; add a DB extra for real dat
 pip install "ab-analysis-kit[clickhouse]"   # or [postgres] / [mysql] / [all-db]
 ```
 
-(`0.6.0`'s `abk dashboard` lands with its tag; until then
-`pip install ab-analysis-kit` gets `0.5.0`, which has the M10 window fields
-(`start_ts`/`horizon_ts`) but no dashboard — for the M11 behavior install from
-source: `pip install -e ".[dev]"`.)
+(`pip install ab-analysis-kit` gets `0.6.0` — `abk dashboard` included. `0.6.1`'s
+CUPED-aware `abk plan` sizing lands with its tag; until then install from source
+for it: `pip install -e ".[dev]"`.)
 
 `abk --version` and `abk --help` work with no database driver; you can even lint a
 config (`abk run --steps validate`) with no database at all. See the

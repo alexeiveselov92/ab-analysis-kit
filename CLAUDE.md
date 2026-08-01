@@ -22,7 +22,7 @@ The as-built condensation for contributors/assistants (detectkit-style):
 Design contracts for what is being *built next* stay in [docs/specs/](docs/specs/)
 (canonical for M2+ work — table below). Keep rules ↔ docs in sync per milestone.
 
-## Status: M1–M11 shipped — `0.6.0` release-ready (latest on PyPI: `0.5.0`); polish track M12–M17 in flight
+## Status: M1–M11 shipped + `0.6.0` released — `0.6.1` release-ready (latest on PyPI: `0.6.0`); polish track M12–M17 in flight
 
 **Done — M1, the pure statistical core** (`abkit.stats`, importable standalone;
 see [ROADMAP.md](ROADMAP.md) for the deferred-cleanup list): data model with the
@@ -244,7 +244,7 @@ gained the one capability a per-metric Run button needs: **`abk run --metric
 the withheld metrics' day state rather than leaving a stale-but-contiguous
 `_ab_unit_state` the M9 gap check cannot see. **Zero statistical numbers
 changed** (no `ALGORITHM_VERSION` bump). CRUD config editing is explicitly
-phase 2. The `v0.6.0` tag/publish is the maintainer's step.
+phase 2. **Released as `0.6.0`** — tagged and published to PyPI.
 
 **Next — the polish track continues: M12–M17 → `0.7.0`…`0.12.0`
 (track approved 2026-07-18)**, plus the `0.6.x` interstitial **PLAN-1/PLAN-2**

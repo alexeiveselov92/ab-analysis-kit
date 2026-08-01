@@ -1,8 +1,9 @@
 # abkit architecture — as built
 
 > The contributor/assistant condensation of the system **as it exists in code**.
-> Reflects: **M1–M11 shipped** (`__version__ = 0.6.0`, release-ready — the
-> `v0.6.0` tag/publish is the maintainer's step; latest on PyPI is `0.5.0`;
+> Reflects: **M1–M11 shipped** + the `0.6.x` PLAN-1 interstitial
+> (`__version__ = 0.6.1`, release-ready — the `v0.6.1` tag/publish is the
+> maintainer's step; latest on PyPI is `0.6.0`;
 > M3's WP9 testcontainers hardening deferred to a Docker-equipped
 > environment).
 > Design contracts for what is being *built next* (the M12–M17 polish track +
@@ -800,8 +801,8 @@ pre-M10 code itself) — with one disclosed derived-number change,
 **M11 shipped** (the record is
 [m11-implementation-plan.md](../../docs/specs/m11-implementation-plan.md) —
 done table, per-WP as-built notes, the exit-gate log; PRs #66, #68, #69,
-#71–#75 + the docs-only decisions PR #67; release-ready as `0.6.0` — the
-`v0.6.0` tag/publish is the maintainer's step): `abk dashboard`, the
+#71–#75 + the docs-only decisions PR #67; **released as `0.6.0`** — tagged
+and published to PyPI): `abk dashboard`, the
 project-level cockpit — the job registry `tuning/jobs.py` (DASH-1), the row
 shaper `overview.py` (DASH-2), the launcher server `dashboard_server.py`
 (DASH-3 page/stats routes + DASH-4 job routes), `abk run --metric` (DASH-4a),
