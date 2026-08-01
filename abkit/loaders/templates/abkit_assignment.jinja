@@ -44,6 +44,7 @@ Validation asserts the rendered SQL joins the cohort through this macro
 {%- endmacro -%}
 
 {%- macro exposed_units(event_date_col='event_date', event_time_col='event_time') -%}
+{%- if ab_apply_cohort_join %}
 INNER JOIN (
     SELECT
         unit_id     AS _abk_unit_id,
@@ -53,11 +54,14 @@ INNER JOIN (
     FROM {{ ab_cohort_source }}{# the comment tag makes trim_blocks eat this newline, exactly like the pre-WP3 '{% endif %}' did — copy-mode renders stay byte-identical #}
     WHERE experiment = '{{ ab_experiment_id }}'
 ) AS _abk_exposures ON _abk_exposures._abk_unit_id = {{ _unit_key_str() }}
+{% else %}
+CROSS JOIN (SELECT '{{ ab_population_variant }}' AS _abk_variant, NULL AS _abk_stratum) AS _abk_exposures
+{% endif %}
 WHERE {{ event_date_col }} >= '{{ ab_start_date }}'
   AND {{ event_date_col }} <= '{{ ab_end_date }}'
   AND {{ event_time_col }} >= '{{ ab_start_ts }}'
   AND {{ event_time_col }} < '{{ ab_end_ts }}'
-{%- if ab_apply_exposure_filter %}
+{%- if ab_apply_cohort_join and ab_apply_exposure_filter %}
   AND {{ event_time_col }} >= _abk_exposures._abk_exposure_ts
 {%- endif %}
 {%- endmacro -%}

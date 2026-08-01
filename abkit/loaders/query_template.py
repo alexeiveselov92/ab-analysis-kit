@@ -35,6 +35,13 @@ class TemplateRenderError(Exception):
 _TS_FORMAT = "%Y-%m-%d %H:%M:%S"
 _DATE_FORMAT = "%Y-%m-%d"
 
+#: The arm label the POPULATION render (``apply_cohort_join=False``, PLAN-2) stamps on
+#: every row. It is deliberately NOT a declared variant name: a population baseline has
+#: no arms, and ``load_metric`` validates observed variants against the declared list,
+#: so a label that collided with one would let a cohort-free render masquerade as arm
+#: data. Callers of the population path pass it as the sole declared variant.
+POPULATION_VARIANT = "_abk_population"
+
 
 @dataclass(frozen=True)
 class RenderWindow:
@@ -84,13 +91,27 @@ def build_builtins(
     cov_window: RenderWindow | None = None,
     direct_source_sql: str | None = None,
     has_stratum: bool = True,
+    apply_cohort_join: bool = True,
 ) -> dict[str, Any]:
     """The authoritative ``ab_*`` built-ins dict (declarative-config.md §5).
 
     ``apply_exposure_filter=False`` is set by the loader's COVARIATE render:
     the pre-period window precedes exposure by construction, so the
     ``event_time >= exposure_ts`` predicate must be dropped there
-    (statistics-changes.md §5 fixed-lookback mechanics).
+    (statistics-changes.md §5 fixed-lookback mechanics). It drops **only that
+    predicate** — the cohort INNER JOIN stays, which is exactly right for CUPED
+    (a covariate is per ENROLLED unit).
+
+    ``apply_cohort_join=False`` (PLAN-2) is the different thing: the POPULATION
+    render, for `abk plan --from-history` on an experiment that has not enrolled
+    anybody yet, where an inner join to the cohort would return zero rows. The
+    macro then swaps the cohort subquery for a **one-row synthetic relation**
+    (``CROSS JOIN (SELECT '<population>' AS _abk_variant, NULL AS _abk_stratum)
+    AS _abk_exposures``) rather than dropping the join: the ``_abk_exposures``
+    alias survives, so ``ab.variant_col()``/``ab.stratum_col()`` and the
+    loader's macro-usage runtime lint keep working on an UNCHANGED metric SQL,
+    and ``GROUP BY variant`` still groups by a relation's column instead of a
+    bare constant (which PostgreSQL rejects).
 
     ``ab_cohort_source`` (m8-implementation-plan.md WP3) is the ONE cohort
     fragment the packaged macro reads, built here in one of two modes:
@@ -141,6 +162,8 @@ def build_builtins(
         "ab_cohort_source": cohort_source,
         "ab_dialect": dialect,
         "ab_apply_exposure_filter": apply_exposure_filter,
+        "ab_apply_cohort_join": apply_cohort_join,
+        "ab_population_variant": POPULATION_VARIANT,
     }
     # Only present when a covariate window exists — otherwise a template
     # referencing ab_cov_* hard-fails under StrictUndefined instead of

@@ -7,6 +7,7 @@ from datetime import datetime
 import pytest
 
 from abkit.loaders.query_template import (
+    POPULATION_VARIANT,
     QueryTemplate,
     RenderWindow,
     TemplateRenderError,
@@ -271,3 +272,59 @@ SELECT {{ ab.stratum_col() }} AS s FROM t {{ ab.exposed_units() }}""",
         )
         sql = QueryTemplate().render("SELECT '{{ ab_cov_start }}', '{{ ab_cov_end }}'", builtins)
         assert "2024-06-17" in sql and "2024-06-30" in sql
+
+
+class TestPopulationRender:
+    """PLAN-2: `apply_cohort_join=False` — the cohort-free POPULATION render.
+
+    `abk plan --from-history` needs per-unit moments for an experiment that has
+    enrolled NOBODY yet, so an inner join to the cohort returns zero rows. The
+    contract called the CUPED pre-period render "cohort-free by construction";
+    it is not — `ab_apply_exposure_filter=False` drops exactly one predicate and
+    the INNER JOIN stays (correctly: a CUPED covariate is per enrolled unit).
+    """
+
+    def test_the_default_render_is_untouched(self):
+        """The flag defaults to the cohort join, so every existing render — and
+        every user's metric SQL — is byte-identical to the pre-PLAN-2 macro."""
+        explicit = QueryTemplate().render(MACRO_SQL, make_builtins(apply_cohort_join=True))
+        assert QueryTemplate().render(MACRO_SQL, make_builtins()) == explicit
+        assert "INNER JOIN (" in explicit
+        assert "_abk_exposures._abk_exposure_ts" in explicit
+
+    def test_population_mode_swaps_a_one_row_relation_for_the_cohort(self):
+        """A one-row CROSS JOIN, not a removed join: the `_abk_exposures` alias
+        must survive so `ab.variant_col()`, `ab.stratum_col()` and the loader's
+        macro-usage runtime lint keep working on an UNCHANGED metric SQL — and so
+        `GROUP BY variant` groups by a relation's column rather than a bare
+        constant, which PostgreSQL rejects."""
+        sql = QueryTemplate().render(MACRO_SQL, make_builtins(apply_cohort_join=False))
+        assert "INNER JOIN (" not in sql
+        assert "abkit_internal._ab_exposures" not in sql
+        assert (
+            "CROSS JOIN (SELECT '_abk_population' AS _abk_variant, NULL AS _abk_stratum) "
+            "AS _abk_exposures" in sql
+        )
+        assert "_abk_exposures" in sql  # the alias the loader's lint greps for
+        assert "_abk_exposures._abk_variant" in sql
+
+    def test_population_mode_drops_the_exposure_predicate_even_when_the_flag_is_on(self):
+        """The regression this pins bit while writing it: the synthetic relation
+        has no `_abk_exposure_ts` column, so leaving the predicate keyed on
+        `ab_apply_exposure_filter` alone renders SQL that cannot execute."""
+        sql = QueryTemplate().render(
+            MACRO_SQL, make_builtins(apply_cohort_join=False, apply_exposure_filter=True)
+        )
+        assert "_abk_exposure_ts" not in sql
+
+    def test_population_mode_keeps_the_window_predicates(self):
+        sql = QueryTemplate().render(MACRO_SQL, make_builtins(apply_cohort_join=False))
+        for fragment in ("event_date >= '", "event_date <= '", "event_time >= '", "event_time < '"):
+            assert fragment in sql
+
+    def test_the_population_variant_is_not_a_declarable_arm_name(self):
+        """`load_metric` validates observed variants against the declared list, so a
+        label colliding with a real arm would let a cohort-free render masquerade as
+        arm data. The sentinel is `_abk_`-prefixed like every other collision guard."""
+        assert POPULATION_VARIANT.startswith("_abk_")
+        assert POPULATION_VARIANT not in ("control", "treatment")
