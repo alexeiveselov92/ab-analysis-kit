@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import math
 from datetime import date, datetime, time
+from typing import Any
 
 import click
 
@@ -60,6 +61,7 @@ def run_plan(
     power: float | None,
     alpha: float | None,
     baseline: tuple[str, ...],
+    from_history: str | None,
     arrival_rate: float | None,
     profile: str | None,
 ) -> None:
@@ -80,6 +82,8 @@ def run_plan(
         overrides = parse_baseline_overrides(baseline)
     except ValueError as exc:
         raise click.BadParameter(str(exc), param_hint="--baseline") from exc
+    if from_history is not None:
+        _validate_history_interval(from_history)
 
     selected, selection_warnings = select_experiments(context.root, select)
     for warning in selection_warnings:
@@ -92,7 +96,16 @@ def run_plan(
     for _, experiment in selected:
         try:
             _plan_one(
-                experiment, context, profile, metric, mde, power, alpha, overrides, arrival_rate
+                experiment,
+                context,
+                profile,
+                metric,
+                mde,
+                power,
+                alpha,
+                overrides,
+                from_history,
+                arrival_rate,
             )
         except click.ClickException:
             raise
@@ -114,6 +127,7 @@ def _plan_one(
     power_opt,
     alpha_opt,
     overrides,
+    from_history,
     arrival_rate,
 ) -> None:
     from abkit.database.internal_tables import InternalTablesManager
@@ -165,6 +179,11 @@ def _plan_one(
         rate_control, rate_source = _resolve_arrival_rate(
             experiment, arrival_rate, tables, manager, context.root, grid
         )
+        history = (
+            _HistoryBaselines(experiment, context, manager, grid, from_history)
+            if from_history is not None
+            else None
+        )
         for comparison in comparisons:
             plans.append(
                 _plan_comparison(
@@ -179,6 +198,7 @@ def _plan_one(
                     rate_source,
                     look_days,
                     horizon_days,
+                    history,
                 )
             )
     finally:
@@ -286,6 +306,7 @@ def _plan_comparison(
     rate_source: str = "",
     look_days: list[float] | None = None,
     horizon_days: float = 0.0,
+    history: _HistoryBaselines | None = None,
 ) -> ComparisonPlan:
     role = (
         "main"
@@ -324,14 +345,14 @@ def _plan_comparison(
     target_mde = mde if mde is not None else comparison.min_effect
 
     notes: list[str] = []
-    moments = _resolve_moments(experiment, comparison, kind, override, tables, notes)
+    moments = _resolve_moments(experiment, comparison, kind, override, tables, notes, history)
     if moments is None:
+        refusal = _no_baseline_refusal(comparison, history)
         return ComparisonPlan(
             comparison.metric,
             method_name,
             role,
-            refused="no baseline — run `abk run` first, or pass "
-            f"--baseline {comparison.metric}:...",
+            refused=refusal,
             kind=kind,
             test_type=test_type,
             alpha=alpha,
@@ -455,8 +476,152 @@ def _plan_ratio(experiment) -> float:
     return 1.0
 
 
+class _HistoryBaselines:
+    """`--from-history`: population moments from the N whole days before the start.
+
+    Sizing needs per-unit moments, and before PLAN-2 they came only from a previous
+    ``abk run`` of this same experiment or a hand-typed ``--baseline`` — so the
+    pre-launch case, the one planning is actually for, read ``SKIPPED: no baseline``.
+
+    The read is deliberately POPULATION-wide: an experiment that has not launched has
+    no cohort to join, so the render measures everything the metric SQL yields over
+    ``[tz-midnight(start − interval), tz-midnight(start))``. That is a strictly better
+    input than a guess and strictly worse than a pilot run — the plan line says so,
+    especially when ``assignment.added_filters`` narrows the real cohort.
+
+    Lazy and cached per metric: a plan touches each metric once, and a comparison that
+    refuses (ratio/bootstrap) must not pay for a render it will never use.
+    """
+
+    def __init__(
+        self, experiment: Any, context: Any, manager: Any, grid: Any, interval: str
+    ) -> None:
+        self._experiment = experiment
+        self._context = context
+        self._manager = manager
+        self._grid = grid
+        self.interval = interval
+        self._backend: Any = None
+        self._cache: dict[str, BaselineMoments | None] = {}
+        self.failures: dict[str, str] = {}
+
+    @property
+    def label(self) -> str:
+        return f"history {self.interval}"
+
+    def moments(self, comparison: Any, kind: str) -> BaselineMoments | None:
+        """Population moments for one comparison, or ``None`` with a recorded reason.
+
+        A render failure refuses THAT comparison (the caller turns it into a SKIPPED
+        line naming the reason) rather than failing the command: one unreadable metric
+        must not cost the whole plan (the same discipline the row shaper uses).
+        """
+        metric_name = comparison.metric
+        if metric_name in self._cache:
+            return self._cache[metric_name]
+        try:
+            moments = self._load(metric_name, kind)
+        except Exception as exc:  # a render/SQL/shape failure on ONE metric
+            self.failures[metric_name] = str(exc)
+            moments = None
+        self._cache[metric_name] = moments
+        return moments
+
+    def _load(self, metric_name: str, kind: str) -> BaselineMoments | None:
+        from abkit.loaders.exposure_source import build_population_backend
+        from abkit.loaders.query_template import POPULATION_VARIANT
+        from abkit.pipeline.analyze import build_container
+
+        metric = self._context.metrics_by_name.get(metric_name)
+        if metric is None:
+            raise ValueError(f"metric '{metric_name}' is not in the library")
+        if self._backend is None:
+            self._backend = build_population_backend(self._manager, self._experiment)
+        loaded = self._backend.load_population_window(
+            metric, metric.get_query_text(self._context.root), self.interval, self._grid
+        )
+        if POPULATION_VARIANT not in loaded.variants():
+            raise ValueError("the history window returned no rows")
+        # The pipeline's OWN container → suffstats path, never a hand-rolled np.std:
+        # `_ab_results.std_1` carries the legacy mixed-ddof convention, and two baseline
+        # sources that disagreed by a ddof would be quietly incomparable.
+        container = build_container(kind, POPULATION_VARIANT, loaded)
+        source = f"{self.label} @ {self._experiment.name}"
+        if kind == FRACTION:
+            return BaselineMoments(
+                FRACTION, container.prop, container.nobs, container.nobs, None, source
+            )
+        from abkit.stats import SufficientStats
+
+        stats = SufficientStats.from_sample(container)
+        if stats.sample_size < 2 or not stats.std > 0:
+            raise ValueError(
+                f"the history window yielded {stats.sample_size} unit(s) with no spread"
+            )
+        return BaselineMoments(
+            SAMPLE,
+            stats.mean,
+            float(stats.sample_size),
+            float(stats.sample_size),
+            stats.std,
+            source,
+        )
+
+
+def _history_notes(experiment: Any, history: _HistoryBaselines) -> list[str]:
+    """What a population baseline is NOT, said on the line that uses it."""
+    notes = [
+        f"baseline from the {history.interval} before the start — POPULATION-wide "
+        "(the experiment has no cohort to read yet), so `n` counts everyone the metric "
+        "SQL yields, not the units this experiment will enroll"
+    ]
+    if experiment.assignment.added_filters:
+        notes.append(
+            "assignment.added_filters narrows the real cohort, and a population read "
+            "cannot apply it — treat this variance as indicative, not as this "
+            "experiment's own"
+        )
+    return notes
+
+
+def _no_baseline_refusal(comparison: Any, history: _HistoryBaselines | None) -> str:
+    """The SKIPPED reason, naming the history render's own failure when there was one."""
+    if history is not None and comparison.metric in history.failures:
+        return (
+            f"no baseline — the {history.label} render failed: "
+            f"{history.failures[comparison.metric]}"
+        )
+    hint = "" if history is not None else ", or pass --from-history <N d>"
+    return "no baseline — run `abk run` first, or pass " f"--baseline {comparison.metric}:...{hint}"
+
+
+def _validate_history_interval(raw: str) -> None:
+    """`--from-history` is whole days — the grain `covariate_lookback` already uses."""
+    from abkit.core.interval import Interval
+
+    try:
+        seconds = Interval(raw).seconds
+    except Exception as exc:
+        raise click.BadParameter(
+            f"--from-history '{raw}' is not an interval (e.g. 14d, 2w)",
+            param_hint="--from-history",
+        ) from exc
+    if seconds <= 0 or seconds % 86400 != 0:
+        raise click.BadParameter(
+            f"--from-history '{raw}' must be a positive WHOLE number of days "
+            "(the pre-period window is day-aligned in the experiment timezone)",
+            param_hint="--from-history",
+        )
+
+
 def _resolve_moments(
-    experiment, comparison, kind: str, override, tables, notes: list[str]
+    experiment,
+    comparison,
+    kind: str,
+    override,
+    tables,
+    notes: list[str],
+    history: _HistoryBaselines | None = None,
 ) -> BaselineMoments | None:
     if override is not None:
         try:
@@ -477,6 +642,19 @@ def _resolve_moments(
                 param_hint="--baseline",
             )
         return moments
+    # Precedence (contract step 3): an explicit --baseline wins, then --from-history,
+    # then the persisted rows. A hand-typed number is the operator's deliberate
+    # statement; a history render is a measurement of the wrong population; a
+    # persisted row is this experiment's own cohort and the most specific of all —
+    # but it only exists once the experiment has run, which is the case
+    # --from-history is for. Whichever wins names itself in the plan line.
+    if history is not None:
+        from_history = history.moments(comparison, kind)
+        if from_history is not None:
+            notes.extend(_history_notes(experiment, history))
+            return from_history
+        if comparison.metric in history.failures:
+            return None  # the SKIPPED line names the render failure
     if tables is None:
         return None
     return _moments_from_results(experiment, comparison, kind, tables)

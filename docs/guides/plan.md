@@ -40,21 +40,30 @@ Each sized line ends with `✓ powered` (current N already meets required-N) or
 ## Where the baseline comes from
 
 Sizing needs per-arm moments — a mean and standard deviation for a `sample` metric,
-or a proportion for a `fraction` metric. `abk plan` draws them from one of two
-sources — an explicit `--baseline` override always takes precedence, and it falls
-back to persisted data otherwise:
+or a proportion for a `fraction` metric. `abk plan` draws them from one of three
+sources, in this order — and the plan line always names the one it used:
 
 1. **`--baseline` override** — for a greenfield experiment with no data yet (or to
    override a stale persisted look), you supply the moments by hand (grammar below).
-2. **Persisted** — the most recent *usable* `_ab_results` row for the
+   An explicit number is the operator's deliberate statement, so it wins.
+2. **`--from-history <N d>`** — read each metric over the **N whole days before the
+   experiment's start** and derive the moments from that (labeled `history 14d @ …`).
+   This is the pre-launch answer: the experiment has enrolled nobody, so the read is
+   **population-wide** — it measures everything the metric SQL yields, not the units
+   this experiment will actually enroll, and the line says so. When
+   `assignment.added_filters` narrows the real cohort, a population read cannot apply
+   it, and the line says that too. Strictly better than a hand-typed guess, strictly
+   worse than a pilot run.
+3. **Persisted** — the most recent *usable* `_ab_results` row for the
    control/first-treatment pair (labeled `persisted @ <ts>` in the output). This
    requires at least one `abk run` to have landed. Rows flagged as
    insufficient-data or with a null value are skipped; the latest data-rich look
    wins.
 
-If **neither** is available, that comparison is reported
+If **none** is available, that comparison is reported
 `SKIPPED: no baseline — run abk run first, or pass --baseline ...`. `abk plan`
-never guesses a baseline it does not have.
+never guesses a baseline it does not have. A `--from-history` render that fails
+skips only *its* comparison, with the failure named on the line.
 
 The **target MDE** defaults to the comparison's `min_effect` (from the experiment
 YAML) and is overridable with `--mde`.
@@ -84,6 +93,7 @@ abk plan --select checkout_flow_v3 --metric arpu --mde 0.03 --power 0.9
 | `--power <p>` | Target power in (0, 1). Default: the project statistics default (`0.8`). |
 | `--alpha <a>` | Experiment-level significance *before* correction, in (0, 1). The two-tier scheme still divides it. Default: the experiment/project alpha. |
 | `--baseline <spec>` | Baseline moments for a metric with no persisted data. Repeatable. |
+| `--from-history <N d>` | Derive baselines from the N whole days before the start (population-wide; loses to `--baseline`, wins over persisted rows). |
 | `--profile <name>` | Profile name (default: `profiles.yml` `default_profile`). |
 
 ### The `--baseline` grammar

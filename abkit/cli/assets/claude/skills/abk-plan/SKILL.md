@@ -59,6 +59,7 @@ Flags (confirm the live set with `abk plan --help`):
 | `--power` | Target power (default: `statistics.power`, typically 0.8) |
 | `--alpha` | Experiment-level significance **before** correction (default: experiment/project alpha) |
 | `--baseline` | Baseline moments for a metric with no data (repeatable — Step 2) |
+| `--from-history <N d>` | Population baselines from the N whole days before the start — the pre-launch source (loses to `--baseline`, wins over persisted) |
 | `--arrival-rate` | Total units/day across arms, for the runtime (days-to-N) + always-valid ASN estimates (default: derived read-only from the cohort source — the persisted `_ab_exposures` copy in copy mode, otherwise a fresh re-execution of the live assignment SQL at invocation time; must be `> 0`) |
 | `--profile` | Profile name (default: `profiles.yml` `default_profile`) |
 
@@ -124,7 +125,7 @@ is omitted and only the achievable MDE is shown — pass `--mde` or set `min_eff
 | **ratio metric** | No versioned closed-form power formula for `ratio-delta` | Size a related `sample`/`fraction` proxy, or measure empirically |
 | **resampling method** | Bootstrap methods have no closed-form power | Measure it with `abk validate --inject-effect` (empirical power) |
 | **paired design** | Paired methods aren't sized here | Size the unpaired analogue as a bound |
-| **no baseline** | No persisted rows and no `--baseline` | Run `abk run` first, or pass `--baseline` (Step 2) |
+| **no baseline** | No persisted rows, no `--baseline` and no `--from-history` | Run `abk run` first, pass `--baseline` (Step 2), or `--from-history 14d` for a population baseline |
 
 **CUPED sizing (0.6.x):** a `cuped-t-test` is sized on its **own** covariate
 correlation — rows have persisted `corr_coef_1/2` since `0.4.0` — so required-N is

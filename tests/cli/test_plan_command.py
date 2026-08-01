@@ -673,3 +673,111 @@ def test_plan_flags_an_implausibly_large_variance_reduction():
     assert any("check that the covariate is not derived from the metric" in n for n in plan.notes)
     # a healthy ρ says nothing of the sort
     assert not any("derived from the metric" in n for n in _cuped_plan(0.6).notes)
+
+
+# ── PLAN-2: --from-history population baselines ─────────────────────────────────
+
+
+def test_from_history_sizes_an_experiment_that_never_ran(project):
+    """The gap PLAN-2 closes: before this, a pre-launch experiment read
+    `SKIPPED: no baseline` — the one case planning is actually for."""
+    without = runner.invoke(cli, ["plan", "--select", EXP, "--mde", "0.05"])
+    assert "no baseline" in without.output
+
+    result = runner.invoke(
+        cli, ["plan", "--select", EXP, "--mde", "0.05", "--from-history", "14d"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "no baseline" not in result.output
+    assert "history 14d" in result.output
+    assert "required" in result.output
+    # the disclosure rides the same line, every time
+    assert "POPULATION-wide" in result.output
+
+
+def test_from_history_loses_to_an_explicit_baseline(project):
+    """Precedence: a hand-typed number is the operator's deliberate statement."""
+    result = runner.invoke(
+        cli,
+        [
+            "plan", "--select", EXP, "--mde", "0.05",
+            "--from-history", "14d",
+            "--baseline", "example_arpu:mean=999,std=1,n=42",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "mean=999" in result.output
+    # ...only for the metric it names; the other metric still uses history
+    assert "history 14d" in result.output
+
+
+def test_from_history_beats_the_persisted_rows(ran):
+    """...and wins over a persisted baseline, which is the same experiment's own
+    cohort: the flag is an explicit request to size on the population instead."""
+    persisted = runner.invoke(cli, ["plan", "--select", EXP, "--mde", "0.05"])
+    assert "persisted @" in persisted.output
+
+    result = runner.invoke(
+        cli, ["plan", "--select", EXP, "--mde", "0.05", "--from-history", "14d"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "history 14d" in result.output
+    assert "persisted @" not in result.output
+
+
+def test_from_history_reads_the_population_not_the_cohort(project):
+    """The whole point of the cohort-free render: an experiment with no enrolled
+    units still gets moments, because the read never joins the cohort."""
+    result = runner.invoke(
+        cli, ["plan", "--select", EXP, "--mde", "0.05", "--from-history", "14d"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "baseline mean=" in result.output
+
+
+@pytest.mark.parametrize("bad", ["garbage", "0d", "36h", "-3d", "1w2"])
+def test_from_history_rejects_a_non_whole_day_interval(project, bad):
+    """Whole days only — the grain `covariate_lookback` uses and the pre-period
+    window is aligned to."""
+    result = runner.invoke(
+        cli, ["plan", "--select", EXP, "--mde", "0.05", "--from-history", bad]
+    )
+    assert result.exit_code != 0
+    assert "from-history" in result.output
+
+
+def test_a_history_render_failure_skips_only_that_comparison(project, monkeypatch):
+    """One unreadable metric must not cost the whole plan — and the SKIPPED line
+    names the render's own failure instead of the generic 'no baseline'."""
+    from abkit.compute.recompute_backend import RecomputeBackend
+
+    def explode(self, metric, metric_sql, lookback, grid):
+        raise RuntimeError("boom: no such column")
+
+    monkeypatch.setattr(RecomputeBackend, "load_population_window", explode)
+    result = runner.invoke(
+        cli, ["plan", "--select", EXP, "--mde", "0.05", "--from-history", "14d"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "boom: no such column" in result.output
+
+
+def test_added_filters_get_their_own_disclosure(project, monkeypatch):
+    """A population read cannot apply `assignment.added_filters`, so the line says
+    the variance is indicative rather than this experiment's own."""
+    from pathlib import Path
+
+    exp_path = Path("experiments/example_signup_test.yml")
+    body = exp_path.read_text(encoding="utf-8")
+    assert "added_filters" not in body
+    exp_path.write_text(
+        body.replace(
+            "  variants:", "  added_filters: \"AND country = 'US'\"\n  variants:", 1
+        ),
+        encoding="utf-8",
+    )
+    result = runner.invoke(
+        cli, ["plan", "--select", EXP, "--mde", "0.05", "--from-history", "14d"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "added_filters narrows the real cohort" in result.output

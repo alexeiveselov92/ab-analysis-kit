@@ -103,9 +103,15 @@ class SeedMirrorWarehouse(FakeDatabaseManager):
                 acc["signed_up"] = max(acc["signed_up"], signed_up)
                 acc["gross_usd"] += gross
 
+            # PLAN-2 population render: the macro swapped the cohort for a one-row
+            # synthetic relation, so every unit is in scope under the sentinel arm.
+            # A fake that kept serving scripted variants here would make the
+            # cohort-free contract untestable (the m8 WP3 lesson, second fake).
+            population = re.search(r"CROSS JOIN \(SELECT '([^']+)' AS _abk_variant", flat)
             rows = []
             for user_idx in sorted(per_unit):
-                row = {"variant": _variant(user_idx), "user_id": f"user_{user_idx}"}
+                arm = population.group(1) if population else _variant(user_idx)
+                row = {"variant": arm, "user_id": f"user_{user_idx}"}
                 if wants_signups:
                     row["signed_up"] = per_unit[user_idx]["signed_up"]
                     row["visits"] = 1

@@ -126,7 +126,7 @@ resampling design reports `sequential ASN: n/a` with the reason.
   │     sequential ASN ≈ 2,400/arm (≈ 1.2d) at target effect · P(win by horizon) 100% · null ASN ≈ 27,800/arm
 ```
 
-#### `abk plan` sizing gaps — PLAN-1 (✅ built) / PLAN-2 (as designed, NOT built)
+#### `abk plan` sizing gaps — PLAN-1 (✅ built) / PLAN-2 (✅ built)
 
 Two gaps the architecture already has the inputs for, scheduled as the `0.6.x`
 interstitial in [ROADMAP.md](../../ROADMAP.md) (added 2026-07-29 at the maintainer's
@@ -239,6 +239,36 @@ moments equal the pipeline's own for the same window (rel-1e-9, computed through
 `SufficientStats`); precedence is pinned in all three combinations; the cohort-free note
 appears whenever `added_filters` is set; `abk plan` still takes no lock and writes
 nothing (spy-asserted).
+
+**As built — and the premise above is retracted.** "The seam already exists" was
+**false**, and it is the load-bearing correction of this WP: the packaged macro
+`ab.exposed_units()` ALWAYS emits an `INNER JOIN` on the cohort, and
+`ab_apply_exposure_filter=False` removes exactly one predicate
+(`event_time >= exposure_ts`). That is correct for CUPED — a covariate is per
+*enrolled* unit — and it means the CUPED pre-period render is **not** cohort-free.
+For an experiment that has not enrolled anybody, that join returns zero rows: exactly
+the case this WP exists for. (`load_covariate_from_preperiod` is sample-only besides —
+it extracts the `value` role and a fraction metric declares `count`/`nobs`.)
+
+So the cohort-free render is a NEW capability, `apply_cohort_join=False`, and it does
+not remove the join: it swaps the cohort subquery for a **one-row synthetic relation**
+(`CROSS JOIN (SELECT '_abk_population' AS _abk_variant, NULL AS _abk_stratum) AS
+_abk_exposures`). That keeps the `_abk_exposures` alias alive, so `ab.variant_col()`,
+`ab.stratum_col()`, the loader's macro-usage runtime lint and an **unchanged** user
+metric SQL all keep working — and `GROUP BY variant` still groups by a relation's
+column rather than a bare constant, which PostgreSQL rejects. The macro is a
+compatibility surface, so the default render was proven byte-identical to the previous
+macro across 12 shapes (copy / direct / covariate / stratum-less × 3 dialects).
+
+Two more as-built notes. `RecomputeBackend.load_population_window` takes the LOOKBACK,
+not a window, so the whole-day pre-period rule keeps exactly one implementation
+(`_preperiod_window`, now with two callers — the m10 one-factory discipline).
+And the backend for this read is built by `exposure_source.build_population_backend`
+rather than `build_cohort_backend`: the M8 §0.5(e) switch exists for reads that JOIN
+the cohort, and its direct-mode branch validates an assignment source that, before
+launch, is empty — it would raise `EmptyCohortError` on the very experiment being
+planned. Backend construction still lives in that one module, so the exception is
+visible beside the rule it excepts.
 
 ## 2. The explore cockpit (priority interface)
 
