@@ -423,7 +423,7 @@ stale-but-contiguous `_ab_unit_state` day is invisible to the M9 gap check
 day state instead of leaving it (reproduced as a silent 3334.5-vs-3434.5
 undercount before the fix).
 
-### Interstitial — `abk plan` sizing gaps (PLAN-1 ✅ `0.6.1` / PLAN-2 📋) → `0.6.x`
+### Interstitial — `abk plan` sizing gaps (PLAN-1 ✅ `0.6.1` / PLAN-2 ✅) → `0.6.x`
 Design contract: [cli-and-dx.md §1 "`abk plan` sizing gaps"](docs/specs/cli-and-dx.md).
 Added 2026-07-29 (maintainer request). Two small, independent WPs that make
 pre-launch planning answer the questions the architecture already has the data
@@ -449,7 +449,7 @@ forward — they touch only `abkit/planning/` + `abkit/cli/commands/plan.py`.
   `abk init` scaffolds is exactly that shape, and the first implementation
   printed "required 10/arm" for it. Deflation is now refused below
   `1 − ρ² = 1e-12` on both the persisted and the `--baseline corr=` path.
-- **PLAN-2 — `abk plan --from-history <interval>`: baseline moments for an
+- **PLAN-2 ✅ SHIPPED — `abk plan --from-history <interval>`: baseline moments for an
   experiment that has never run.** Today a greenfield experiment is either
   SKIPPED ("no baseline") or needs hand-supplied `--baseline
   <metric>:mean=..,std=..,n=..`. The render it needs already exists: the CUPED

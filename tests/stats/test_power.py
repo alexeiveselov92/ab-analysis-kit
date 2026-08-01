@@ -20,6 +20,7 @@ from abkit.stats.power import (
     get_fraction_mde,
     get_fraction_power,
     get_ttest_mde,
+    get_fraction_sample_size,
     get_ttest_power,
     get_ttest_sample_size,
 )
@@ -48,6 +49,29 @@ def test_as_scalar_extracts_and_rejects() -> None:
     assert _as_scalar(np.float64(2.0)) == 2.0
     with pytest.raises(ValueError):
         _as_scalar(np.array([1.0, 2.0]))
+
+
+def test_every_solve_entry_extracts_an_fsolve_array(recwarn) -> None:
+    """statsmodels falls back to ``fsolve`` when brentq cannot bracket, and returns a
+    shape-(1,) ndarray. ``_as_scalar`` was added for the MDE path; the SAMPLE-SIZE
+    and POWER entries kept a raw ``float(...)``, which numpy deprecated in 1.25 and
+    newer numpy raises on outright — so the crash reached CI as
+    "only 0-dimensional arrays can be converted to Python scalars" while a local
+    (older-numpy) run only warned.
+
+    The pin is the WARNING, not the exception: it fails on every numpy in the
+    supported range, including the ones where the old code merely deprecated.
+    """
+    import warnings
+
+    # a huge standardized effect (999 * 5% / 1) — brentq cannot bracket it, so every
+    # entry below goes through the array-returning fallback
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")  # statsmodels' own ConvergenceWarning
+        warnings.filterwarnings("error", category=DeprecationWarning)
+        assert get_ttest_sample_size(999.0, 1.0, 0.05, "relative", 0.05, 0.8, 1.0) > 0
+        assert get_fraction_sample_size(0.5, 0.9, "relative", 0.05, 0.8, 1.0) > 0
+        assert 0.0 <= get_ttest_power(999.0, 1.0, 42, 0.05, "relative", 0.05, 1.0) <= 1.0
 
 
 def test_mde_inf_guard_zero_std() -> None:

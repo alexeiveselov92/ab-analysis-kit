@@ -284,6 +284,29 @@ def load_variant_map(
     return variant_map
 
 
+def build_population_backend(
+    manager: BaseDatabaseManager,
+    experiment: ExperimentConfig,
+) -> RecomputeBackend:
+    """A backend for the COHORT-FREE population render (PLAN-2), built here on purpose.
+
+    :func:`build_cohort_backend` is the ONE switch for every read that JOINS the
+    cohort (the binding m8 §0.5(e) contract). This read does not: the population
+    render swaps the cohort for a one-row synthetic relation, so there is no
+    copy-vs-direct branch to take — and taking it anyway would be actively wrong,
+    because direct mode renders and validates the assignment source, which for a
+    not-yet-launched experiment returns no rows and raises ``EmptyCohortError``.
+    That experiment is exactly the one ``abk plan --from-history`` exists for.
+
+    Constructing it HERE rather than at the call site keeps the contract's real
+    property — backend construction lives in this module, never scattered — and
+    makes the one cohort-free exception visible beside the rule it excepts.
+    """
+    from abkit.compute.recompute_backend import RecomputeBackend
+
+    return RecomputeBackend(manager, experiment, exposures_table=TABLE_EXPOSURES)
+
+
 def build_cohort_backend(
     manager: BaseDatabaseManager,
     experiment: ExperimentConfig,

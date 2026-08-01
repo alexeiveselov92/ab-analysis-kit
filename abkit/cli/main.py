@@ -368,6 +368,13 @@ def validate(
     "'<metric>:mean=..,std=..,n=..' (sample) or '<metric>:prop=..,n=..' (fraction); repeatable",
 )
 @click.option(
+    "--from-history",
+    default=None,
+    help="Derive baseline moments for an experiment that has never run, by reading each "
+    "metric over the N whole days before its start (e.g. 14d) — POPULATION-wide (the "
+    "cohort does not exist yet). Loses to --baseline, wins over persisted rows",
+)
+@click.option(
     "--arrival-rate",
     type=float,
     default=None,
@@ -383,6 +390,7 @@ def plan(
     power: float | None,
     alpha: float | None,
     baseline: tuple[str, ...],
+    from_history: str | None,
     arrival_rate: float | None,
     profile: str | None,
 ) -> None:
@@ -397,7 +405,7 @@ def plan(
     """
     from abkit.cli.commands.plan import run_plan
 
-    run_plan(select, metric, mde, power, alpha, baseline, arrival_rate, profile)
+    run_plan(select, metric, mde, power, alpha, baseline, from_history, arrival_rate, profile)
 
 
 @cli.command(name="verify-incremental")

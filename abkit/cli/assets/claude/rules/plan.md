@@ -26,14 +26,19 @@ from the *same* grid enumeration the pipeline uses.
 
 Sizing needs per-arm moments (mean+std for `sample`, proportion for `fraction`):
 
-1. **Persisted** — the latest usable `_ab_results` row for the control/first-
+1. **`--baseline` override** (wins) — for a greenfield experiment with no data yet.
+   Grammar: `<metric>:mean=..,std=..,n=..` (sample) or `<metric>:prop=..,n=..`
+   (fraction). Optional `n_other=..` sets the treatment arm (defaults to `n`);
+   optional `corr=..` sizes CUPED.
+2. **`--from-history <N d>`** — the N whole days before the start, for an experiment
+   that has never run. **Population-wide** (there is no cohort yet), so `n` counts
+   everyone the metric SQL yields and `assignment.added_filters` cannot be applied —
+   both stated on the line. Tell the user it is indicative, not the experiment's own.
+3. **Persisted** — the latest usable `_ab_results` row for the control/first-
    treatment pair (source shown as `persisted @ <ts>`). Requires at least one
    `abk run` to have landed.
-2. **`--baseline` override** — for a greenfield experiment with no data yet.
-   Grammar: `<metric>:mean=..,std=..,n=..` (sample) or `<metric>:prop=..,n=..`
-   (fraction). Optional `n_other=..` sets the treatment arm (defaults to `n`).
 
-Without either, that comparison is reported **un-sizable — not guessed**. The
+Without any of them, that comparison is reported **un-sizable — not guessed**. The
 **target MDE** defaults to the comparison's `min_effect` (override with `--mde`).
 
 ## Flags
@@ -46,6 +51,7 @@ Without either, that comparison is reported **un-sizable — not guessed**. The
 | `--power 0.8` | Target power. Default: the project statistics default. |
 | `--alpha 0.05` | Experiment-level alpha *before* correction; the two-tier scheme still divides it. Default: experiment/project alpha. |
 | `--baseline <spec>` | Greenfield baseline moments (repeatable; see above). |
+| `--from-history <N d>` | Population baselines from the N whole days before the start (see above). |
 | `--arrival-rate <units/day>` | Total units/day across arms, for the **runtime** (days-to-required-N) + always-valid **ASN** estimates. Default: derived read-only from the cohort source — the persisted `_ab_exposures` copy under `assignment.cohort_copy.enabled`, otherwise (the default) a fresh snapshot of the live assignment source re-executed at invocation time (the documented no-copy cost/freshness tradeoff); without arrival data both are skipped. Must be `> 0`. |
 | `--profile` | Profile name (default: `profiles.yml` `default_profile`). |
 

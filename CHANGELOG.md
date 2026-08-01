@@ -11,6 +11,52 @@ recorded here alongside an `ALGORITHM_VERSION` bump and a
 [`statistics-changes.md`](docs/specs/statistics-changes.md) entry (never a silent
 number change).
 
+## [Unreleased]
+
+### Added
+- **PLAN-2 — `abk plan --from-history <N d>`: a baseline for an experiment that
+  has never run.** Sizing needs per-unit moments, and they came only from a previous
+  `abk run` of the same experiment or a hand-typed `--baseline` — so the pre-launch
+  case, the one planning is actually for, answered `SKIPPED: no baseline`. The flag
+  reads each sizable metric over the N whole days before the experiment's start and
+  derives its moments through the **pipeline's own** `build_container` →
+  `SufficientStats` path (a hand-rolled `np.std` would disagree with the persisted
+  `std_1`'s legacy mixed ddof, making two baseline sources quietly incomparable).
+  No `_ab_results` number moves and `abk plan` stays read-only — no lock, no writes.
+  - **The read is POPULATION-wide, and the plan line says so.** The design contract
+    assumed the CUPED pre-period render was "cohort-free by construction" and could
+    simply be reused. It is not: the packaged macro always INNER JOINs the cohort and
+    `ab_apply_exposure_filter=False` drops exactly one predicate — correct for CUPED
+    (a covariate is per *enrolled* unit) and useless before launch, where that join
+    returns zero rows. So the render is a new capability: `ab_apply_cohort_join`
+    (default true) swaps the cohort for a **one-row synthetic relation**, which keeps
+    the `_abk_exposures` alias — and therefore `ab.variant_col()`, `ab.stratum_col()`,
+    the loader's macro-usage lint and an unchanged user metric SQL — working, while
+    `GROUP BY variant` still groups by a relation's column instead of a bare constant
+    (PostgreSQL rejects the latter). Every default render is byte-identical to before.
+  - **Precedence is explicit `--baseline` > `--from-history` > persisted rows**, and
+    whichever wins names itself on the line (`baseline mean=… (history 14d @ …)`).
+    A planning number whose origin is invisible is the thing to avoid.
+  - **Two disclosures ride the line**: `n` counts everyone the metric SQL yields, not
+    the units this experiment will enroll; and when `assignment.added_filters` narrows
+    the real cohort, a population read cannot apply it, so the variance is indicative
+    rather than this experiment's own.
+  - A render failure **skips that comparison** with the reason on its `SKIPPED` line
+    instead of failing the command; the interval must be a positive whole number of
+    days (the grain `covariate_lookback` uses and the pre-period window is aligned to).
+
+### Fixed
+- **`abk plan` could crash on a large standardized effect (numpy ≥ 2).** statsmodels
+  falls back to `fsolve` when brentq cannot bracket a solve and returns a shape-`(1,)`
+  ndarray; `_as_scalar` was introduced for the MDE path, but `get_ttest_sample_size`,
+  `get_fraction_sample_size` and `get_ttest_power` kept a raw `float(...)`. numpy
+  deprecated that in 1.25 and newer numpy raises outright, so an ordinary
+  `--baseline arpu:mean=999,std=1,n=42` failed the whole experiment's plan with
+  "only 0-dimensional arrays can be converted to Python scalars" — while an older-numpy
+  machine only warned. All three now extract through `_as_scalar`. **Value-preserving:
+  the same number the working path already returned, golden tests unmoved, no
+  `ALGORITHM_VERSION` bump.**
+
 ## [0.6.1] - 2026-08-01
 
 ### Changed

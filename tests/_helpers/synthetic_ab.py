@@ -155,6 +155,14 @@ class SyntheticWarehouse(FakeDatabaseManager):
         w_start = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S")
         w_end = datetime.strptime(match.group(2), "%Y-%m-%d %H:%M:%S")
         exposure_filter = "exposure_ts" in flat.split("WHERE experiment")[-1]
+        # PLAN-2 population render: the macro swapped the cohort for a one-row
+        # synthetic relation, so EVERY unit the fact table yields is in scope and
+        # its arm is the sentinel — a fake that kept serving scripted variants
+        # here would make the cohort-free contract untestable (the m8 WP3 lesson:
+        # the fake must model the real backend, or the parity test is vacuous).
+        population = re.search(r"CROSS JOIN \(SELECT '([^']+)' AS _abk_variant", flat)
+        if population is not None:
+            return self._aggregate_population(flat, events, w_start, w_end, population.group(1))
         exposure_by_unit = self._cohort_join_map(flat)
         sums: dict[tuple[str, str], dict[str, float]] = {}
         scanned = 0
@@ -174,6 +182,23 @@ class SyntheticWarehouse(FakeDatabaseManager):
             {"variant": variant, "user_id": unit, **acc}
             for (unit, variant), acc in sorted(sums.items())
         ]
+        if self.shuffled:
+            random.Random(20240701).shuffle(rows)
+        return rows
+
+    def _aggregate_population(self, flat, events, w_start, w_end, arm: str):
+        """The cohort-free counterpart of :meth:`_aggregate` (PLAN-2)."""
+        sums: dict[str, dict[str, float]] = {}
+        scanned = 0
+        for unit, _variant, ts, values in events:
+            if not (w_start <= ts < w_end):
+                continue
+            scanned += 1
+            acc = sums.setdefault(unit, dict.fromkeys(values, 0.0))
+            for column, value in values.items():
+                acc[column] += value
+        self._last_scanned = scanned
+        rows = [{"variant": arm, "user_id": unit, **acc} for unit, acc in sorted(sums.items())]
         if self.shuffled:
             random.Random(20240701).shuffle(rows)
         return rows

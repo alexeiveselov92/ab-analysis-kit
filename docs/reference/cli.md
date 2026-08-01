@@ -338,7 +338,8 @@ Read-only pre-launch power / sample-size planner (cli-and-dx §1). No lock, no w
 
 ```bash
 abk plan [--select <exp>]... [--metric <m>] [--mde PCT] [--power P] [--alpha A] \
-         [--baseline '<metric>:mean=..,std=..,n=..']... [--arrival-rate N] [--profile NAME]
+         [--baseline '<metric>:mean=..,std=..,n=..']... [--from-history <N d>] \\
+         [--arrival-rate N] [--profile NAME]
 ```
 
 | Option | Default | Meaning |
@@ -349,6 +350,7 @@ abk plan [--select <exp>]... [--metric <m>] [--mde PCT] [--power P] [--alpha A] 
 | `--power` | project default | Target power (must be in `(0, 1)`) |
 | `--alpha` | experiment / project alpha | Experiment-level significance before correction (must be in `(0, 1)`) |
 | `--baseline` | — | Baseline moments override for a greenfield metric (repeatable, see below) |
+| `--from-history` | — | Derive baselines from the N whole days before the start (e.g. `14d`) — population-wide; loses to `--baseline`, wins over persisted rows |
 | `--arrival-rate` | derived from the cohort source (persisted copy or a live re-render) | Total units/day across arms, for the runtime (days-to-N) + always-valid ASN estimates (must be > 0) |
 | `--profile` | `default_profile` | Connection profile to use |
 
