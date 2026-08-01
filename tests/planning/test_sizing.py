@@ -18,12 +18,17 @@ from abkit.planning.sizing import (
     SAMPLE,
     BaselineMoments,
     asn_for,
+    corr_is_usable,
     moments_from_override,
     parse_baseline_overrides,
     runtime_for,
     size_comparison,
 )
 from abkit.stats.power import (
+    cuped_adjusted_std,
+    get_cuped_ttest_mde,
+    get_cuped_ttest_power,
+    get_cuped_ttest_sample_size,
     get_fraction_mde,
     get_fraction_power,
     get_fraction_sample_size,
@@ -372,3 +377,210 @@ def test_asn_fraction_metric_is_supported():
     assert a is not None
     assert a.asn_n_h1 < a.horizon_n
     assert a.asn_n_h0 > a.asn_n_h1
+
+
+# ── PLAN-1: CUPED sized on the persisted covariate correlation ───────────────────
+#
+# The gap this closes: `_ab_results` has persisted `corr_coef_1/2` since M9 WP1, and
+# `power.py` has shipped the CUPED solves since M1, so sizing a `cuped-t-test` on the
+# raw variance over-stated required-N by 1/(1−ρ²). Every test below either pins the
+# deflated answer against `power.py` (never a re-derived formula) or pins the
+# unchanged raw answer, which is the regression gate for the flag-off path.
+
+
+def _cuped_moments(rho, *, n=5000, std=8.0, mean=12.5):
+    return BaselineMoments(SAMPLE, baseline=mean, n=n, n_other=n, std=std, source="x", corr_coef=rho)
+
+
+def test_cuped_sizing_matches_the_power_module_exactly():
+    """The three solves route through `get_cuped_ttest_*`, not a local deflation."""
+    m = _cuped_moments(0.6)
+    r = size_comparison(
+        m, test_type="relative", alpha=0.05, power=0.8, target_mde=0.05, plan_ratio=1.0
+    )
+    assert r.required_n == get_cuped_ttest_sample_size(
+        12.5, 8.0, 0.6, 0.05, test_type="relative", alpha=0.05, power=0.8, ratio=1.0
+    )
+    assert r.achievable_mde == get_cuped_ttest_mde(
+        12.5, 8.0, 0.6, 5000, test_type="relative", alpha=0.05, power=0.8, ratio=1.0
+    )
+    assert r.achieved_power == get_cuped_ttest_power(
+        12.5, 8.0, 0.6, 5000, 0.05, test_type="relative", alpha=0.05, ratio=1.0
+    )
+
+
+def test_cuped_required_n_is_strictly_below_the_raw_bound():
+    """The whole point of the WP: a real ρ buys units, and the plan must show it."""
+    raw = size_comparison(
+        BaselineMoments(SAMPLE, 12.5, 5000, 5000, 8.0, "x"),
+        test_type="relative",
+        alpha=0.05,
+        power=0.8,
+        target_mde=0.05,
+        plan_ratio=1.0,
+    )
+    cuped = size_comparison(
+        _cuped_moments(0.6),
+        test_type="relative",
+        alpha=0.05,
+        power=0.8,
+        target_mde=0.05,
+        plan_ratio=1.0,
+    )
+    assert cuped.required_n < raw.required_n
+    # ...and by the factor the math says, not merely "less" (1 − ρ² = 0.64)
+    assert cuped.required_n == pytest.approx(raw.required_n * 0.64, rel=0.01)
+    # the retrospective bounds move the same way: a tighter MDE, more power
+    assert cuped.achievable_mde < raw.achievable_mde
+    assert cuped.achieved_power > raw.achieved_power
+
+
+@pytest.mark.parametrize("rho", [None, float("nan"), 1.0, -1.0, 1.0 - 1e-16])
+def test_an_unusable_correlation_reproduces_the_raw_numbers_exactly(rho):
+    """The regression gate: no ρ, a NaN ρ, or one that leaves no residual variance
+    must size EXACTLY as the pre-PLAN-1 planner did — byte-for-byte, not close.
+
+    ``1 − 1e-16`` is the case the scaffolded example actually persists (its synthetic
+    covariate is collinear with the metric), and it is a hair BELOW 1, so a naive
+    ``abs(rho) >= 1`` gate lets it through and sizes the experiment to nothing.
+    """
+    raw = size_comparison(
+        BaselineMoments(SAMPLE, 12.5, 5000, 5000, 8.0, "x"),
+        test_type="relative",
+        alpha=0.05,
+        power=0.8,
+        target_mde=0.05,
+        plan_ratio=1.0,
+    )
+    got = size_comparison(
+        _cuped_moments(rho),
+        test_type="relative",
+        alpha=0.05,
+        power=0.8,
+        target_mde=0.05,
+        plan_ratio=1.0,
+    )
+    assert (got.required_n, got.achievable_mde, got.achieved_power) == (
+        raw.required_n,
+        raw.achievable_mde,
+        raw.achieved_power,
+    )
+
+
+def test_zero_correlation_is_a_measurement_not_a_missing_value():
+    """ρ = 0 is usable (it reproduces the raw numbers) — and it must be
+    distinguishable from "no ρ persisted", because the CLI says different things."""
+    m = _cuped_moments(0.0)
+    assert m.usable_corr == 0.0
+    assert _cuped_moments(None).usable_corr is None
+    raw = size_comparison(
+        BaselineMoments(SAMPLE, 12.5, 5000, 5000, 8.0, "x"),
+        test_type="relative",
+        alpha=0.05,
+        power=0.8,
+        target_mde=0.05,
+        plan_ratio=1.0,
+    )
+    got = size_comparison(
+        m, test_type="relative", alpha=0.05, power=0.8, target_mde=0.05, plan_ratio=1.0
+    )
+    assert got.required_n == raw.required_n
+
+
+def test_a_fraction_never_deflates():
+    """`power.py` has no CUPED proportion solve, so a ρ on a fraction is inert."""
+    m = BaselineMoments(FRACTION, 0.2, 10_000, 10_000, None, "x", corr_coef=0.9)
+    assert m.usable_corr is None
+    got = size_comparison(
+        m, test_type="relative", alpha=0.05, power=0.8, target_mde=0.05, plan_ratio=1.0
+    )
+    assert got.required_n == get_fraction_sample_size(
+        0.2, 0.05, test_type="relative", alpha=0.05, power=0.8, ratio=1.0
+    )
+
+
+def test_sizing_std_is_the_shared_deflation():
+    m = _cuped_moments(0.6)
+    assert m.sizing_std == cuped_adjusted_std(8.0, 0.6)
+    assert _cuped_moments(None).sizing_std == 8.0
+    assert BaselineMoments(FRACTION, 0.2, 10, 10, None, "x").sizing_std is None
+
+
+@pytest.mark.parametrize(
+    "rho,usable",
+    [(0.0, True), (0.9, True), (-0.9, True), (0.999999, True), (1.0, False), (None, False)],
+)
+def test_corr_is_usable_is_the_one_gate(rho, usable):
+    assert corr_is_usable(rho) is usable
+
+
+def test_zero_effect_guard_is_unchanged_under_deflation():
+    """A relative MDE on a zero baseline mean has no finite N with OR without CUPED —
+    the guard reads the raw std, and deflation cannot change a zero numerator."""
+    m = _cuped_moments(0.6, mean=0.0)
+    r = size_comparison(
+        m, test_type="relative", alpha=0.05, power=0.8, target_mde=0.05, plan_ratio=1.0
+    )
+    assert r.required_n == float("inf")
+
+
+# ── PLAN-1 step 3: the ASN must describe the SAME design as required-N ───────────
+
+
+def test_asn_consumes_the_deflated_variance():
+    """A deflated required-N beside a raw-variance ASN is one line contradicting
+    itself: the expected stopping size would sit above a requirement computed for a
+    lower-variance estimator, with nothing saying why."""
+    common = dict(
+        test_type="relative",
+        target_mde=0.05,
+        alpha=0.05,
+        plan_ratio=1.0,
+        look_days=_ASN_LOOK_DAYS,
+        rate_control_per_day=_ASN_RATE,
+    )
+    raw = asn_for(BaselineMoments(SAMPLE, 100.0, 1, 1, 25.0, "x"), **common)
+    cuped = asn_for(BaselineMoments(SAMPLE, 100.0, 1, 1, 25.0, "x", corr_coef=0.8), **common)
+    assert raw is not None and cuped is not None
+    # less variance ⇒ the confidence sequence excludes zero sooner
+    assert cuped.asn_n_h1 < raw.asn_n_h1
+    assert cuped.asn_days_h1 < raw.asn_days_h1
+
+
+def test_asn_ignores_an_unusable_correlation():
+    common = dict(
+        test_type="relative",
+        target_mde=0.05,
+        alpha=0.05,
+        plan_ratio=1.0,
+        look_days=_ASN_LOOK_DAYS,
+        rate_control_per_day=_ASN_RATE,
+    )
+    raw = asn_for(BaselineMoments(SAMPLE, 100.0, 1, 1, 25.0, "x"), **common)
+    degenerate = asn_for(BaselineMoments(SAMPLE, 100.0, 1, 1, 25.0, "x", corr_coef=1.0), **common)
+    assert raw is not None and degenerate is not None
+    assert degenerate.asn_n_h1 == raw.asn_n_h1
+
+
+# ── PLAN-1: the --baseline corr= override ───────────────────────────────────────
+
+
+def test_baseline_override_accepts_corr():
+    parsed = parse_baseline_overrides(("arpu:mean=12.5,std=8,n=5000,corr=0.6",))
+    assert parsed["arpu"]["corr"] == 0.6
+    m = moments_from_override(SAMPLE, parsed["arpu"])
+    assert m.corr_coef == 0.6
+    assert m.usable_corr == 0.6
+
+
+@pytest.mark.parametrize("corr", ["1", "-1", "1.5", "0.9999999999999999"])
+def test_baseline_override_rejects_an_unusable_corr(corr):
+    fields = parse_baseline_overrides((f"arpu:mean=12.5,std=8,n=5000,corr={corr}",))["arpu"]
+    with pytest.raises(ValueError, match="corr"):
+        moments_from_override(SAMPLE, fields)
+
+
+def test_baseline_override_rejects_corr_on_a_fraction():
+    fields = parse_baseline_overrides(("signup:prop=0.2,n=5000,corr=0.6",))["signup"]
+    with pytest.raises(ValueError, match="sample metric"):
+        moments_from_override(FRACTION, fields)

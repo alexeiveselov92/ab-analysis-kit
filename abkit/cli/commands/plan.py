@@ -10,9 +10,10 @@ achieved-power at the effective two-tier alpha.
 Strictly read-only (D11): no lock, no ``_ab_*`` writes; its own manager is closed in a
 ``finally``. Honest refusals (D10): ratio metrics and resampling (bootstrap) methods
 have no versioned power formula → SKIPPED with a reason, never sized with invented math;
-CUPED is sized on the raw persisted variance (ρ is not persisted) and flagged as a
-conservative upper bound. A genuine harness failure (bad selection / ``--baseline`` /
-warehouse error) exits non-zero; a by-design refusal does not.
+CUPED is sized on the variance its own persisted ``corr_coef_1`` deflates (PLAN-1), and
+the plan line always names which variance that was — raw or deflated, and why. A genuine
+harness failure (bad selection / ``--baseline`` / warehouse error) exits non-zero; a
+by-design refusal does not.
 
 Runtime / ASN (WP-A, m6-implementation-plan.md): each sizable comparison also reports
 days-to-required-N from a unit-arrival rate (derived read-only from the cohort source —
@@ -37,6 +38,7 @@ from abkit.pipeline import comparison_alpha, effective_alphas
 from abkit.planning.sizing import (
     FRACTION,
     SAMPLE,
+    SUSPICIOUS_RESIDUAL_VARIANCE_SHARE,
     AsnResult,
     BaselineMoments,
     ComparisonPlan,
@@ -337,7 +339,7 @@ def _plan_comparison(
             target_mde=target_mde,
         )
     if method_cls.requires_covariate:
-        notes.append("sized on RAW variance — CUPED (ρ not persisted) lowers required-N further")
+        notes.append(_covariate_note(moments))
 
     plan_ratio = _plan_ratio(experiment)
     result = size_comparison(
@@ -458,12 +460,76 @@ def _resolve_moments(
 ) -> BaselineMoments | None:
     if override is not None:
         try:
-            return moments_from_override(kind, override)
+            moments = moments_from_override(kind, override)
         except ValueError as exc:
             raise click.BadParameter(str(exc), param_hint="--baseline") from exc
+        if (
+            moments.corr_coef is not None
+            and not get_method_class(comparison.method.name).requires_covariate
+        ):
+            # Deflating a method that will not run CUPED promises a variance reduction
+            # the analysis cannot deliver — refuse where it was typed rather than print
+            # an under-stated required-N.
+            raise click.BadParameter(
+                f"--baseline {comparison.metric}: 'corr' sizes a covariate method, but "
+                f"{comparison.metric} is planned with '{comparison.method.name}' — drop "
+                "'corr' or plan a cuped-t-test comparison",
+                param_hint="--baseline",
+            )
+        return moments
     if tables is None:
         return None
     return _moments_from_results(experiment, comparison, kind, tables)
+
+
+def _covariate_note(moments: BaselineMoments) -> str:
+    """The one line a CUPED plan states about the variance it was sized on (PLAN-1).
+
+    Every branch names what it used, because "required-N" without its variance basis
+    is the number an operator would then plan a launch around. The pre-PLAN-1 note
+    said the correlation "is not persisted", which M9 WP1 made false for every row
+    written since ``0.4.0``.
+    """
+    rho = moments.usable_corr
+    if rho is None:
+        if moments.corr_coef is None:
+            # Two different causes, two different fixes: a hand-typed baseline simply
+            # omitted `corr=`, while a persisted one predates the 0.4.0 column. Naming
+            # the wrong one sends the operator to re-run an experiment that would not
+            # have helped (or to look for a flag that would not have applied).
+            if moments.source.startswith("--baseline"):
+                return (
+                    "sized on RAW variance — the --baseline override carries no 'corr', "
+                    "so required-N is an upper bound (add corr=<ρ> to size on CUPED)"
+                )
+            return (
+                "sized on RAW variance — no covariate correlation on the baseline row "
+                "(rows written before 0.4.0 carry none), so required-N is an upper bound"
+            )
+        return (
+            f"sized on RAW variance — ρ = {moments.corr_coef:.6g} leaves no usable "
+            "residual variance (the covariate reproduces the metric), so a deflated "
+            "required-N would be rounding noise"
+        )
+    if rho == 0.0:
+        return (
+            "sized on RAW variance — the baseline's covariate correlation is ρ = 0, "
+            "so CUPED reduces no variance here (this is a measurement, not a missing value)"
+        )
+    share = 1.0 - rho * rho
+    note = (
+        f"sized on CUPED-deflated variance (ρ = {rho:.4g}) — required-N is "
+        f"{share:.3g}× the raw-variance bound"
+    )
+    if share < SUSPICIOUS_RESIDUAL_VARIANCE_SHARE:
+        # Computable, so we compute it — but a >100× reduction is far more often a
+        # covariate derived from the metric than a real one, and this is the number
+        # someone sizes a launch on. Say so on the line, do not silently under-size.
+        note += (
+            f" — that is a {1.0 / share:,.0f}× reduction; check that the covariate is "
+            "not derived from the metric"
+        )
+    return note
 
 
 def _moments_from_results(experiment, comparison, kind: str, tables) -> BaselineMoments | None:
@@ -508,7 +574,12 @@ def _moments_from_results(experiment, comparison, kind: str, tables) -> Baseline
     std_1 = _num(latest.get("std_1"))
     if std_1 is None or std_1 <= 0:
         return None
-    return BaselineMoments(SAMPLE, value_1, float(size_1), float(size_2), std_1, source)
+    # M9 WP1 persists the control arm's value↔covariate correlation beside its std, and
+    # the rows are already filtered to THIS comparison's method_config_id — so a non-NULL
+    # corr_coef_1 is this method's own CUPED correlation, never another method's.
+    # `_num` maps NULL/NaN/inf to None; `usable_corr` makes the final call.
+    corr_1 = _num(latest.get("corr_coef_1"))
+    return BaselineMoments(SAMPLE, value_1, float(size_1), float(size_2), std_1, source, corr_1)
 
 
 def _num(value) -> float | None:

@@ -60,10 +60,15 @@ power formula:
   `abk validate --inject-effect` instead → SKIPPED.
 - **paired** designs — SKIPPED.
 
-**CUPED** (`cuped-t-test`) *is* sized, but on the **raw** persisted variance (the
-covariate correlation ρ is not persisted per row). This is a **conservative upper
-bound** on required-N — the real CUPED-deflated N is lower; the plan flags this
-with a `⚠ sized on RAW variance` note.
+**CUPED** (`cuped-t-test`) is sized on its **own covariate correlation**: rows have
+persisted `corr_coef_1/2` since `0.4.0`, so required-N is `(1 − ρ²)×` the
+raw-variance number and the note names the ρ it used. Three cases fall back to the
+raw variance, each saying which: **no ρ on the row** (written before `0.4.0` — the
+number is then a conservative upper bound), **ρ = 0** (a measurement: this covariate
+reduces nothing), and **`1 − ρ² < 1e-12`** (the covariate reproduces the metric — a
+leak or a synthetic fixture; a deflated N would be rounding noise). Pass
+`corr=` inside `--baseline` to size a never-run experiment; it is accepted only on a
+comparison whose method actually applies a covariate.
 
 ## Reading the output
 
@@ -78,7 +83,8 @@ than crashing the plan.
 │     target MDE 5.00% → required 25,580/arm ✗ underpowered · power@MDE 0.06 · achievable MDE 49.26%
 │   example_arpu [secondary · cuped-t-test · relative] — baseline mean=62.86 std=42 · n=300/300 (persisted @ …)
 │     target MDE 5.00% → required 2,804/arm ✗ underpowered · power@MDE 0.15 · achievable MDE 15.31%
-│     ⚠ sized on RAW variance — CUPED (ρ not persisted) lowers required-N further
+│     ⚠ sized on RAW variance — ρ = 1 leaves no usable residual variance (the covariate
+│       reproduces the metric), so a deflated required-N would be rounding noise
 └─ looks: 14 planned · cadence 1d · horizon 2024-07-15 · ~28 _ab_results rows/full-refresh
 ```
 

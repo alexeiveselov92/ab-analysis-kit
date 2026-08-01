@@ -121,13 +121,36 @@ name), so:
   `abk validate --inject-effect` instead (see [Validating with A/A](validate.md)).
 - **paired designs** (`paired-*`) → SKIPPED.
 
-### CUPED is sized on the raw variance
+### CUPED is sized on its own covariate correlation
 
-`cuped-t-test` **is** sized, but on the **raw** persisted variance — the covariate
-correlation ρ is not persisted per `_ab_results` row. That makes the reported
-required-N a **conservative upper bound**: the real CUPED-deflated N is *lower*. The
-plan flags this with a `⚠ sized on RAW variance` note so you never mistake the
-ceiling for the true number.
+`cuped-t-test` is sized on the **deflated** variance whenever the baseline row carries
+a covariate correlation: since `0.4.0` every `_ab_results` row persists `corr_coef_1/2`,
+and `0.6.x` uses it, so required-N is `(1 − ρ²)×` the raw-variance number instead of the
+old upper bound. The plan line always names the variance it used:
+
+```
+⚠ sized on CUPED-deflated variance (ρ = 0.62) — required-N is 0.616× the raw-variance bound
+```
+
+Three cases fall back to the raw variance, each with its own note, because a
+required-N whose basis you cannot see is the number you would plan a launch around:
+
+| Note | When | What it means |
+|---|---|---|
+| `no covariate correlation on the baseline row (rows written before 0.4.0 carry none)` | the row predates `0.4.0`, so no ρ was stored | required-N is a **conservative upper bound**; re-run the experiment (or pass `corr=`) to size on the real ρ |
+| `the baseline's covariate correlation is ρ = 0 …` | ρ really is zero | a **measurement**, not a missing value: this covariate reduces no variance, so the raw number *is* the answer |
+| `ρ = 1 leaves no usable residual variance …` | `1 − ρ² < 1e-12` | the covariate reproduces the metric (a leak, or a synthetic fixture). Deflating would size the experiment to nothing off rounding noise, so the raw bound stands — **check what your covariate is** |
+| `the --baseline override carries no 'corr'` | you typed a baseline without `corr=` | add `corr=<ρ>` to size on CUPED; until then the number is an upper bound |
+
+A ρ that clears the degeneracy floor can still imply a **>100× drop** in required-N
+(`1 − ρ² < 0.01`). That is the measurement, so it is used — and the line adds *"check
+that the covariate is not derived from the metric"*, because a covariate built from the
+outcome is the usual explanation.
+
+You can also supply ρ by hand for an experiment that has never run:
+`--baseline arpu:mean=12.5,std=8,n=5000,corr=0.6`. It is accepted only on a comparison
+whose method actually applies a covariate — deflating a plain `t-test` would promise a
+reduction the analysis will never perform.
 
 ## Reading the output
 
@@ -138,8 +161,8 @@ Output is the same tree style as the rest of the CLI. Here is a full example:
 │   signup_cr [main · z-test · relative] — baseline prop=0.2 · n=300/300 trials (persisted @ …)
 │     target MDE 5.00% → required 25,580/arm ✗ underpowered · power@MDE 0.06 · achievable MDE 49.26%
 │   arpu [secondary · cuped-t-test · relative] — baseline mean=62.86 std=42 · n=300/300 (persisted @ …)
-│     target MDE 5.00% → required 2,804/arm ✗ underpowered · power@MDE 0.15 · achievable MDE 15.31%
-│     ⚠ sized on RAW variance — CUPED (ρ not persisted) lowers required-N further
+│     target MDE 5.00% → required 1,727/arm ✗ underpowered · power@MDE 0.21 · achievable MDE 12.01%
+│     ⚠ sized on CUPED-deflated variance (ρ = 0.62) — required-N is 0.616× the raw-variance bound
 └─ looks: 14 planned · cadence 1d · horizon 2024-07-15 · ~28 _ab_results rows/full-refresh
 ```
 

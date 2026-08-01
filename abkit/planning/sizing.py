@@ -11,10 +11,14 @@ Scope boundary (honest refusal, D10): only the closed-form families in ``power.p
 sized — continuous (``t-test`` / CUPED) via the standardized-effect solve and
 proportions (``z-test``) via Cohen's h. Ratio metrics and resampling (bootstrap)
 methods have **no versioned power formula**, so the caller refuses them rather than
-invent math. CUPED is sized on the **raw** persisted variance (the covariate
-correlation is not persisted per ``_ab_results`` row — see ``cuped_ttest.py``: per-arm
-``std`` reports the *original* std): a conservative upper bound on required-N, which the
-caller flags.
+invent math. **CUPED is sized on the deflated variance when the row carries a
+correlation** (PLAN-1): per-arm ``std`` still reports the *original* std (see
+``cuped_ttest.py``), but M9 WP1 persists ``corr_coef_1/2`` beside it, so
+``BaselineMoments.corr_coef`` routes the solves through ``power.get_cuped_ttest_*`` —
+the same ``cuped_adjusted_std`` deflation ``validate/scoring.py`` already uses, never a
+second formula. Without a usable ρ (a pre-``0.4.0`` row, a non-CUPED method, a
+degenerate ``|ρ| ≥ 1``) the raw-variance bound stands unchanged and the caller flags it
+as the upper bound it is.
 
 **Runtime / ASN (WP-A, m6-implementation-plan.md).** Two forward-looking timing
 answers layered on the sizing solves, both keyed on a unit-arrival rate the caller
@@ -44,6 +48,10 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from abkit.stats.power import (
+    cuped_adjusted_std,
+    get_cuped_ttest_mde,
+    get_cuped_ttest_power,
+    get_cuped_ttest_sample_size,
     get_fraction_mde,
     get_fraction_power,
     get_fraction_sample_size,
@@ -58,6 +66,38 @@ from abkit.stats.sequential import mixture_tau2, sequentialize
 SAMPLE = "sample"
 FRACTION = "fraction"
 
+#: PLAN-1: the smallest residual variance share ``1 − ρ²`` a CUPED deflation may use.
+#: Below it the deflation factor is decided by rounding noise in the persisted ρ (a
+#: Float64 carries ~1e-16 of absolute slack, and the factor is ``2·(1−ρ)``), not by the
+#: data — so a required-N derived from it is an artifact, not a smaller experiment. It
+#: is also the shape a *leaking* covariate takes: the covariate IS the metric. The
+#: project ``abk init`` scaffolds is exactly this case — its synthetic pre-period value
+#: is a linear function of the same generator as the experiment value, so ρ rounds to 1
+#: and an ungated deflation printed "required 10/arm" for a series whose raw-variance
+#: requirement is five orders of magnitude larger.
+MIN_RESIDUAL_VARIANCE_SHARE = 1e-12
+
+#: PLAN-1: below this residual variance share the deflation is still computed, but the
+#: plan line flags it — a >100× reduction in required-N is far more often a covariate
+#: derived from the metric than a real one, and it is the number someone sizes a launch
+#: on. Disclosure, not refusal: the measurement stands, the operator gets to check it.
+SUSPICIOUS_RESIDUAL_VARIANCE_SHARE = 0.01
+
+
+def corr_is_usable(corr_coef: float | None) -> bool:
+    """True iff ``corr_coef`` can deflate a variance without inventing precision.
+
+    The ONE predicate behind both gates — :attr:`BaselineMoments.usable_corr` (what the
+    solves read) and ``--baseline corr=``'s parse-time validation — so a correlation the
+    planner would silently ignore can never be accepted at the door.
+    """
+    if corr_coef is None:
+        return False
+    rho = float(corr_coef)
+    if not math.isfinite(rho):
+        return False
+    return 1.0 - rho * rho >= MIN_RESIDUAL_VARIANCE_SHARE
+
 
 @dataclass(frozen=True)
 class BaselineMoments:
@@ -67,6 +107,12 @@ class BaselineMoments:
     ``fraction`` (inverted from the persisted proportion SE ``sqrt(p(1−p)/nobs)`` —
     the same inversion the readout MDE fallback uses). ``std`` is ``None`` for a
     ``fraction`` (the proportion carries its own variance).
+
+    ``corr_coef`` is the control arm's value↔covariate correlation (PLAN-1) — the
+    persisted ``corr_coef_1`` for a ``cuped-t-test`` row, or the ``--baseline
+    corr=`` override. It is appended LAST deliberately: every existing positional
+    construction (``BaselineMoments(SAMPLE, mean, n1, n2, std, source)``) must keep
+    meaning what it meant.
     """
 
     kind: str  # SAMPLE | FRACTION
@@ -75,11 +121,45 @@ class BaselineMoments:
     n_other: float  # treatment-arm N (same unit)
     std: float | None = None  # control std (sample only)
     source: str = ""  # human label — "persisted @ <ts>" or "--baseline override"
+    corr_coef: float | None = None  # CUPED value↔covariate correlation (sample only)
 
     @property
     def observed_ratio(self) -> float:
         """treatment:control allocation actually observed (for the retrospective bounds)."""
         return self.n_other / self.n if self.n > 0 else 1.0
+
+    @property
+    def usable_corr(self) -> float | None:
+        """``corr_coef`` when it can deflate this baseline's variance, else ``None``.
+
+        The single gate every deflation decision reads, so the solves, the ASN's
+        base variance and the CLI's note can never disagree about whether this plan
+        line is a CUPED-sized one.
+
+        Refused: a ``fraction`` (proportions carry their own variance and
+        ``power.py`` has no CUPED proportion solve), a missing/NaN value (a pre-M9
+        row persisted no correlation), and a residual variance share below
+        :data:`MIN_RESIDUAL_VARIANCE_SHARE` — a (near-)perfect correlation deflates
+        the std to rounding noise, which is not "no sample needed" but a degenerate
+        input. ``ρ = 0`` IS usable: it is a real measurement of "this covariate
+        buys nothing", and it reproduces the raw-variance numbers exactly.
+        """
+        if self.kind != SAMPLE or not corr_is_usable(self.corr_coef):
+            return None
+        assert self.corr_coef is not None
+        return float(self.corr_coef)
+
+    @property
+    def sizing_std(self) -> float | None:
+        """The std the solves actually use — deflated iff :attr:`usable_corr`.
+
+        Exposed for the CLI's note and for the ASN's base variance so neither
+        re-implements ``cuped_adjusted_std``.
+        """
+        if self.std is None:
+            return None
+        rho = self.usable_corr
+        return self.std if rho is None else cuped_adjusted_std(self.std, rho)
 
 
 @dataclass(frozen=True)
@@ -165,29 +245,55 @@ def size_comparison(
         )
         return SizingResult(required, achievable, achieved)
 
-    # SAMPLE (t-test / CUPED on the raw std)
+    # SAMPLE (t-test, or CUPED deflated by a persisted ρ — PLAN-1)
     assert moments.std is not None
     mean, std = moments.baseline, moments.std
+    rho = moments.usable_corr
     # A zero standardized effect (a relative MDE on a zero baseline mean) has no finite N
     # — statsmodels raises "Cannot detect an effect-size of 0". Report ∞ instead of
     # aborting the plan (mirrors get_ttest_mde's own size≤1/std=0 → inf convention).
+    # The guard reads the RAW std on purpose: `|adjusted − mean| / std` is zero iff its
+    # numerator is, and CUPED scales the denominator by a strictly positive factor
+    # (`|ρ| ≥ 1` never reaches here — `usable_corr` refuses it), so the deflated solve
+    # answers "no finite N" on exactly the same inputs.
     if magnitude is None:
         required = None
     elif _sample_effect_size(mean, std, magnitude, test_type) == 0.0:
         required = float("inf")
-    else:
+    elif rho is None:
         required = get_ttest_sample_size(
             mean, std, magnitude, test_type=test_type, alpha=alpha, power=power, ratio=plan_ratio
         )
-    achievable = get_ttest_mde(
-        mean, std, n, test_type=test_type, alpha=alpha, power=power, ratio=obs_ratio
-    )
+    else:
+        required = get_cuped_ttest_sample_size(
+            mean,
+            std,
+            rho,
+            magnitude,
+            test_type=test_type,
+            alpha=alpha,
+            power=power,
+            ratio=plan_ratio,
+        )
+    if rho is None:
+        achievable = get_ttest_mde(
+            mean, std, n, test_type=test_type, alpha=alpha, power=power, ratio=obs_ratio
+        )
+    else:
+        achievable = get_cuped_ttest_mde(
+            mean, std, rho, n, test_type=test_type, alpha=alpha, power=power, ratio=obs_ratio
+        )
     # get_ttest_power tolerates a zero effect (power → alpha), so no guard is needed here.
-    achieved = (
-        get_ttest_power(mean, std, n, magnitude, test_type=test_type, alpha=alpha, ratio=obs_ratio)
-        if magnitude is not None
-        else None
-    )
+    if magnitude is None:
+        achieved = None
+    elif rho is None:
+        achieved = get_ttest_power(
+            mean, std, n, magnitude, test_type=test_type, alpha=alpha, ratio=obs_ratio
+        )
+    else:
+        achieved = get_cuped_ttest_power(
+            mean, std, rho, n, magnitude, test_type=test_type, alpha=alpha, ratio=obs_ratio
+        )
     return SizingResult(required, achievable, achieved)
 
 
@@ -300,12 +406,20 @@ def _absolute_effect(moments: BaselineMoments, magnitude: float, test_type: str)
 
 
 def _base_variance(moments: BaselineMoments) -> float:
-    """Per-unit variance of one arm: ``σ²`` (sample) or the null ``p(1−p)`` (fraction)."""
+    """Per-unit variance of one arm: ``σ²`` (sample) or the null ``p(1−p)`` (fraction).
+
+    **Reads the SIZING std, not the raw one** (PLAN-1 step 3): required-N and the ASN
+    must describe the same design. A CUPED line whose required-N was deflated by ρ but
+    whose ASN simulated the raw variance would be internally inconsistent — it would
+    report an expected stopping size ABOVE a requirement computed for a lower-variance
+    estimator, on one line, with nothing saying why.
+    """
     if moments.kind == FRACTION:
         p = moments.baseline
         return p * (1.0 - p)
-    assert moments.std is not None
-    return moments.std * moments.std
+    std = moments.sizing_std
+    assert std is not None
+    return std * std
 
 
 def asn_for(
@@ -413,10 +527,12 @@ def parse_baseline_overrides(specs: tuple[str, ...]) -> dict[str, dict[str, floa
 
     Grammar: ``<metric>:<field>=<value>[,<field>=<value>...]`` — e.g.
     ``arpu:mean=12.5,std=8,n=5000`` (sample) or ``signup:prop=0.1,n=10000`` (fraction).
-    Optional ``n_other`` overrides the treatment-arm size (defaults to ``n``). Raises
-    :class:`ValueError` on a malformed spec so the CLI can exit non-zero with a hint.
+    Optional ``n_other`` overrides the treatment-arm size (defaults to ``n``); optional
+    ``corr`` is the CUPED value↔covariate correlation for the greenfield path (PLAN-1),
+    validated to ``|ρ| < 1``. Raises :class:`ValueError` on a malformed spec so the CLI
+    can exit non-zero with a hint.
     """
-    known = {"mean", "std", "n", "n_other", "prop"}
+    known = {"mean", "std", "n", "n_other", "prop", "corr"}
     out: dict[str, dict[str, float]] = {}
     for spec in specs:
         if ":" not in spec:
@@ -462,7 +578,13 @@ def moments_from_override(kind: str, fields: dict[str, float]) -> BaselineMoment
     n_other = fields.get("n_other", n)
     if n_other <= 0:
         raise ValueError("--baseline 'n_other' must be positive")
+    corr = fields.get("corr")
     if kind == FRACTION:
+        if corr is not None:
+            raise ValueError(
+                "--baseline 'corr' applies to a sample metric (CUPED); a fraction "
+                "carries its own variance and has no CUPED solve"
+            )
         prop = fields.get("prop", fields.get("mean"))
         if prop is None or not 0.0 < prop < 1.0:
             raise ValueError("--baseline for a fraction metric needs 'prop' in (0, 1)")
@@ -471,4 +593,13 @@ def moments_from_override(kind: str, fields: dict[str, float]) -> BaselineMoment
     std = fields.get("std")
     if mean is None or std is None or std <= 0:
         raise ValueError("--baseline for a sample metric needs 'mean' and a positive 'std'")
-    return BaselineMoments(SAMPLE, mean, n, n_other, std, "--baseline override")
+    if corr is not None and not corr_is_usable(corr):
+        # A (near-)perfect correlation deflates the std to rounding noise, which reads
+        # as "no sample needed" rather than the degenerate input it is — refuse it at
+        # the door, where the operator typed it, instead of silently ignoring it
+        # downstream (the persisted path can only NOTE its refusal; here we can error).
+        raise ValueError(
+            "--baseline 'corr' must satisfy |corr| < 1 and leave a usable residual "
+            f"variance (1 − corr² ≥ {MIN_RESIDUAL_VARIANCE_SHARE:g})"
+        )
+    return BaselineMoments(SAMPLE, mean, n, n_other, std, "--baseline override", corr)
