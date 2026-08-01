@@ -1,8 +1,8 @@
 # M10 Implementation Plan — timestamps + schema cleanup + explore polish
 
 > **Implementation record — M10 shipped in full (WP1–WP5 + the exit gate),
-> 2026-07-25/26; version bumped to `0.5.0`, release-ready pending the
-> maintainer's `v0.5.0` tag/publish step.** Written as the as-designed
+> 2026-07-25/26; released as `0.5.0` — tagged `v0.5.0`
+> and published to PyPI.** Written as the as-designed
 > contract for M10 (track approved 2026-07-18) in the shape of
 > [m4-implementation-plan.md](m4-implementation-plan.md) /
 > [m6-implementation-plan.md](m6-implementation-plan.md), and amended in place

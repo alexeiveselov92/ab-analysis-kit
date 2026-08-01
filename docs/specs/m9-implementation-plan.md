@@ -1,8 +1,8 @@
 # M9 Implementation Plan — additive compute engine + CUPED Tier-E
 
 > **Implementation record — M9 shipped in full (WP1–WP6), 2026-07-21/25;
-> version bumped to `0.4.0`, release-ready pending the maintainer's `v0.4.0`
-> tag/publish step.** Written 2026-07-18 as the as-designed contract for M9
+> released as `0.4.0` — tagged `v0.4.0`
+> and published to PyPI.** Written 2026-07-18 as the as-designed contract for M9
 > (polish track M7–M17, approved by the maintainer 2026-07-18 — see
 > [ROADMAP.md](../../ROADMAP.md) "The polish track"), in the shape of
 > [m4](m4-implementation-plan.md)/[m5](m5-implementation-plan.md)/

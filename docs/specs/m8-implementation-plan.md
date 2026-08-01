@@ -1,8 +1,8 @@
 # M8 Implementation Plan — assignments: no-copy default + incremental copy
 
 > **Implementation record — M8 shipped in full (WP1–WP7), 2026-07-20/21;
-> version bumped to `0.3.0`, release-ready pending the maintainer's `v0.3.0`
-> tag/publish step.** Written 2026-07-18 as the as-designed contract for M8
+> released as `0.3.0` — tagged `v0.3.0`
+> and published to PyPI.** Written 2026-07-18 as the as-designed contract for M8
 > (polish track M7–M17, approved by the maintainer 2026-07-18 — see
 > [ROADMAP.md](../../ROADMAP.md) "The polish track"), in the shape of
 > [m6-implementation-plan.md](m6-implementation-plan.md) /

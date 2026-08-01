@@ -22,7 +22,7 @@ The as-built condensation for contributors/assistants (detectkit-style):
 Design contracts for what is being *built next* stay in [docs/specs/](docs/specs/)
 (canonical for M2+ work — table below). Keep rules ↔ docs in sync per milestone.
 
-## Status: M1–M10 shipped — `0.5.0` release-ready (latest on PyPI: `0.4.0`); polish track M11–M17 in flight
+## Status: M1–M11 shipped — `0.6.0` release-ready (latest on PyPI: `0.5.0`); polish track M12–M17 in flight
 
 **Done — M1, the pure statistical core** (`abkit.stats`, importable standalone;
 see [ROADMAP.md](ROADMAP.md) for the deferred-cleanup list): data model with the
@@ -211,22 +211,57 @@ pre-M10 code itself). One derived number legitimately did:
 differs from the old value by exactly the window's UTC-offset change — ±30 min,
 ±1h, ±2h or ±24h depending on the zone, and it fires for a permanent zone shift
 with no DST involved. It now agrees with its own grid (which pre-m10 it
-contradicted), and no persisted column derives from it. The `v0.5.0`
-tag/publish is the maintainer's step.
+contradicted), and no persisted column derives from it. **Released as
+`0.5.0`** — tagged and published to PyPI.
 
-**Next — the polish track continues: M11–M17 → `0.6.0`…`0.12.0`
-(track approved 2026-07-18).** The code-verified pain audit
+**Done — M11, `abk dashboard` — the project-level cockpit → `0.6.0`** (the
+implementation record is
+[m11-implementation-plan.md](docs/specs/m11-implementation-plan.md) — done
+table, per-WP as-built notes, exit-gate log; PRs #66, #68, #69, #71–#75 +
+the docs-only decisions PR #67): the whole selection as **one row per
+experiment** — headline verdict, effect + CI, p/α, elapsed, a canvas
+sparkline of the cumulative series — with buttons that spawn **real `abk`
+subprocesses** and stream their logs. The binding invariant is that the
+dashboard is a **launcher, never a worker**: no route computes a statistic,
+turns a knob, writes a config or takes the pipeline lock (an AST gate over
+the module *plus* a spy over every job route), so every verdict on the page
+is `readout.evaluate()`'s — the same one `abk run --report` bakes, over the
+FULL cumulative series (`?window=` bounds only the sparkline's x-range;
+truncating the left edge would read a 14-day WIN as INCONCLUSIVE, because
+`_ab_results` rows are cumulative looks from a fixed start, not a plain time
+series). Shipped as `abkit/tuning/jobs.py` (the subprocess registry, DASH-1),
+`overview.py` (the row shaper, DASH-2), `dashboard_server.py` (the stdlib
+localhost server, DASH-3 + the job routes DASH-4), the third committed client
+bundle `assets/dashboard.js` from `web/src/dashboard/` (DASH-5), and the
+`abk dashboard` command + docs + the two hardcoded wheel-namelist gates
+(DASH-6), behind the DASH-7 exit gate
+([tests/e2e/test_dashboard_session.py]) — a real server over live HTTP, a
+real `abk` child through `/api/run`, three distinct row states in one list,
+and a whole-session spy proving no pipeline lock is ever taken. The pipeline
+gained the one capability a per-metric Run button needs: **`abk run --metric
+<m>`** (DASH-4a), whose alphas are invariant by construction
+(`effective_alphas()` reads the CONFIG, not the run) and which **truncates**
+the withheld metrics' day state rather than leaving a stale-but-contiguous
+`_ab_unit_state` the M9 gap check cannot see. **Zero statistical numbers
+changed** (no `ALGORITHM_VERSION` bump). CRUD config editing is explicitly
+phase 2. The `v0.6.0` tag/publish is the maintainer's step.
+
+**Next — the polish track continues: M12–M17 → `0.7.0`…`0.12.0`
+(track approved 2026-07-18)**, plus the `0.6.x` interstitial **PLAN-1/PLAN-2**
+(the two `abk plan` sizing gaps — size CUPED on the persisted ρ, and
+`--from-history` baselines for a never-run experiment; added 2026-07-29, it
+renumbers nothing). The code-verified pain audit
 ([docs/research/2026-07-data-flow-audit/REPORT.md](docs/research/2026-07-data-flow-audit/REPORT.md))
-plus the entire hardening backlog, one minor release per milestone: M11
-`abk dashboard` → M12 notifications → M13–M17 (versioned stats, multi-arm
-decisions, new methods, owned randomization, app integration — contours,
-design-session-first). The track section in [ROADMAP.md](ROADMAP.md) is the
-map; the as-designed contracts are
-[m11](docs/specs/m11-implementation-plan.md)–[m12](docs/specs/m12-implementation-plan.md)
-implementation plans ([m7](docs/specs/m7-implementation-plan.md),
+plus the entire hardening backlog, one minor release per milestone: M12
+notifications → M13–M17 (versioned stats, multi-arm decisions, new methods,
+owned randomization, app integration — contours, design-session-first). The
+track section in [ROADMAP.md](ROADMAP.md) is the map; the as-designed contract
+is the [m12](docs/specs/m12-implementation-plan.md) implementation plan
+([m7](docs/specs/m7-implementation-plan.md),
 [m8](docs/specs/m8-implementation-plan.md),
-[m9](docs/specs/m9-implementation-plan.md) and
-[m10](docs/specs/m10-implementation-plan.md) are now implementation records).
+[m9](docs/specs/m9-implementation-plan.md),
+[m10](docs/specs/m10-implementation-plan.md) and
+[m11](docs/specs/m11-implementation-plan.md) are now implementation records).
 Discipline: one WP = one session = one PR; **M7–M12
 move no statistical number** (parity gates); M13/M15 go through full change
 control.
@@ -244,6 +279,7 @@ spec before writing code:
 | The results contract, decision logic, reporting, explore, BI | [docs/specs/data-contract-and-reporting.md](docs/specs/data-contract-and-reporting.md) |
 | The A/A FPR matrix (`abk validate`) | [docs/specs/aa-false-positive-matrix.md](docs/specs/aa-false-positive-matrix.md) |
 | CLI, explore cockpit, init-claude, Prefect, docs | [docs/specs/cli-and-dx.md](docs/specs/cli-and-dx.md) |
+| `abk dashboard` — the launcher discipline, the row shape, the job routes | [docs/specs/m11-implementation-plan.md](docs/specs/m11-implementation-plan.md) |
 | **What must be true before/after each milestone** | [docs/specs/quorum-review.md](docs/specs/quorum-review.md) (the must-fix gate) |
 
 The master plan in Russian: [docs/ru/project-initiation-spec.md](docs/ru/project-initiation-spec.md).

@@ -1,11 +1,12 @@
 # abkit architecture — as built
 
 > The contributor/assistant condensation of the system **as it exists in code**.
-> Reflects: **M1–M10 shipped** (`__version__ = 0.5.0`, release-ready — the
-> `v0.5.0` tag/publish is the maintainer's step; latest on PyPI is `0.4.0`;
+> Reflects: **M1–M11 shipped** (`__version__ = 0.6.0`, release-ready — the
+> `v0.6.0` tag/publish is the maintainer's step; latest on PyPI is `0.5.0`;
 > M3's WP9 testcontainers hardening deferred to a Docker-equipped
 > environment).
-> Design contracts for what is being *built next* (the M11–M17 polish track)
+> Design contracts for what is being *built next* (the M12–M17 polish track +
+> the `0.6.x` PLAN-1/PLAN-2 interstitial)
 > live in [docs/specs/](../../docs/specs/) + [ROADMAP.md](../../ROADMAP.md);
 > this file must never claim unbuilt code exists.
 > Keep in sync with `docs/` and the packaged `init-claude` payload
@@ -34,7 +35,9 @@ abkit/
   __init__.py            # __version__ (single source; numpy-free import path)
   cli/                   # ✅ M2: main (lazy Click group), _output (tree style),
     commands/            #   init/run/unlock/clean (M2), explore (M3), validate (M4),
-                         #   ✅ M5: plan (read-only pre-launch power/sizing)
+                         #   ✅ M5: plan (read-only pre-launch power/sizing);
+                         #   ✅ M11 DASH-6: dashboard (the project-level cockpit
+                         #   launcher; DASH-4a added `run --metric`)
   core/                  # ✅ M2: interval (N{s,m,h,d,w}), models (TableModel +
                          #   version_column LWW), period_planner (THE grid — one
                          #   enumeration for validator gates AND the anti-join);
@@ -68,8 +71,14 @@ abkit/
                          #   ✅ M4: calibration.py (the payload calibration block)
   tuning/                # ✅ M3: session (bounded Tier-S cache), recompute
     assets/explore.js    #   (Tiers E/α/S/R + D3 calibration), config_writer
-                         #   (Apply seam + .history + orphans), server (WP6:
-                         #   ✅ M4 POST /validate Auto mode), payload, html
+    assets/dashboard.js  #   (Apply seam + .history + orphans), server (WP6:
+                         #   ✅ M4 POST /validate Auto mode), payload, html;
+                         #   ✅ M11: jobs (the subprocess registry, DASH-1),
+                         #   overview (the one-row-per-experiment shaper,
+                         #   DASH-2), dashboard_server (the launcher server —
+                         #   DASH-3 page/stats routes + DASH-4 job routes),
+                         #   html.render_dashboard_html, the committed
+                         #   dashboard.js bundle (DASH-5)
   validate/              # ✅ M4: the pure A/A engine (panel/resample/inject/
                          #   scoring), load (placebo panel + denser-early grid
                          #   subsample), runner (cell enum + effective alpha +
@@ -96,7 +105,9 @@ abkit/
 web/                     # ✅ M3: the dev-only TS toolchain (never wheel-shipped)
   src/shared/            #   chart.ts (canvas primitives + TOKEN_FALLBACKS —
                          #   THE brand-token layer), payload.ts (lockstep types)
-  src/report/ src/explore/  # the two renderers → committed assets (build.mjs)
+  src/report/ src/explore/  # the renderers → committed assets (build.mjs)
+  src/dashboard/         #   ✅ M11 DASH-5: the third renderer + its payload
+                         #   types → abkit/tuning/assets/dashboard.js
   test/                  #   jsdom smoke suites + type-checked fixtures
 tests/
   stats/ golden/         # M1 (incl. test_purity.py; golden rel-1e-9)
@@ -119,6 +130,11 @@ tests/
                          #   e2e/test_sub_day_anchors_and_explore.py (+ its
                          #   fixtures/window_golden_pre_m10.json, captured from
                          #   the pre-M10 code — regenerate ONLY from f85371d)
+                         # ✅ M11: tuning/test_{jobs,overview,dashboard_server}.py,
+                         #   cli/test_dashboard_command.py, the exit gate
+                         #   e2e/test_dashboard_session.py (a real server over
+                         #   live HTTP + a real `abk` child), and web/test/
+                         #   smoke-dashboard.mjs
   _helpers/fake_db.py    # in-memory manager with SQL-backend semantics
   _helpers/synthetic_ab.py  # SyntheticWarehouse (3 metric kinds, shuffle mode,
                          #   seed_null_events — the exact-null A/A fixture)
@@ -543,6 +559,99 @@ two-process lock race) is deferred to a Docker-equipped environment.
   rename orphans every existing `_ab_unit_state` series once — the next run
   re-materializes and `abk clean` sweeps the stale ids.
 
+### M11 dashboard facts an assistant must know (shipped: DASH-1…DASH-7)
+
+- **The dashboard is a LAUNCHER, never a worker — this is the milestone's
+  binding invariant.** No route in `tuning/dashboard_server.py` computes a
+  statistic, turns a knob, writes a config or takes the pipeline lock; the only
+  mutation a button can cause is a real `abk` subprocess doing it in its own
+  process. Gated twice, because one gate cannot see the other's hole: an AST
+  scan proves the module never names the lock API (and the gate is proven to
+  BITE on a hostile source), and a spy over **every job route** proves no
+  helper takes it either (`TestLauncherOnly`). The read-only `check_lock`
+  probe behind a row's `locked` chip does run — that is the distinction.
+- **A verdict on the page is `readout.evaluate()`'s over the FULL cumulative
+  series.** `_ab_results` rows are cumulative looks from a fixed start, not a
+  plain time series, so windowing them is not "a shorter series" — it is a
+  truncated stabilization history: filtering the left edge read a 14-day daily
+  WIN as INCONCLUSIVE and inverted a 6h-cadence series into a WIN the full
+  readout refuses. `?window=`/`--window` therefore bounds **only the
+  sparkline's x-range**, never the verdict. Two more shape rules: rows for an
+  arm pair the config no longer declares are dropped **before** the series
+  lookup (they still enter the BH family and would tighten the threshold — the
+  `builder.py` discipline), and an experiment with **no rows of its own** must
+  never reach `evaluate()` — zero rows rendered INCONCLUSIVE, i.e. a verdict
+  about *data* on a row nobody computed. `verdict: null` + `error: null` is
+  "no data — press Run"; with `error` set it is the error chip.
+- **`insufficient` is the HEADLINE look's own persisted cell**, read through
+  the readout's `_flag` (the report's `_flag01` is a bare `bool()` and
+  disagrees on a `"0"` string cell) over the UNWINDOWED pair series, so no
+  display window can move it and the chip cannot contradict the rationale
+  beside it. The §4 markers ride the chip and a one-line note:
+  `abk-srm-fail` / `abk-insufficient` / `abk-prehorizon` — a verdict taken
+  early **under an always-valid sequence is deliberately NOT marked**.
+- **The token gates EVERY request, GET included** (unlike `abk explore`, which
+  gates only POSTs) — `GET /` enumerates the project and `GET /api/stats/…`
+  reads the warehouse. Authorization runs **before** routing (a 403 is not a
+  path oracle) and compares **bytes**: `compare_digest` refuses a non-ASCII
+  `str`, so `?token=α` would raise before the handler's wrapper and never be
+  answered. The token is never baked into the page (the client reads
+  `location.search`). The gate's own coverage is machine-checked: the
+  `parametrize` list is asserted against an **AST extraction of what
+  `_route_get` actually dispatches on** (DASH-4's review found that list rotted
+  once already — a new file-serving route was simply missing from it and would
+  have shipped ungated), so the list is only as honest as that extraction.
+- **The server never shuts itself down** (AST-gated over the module, the gate
+  itself proven to bite on the explore server's copy-paste shape — and to
+  ALLOW `server.jobs.shutdown()`, the registry teardown): `abk explore`'s
+  Apply is terminal, the dashboard has no terminal action. It serves until
+  Ctrl-C and then terminates every job it spawned.
+- **`tuning/jobs.py` is the subprocess registry.** `JOB_KINDS` /
+  `PIPELINE_KINDS` are validated **whitelists** at both entry points (the
+  donor's blacklist let a typo fall UNDER the gate); `spawn_pipeline` is the
+  one-at-a-time gate (`400` while a pipeline job runs), `spawn_deduped` is the
+  atomic per-experiment dedup (`running_job_for()` + `spawn()` is check-then-act
+  — a double-clicked Explore started two cockpits each rewriting the YAML from
+  its own snapshot); `snapshot(offset=)` counts **absolute** line indices, so a
+  job chattier than the 5000-line buffer keeps streaming and discards are
+  disclosed as `dropped`/`truncated`. A spawn racing `shutdown()` raises
+  `JobManagerClosed` (⇒ **503**, "busy" is what `None` means) and kills **and
+  reaps** the child it just created.
+- **Every button spawns `sys.executable` through a bootstrap that drops the CWD
+  from `sys.path`.** `-m` puts the child's CWD (the operator's project root) on
+  `sys.path[0]`, where a stray `click.py` breaks every button and an `abkit/`
+  directory runs a *different* abkit than the one serving the page — neither of
+  which happens when you type `abk`. Consequence: **every spawned job needs an
+  installed abkit**; `abk dashboard` warns once at startup, and only on the
+  CONJUNCTION of two probes (a `sys.path` search with the CWD dropped, then the
+  `sys.meta_path` finders that answer for a strict editable install) — dist-info
+  metadata is NOT a signal, a checkout whose install was removed keeps it.
+- **`--select` is the experiment's YAML path** (glob metacharacters `*?[`
+  escaped, not abandoned), and every job route **re-resolves** it through
+  `select_experiments` — the child's own resolver — before spawning, answering
+  400 unless it lands on exactly the clicked experiment. Two reasons, both
+  silent otherwise: a bare name resolves file-first, so a file named after
+  another experiment shadows it; and `abk run/unlock/clean` meet an unmatched
+  selector with "Nothing selected." and **exit 0**, which would show a green,
+  successful job that computed nothing.
+- **`dashboard.js` is the third committed bundle** and obeys the M3 build
+  discipline verbatim (edit `web/src/dashboard/**` → `cd web && npm run build`
+  → commit the asset in the same PR; the marker/hex/freshness gates cover it by
+  glob). It is named in **two** hardcoded wheel namelists — `.github/workflows/
+  ci.yml` and `tests/e2e/test_release_readiness.py` — and a missing bundle now
+  RAISES rather than degrading to a "run npm build" note (a `pip install` user
+  cannot fix that).
+- **`abk run --metric <m>` (DASH-4a) is the CLI capability the per-metric Run
+  button needs.** The alphas are invariant **by construction** —
+  `effective_alphas()` derives the two-tier scheme from the *config's*
+  comparison list, never from what a run computes — and that is the WP's #1
+  pinned assertion. The one thing a narrowed run must still touch outside its
+  filter is **day state**: a stale-but-contiguous `_ab_unit_state` day is
+  invisible to the M9 gap check (it detects ABSENCE only), so a scoped
+  `--full-refresh` **truncates** the withheld metrics' series from the first
+  touched day onward instead of leaving it; the cohort load, the SRM gate and
+  copy-mode `--resync-cohort`'s rebuild stay experiment-level.
+
 ## The stats core (`abkit.stats`) — the implemented system
 
 **Purity invariant (hard):** numpy/scipy/statsmodels + stdlib only; never
@@ -676,8 +785,8 @@ off** with the flip criteria in
 **M10 shipped** (the record is
 [m10-implementation-plan.md](../../docs/specs/m10-implementation-plan.md) —
 done table, per-WP as-built notes, the §3 exit-gate record, the §6 review log;
-PRs #61–#64 + the exit-gate PR; release-ready as `0.5.0` — the `v0.5.0`
-tag/publish is the maintainer's step): timestamps + both track schema breaks +
+PRs #61–#64 + the exit-gate PR; **released as `0.5.0`** — tagged and published
+to PyPI): timestamps + both track schema breaks +
 explore polish — the renamed `start_ts`/`horizon_ts` window with
 `interval_anchor` and the one `ExperimentConfig.grid()` factory (WP1–WP2), the
 dropped `_ab_results` date columns + the renamed/widened `_ab_experiments`
@@ -688,16 +797,36 @@ above for the working contracts. **Zero statistical numbers moved** (no
 pre-M10 code itself) — with one disclosed derived-number change,
 `horizon_seconds()` across a DST transition.
 
-**Next — the polish track continues: M11–M17 → `0.6.0`…`0.12.0`** (track
+**M11 shipped** (the record is
+[m11-implementation-plan.md](../../docs/specs/m11-implementation-plan.md) —
+done table, per-WP as-built notes, the exit-gate log; PRs #66, #68, #69,
+#71–#75 + the docs-only decisions PR #67; release-ready as `0.6.0` — the
+`v0.6.0` tag/publish is the maintainer's step): `abk dashboard`, the
+project-level cockpit — the job registry `tuning/jobs.py` (DASH-1), the row
+shaper `overview.py` (DASH-2), the launcher server `dashboard_server.py`
+(DASH-3 page/stats routes + DASH-4 job routes), `abk run --metric` (DASH-4a),
+the third committed bundle `dashboard.js` from `web/src/dashboard/` (DASH-5),
+the `abk dashboard` command + docs + both wheel-namelist gates (DASH-6), and
+the live-HTTP exit gate `tests/e2e/test_dashboard_session.py` (DASH-7). See
+"M11 dashboard facts an assistant must know" above for the working contracts.
+**Zero statistical numbers moved** (no `ALGORITHM_VERSION` bump; every verdict
+the page shows is `readout.evaluate()`'s). CRUD config editing is explicitly
+phase 2.
+
+**Next — the polish track continues: M12–M17 → `0.7.0`…`0.12.0`** (track
 approved 2026-07-18; it absorbs the whole "Post-baseline hardening" backlog —
 see the track section in [ROADMAP.md](../../ROADMAP.md) and the as-designed
-contracts
-[m11](../../docs/specs/m11-implementation-plan.md)…[m12](../../docs/specs/m12-implementation-plan.md)
+contract
+[m12](../../docs/specs/m12-implementation-plan.md)
 ([m7](../../docs/specs/m7-implementation-plan.md),
 [m8](../../docs/specs/m8-implementation-plan.md),
-[m9](../../docs/specs/m9-implementation-plan.md) and
-[m10](../../docs/specs/m10-implementation-plan.md) are now implementation
-records); M13–M17 are contours, each opens with a design session). One WP = one session =
+[m9](../../docs/specs/m9-implementation-plan.md),
+[m10](../../docs/specs/m10-implementation-plan.md) and
+[m11](../../docs/specs/m11-implementation-plan.md) are now implementation
+records); M13–M17 are contours, each opens with a design session), plus the
+`0.6.x` **PLAN-1/PLAN-2** interstitial (the two `abk plan` sizing gaps; design
+contract: [cli-and-dx.md](../../docs/specs/cli-and-dx.md) "`abk plan` sizing
+gaps"). One WP = one session =
 one PR; **M7–M12 move no statistical number** (parity gates + empty
 `ALGORITHM_VERSION` grep); M13/M15 use full change control. Two binding
 inter-milestone contracts: the M8→M9 one (honored — STATE/tail-scan SQL builds
@@ -716,7 +845,9 @@ Read before coding:
   implementation note) → [aa-false-positive-matrix.md](../../docs/specs/aa-false-positive-matrix.md)
 - The blocking must-fix checklist → [quorum-review.md](../../docs/specs/quorum-review.md)
 - The cockpit & readout as-built contracts → [data-contract-and-reporting.md §5](../../docs/specs/data-contract-and-reporting.md),
-  [cli-and-dx.md §2](../../docs/specs/cli-and-dx.md)
+  [cli-and-dx.md §2](../../docs/specs/cli-and-dx.md); the **dashboard's** own
+  contract (launcher discipline, row shape, job routes) →
+  [m11-implementation-plan.md](../../docs/specs/m11-implementation-plan.md)
 - The implementation records → [m2](../../docs/specs/m2-implementation-plan.md),
   [m3](../../docs/specs/m3-implementation-plan.md),
   [m4](../../docs/specs/m4-implementation-plan.md),
@@ -724,7 +855,8 @@ Read before coding:
   [m7](../../docs/specs/m7-implementation-plan.md),
   [m8](../../docs/specs/m8-implementation-plan.md),
   [m9](../../docs/specs/m9-implementation-plan.md),
-  [m10](../../docs/specs/m10-implementation-plan.md)
+  [m10](../../docs/specs/m10-implementation-plan.md),
+  [m11](../../docs/specs/m11-implementation-plan.md)
 
 ## Invariants (do not violate)
 

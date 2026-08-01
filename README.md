@@ -11,16 +11,16 @@ stabilization chart), writes them to a clean warehouse table any BI can read, an
 gives you a local cockpit to tune the analysis and a harness to prove your method is
 actually calibrated.
 
-> **Status: `0.5.0` (Alpha) — release-ready; `0.4.0` is the latest on PyPI**
-> (milestones **M1–M10** shipped — M10 makes an experiment's window a pair of
-> real timestamps (`start_ts`/`horizon_ts`, with `interval_anchor` deciding
-> where the cutoff lattice sits), collects both breaking schema changes of the
-> polish track into this one release with a single recreate instruction, and
-> fixes two live `abk explore` defects: a knob turn no longer queues behind a
-> Reload or Auto-validate, and dragging alpha over a bootstrap series stops
-> redrawing the replicates — 6.01 s → 1.01 s over six turns). The
-> statistical core, the declarative config / DB / pipeline layer, the explore cockpit +
-> self-contained reports, `abk validate` (now numpy-vectorized — minutes → sub-seconds),
+> **Status: `0.6.0` (Alpha) — release-ready; `0.5.0` is the latest on PyPI**
+> (milestones **M1–M11** shipped — M11 adds **`abk dashboard`**, the
+> project-level cockpit: one row per experiment with its headline verdict,
+> effect + CI, p/α and a sparkline of the cumulative series, plus buttons that
+> spawn real `abk` subprocesses (Run — for the whole experiment or one metric —
+> Unlock, Clean, Explore, Open report) and stream their logs. It is a
+> **launcher**: it computes no statistic and never takes the pipeline lock, so
+> every verdict on the page is the readout's own). The statistical core, the
+> declarative config / DB / pipeline layer, the explore cockpit +
+> self-contained reports, `abk validate` (numpy-vectorized — minutes → sub-seconds),
 > opt-in sequential analysis + `abk plan`, and the DX layer (`abk init-claude`, docs site,
 > Prefect scaffolding) are all shipped. Docs: [abkit.pipelab.dev](https://abkit.pipelab.dev).
 
@@ -31,10 +31,10 @@ pip install ab-analysis-kit          # Python 3.10+; add a DB extra for real dat
 pip install "ab-analysis-kit[clickhouse]"   # or [postgres] / [mysql] / [all-db]
 ```
 
-(`0.5.0`'s renamed window fields + explore fixes land with its tag; until then
-`pip install ab-analysis-kit` gets `0.4.0`, which still expects
-`start_date`/`end_date` — for the M10 behavior install from source:
-`pip install -e ".[dev]"`.)
+(`0.6.0`'s `abk dashboard` lands with its tag; until then
+`pip install ab-analysis-kit` gets `0.5.0`, which has the M10 window fields
+(`start_ts`/`horizon_ts`) but no dashboard — for the M11 behavior install from
+source: `pip install -e ".[dev]"`.)
 
 `abk --version` and `abk --help` work with no database driver; you can even lint a
 config (`abk run --steps validate`) with no database at all. See the
@@ -50,6 +50,11 @@ config (`abk run --steps validate`) with no database at all. See the
   correction. Ported from a battle-tested legacy engine and improved deliberately.
 - **The cumulative stabilization chart** — effect + CI per day from experiment
   start, so you see the estimate converge and call a winner only once it stabilizes.
+- **`abk dashboard`** — the project-level cockpit: every experiment as one row
+  (verdict, effect + CI, p/α, sparkline), with Run / Unlock / Clean / Explore /
+  Open-report buttons that spawn real `abk` subprocesses and stream their logs.
+  It never computes a statistic itself, so what you read is the readout's own
+  verdict.
 - **`abk explore`** — a local, chart-first cockpit to turn method knobs (CUPED,
   stratification, alpha…) and watch the result recompute live, with A/A calibration
   always in view. *The priority interface.*

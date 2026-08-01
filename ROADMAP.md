@@ -213,7 +213,16 @@ below and in the milestone docs). Core (M7–M12): ~42 sessions; extension
   figure, but *under* the detailed m7 plan, whose per-WP lines sum to ~9.5–10.5
   (WP2/WP3/WP4 each budgeted 2 sessions but each landed in one). So the coarse
   M8+ figures stand, if anything conservative; the detailed multi-session WP
-  estimates are the ones worth trimming — revisit after M8**).
+  estimates are the ones worth trimming.** **Recalibrated after M11:** the same
+  pattern held four milestones running — M8's WP4 and WP5 and M11's DASH-5 each
+  carried a 2-session budget and each landed in one, M10 shipped its 5 WPs in 4
+  PRs plus the exit-gate PR, and M11 shipped 8 WPs in ~7 sessions plus a
+  docs-only decisions PR. **Every
+  detailed per-WP "2 sessions" left in the remaining plans should be read as
+  1**; the coarse per-milestone figures stay as written. The costs that *did*
+  recur are not in the WP bodies at all: an exit gate reliably finds real
+  defects in already-merged code — M11's found two — and every milestone since
+  M7 has paid ≥2 adversarial review rounds per WP.)
 - **M7–M12: statistical numbers do not move anywhere.** Parity/golden gates
   (exact on integer counts + mandatory near-boundary stress fixtures, rel-1e-9
   on continuous values); the grep for `ALGORITHM_VERSION` bumps stays empty.
@@ -364,8 +373,11 @@ breaking-change remedy that escaped as an uncaught traceback instead of
 incremental cohort copy that dropped every unit exposed before a sub-day
 start.
 
-### M11 — `abk dashboard` (the flagship overview UI) → `0.6.0` 📋
-Design contract: [m11-implementation-plan.md](docs/specs/m11-implementation-plan.md).
+### M11 — `abk dashboard` (the flagship overview UI) → `0.6.0` ✅ SHIPPED
+Implementation record:
+[m11-implementation-plan.md](docs/specs/m11-implementation-plan.md)
+(PRs #66, #68, #69, #71–#75 + the docs-only decisions PR #67; release-ready as
+`0.6.0` — the `v0.6.0` tag/publish is the maintainer's step).
 The `dtk ui` architecture ported: metadata-only boot, lazy per-row stats
 (client-side pool of 3), sparklines ≤160 points, buttons = CLI subprocesses;
 the server **never takes the pipeline lock**; verdicts via
@@ -377,6 +389,39 @@ dashboard one), job routes (DASH-4),
 `dashboard.ts` written from scratch — the donor has no TS sources (DASH-5),
 the third build entry + `abk dashboard` CLI (DASH-6), and the exit gate
 (DASH-7). CRUD editing is explicitly phase 2, out of the milestone.
+**Zero statistical numbers moved** (no `ALGORITHM_VERSION` bump).
+
+**Load-bearing as-built deltas.** DASH-2's prescribed step 3 — window the rows,
+then call `evaluate()` — was **wrong for this data model**: `_ab_results` rows
+are cumulative looks from a fixed start, not the donor's plain time series, so
+cutting the left edge feeds the readout a truncated stabilization history. A
+14-day daily WIN read INCONCLUSIVE at 24h (every daily experiment), and a
+6h-cadence series inverted into a WIN the full readout refuses to give;
+`--window` now bounds only the sparkline's x-range. Two more row-shape rules
+followed: rows for an arm pair the config no longer declares are dropped before
+the series lookup (they still enter the BH family and tightened the threshold —
+9 renamed pairs turned a report WIN into a dashboard INCONCLUSIVE), and an
+experiment with **no rows of its own** must never reach `evaluate()` at all —
+zero rows rendered INCONCLUSIVE, a verdict about *data* on a row nobody
+computed. The launcher invariant needed **two** gates: the module-level AST
+scan cannot see a lock taken through a helper, so a spy runs over every job
+route. Spawning was the other surprise: `-m` puts the child's CWD — the
+operator's project root — on `sys.path[0]`, so a stray `click.py` there breaks
+every button and an `abkit/` directory there runs a *different* abkit than the
+one serving the page; the child is now bootstrapped with the CWD dropped, which
+makes an **installed abkit** a hard requirement for every job (warned once at
+startup, and only after a probe that ignores dist-info metadata — a checkout
+whose install was removed keeps it, and that stale metadata silently suppressed
+the warning until the exit gate). `--select` is passed as the YAML **path** and
+every route re-resolves it through the child's own resolver, because a bare
+name resolves file-first (a file named after another experiment shadows it) and
+because `abk run/unlock/clean` answer an unmatched selector with "Nothing
+selected." and **exit 0** — a green job that computed nothing. DASH-4a found
+the one thing a narrowed run must still touch outside its filter: a
+stale-but-contiguous `_ab_unit_state` day is invisible to the M9 gap check
+(absence only), so a scoped `--full-refresh` truncates the withheld metrics'
+day state instead of leaving it (reproduced as a silent 3334.5-vs-3434.5
+undercount before the fix).
 
 ### Interstitial — `abk plan` sizing gaps (PLAN-1/PLAN-2) → `0.6.x` 📋
 Design contract: [cli-and-dx.md §1 "`abk plan` sizing gaps"](docs/specs/cli-and-dx.md).
