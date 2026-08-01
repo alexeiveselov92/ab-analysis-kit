@@ -11,6 +11,24 @@ recorded here alongside an `ALGORITHM_VERSION` bump and a
 [`statistics-changes.md`](docs/specs/statistics-changes.md) entry (never a silent
 number change).
 
+## [Unreleased]
+
+### Fixed
+- **A renamed `paths.experiments` now reaches selection — it used to reach
+  nothing.** `project.paths.experiments` has always been a config field, but
+  `discovery.select_experiments` hard-coded `"experiments"`, and all ten of its
+  callers (`run`, `plan`, `validate`, `explore`, `clean`, `unlock`, `dashboard`,
+  `verify-incremental`, `test-report`) took that default — so a project whose
+  experiments live anywhere else answered **"Nothing selected."** to every
+  command, while `abk dashboard`'s own derivation honored the setting and the two
+  disagreed about which files exist. The directory is now resolved inside
+  `select_experiments` from the project config, so every caller gets it without a
+  signature change (passing it explicitly still overrides). Deliberately
+  tolerant: discovery runs before the CLI's config load, so an unreadable
+  `abkit_project.yml` falls back to the default rather than turning selection
+  into a parse error — the caller that needs a validated project reports that
+  failure itself.
+
 ## [0.6.2] - 2026-08-01
 
 ### Added

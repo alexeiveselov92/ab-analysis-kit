@@ -91,3 +91,50 @@ class TestSelectExperiments:
         (history / "v1.yml").write_text(EXPERIMENT_YML.format(name="exp1", tags="growth"))
         selected, _ = select_experiments(root, select=("*",))
         assert len(selected) == 1
+
+
+class TestRenamedExperimentsDirectory:
+    """`paths.experiments` must reach selection — it used to reach nothing.
+
+    Ten commands call `select_experiments` and every one of them took the
+    default, so a project that renamed the directory answered "Nothing
+    selected." everywhere — while `abk dashboard`'s own derivation honored the
+    setting, so the two disagreed about which files exist (the m10
+    `interval_anchor` lesson: a knob that must reach N hand-copied call sites
+    reaches none of them).
+    """
+
+    def _renamed(self, tmp_path: Path) -> Path:
+        (tmp_path / "abkit_project.yml").write_text(
+            "name: p\ndefault_profile: dev\npaths:\n  experiments: my_experiments\n"
+        )
+        exp_dir = tmp_path / "my_experiments"
+        exp_dir.mkdir()
+        (exp_dir / "exp_a.yml").write_text(EXPERIMENT_YML.format(name="exp_a", tags="actual"))
+        return tmp_path
+
+    def test_selection_finds_a_renamed_directory(self, tmp_path):
+        root = self._renamed(tmp_path)
+        selected, warnings = select_experiments(root, ())
+        assert [c.name for _, c in selected] == ["exp_a"]
+        assert warnings == []
+
+    def test_select_by_name_finds_it_too(self, tmp_path):
+        root = self._renamed(tmp_path)
+        selected, _ = select_experiments(root, ("exp_a",))
+        assert [c.name for _, c in selected] == ["exp_a"]
+
+    def test_an_explicit_directory_still_wins(self, tmp_path):
+        """The parameter is an override for a directory the config does not name."""
+        root = self._renamed(tmp_path)
+        selected, _ = select_experiments(root, (), (), "nowhere")
+        assert selected == []
+
+    def test_an_unreadable_project_config_falls_back_to_the_default(self, tmp_path):
+        """Discovery runs before (and independently of) the CLI's config load, so a
+        broken `abkit_project.yml` must not turn selection into a parse error — the
+        caller that needs a validated project reports that failure itself."""
+        root = scaffold(tmp_path, {"exp_b": "actual"})
+        (root / "abkit_project.yml").write_text("{{{ not yaml")
+        selected, _ = select_experiments(root, ())
+        assert [c.name for _, c in selected] == ["exp_b"]

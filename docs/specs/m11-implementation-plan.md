@@ -437,10 +437,12 @@ every row drags `metric_query` + `metric_rendered_query` (~2.7 KB of SQL text
 per persisted look) across the wire for a payload that never reads them — a
 projected read belongs with DASH-3's perf pass, not here. And
 `experiments_base_dir` honors `project.paths.experiments` while
-`discovery.select_experiments` still hardcodes `"experiments"`, so a project
-that renames the directory resolves `dir` correctly and then matches no
-experiment at all through the selector — a pre-existing repo inconsistency
-this WP surfaced but did not widen.
+`discovery.select_experiments` hardcoded `"experiments"`, so a project that
+renames the directory resolved `dir` correctly and then matched no experiment
+at all through the selector — a pre-existing repo inconsistency this WP
+surfaced but did not widen. **Fixed after M11** (`0.6.x`):
+`select_experiments` now resolves the directory from the project config
+itself, so all ten of its callers get it without a signature change.
 
 ---
 
@@ -874,9 +876,9 @@ rediscover:
    boot snapshot outliving a renamed or deleted YAML the drawer would show a
    green, successful Run that computed nothing. The check also covers the
    remaining name fallback and a project whose `paths.experiments` is not the
-   default `experiments/`, which the CLI's selector cannot reach at all
-   (`select_experiments` hard-codes the directory — a pre-existing project-wide
-   gap, a named follow-up). Its costs, both accepted: one config-discovery scan
+   default `experiments/`, which the CLI's selector could not reach at
+   all when this was written (`select_experiments` hard-coded the directory — a
+   pre-existing project-wide gap, since fixed in `0.6.x`). Its costs, both accepted: one config-discovery scan
    per click, and a broken sibling YAML surfaces as a 400 naming the file (a
    `select_experiments` `ValueError`). One consequence for DASH-5: the job label
    reads `abk run --select experiments/growth/checkout.yml`.

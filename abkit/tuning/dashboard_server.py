@@ -328,9 +328,10 @@ def _selector_for(experiment_path: Path, experiment: ExperimentConfig, project_r
     unremarkable file name, and ``experiments/star*.yml`` left raw would match a
     SIBLING as well. Only two cases genuinely have no path form: a file outside
     the project root, and one with no directory part (neither is something
-    discovery produces). Those do fall back to the name, and a project whose
-    ``paths.experiments`` is not the default ``experiments/`` cannot be selected
-    by either form (``select_experiments`` hard-codes the directory) — which is
+    discovery produces). Those do fall back to the name, which resolves through
+    ``select_experiments`` — including under a renamed ``paths.experiments``,
+    which that function reads from the project config (it hard-coded
+    ``experiments/`` until the ``0.6.x`` fix) — which is
     why the routes never use this function directly: :func:`_verified_selector`
     re-resolves whatever comes out of it and refuses to spawn unless it lands on
     the clicked experiment.
