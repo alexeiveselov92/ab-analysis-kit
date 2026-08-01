@@ -45,6 +45,18 @@ number change).
     instead of failing the command; the interval must be a positive whole number of
     days (the grain `covariate_lookback` uses and the pre-period window is aligned to).
 
+### Fixed
+- **`abk plan` could crash on a large standardized effect (numpy ≥ 2).** statsmodels
+  falls back to `fsolve` when brentq cannot bracket a solve and returns a shape-`(1,)`
+  ndarray; `_as_scalar` was introduced for the MDE path, but `get_ttest_sample_size`,
+  `get_fraction_sample_size` and `get_ttest_power` kept a raw `float(...)`. numpy
+  deprecated that in 1.25 and newer numpy raises outright, so an ordinary
+  `--baseline arpu:mean=999,std=1,n=42` failed the whole experiment's plan with
+  "only 0-dimensional arrays can be converted to Python scalars" — while an older-numpy
+  machine only warned. All three now extract through `_as_scalar`. **Value-preserving:
+  the same number the working path already returned, golden tests unmoved, no
+  `ALGORITHM_VERSION` bump.**
+
 ## [0.6.1] - 2026-08-01
 
 ### Changed

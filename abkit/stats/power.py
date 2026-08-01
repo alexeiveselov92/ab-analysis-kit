@@ -133,7 +133,7 @@ def get_ttest_power(
     _check_test_type(test_type)
     mean_adjusted = _adjusted_mean(mean, mde, test_type)
     effect_size = abs(mean - mean_adjusted) / std
-    return float(
+    return _as_scalar(
         TTestIndPower().solve_power(
             effect_size=effect_size,
             nobs1=size,
@@ -168,7 +168,7 @@ def get_ttest_sample_size(
         ratio=ratio,
         alternative="two-sided",
     )
-    return int(round(float(size)))
+    return int(round(_as_scalar(size)))
 
 
 # --- CUPED variants: variance shrunk by the covariate correlation ----------------
@@ -293,4 +293,4 @@ def get_fraction_sample_size(
         ratio=ratio,
         alternative="two-sided",
     )
-    return int(round(float(size)))
+    return int(round(_as_scalar(size)))
