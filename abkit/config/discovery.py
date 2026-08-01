@@ -127,18 +127,49 @@ def select_configs(
     return validate_config_uniqueness(sorted(set(paths)), config_cls, namespace), warnings
 
 
+def resolve_experiments_dir(project_root: Path) -> str:
+    """``project.paths.experiments`` for *project_root*, or the default.
+
+    Resolved HERE rather than passed in by each caller: ten commands call
+    :func:`select_experiments`, all of them with the default, which is exactly
+    how a configurable directory ends up reaching none of its call sites (the
+    m10 ``interval_anchor`` lesson). A project whose ``paths.experiments`` is
+    renamed used to resolve NO selector at all — every command answered
+    "Nothing selected." — while ``abk dashboard``'s own derivation honored the
+    setting, so the two disagreed about which files exist.
+
+    Deliberately tolerant: discovery runs before (and independently of) the
+    CLI's config load, so an unreadable/absent ``abkit_project.yml`` falls back
+    to the default instead of turning selection into a parse error — the
+    caller that needs a validated project reports that failure itself.
+    """
+    from abkit.config.project_config import ProjectConfig
+
+    try:
+        project = ProjectConfig.from_yaml_file(project_root / "abkit_project.yml")
+    except Exception:
+        return "experiments"
+    return project.paths.experiments
+
+
 def select_experiments(
     project_root: Path,
     select: tuple[str, ...],
     exclude: tuple[str, ...] = (),
-    experiments_dir: str = "experiments",
+    experiments_dir: str | None = None,
 ) -> tuple[list[tuple[Path, ExperimentConfig]], list[str]]:
     """Resolve ``--select``/``--exclude`` to a unique experiment list.
 
     No selectors means ``*``. Every selection error names the namespace: an
     unmatched selector reminds that ``--select`` resolves experiments and
     metrics need ``--metric``.
+
+    ``experiments_dir`` defaults to the project's own ``paths.experiments``
+    (see :func:`resolve_experiments_dir`); pass it explicitly only to search a
+    directory the project config does not name.
     """
+    if experiments_dir is None:
+        experiments_dir = resolve_experiments_dir(project_root)
     selectors = select or ("*",)
     chosen: dict[str, tuple[Path, ExperimentConfig]] = {}
     warnings: list[str] = []
