@@ -376,8 +376,8 @@ start.
 ### M11 — `abk dashboard` (the flagship overview UI) → `0.6.0` ✅ SHIPPED
 Implementation record:
 [m11-implementation-plan.md](docs/specs/m11-implementation-plan.md)
-(PRs #66, #68, #69, #71–#75 + the docs-only decisions PR #67; release-ready as
-`0.6.0` — the `v0.6.0` tag/publish is the maintainer's step).
+(PRs #66, #68, #69, #71–#75 + the docs-only decisions PR #67; **released as
+`0.6.0`**, tagged and published to PyPI).
 The `dtk ui` architecture ported: metadata-only boot, lazy per-row stats
 (client-side pool of 3), sparklines ≤160 points, buttons = CLI subprocesses;
 the server **never takes the pipeline lock**; verdicts via
@@ -423,7 +423,7 @@ stale-but-contiguous `_ab_unit_state` day is invisible to the M9 gap check
 day state instead of leaving it (reproduced as a silent 3334.5-vs-3434.5
 undercount before the fix).
 
-### Interstitial — `abk plan` sizing gaps (PLAN-1/PLAN-2) → `0.6.x` 📋
+### Interstitial — `abk plan` sizing gaps (PLAN-1 ✅ `0.6.1` / PLAN-2 📋) → `0.6.x`
 Design contract: [cli-and-dx.md §1 "`abk plan` sizing gaps"](docs/specs/cli-and-dx.md).
 Added 2026-07-29 (maintainer request). Two small, independent WPs that make
 pre-launch planning answer the questions the architecture already has the data

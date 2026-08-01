@@ -20,8 +20,8 @@
 > The `0.6.0` release cut has since landed too — `__version__ = 0.6.0`, the
 > `CHANGELOG` `[Unreleased]` section dated, and the M11-shipped flip across
 > `.claude/rules/{architecture,contributing}.md`, the root `CLAUDE.md`, the
-> `README` and the ROADMAP (📋→✅). **Only the `v0.6.0` tag/publish is left,
-> and that is the maintainer's step** (tag → `publish.yml` → PyPI).
+> `README` and the ROADMAP (📋→✅) — and **`0.6.0` is released**: tagged
+> `v0.6.0` and published to PyPI on 2026-08-01.
 >
 > Governing specs: [cli-and-dx.md](cli-and-dx.md) (the CLI surface + skill
 > conventions the new `abk dashboard` command joins),

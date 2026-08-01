@@ -11,7 +11,7 @@ recorded here alongside an `ALGORITHM_VERSION` bump and a
 [`statistics-changes.md`](docs/specs/statistics-changes.md) entry (never a silent
 number change).
 
-## [Unreleased]
+## [0.6.1] - 2026-08-01
 
 ### Changed
 - **PLAN-1 — `abk plan` sizes CUPED on the covariate correlation it already has.**
