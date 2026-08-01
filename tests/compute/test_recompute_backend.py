@@ -191,3 +191,53 @@ def test_direct_vs_copy_load_parity_on_a_well_formed_cohort():
         assert len(copy_loads) == len(direct_loads)
         for copy_load, direct_load in zip(copy_loads, direct_loads, strict=True):
             _assert_loads_identical(copy_load, direct_load)
+
+
+# ── PLAN-2: the cohort-free population render ───────────────────────────────────
+
+
+def test_population_window_renders_without_the_cohort():
+    """The pre-launch baseline read: no cohort join, no exposure predicate, and the
+    pre-period window rule comes from the ONE `_preperiod_window` implementation."""
+    warehouse = _seeded()
+    experiment = make_experiment("exp_pop", "arpu", {"name": "t-test"})
+    backend = RecomputeBackend(
+        warehouse, experiment, direct_source_sql=DIRECT_SQL, has_stratum=False
+    )
+    loaded = backend.load_population_window(
+        REVENUE, REVENUE.get_query_text(None), "7d", experiment.grid()
+    )
+
+    rendered = [q for q in warehouse.executed if "user_revenue" in q]
+    assert rendered, "the population render never reached the warehouse"
+    for q in rendered:
+        assert "INNER JOIN" not in q
+        assert "_abk_exposure_ts" not in q  # the synthetic relation has no such column
+        assert "CROSS JOIN (SELECT '_abk_population'" in q
+        assert DIRECT_SQL not in q  # the cohort source is not consulted at all
+    # every unit lands under the sentinel arm, never a declared one
+    assert loaded.variants() == ["_abk_population"]
+
+
+def test_population_window_reads_the_same_pre_period_as_the_covariate():
+    """One window rule, two callers: a second copy is how a knob reaches none of
+    its call sites (the m10 lesson)."""
+    warehouse = _seeded()
+    experiment = make_experiment("exp_pop_window", "arpu", CUPED)
+    backend = RecomputeBackend(
+        warehouse, experiment, direct_source_sql=DIRECT_SQL, has_stratum=False
+    )
+    grid = experiment.grid()
+    backend.load_population_window(REVENUE, REVENUE.get_query_text(None), "7d", grid)
+    population = [q for q in warehouse.executed if "user_revenue" in q][-1]
+
+    warehouse.executed.clear()
+    backend.preperiod_covariate(REVENUE, REVENUE.get_query_text(None), "7d", grid)
+    covariate = [q for q in warehouse.executed if "user_revenue" in q][-1]
+
+    def window_bounds(sql: str) -> list[str]:
+        import re
+
+        return re.findall(r"event_time [<>=]+ '([^']+)'", sql)
+
+    assert window_bounds(population) == window_bounds(covariate)

@@ -32,7 +32,12 @@ from abkit.loaders.metric_loader import (
     load_covariate_from_preperiod,
     load_metric,
 )
-from abkit.loaders.query_template import QueryTemplate, RenderWindow, build_builtins
+from abkit.loaders.query_template import (
+    POPULATION_VARIANT,
+    QueryTemplate,
+    RenderWindow,
+    build_builtins,
+)
 
 
 def dialect_of(manager: BaseDatabaseManager) -> str:
@@ -81,6 +86,7 @@ class RecomputeBackend:
         window: RenderWindow,
         apply_exposure_filter: bool = True,
         cov_window: RenderWindow | None = None,
+        apply_cohort_join: bool = True,
     ) -> dict[str, Any]:
         experiment = self._experiment
         return build_builtins(
@@ -97,6 +103,7 @@ class RecomputeBackend:
             cov_window=cov_window,
             direct_source_sql=self._direct_source_sql,
             has_stratum=self._has_stratum,
+            apply_cohort_join=apply_cohort_join,
         )
 
     def _preperiod_window(self, lookback: str | int, grid: Grid) -> RenderWindow:
@@ -175,6 +182,43 @@ class RecomputeBackend:
             )
             self._covariate_cache[metric.name] = covariate
         return covariate
+
+    def load_population_window(
+        self,
+        metric: MetricConfig,
+        metric_sql: str,
+        lookback: str | int,
+        grid: Grid,
+    ) -> MetricLoadResult:
+        """A COHORT-FREE pre-period load — the PLAN-2 pre-launch baseline render.
+
+        Unlike :meth:`load_window` (the m9 STATE render, cohort-filtered by
+        design) this renders with ``apply_cohort_join=False``, so the macro
+        joins a one-row synthetic relation instead of the cohort and the query
+        measures the whole population the metric SQL yields. That is the ONLY
+        thing that can answer "size this experiment" before it has enrolled
+        anybody — an inner join to an empty cohort returns zero rows — and it is
+        why the plan line discloses that the baseline is population-wide rather
+        than the cohort ``added_filters`` will actually select.
+
+        Every row comes back under :data:`POPULATION_VARIANT`, which is passed as
+        the sole declared variant: ``load_metric`` validates observed variants
+        against that list, so a real arm label can never appear here.
+
+        It takes the LOOKBACK, not a window: the whole-day pre-period rule lives
+        in :meth:`_preperiod_window` and must have exactly one implementation
+        (the m10 ``ExperimentConfig.grid()`` discipline — a second copy of a
+        window rule is how a knob reaches none of its call sites).
+        """
+        window = self._preperiod_window(lookback, grid)
+        return load_metric(
+            self._manager,
+            metric,
+            metric_sql,
+            self._builtins(window, apply_exposure_filter=False, apply_cohort_join=False),
+            declared_variants=[POPULATION_VARIANT],
+            template=self._template,
+        )
 
     def load_cutoff(
         self,
