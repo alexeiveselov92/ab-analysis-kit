@@ -149,7 +149,8 @@ multi-branch query), but that filter can only take eligibility away, never grant
 it. The empirical check is
 [`abk verify-incremental`](../reference/cli.md#abk-verify-incremental), which
 reconciles both read paths across the whole computed series — run it before
-turning `compute.incremental_reads` on.
+turning `compute.incremental_reads` on — or, in a project scaffolded by
+`abk init` (where it is already on), after declaring a new metric additive.
 
 ## `aa_fpr_budget` (optional)
 

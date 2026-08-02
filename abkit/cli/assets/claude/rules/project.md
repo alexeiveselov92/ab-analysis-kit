@@ -41,16 +41,30 @@ timeouts:                        # per-step, seconds
 
 compute:
   mode: recompute                # v1: full-window recompute (the golden reference). Only value today.
-  incremental_reads: false       # opt-in (M9): eligible closed-form comparisons read the `state`
+  incremental_reads: true        # opt-in (M9): eligible closed-form comparisons read the `state`
                                  # stage's `_ab_unit_state` day moments instead of re-scanning the
                                  # fact window; any gap falls back to recompute. An experiment can
                                  # override it with its own `incremental_reads:`. Changes HOW a
                                  # number is computed, never the number.
 ```
 
+**Decide `incremental_reads` explicitly.** The library default (the key ABSENT)
+is `false`, `abk init` writes `true`, and `abk run` warns when a metric declares
+`state_additive: true` — so the `state` step is materializing day moments every
+run — while the flag is unwritten and the series has reached six looks. That
+combination pays for the write and never takes the read, which is strictly worse
+than either choice. Writing the flag either way silences the warning.
+
+The flag is not a correctness gate: `abk verify-incremental` reconciles both read
+paths at `rel-1e-9`, and a gap in day state falls back to recompute on its own.
+It guards **one** thing — an event backfilled later than your `data_lag` freezes
+in already-materialized day state, where recompute would pick it up at the next
+look. Set `data_lag` to your real ingestion delay; if your warehouse backfills
+beyond it, keep `false`, which self-heals late data prospectively.
+
 Everything except `name` and `default_profile` has a default — a minimal project
-file is just those two lines (that is what `abk init` writes; the rest is
-commented). `tables:` (the six `_ab_*` names) exists for forward-compat but
+file is just those two lines. `abk init` writes those plus an explicit
+`compute.incremental_reads` (see above); the rest is commented. `tables:` (the six `_ab_*` names) exists for forward-compat but
 **rejects overrides** today — the names are canonical.
 
 ### The statistics block

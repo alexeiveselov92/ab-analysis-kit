@@ -42,6 +42,94 @@ STATUS_FAILED = "failed"
 
 
 @dataclass
+class AdditiveReadStatus:
+    """Whether this run could take the m9 additive read path — and did (PERF-1).
+
+    The m9 fast path shipped silent: nothing in `abk run` ever mentioned it, so
+    the scaffold's own project paid the STATE write and never took the read.
+    This is what breaks that silence — collected on every run, turned into the
+    CLI hint, and (with ``--cost-report``) printed beside the measured
+    day-additive slice of COMPUTE.
+    """
+
+    #: the RESOLVED flag for this run — NOT the config value: a
+    #: --full-refresh/--resync-cohort without the `state` step turns it off.
+    enabled: bool = False
+    #: what the CONFIG asked for, before that force-off. When this is true and
+    #: `enabled` is false, the run disabled the path for its own reasons and
+    #: must not advise setting a flag that is already set.
+    configured: bool = False
+    #: did any config level state a preference at all? An absent flag is the
+    #: undecided m9 default the hint nags about; an explicit ``false`` is a
+    #: recorded decision and stays quiet.
+    declared: bool = False
+    #: comparisons on the additive contract (``comparison_state_eligible``),
+    #: i.e. the ones the STATE stage materializes day moments for
+    eligible_comparisons: int = 0
+    total_comparisons: int = 0
+    #: the longest eligible series this run touched (computed ∪ pending).
+    #: LOOKS, not days: the recompute scan is quadratic in looks — an hourly
+    #: cadence re-reads the window 24× a day (cumulative-intervals §4.1 states
+    #: the same threshold in days because it assumes a daily grid).
+    series_looks: int = 0
+    #: eligible cutoffs this run actually computed, and how many of those the
+    #: reader had to fall back to full recompute for (``enabled`` only)
+    looks_computed: int = 0
+    fallbacks: int = 0
+
+    #: Restraint, NOT a break-even: the measured crossover is at one look
+    #: (cumulative-intervals §4.2 — the additive path already scans 60% fewer
+    #: fact rows at two looks, so §4.1's "within noise below ~5" is wrong). We
+    #: stay quiet until the ABSOLUTE saving is worth an operator's attention.
+    MIN_LOOKS_TO_MATTER = 6
+
+    def hint(self) -> str | None:
+        """The one line `abk run` prints about the additive read path, if any.
+
+        Pure and name-free — the CLI renders it under the experiment it
+        belongs to. Returns None when there is nothing honest to say, which
+        is the common case: a project that declared its choice either way and
+        is getting what it asked for hears nothing.
+        """
+        if self.enabled:
+            if self.eligible_comparisons == 0 and self.total_comparisons > 0:
+                return (
+                    "compute.incremental_reads is on, but no comparison in this run is "
+                    "on the additive contract — every look still re-scans the full "
+                    "window. Eligibility needs `state_additive: true` on the metric AND "
+                    "a closed-form unstratified comparison with no explicit covariate "
+                    "(see `abk verify-incremental` for the empirical check)."
+                )
+            if self.fallbacks:
+                # The reader's own warnings name the REASON but are deduped per
+                # (metric, reason), so only this can say how much it cost.
+                return (
+                    f"incremental reads fell back to full recompute for {self.fallbacks} "
+                    f"of {self.looks_computed} looks this run (reasons above) — those "
+                    "looks paid the recompute scan on top of the state read."
+                )
+            return None
+        if self.configured:
+            # The config asked for the fast path and this run disabled it; the
+            # driver has already said why. Telling the operator to set a flag
+            # they have set would be worse than silence.
+            return None
+        if self.declared or not self.eligible_comparisons:
+            return None
+        if self.series_looks < self.MIN_LOOKS_TO_MATTER:
+            return None
+        return (
+            f"{self.eligible_comparisons} of {self.total_comparisons} comparisons are "
+            f"day-additive and their series is {self.series_looks} looks long, but "
+            "compute.incremental_reads is unset (default off): the `state` step "
+            "materializes their day moments and COMPUTE re-scans the full window "
+            "anyway. `abk verify-incremental` certifies the fast path; set "
+            "compute.incremental_reads to true to take it, or to false to record the "
+            "decision and silence this."
+        )
+
+
+@dataclass
 class RunOutcome:
     """One experiment's run summary (the driver's return value)."""
 
@@ -63,8 +151,12 @@ class RunOutcome:
     #: per-stage warehouse cost, keyed by stage name (m9 WP5 — the evidence
     #: behind ``abk run --cost-report`` and the incremental-read default-flip
     #: decision). Always collected (the counters are ~free); the flag only
-    #: decides whether the CLI PRINTS them.
+    #: decides whether the CLI PRINTS them. PERF-1 adds the derived key
+    #: ``compute.additive`` — the day-additive SLICE of ``compute``, so the
+    #: two are NOT disjoint and must never be summed.
     stage_costs: dict[str, StageCost] = field(default_factory=dict)
+    #: PERF-1: what this run learned about the m9 additive read path.
+    additive: AdditiveReadStatus = field(default_factory=AdditiveReadStatus)
 
 
 @dataclass(frozen=True)

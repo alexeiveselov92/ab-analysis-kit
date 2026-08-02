@@ -39,7 +39,7 @@ from abkit.cli._output import (
 from abkit.cli.commands._context import load_project_context
 from abkit.config import select_experiments, validate_level2
 from abkit.config.experiment_config import ExperimentConfig
-from abkit.pipeline import PipelineStep, effective_alphas, run_experiments
+from abkit.pipeline import PipelineStep, RunOutcome, effective_alphas, run_experiments
 from abkit.stats import n_comparisons
 
 
@@ -54,6 +54,39 @@ def _parse_date(value: str | None, option: str) -> datetime | None:
     raise click.BadParameter(
         f"invalid {option} value {value!r} (use YYYY-MM-DD or 'YYYY-MM-DD HH:MM:SS')"
     )
+
+
+def _additive_cost_lines(outcome: RunOutcome) -> list[str]:
+    """The PERF-1 counterfactual under ``--cost-report``'s ``compute:`` line.
+
+    Only the SLICE is a measurement (the same query deltas, attributed to the
+    day-additive comparisons alone). The sentence after it deliberately claims
+    less than the m9 perf gate does: that gate's "COMPUTE scans no fact rows"
+    holds at DAILY cadence, while a sub-day grid still renders the current
+    day's tail and every look inside the opening local day reads no day state
+    at all. Nothing here estimates a number that was not observed.
+    """
+    status = outcome.additive
+    slice_cost = outcome.stage_costs.get("compute.additive")
+    if slice_cost is None or status.eligible_comparisons == 0:
+        return []
+    lines = [f"    of which day-additive: {slice_cost.describe()}"]
+    if status.enabled:
+        took = status.looks_computed - status.fallbacks
+        lines.append(
+            f"    → {took} of {status.looks_computed} looks took the additive "
+            "path; recompute would re-scan the full window at each of them"
+        )
+    elif status.configured:
+        # the driver already warned WHY it disabled the path for this run
+        lines.append("    → the additive path is configured but was disabled for this run")
+    else:
+        lines.append(
+            f"    → compute.incremental_reads: true would read day moments for "
+            f"those {status.looks_computed} looks instead of re-scanning the "
+            "full window"
+        )
+    return lines
 
 
 def _resolve_report_path(report_path: str, project_root: Path, experiment: str) -> Path:
@@ -347,8 +380,17 @@ def run_run(
                         cost = outcome.stage_costs.get(stage)
                         if cost is not None:
                             children.append(f"  {stage}: {cost.describe()}")
+                        if stage == "compute":
+                            children.extend(_additive_cost_lines(outcome))
                 srm_warnings = [w for w in outcome.warnings if "SRM" in w]
                 other_warnings = [w for w in outcome.warnings if "SRM" not in w]
+                # PERF-1: the m9 fast path shipped silent — nothing here ever
+                # said it existed. It rides the warning channel because that is
+                # the one that reaches the terminal (the M7 `decision_log`
+                # lesson: a list nothing echoes is a list nobody reads).
+                hint = outcome.additive.hint()
+                if hint is not None:
+                    other_warnings.append(hint)
                 echo_tree(outcome.experiment, children, warnings=other_warnings)
                 for warning in srm_warnings:
                     echo_srm(warning)

@@ -32,6 +32,8 @@ testcontainers_clickhouse = pytest.importorskip(
 )
 pytest.importorskip("clickhouse_driver", reason="clickhouse-driver not installed")
 
+from tests._helpers.scaffold import set_incremental_reads  # noqa: E402
+
 
 def _docker_available() -> bool:
     if shutil.which("docker") is None:
@@ -92,6 +94,11 @@ def _prepare_project(clickhouse, tmp_path, monkeypatch, name: str):
     assert runner.invoke(cli_group(), ["init", name]).exit_code == 0
     project = tmp_path / name
     monkeypatch.chdir(project)
+    # PERF-1 flipped the scaffold to `incremental_reads: true`. This is the
+    # ONLY real-SQL first-run gate, so it is pinned OFF to keep certifying
+    # recompute against a real warehouse; the M9 migration leg below turns it
+    # back on explicitly for the additive path.
+    set_incremental_reads(project / "abkit_project.yml", False)
 
     # point the dev profile at the container
     profiles = (project / "profiles.yml").read_text()
@@ -186,10 +193,7 @@ def test_pre_m9_install_migrates_and_the_additive_path_reconciles(
     assert not (set(M9_RESULT_COLUMNS) & before), "fixture must start WITHOUT the M9 columns"
 
     # ── turn the opt-in additive read path on and run
-    project_yml = project / "abkit_project.yml"
-    project_yml.write_text(
-        project_yml.read_text() + "\ncompute:\n  incremental_reads: true\n", encoding="utf-8"
-    )
+    set_incremental_reads(project / "abkit_project.yml", True)
     result = runner.invoke(cli_group(), ["run", "--select", "example_signup_test"])
     assert result.exit_code == 0, result.output
 

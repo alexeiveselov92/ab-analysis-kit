@@ -14,6 +14,60 @@ number change).
 ## [Unreleased]
 
 ### Added
+- **PERF-1 — the M9 additive read path is no longer silent, and the flip
+  question is settled with numbers.** `compute.incremental_reads` shipped in
+  `0.4.0` behind the note *"default false until verify-incremental bakes"*,
+  which was true then and was never revisited; meanwhile nothing in `abk run`
+  or `--cost-report` ever mentioned the fast path existed. Worse, the scaffold
+  declared `state_additive: true` on `example_arpu` while leaving the read flag
+  off, so a default project paid the STATE write and never took the read — the
+  one configuration strictly worse than either endpoint.
+  - **`abk run` now warns** when a metric is day-additive (so the `state` step
+    is materializing its moments every run), `compute.incremental_reads` is
+    **written nowhere**, and the series has reached **six looks**. The warning
+    names both ways out. It also discloses the two mirror silences: the flag on
+    with *nothing* declaring `state_additive` (it is doing nothing), and how
+    many looks an enabled read **fell back** to recompute for — the reader's own
+    warnings name the reason but are deduped per (metric, reason) and so could
+    never report extent.
+  - **An absent key and an explicit `false` are now distinguished** (via
+    pydantic's `model_fields_set`; the field is still a plain `bool` and every
+    reader is untouched). They resolve to identical behaviour, but only the
+    first is undecided — without the distinction the warning could never
+    terminate, and a nag that cannot be answered is just a different silence.
+  - **`abk run --cost-report` prints the counterfactual.** Under `compute:` it
+    adds `of which day-additive:` — the same measured query deltas attributed
+    to the eligible comparisons only — then what the other read path would do
+    with it. The slice is **part of** the `compute` total, never a sibling;
+    adding them double-counts.
+  - **`abk init` now scaffolds `compute.incremental_reads: true`**, with a
+    comment saying why and when to set it back. Its seed dataset never
+    backfills, and M9 picked `example_arpu` as the additive demo deliberately —
+    a scaffold that pays the write and *demonstrates the read* beats one that
+    demonstrates neither.
+  - **The library default stays `false`, now for the real reason.** The flag is
+    not a correctness gate: `abk verify-incremental` reconciles both paths at
+    rel-1e-9 and any state gap falls back to recompute unaided. It guards
+    exactly one thing — an event backfilled later than `data_lag` freezes in
+    already-materialized day state — which is a property of the operator's
+    ingestion SLA, not of abkit. The stale field text now says that.
+  - **The §4.1 criteria were executed** and the evidence published in
+    [cumulative-intervals.md §4.2](docs/specs/cumulative-intervals.md): three
+    consecutive clean `verify-incremental` runs over the scaffold (zero
+    divergences, zero `unverified`), and fact-row scans of 2.5× / 3.5× / 5.0× /
+    8.5× / 11.0× at 2 / 4 / 7 / 14 / 19 looks (total fact rows scanned; the
+    COMPUTE stages behind them reproduce `N·L(L+1)/2` recompute vs **zero**
+    incremental at daily cadence, exactly). The threshold is stated in **looks, not
+    days** — §4.1 said days because it assumed a daily grid, and an hourly
+    cadence re-reads the window 24× a day.
+  - **Test impact, deliberately pinned both ways.** The scaffold flip changed
+    which path the e2e gates exercise by default: the milestone's №1 assertion
+    (`incremental` vs `recompute` persist the same numbers) silently became a
+    comparison of the incremental path *against itself*, because its "flag off"
+    leg simply appended nothing. Both legs now set the flag explicitly through
+    one helper that asserts the edit landed, and each leg asserts — from
+    `--cost-report`'s output — that it really took the path its name claims.
+  - Zero statistical numbers moved (no `ALGORITHM_VERSION` bump).
 - **UI-1 — the `abk dashboard` cockpit edits experiment YAML.** M11 shipped
   `Show YAML` as a read of the file on disk and recorded CRUD as "phase 2"; this
   is that phase. The row's button is now **`Edit YAML`**, opening the raw text in

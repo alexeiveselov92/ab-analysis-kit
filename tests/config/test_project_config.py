@@ -39,9 +39,21 @@ class TestDefaults:
         assert make().compute.mode == "recompute"
 
     def test_incremental_reads_default_is_false(self):
-        # m9 WP4: opt-in until verify-incremental (WP5) bakes
+        # m9 WP4 opt-in. PERF-1 revisited the reason (it guards the operator's
+        # ingestion SLA, not correctness) but not the value; `abk init` writes
+        # `true` while the LIBRARY default stays off.
         assert make().compute.incremental_reads is False
         assert make(compute={"incremental_reads": True}).compute.incremental_reads is True
+
+    def test_an_absent_flag_is_distinguishable_from_an_explicit_false(self):
+        """PERF-1: the two resolve identically, and must not be confused —
+        only the absent one is undecided, and only it is warned about. Reading
+        the boolean cannot tell them apart, so `model_fields_set` does."""
+        absent = make().compute
+        explicit = make(compute={"incremental_reads": False}).compute
+        assert absent.incremental_reads == explicit.incremental_reads is False
+        assert "incremental_reads" not in absent.model_fields_set
+        assert "incremental_reads" in explicit.model_fields_set
 
 
 class TestValidation:

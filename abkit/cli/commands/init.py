@@ -29,6 +29,17 @@ version: "1.0"
 
 default_profile: dev
 
+compute:
+  # `example_arpu` below declares `state_additive: true`, so the `state` step
+  # materializes its per-(unit, day) moments on every run. Reading them back is
+  # what makes that write pay for itself — the alternative is the strictly
+  # worst configuration: paying for the write and re-scanning the full window
+  # anyway. `abk verify-incremental` reconciles both paths at rel-1e-9.
+  # Set this to false if your warehouse backfills events later than `data_lag`
+  # declares: the fast path freezes a late backfill in day state, where the
+  # recompute default would pick it up at the next look.
+  incremental_reads: true
+
 # statistics:            # project-wide defaults (experiments override)
 #   alpha: 0.05
 #   correction: bonferroni

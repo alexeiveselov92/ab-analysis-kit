@@ -412,8 +412,8 @@ holds cumulative per-unit statistical moments, day-bucketed, keyed by
   aggregates unchanged; cumulative-intervals §5.2). The series is strictly
   contiguous: every day up to the last materialized one exists, and any
   failure truncates the tail rather than leaving stale rows.
-- **Read** only with `compute.incremental_reads: true` (opt-in, default
-  off): eligible comparisons then load each cutoff as one additive per-unit
+- **Read** only with `compute.incremental_reads: true` (opt-in; scaffolded on
+  by `abk init`, library default off): eligible comparisons then load each cutoff as one additive per-unit
   `SUM` over closed days plus, for sub-day cadence, a fact scan of just the
   current-day tail — instead of re-scanning the whole cumulative window. Any
   gap in the materialized series falls back to full recompute for that
