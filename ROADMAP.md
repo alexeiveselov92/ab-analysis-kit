@@ -602,7 +602,7 @@ no live users to hurry for, and sweeping the previous release's status lines
   surface, not an addendum to a closing interstitial. Revisit **after M12**,
   with its own design pass.
 
-### M12 — notifications → `0.7.0` 🚧 IN PROGRESS (NTF-1, NTF-2 shipped)
+### M12 — notifications → `0.7.0` 🚧 IN PROGRESS (NTF-1, NTF-2, NTF-3 shipped)
 Design contract: [m12-implementation-plan.md](docs/specs/m12-implementation-plan.md).
 `abkit/notify/` (shipped M6, reachable only via `abk test-report`) gets wired
 to six real signals behind opt-in `--notify`, with dedup/cooldown state in
@@ -661,6 +661,24 @@ for the exit gate — no NTF WP depends on them.
   - **No sixth brand hex.** The five tokens are verdict tokens; notices reuse
     `--srm` `#B23A6B` and the word/emoji carry the distinction. Adding a real
     error token is a designer's call, and it is one map away.
+- **NTF-3 ✅ SHIPPED — the dedup, and the flag becomes schedulable.** The new
+  `_ab_notify_states` table + the pure `notify/cooldown.py` rule: a change always
+  announces, an unchanged value never re-announces (D2, signed off before
+  implementation). ~1–2 sessions — **actual: 1 session**. Three as-built deltas:
+  - **"Unchanged" had to mean the verdict AND its SRM gate**, so the table
+    carries `last_srm_flag` beside `last_verdict`. The plan's schema deduped on
+    the verdict word, which reads fine until you notice a pre-horizon pair says
+    INCONCLUSIVE either way — the word-only key would have swallowed the SRM
+    alarm NTF-2 had just built, on the experiments most likely to need it.
+  - **State is recorded only after a channel ACCEPTED the message.** `_deliver`
+    now returns per-payload success counts for exactly this. Recording an
+    announcement that reached nobody loses the flip permanently, because nothing
+    re-derives what was never sent.
+  - **`_ab_notify_states` joined `EXPERIMENT_KEYED_TABLES`**, so `abk clean
+    --orphaned-experiments` purges it. Not tidiness: a deleted-and-reused
+    experiment name would otherwise inherit the old history and have its first
+    verdict deduped away. Two roster tests that hand-listed six tables are now
+    derived from `INTERNAL_TABLES` instead.
 
 ### M13 — versioned statistical improvements (bucket B, core) → `0.8.0` 📐 contour
 Holm over Bonferroni (strictly more power, same FWER); unpooled SE in the

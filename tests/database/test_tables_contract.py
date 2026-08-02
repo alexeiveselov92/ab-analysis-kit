@@ -12,6 +12,7 @@ from abkit.database.tables import (
     TABLE_AA_RUNS,
     TABLE_EXPERIMENTS,
     TABLE_EXPOSURES,
+    TABLE_NOTIFY_STATES,
     TABLE_RESULTS,
     TABLE_TASKS,
     TABLE_UNIT_STATE,
@@ -154,7 +155,7 @@ class TestExperimentsCatalogSchema:
 
 
 class TestTableRegistry:
-    def test_all_six_tables_registered(self):
+    def test_every_table_is_registered(self):
         assert set(INTERNAL_TABLES) == {
             TABLE_EXPERIMENTS,
             TABLE_EXPOSURES,
@@ -162,6 +163,7 @@ class TestTableRegistry:
             TABLE_RESULTS,
             TABLE_AA_RUNS,
             TABLE_TASKS,
+            TABLE_NOTIFY_STATES,
         }
 
     def test_factories_produce_valid_models(self):
@@ -171,7 +173,13 @@ class TestTableRegistry:
             assert model.primary_key, name
 
     def test_versioned_tables_have_version_column(self):
-        versioned = {TABLE_EXPOSURES, TABLE_UNIT_STATE, TABLE_RESULTS, TABLE_AA_RUNS}
+        versioned = {
+            TABLE_EXPOSURES,
+            TABLE_UNIT_STATE,
+            TABLE_RESULTS,
+            TABLE_AA_RUNS,
+            TABLE_NOTIFY_STATES,
+        }
         for name, factory in INTERNAL_TABLES.items():
             model = factory()
             if name in versioned:

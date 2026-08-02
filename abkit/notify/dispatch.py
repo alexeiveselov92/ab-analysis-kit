@@ -39,6 +39,7 @@ from abkit.config.project_config import ProjectConfig
 from abkit.database.internal_tables import InternalTablesManager
 from abkit.notify.base import ReadoutData, describe_error
 from abkit.notify.branding import READOUT_GUIDE_URL
+from abkit.notify.cooldown import should_announce
 from abkit.pipeline.readout import ExperimentReadout, PairVerdict, evaluate
 from abkit.utils.datetime_utils import now_utc_naive, to_naive_utc
 
@@ -141,6 +142,23 @@ def resolve_channels(
             continue
         resolved.append((name, cfg))
     return resolved, warnings
+
+
+def _method_config_id(experiment: ExperimentConfig, metric: str) -> str:
+    """The comparison's identity hash — part of the dedup key (§0.4 point 2).
+
+    Read from the CONFIG, mirroring ``evaluate()``'s own lookup
+    (``readout.py``'s ``_filter_rows``): the rows that produced this verdict
+    were already filtered to exactly this id, and ``ExperimentConfig``
+    validation rejects duplicate metric references, so the mapping is total and
+    unambiguous. A metric with no comparison cannot reach here (the verdict came
+    from one), but answer "" rather than raise if it ever does — a dedup key is
+    not worth failing a run over.
+    """
+    for comparison in experiment.comparisons:
+        if comparison.metric == metric:
+            return comparison.method.method_config_id
+    return ""
 
 
 def _is_relative(comparison: ComparisonConfig | None) -> bool:
@@ -266,22 +284,27 @@ def _deliver(
     payloads: Sequence[ReadoutData],
     channels: Sequence[tuple[str, Any]],
     echo: Echo,
-) -> int:
+) -> list[int]:
     """Push every payload through every channel that accepts its kind.
 
     The one place a channel is constructed and a send is attempted, shared by
     the verdict and notice paths so the fail-soft discipline cannot drift
     between them.
+
+    Returns the successful-send count PER PAYLOAD, parallel to *payloads* —
+    the caller sums it for the terminal line, and NTF-3's dedup needs the
+    per-payload half: an announcement may only be recorded once somebody has
+    actually received it.
     """
     from abkit.notify.factory import ChannelFactory
 
     experiment_on = experiment.notify.on if experiment.notify is not None else None
-    sent = 0
+    sent = [0] * len(payloads)
     for name, cfg in channels:
         channel_on = getattr(cfg, "on", None)
         accepted = [
-            payload
-            for payload in payloads
+            index
+            for index, payload in enumerate(payloads)
             if any(
                 passes_filter(kind, channel_on, experiment_on) for kind in signal_kinds_for(payload)
             )
@@ -293,7 +316,8 @@ def _deliver(
         except Exception as exc:
             echo(f"{experiment.name}: notify channel '{name}' skipped — {exc}")
             continue
-        for payload in accepted:
+        for index in accepted:
+            payload = payloads[index]
             try:
                 delivered = (
                     channel.send_notice(payload)
@@ -301,7 +325,7 @@ def _deliver(
                     else channel.send(payload)
                 )
                 if delivered:
-                    sent += 1
+                    sent[index] += 1
                 else:
                     echo(f"{experiment.name}: notify channel '{name}' reported a failed send")
             except Exception as exc:  # a channel that raises despite the bool contract
@@ -321,13 +345,20 @@ def dispatch_experiment_signals(
     rows: Sequence[dict] = (),
     channels_cfg: dict[str, Any],
     project_name: str | None = None,
+    states: InternalTablesManager | None,
     echo: Echo,
 ) -> int:
-    """Send one message per verdict through every channel that accepts it.
+    """Send one message per CHANGED verdict through every channel that accepts it.
 
     Returns how many sends reported success — the caller prints it. Nothing
     raises: a channel that cannot even be CONSTRUCTED (a rotated secret, an
     unknown type) is one yellow line, and the remaining channels still go.
+
+    ``states`` is the ``_ab_notify_states`` store (m12 NTF-3): a comparison
+    whose announcement signature is unchanged since last time is skipped, so a
+    run every hour is not a message every hour. It is a REQUIRED argument with
+    an explicit ``None`` for "no dedup" — a default would let a caller disable
+    the quiet by forgetting it.
     """
     channels, warnings = resolve_channels(experiment, channels_cfg)
     for warning in warnings:
@@ -335,15 +366,54 @@ def dispatch_experiment_signals(
     if not channels:
         return 0
 
+    verdicts = list(readout.verdicts)
+    if states is not None:
+        keep = []
+        for verdict in verdicts:
+            state = states.get_notify_state(
+                experiment.name,
+                verdict.metric,
+                verdict.name_1,
+                verdict.name_2,
+                _method_config_id(experiment, verdict.metric),
+            )
+            if should_announce(state, verdict.verdict, readout.srm_flag):
+                keep.append(verdict)
+            else:
+                echo(
+                    f"{experiment.name}: {verdict.metric} {verdict.name_1} vs "
+                    f"{verdict.name_2} unchanged ({verdict.verdict}) — not re-sent"
+                )
+        verdicts = keep
+
     payloads = [
         readout_data_from_verdict(
             experiment, verdict, readout, project_name=project_name, rows=rows
         )
-        for verdict in readout.verdicts
+        for verdict in verdicts
     ]
     if not payloads:
         return 0
-    return _deliver(experiment=experiment, payloads=payloads, channels=channels, echo=echo)
+
+    per_payload = _deliver(experiment=experiment, payloads=payloads, channels=channels, echo=echo)
+
+    if states is not None:
+        for verdict, delivered in zip(verdicts, per_payload, strict=True):
+            # Only a message somebody RECEIVED becomes history. Recording an
+            # announcement that reached no channel (all down, all filtered out)
+            # would make the next run treat the flip as old news and lose it —
+            # permanently, since nothing re-derives what was never sent.
+            if delivered:
+                states.record_notification(
+                    experiment.name,
+                    verdict.metric,
+                    verdict.name_1,
+                    verdict.name_2,
+                    _method_config_id(experiment, verdict.metric),
+                    verdict=verdict.verdict,
+                    srm_flag=readout.srm_flag,
+                )
+    return sum(per_payload)
 
 
 def pipeline_error_notice(
@@ -396,4 +466,6 @@ def dispatch_pipeline_error(
     if not channels:
         return 0
     payload = pipeline_error_notice(experiment, error, project_name=project_name)
-    return _deliver(experiment=experiment, payloads=[payload], channels=channels, echo=echo)
+    # No dedup: an error is not a verdict, and a run that fails twice failed
+    # twice. NTF-3's state store is deliberately not consulted here.
+    return sum(_deliver(experiment=experiment, payloads=[payload], channels=channels, echo=echo))

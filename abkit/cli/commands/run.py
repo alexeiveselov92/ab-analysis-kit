@@ -502,6 +502,10 @@ def run_run(
                                 rows=result_rows,
                                 channels_cfg=notify_channels,
                                 project_name=context.project.name,
+                                # m12 NTF-3: the same tables handle carries the
+                                # dedup state, so an unchanged verdict is not
+                                # re-announced on every scheduled run
+                                states=readback(),
                                 echo=notify_echo,
                             )
                     if sent:

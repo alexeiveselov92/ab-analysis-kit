@@ -25,7 +25,12 @@ from abkit.database.internal_tables import (
     normalize_sql_for_identity,
 )
 from abkit.database.internal_tables._results import RESULT_COLUMNS
-from abkit.database.tables import TABLE_RESULTS, TABLE_TASKS, get_results_table_model
+from abkit.database.tables import (
+    INTERNAL_TABLES,
+    TABLE_RESULTS,
+    TABLE_TASKS,
+    get_results_table_model,
+)
 from abkit.utils.datetime_utils import now_utc_naive
 
 
@@ -42,23 +47,18 @@ def tables(backend):
 
 
 class TestEnsureTables:
-    def test_creates_and_registers_all_six(self, backend):
+    def test_creates_and_registers_every_internal_table(self, backend):
+        """Derived from INTERNAL_TABLES, not from a hand-copied list: a new
+        table that nobody adds here would otherwise ship uncreated."""
         manager = InternalTablesManager(backend)
         manager.ensure_tables()
-        for table in (
-            "_ab_experiments",
-            "_ab_exposures",
-            "_ab_unit_state",
-            "_ab_results",
-            "_ab_aa_runs",
-            "_ab_tasks",
-        ):
+        for table in INTERNAL_TABLES:
             assert backend.table_exists(table), table
             assert backend._model(table) is not None, table
 
     def test_idempotent(self, tables):
         tables.ensure_tables()  # second call must not raise or duplicate
-        assert len(tables._manager._rows) == 6
+        assert len(tables._manager._rows) == len(INTERNAL_TABLES)
 
 
 #: the M9 WP1 additive columns — the project's first post-release schema change

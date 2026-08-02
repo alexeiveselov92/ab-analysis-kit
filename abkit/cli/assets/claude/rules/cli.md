@@ -154,8 +154,12 @@ on with nothing declared additive, and how many looks fell back to recompute.
   answers to the `srm` kind too, so an `on: [srm, error]` channel hears about a
   broken split without receiving routine readouts. Route it per experiment with a
   `notify:` block (`channels` / `mentions` / `on`); with no block, a notified run
-  goes to every configured channel. **Every completed run sends** — verdict-change
-  dedup is not built yet, so point the flag at the runs you want announced.
+  goes to every configured channel. **Only a CHANGE is announced**: `_ab_notify_states`
+  remembers what each comparison last said, and an unchanged verdict is not
+  re-sent — so a scheduled run every hour is not a message every hour. A newly
+  broken SRM gate counts as a change even when the verdict word is identical
+  (a pre-horizon pair says INCONCLUSIVE either way), and a message no channel
+  accepted is not recorded, so the next run retries it.
 - `--force` — take over a held lock (prefer `abk unlock`; risky with concurrent runs).
 - `--profile` — override `profiles.yml`'s `default_profile` (e.g. run against staging).
 

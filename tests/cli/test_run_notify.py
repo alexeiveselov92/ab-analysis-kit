@@ -206,6 +206,52 @@ class TestFailSoft:
         assert (notice.effect, notice.pvalue, notice.alpha) == (None, None, None)
 
 
+class TestVerdictDedup:
+    """NTF-3 through the real CLI: a scheduler is the point of this feature."""
+
+    def test_a_second_run_over_unchanged_data_says_nothing(self, scaffolded):
+        configure_channels(team={"type": "spy", "label": "team"})
+
+        first = runner.invoke(cli, ["run", "--select", EXP, "--notify"])
+        assert first.exit_code == 0, first.output
+        assert len(SpyChannel.sent) == 1
+
+        second = runner.invoke(cli, ["run", "--select", EXP, "--notify"])
+
+        assert second.exit_code == 0, second.output
+        assert len(SpyChannel.sent) == 1  # still one — nothing was re-announced
+        assert "unchanged" in second.output
+
+    def test_the_state_survives_in_the_warehouse_not_the_process(self, scaffolded):
+        """The dedup is only useful if it outlives the CLI invocation — the
+        second run is a fresh process reading `_ab_notify_states`."""
+        configure_channels(team={"type": "spy", "label": "team"})
+        runner.invoke(cli, ["run", "--select", EXP, "--notify"])
+
+        rows = scaffolded.execute_query("SELECT * FROM _ab_notify_states")
+
+        assert rows, "the announcement must be persisted"
+        assert rows[0]["notify_count"] == 1
+        assert rows[0]["last_verdict"]
+
+    def test_a_failed_run_is_reported_every_time(self, scaffolded, monkeypatch):
+        """An error is not a verdict: a run that fails twice failed twice."""
+        configure_channels(team={"type": "spy", "label": "team"})
+        orig = scaffolded.execute_query
+
+        def explode(query, params=None):
+            if "example_ab_assignments" in query:
+                raise RuntimeError("warehouse down")
+            return orig(query, params)
+
+        monkeypatch.setattr(scaffolded, "execute_query", explode)
+
+        runner.invoke(cli, ["run", "--select", EXP, "--notify"])
+        runner.invoke(cli, ["run", "--select", EXP, "--notify"])
+
+        assert [r.kind for r in SpyChannel.sent] == ["error", "error"]
+
+
 class TestRouting:
     def test_no_notify_block_reaches_every_configured_channel(self, scaffolded):
         configure_channels(

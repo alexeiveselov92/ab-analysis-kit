@@ -845,6 +845,24 @@ two-process lock race) is deferred to a Docker-equipped environment.
   `signal_kinds_for()` answers `("readout", "srm")` for an SRM-failed readout
   and delivery asks "does ANY kind pass both filters", so a channel accepting
   both still receives exactly one message.
+- **NTF-3: the dedup signature is `(verdict, srm_flag)`, and it lives in
+  `_ab_notify_states`.** `notify/cooldown.py` is the pure rule (no DB, no
+  config): a change always announces, an unchanged value never re-announces
+  (D2). Deduping on the verdict WORD alone is the trap — a pre-horizon pair says
+  INCONCLUSIVE either way, so a newly broken SRM gate would be silenced on the
+  experiments most likely to need the alarm. `cooldown_seconds` is not consulted
+  here at all; `is_in_cooldown` exists for a future recurring kind, and the
+  config field is deliberately NOT added until one needs it.
+- **State is recorded only after a channel ACCEPTED the message** — `_deliver`
+  returns per-payload success counts for exactly this. An announcement that
+  reached nobody must not become history: nothing re-derives what was never
+  sent, so the flip would be lost permanently.
+- **`_ab_notify_states` is in `EXPERIMENT_KEYED_TABLES`**, so `abk clean
+  --orphaned-experiments` purges it — a deleted-and-reused experiment name would
+  otherwise inherit the old announcement history and have its first verdict
+  deduped away. `states` is a REQUIRED keyword on
+  `dispatch_experiment_signals` (explicit `None` disables dedup) so no caller
+  can turn the quiet off by forgetting it.
 - **The notify block sits BEFORE the report block in `run.py`'s outcome loop**,
   because the report block's `if report_path is None: continue` would skip
   everything after it. Both share one lazily-built manager, now honestly named
