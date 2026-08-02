@@ -44,7 +44,7 @@ from abkit.config.experiment_config import ExperimentConfig
 from abkit.config.metric_config import MetricConfig
 from abkit.config.project_config import ProjectConfig
 from abkit.core.exposure_counting import bucket_timestamps, count_stream
-from abkit.core.period_planner import backlog_seconds, pending_cutoffs
+from abkit.core.period_planner import backlog_seconds, last_due_cutoff, pending_cutoffs
 from abkit.database.internal_tables import InternalTablesManager
 from abkit.database.manager import BaseDatabaseManager
 from abkit.loaders.exposure_copy import copy_exposures_incremental
@@ -53,6 +53,7 @@ from abkit.loaders.query_template import RenderWindow
 from abkit.pipeline._types import (
     STATUS_COMPLETED,
     STATUS_FAILED,
+    BacklogEntry,
     PipelineStep,
     RunOutcome,
     StageCost,
@@ -637,13 +638,22 @@ def run_experiment(
             )
             # threshold on the TAIL segment's cadence: a dense-early schedule
             # that coarsened to daily must not warn forever on its 1h segment
-            lag = backlog_seconds(computed, watermark_ts)
+            # measured against the last DUE cutoff, never the watermark: past
+            # its horizon an experiment has no more looks to compute, and the
+            # watermark keeps moving (see `last_due_cutoff`)
+            due_ts = last_due_cutoff(grid, watermark_ts)
+            lag = None if due_ts is None else backlog_seconds(computed, due_ts)
             tail_cadence = experiment.cadence_segments()[-1][0]
             if lag is not None and lag > 3 * tail_cadence:
                 outcome.warnings.append(
-                    f"{experiment.name}/{metric.name}: computed series trails the "
-                    f"watermark by {lag / 3600.0:.1f}h (> 3 cadence steps) — backlog"
+                    f"{experiment.name}/{metric.name}: computed series is "
+                    f"{lag / 3600.0:.1f}h behind the looks already due "
+                    f"(> 3 cadence steps) — backlog"
                 )
+                # ONE condition, two consumers (m12 NTF-5): the line above is
+                # what the terminal prints, this is what `--notify` routes.
+                # Deriving the second from the first would mean parsing prose.
+                outcome.backlog.append(BacklogEntry(metric.name, lag))
 
             # Orphan detection: >1 stored id per metric = duplicate BI lines.
             stored_ids = {

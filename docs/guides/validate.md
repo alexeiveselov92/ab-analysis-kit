@@ -191,7 +191,7 @@ item.
 ```bash
 abk validate --select <exp> [--method <m>]... [--metric <m>] [--iterations N] \
              [--family-sweep] [--inject-effect <rel>] [--scoring fpr|power|mde] \
-             [--report] [--force] [--profile <name>]
+             [--report] [--notify] [--force] [--profile <name>]
 ```
 
 | Flag | Meaning |
@@ -204,6 +204,7 @@ abk validate --select <exp> [--method <m>]... [--metric <m>] [--iterations N] \
 | `--inject-effect` | Inject this **relative** effect (e.g. `0.05`) to measure power / achieved MDE / coverage. |
 | `--scoring` | `fpr` (default) / `power` / `mde` — the objective for the **Recommended row only**. All columns are always computed regardless. |
 | `--report` | Emit a self-contained HTML matrix report (best-effort). Bare flag → `reports/<exp>__validate.html`; pass a directory or an `.html` path to override. |
+| `--notify` | Send a `calibration_red` notice to the `profiles.yml` channels when a cell's measured FPR exceeds its budget (best-effort). See [notification channels](notification-channels.md#calibration-and-schedule-signals). |
 | `--force` | Take over a held validate lock (use with care). |
 | `--profile` | Profile name (default: `profiles.yml` `default_profile`). |
 
@@ -229,8 +230,12 @@ Notes on behavior (aa-false-positive-matrix; validate.py):
   `_ab_aa_runs`, it need not serialize behind nightly `abk run`.
 - **Exits non-zero** on any experiment-level (harness) failure, so it is safe to wire
   into CI. A single unscoreable cell is recorded as a `status='failed'` row rather than
-  aborting the run. `--report` is the one best-effort exception — a bake failure
-  yellow-skips and never fails the validation itself.
+  aborting the run. `--report` and `--notify` are the best-effort exceptions — a bake
+  or a delivery failure yellow-skips and never fails the validation itself.
+- **`--notify` repeats itself only when the red cells change.** A nightly validation
+  that keeps finding the same inflated cell announces it once; a *second* cell going
+  red is a new message. Set `notify.cooldown_seconds` on the experiment to be reminded
+  about an unchanged one.
 - `--scoring` sets only which row is marked **Recommended** (persisted as the `mode`
   column); the FPR / peeking / power / coverage columns always compute so the explore
   calibration chip can light regardless.

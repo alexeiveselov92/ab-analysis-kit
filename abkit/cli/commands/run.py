@@ -467,6 +467,7 @@ def run_run(
                     from abkit.notify.dispatch import (
                         dispatch_experiment_signals,
                         dispatch_pipeline_error,
+                        dispatch_stale,
                         load_experiment_readout,
                     )
 
@@ -508,6 +509,22 @@ def run_run(
                                 states=readback(),
                                 echo=notify_echo,
                             )
+                        # m12 NTF-5: the `stale` signal, routed off the SAME
+                        # backlog the PLAN stage already warned about above.
+                        # Completed runs only — a failed run's news is the
+                        # failure, and it has just been sent. The call is made
+                        # even with an empty backlog: that is how the stored
+                        # signature is cleared, so a gap that reappears next
+                        # month is news again instead of deduping against a
+                        # months-old row.
+                        sent += dispatch_stale(
+                            experiment=experiment,
+                            entries=outcome.backlog,
+                            channels_cfg=notify_channels,
+                            project_name=context.project.name,
+                            states=readback(),
+                            echo=notify_echo,
+                        )
                     if sent:
                         click.echo(click.style(f"  │ Notify → {sent} message(s) sent", fg="cyan"))
                 except Exception as notify_error:  # never fail the run on a notification

@@ -10,13 +10,14 @@ never re-sent, however long the cooldown. Getting that backwards would let a
 timer swallow the single WIN→LOSE message the whole feature exists to deliver —
 a silence, not a crash, which is why it was arbitrated before any code was
 written. ``cooldown_seconds`` is therefore NOT consulted for verdict dedup; it
-is reserved for a future recurring kind (a repeating ``stale``) that
-legitimately re-fires with the same value, and :func:`is_in_cooldown` is
-exported for it.
+belongs to the RECURRING kinds (m12 NTF-5's ``stale`` and ``calibration_red``),
+whose condition legitimately persists across runs with an identical value —
+:func:`should_announce_recurring` is where the two rules meet.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
@@ -60,6 +61,49 @@ def should_announce(state: dict[str, Any], verdict: str | None, srm_flag: bool) 
     return current != previous
 
 
+def recurring_signature(items: Sequence[str]) -> str:
+    """What a RECURRING signal announces: WHICH things are wrong, not how badly.
+
+    Sorted and de-duplicated so the answer does not depend on enumeration
+    order, and deliberately free of magnitudes: a backlog's lag grows every
+    run and an A/A cell's FPR moves with every resample, so a signature
+    carrying either would differ every time and dedup nothing at all. The
+    empty string is the honest "nothing is wrong" value — it is a signature
+    like any other, so the transition out of it announces.
+    """
+    return "\n".join(sorted(set(items)))
+
+
+def should_announce_recurring(
+    state: dict[str, Any],
+    signature: str,
+    cooldown_seconds: float | None,
+    now: datetime,
+) -> bool:
+    """Is a recurring condition due to be announced again?
+
+    Two rules, in D2's order and for D2's reason. A CHANGED signature always
+    announces, cooldown or not — a timer must never swallow "a second metric
+    just fell behind". An UNCHANGED one announces only once its cooldown has
+    elapsed, which is what separates these kinds from a verdict: the condition
+    is still true on the next run, and re-sending it every run is the noise
+    NTF-3 exists to prevent.
+
+    ``None`` — the default — is "never repeat", and is NOT the same as ``0``:
+    :func:`is_in_cooldown` answers False for both (neither mutes anything), so
+    deferring to it alone would re-announce an unchanged condition on every
+    single run, which is the exact behaviour the default must not have. Zero
+    keeps its literal reading: a window that has always already elapsed.
+    """
+    if not state.get("notify_count"):
+        return True
+    if state.get("last_verdict") != signature:
+        return True
+    if cooldown_seconds is None:
+        return False
+    return not is_in_cooldown(state, cooldown_seconds, now)
+
+
 def is_in_cooldown(
     state: dict[str, Any],
     cooldown_seconds: float | None,
@@ -67,9 +111,10 @@ def is_in_cooldown(
 ) -> bool:
     """Is a REPEAT of the same value still muted?
 
-    Not consulted by :func:`should_announce` — see the module docstring. It is
-    the primitive a recurring kind will need, kept here so the rule and its
-    exception live in one file.
+    Never consulted by :func:`should_announce` (a verdict is not recurring —
+    see the module docstring); it is the second half of
+    :func:`should_announce_recurring`, kept here so the rule and its exception
+    live in one file.
     """
     if not cooldown_seconds or cooldown_seconds <= 0:
         return False

@@ -30,7 +30,7 @@ There are seven internal tables:
 | [`_ab_tasks`](#_ab_tasks--run-locks) | `MergeTree` | `(experiment, scope, process_type)` | Run locks + idempotency. |
 | [`_ab_aa_runs`](#_ab_aa_runs--the-aa-validation-audit-trail) | `ReplacingMergeTree(created_at)` | `(experiment, run_id)` | `abk validate` A/A audit trail. |
 | [`_ab_experiments`](#_ab_experiments--the-catalog) | `MergeTree` | `(experiment)` | Informational experiment catalog. |
-| [`_ab_notify_states`](#_ab_notify_states--what-each-comparison-last-announced) | `ReplacingMergeTree(updated_at)` | `(experiment, metric, name_1, name_2, method_config_id)` | What `abk run --notify` last announced — the verdict-change dedup. |
+| [`_ab_notify_states`](#_ab_notify_states--what-each-comparison-last-announced) | `ReplacingMergeTree(updated_at)` | `(experiment, metric, name_1, name_2, method_config_id)` | What `--notify` last announced — the verdict-change dedup, plus the recurring signals' memory. |
 | [`_ab_unit_state`](#_ab_unit_state--the-scalability-seam) | `ReplacingMergeTree(version)` | `(source_table, column_set_id, unit_id, day)` | Per-(unit, day) cumulative moments — written by the `state` stage, read only under `compute.incremental_reads`. |
 
 ### Where they live
@@ -417,6 +417,16 @@ A row is written **only after a channel accepted the message**. If every channel
 was down, nothing is recorded and the next run tries again — an announcement
 nobody received must not become history.
 
+The same table also holds the two RECURRING signals' memory (`abk run`'s `stale`
+and `abk validate`'s `calibration_red`), one row per experiment per kind under
+the sentinel key `metric='__stale__' / '__calibration_red__'` with an **empty
+arm pair** — which is what keeps it disjoint from every comparison row, since a
+variant name cannot be empty. There `last_verdict` holds the condition's
+signature (the sorted metric names that were behind, the sorted red cells) and
+an EMPTY signature is written when the condition clears, so the same backlog
+recurring months later is announced again instead of deduping against a stale
+row. These are also the only kinds `notify.cooldown_seconds` applies to.
+
 **Engine** `ReplacingMergeTree(updated_at)` · **PK**
 `(experiment, metric, name_1, name_2, method_config_id)`
 
@@ -424,7 +434,7 @@ nobody received must not become history.
 |---|---|---|
 | `experiment`, `metric`, `name_1`, `name_2` | `String` | The comparison and its arm pair. |
 | `method_config_id` | `String` | In the key on purpose: a re-tuned comparison is a different measurement, so it starts a fresh announcement history instead of inheriting the old method's. |
-| `last_verdict` | `Nullable(String)` | The verdict last announced. |
+| `last_verdict` | `Nullable(String)` | The verdict last announced — or, on a sentinel notice row, the condition's signature (`""` once it cleared). |
 | `last_srm_flag` | `Bool` | Whether that message carried a failed SRM gate. |
 | `last_notified_at` | `Nullable(DateTime64(3,'UTC'))` | When it was delivered. |
 | `notify_count` | `Int32` | How many messages this comparison has produced. |
@@ -489,7 +499,7 @@ Moment columns unused by a given column set stay `0`.
 | Command | Effect on `_ab_*` |
 |---|---|
 | `abk run` | Claims/releases the `_ab_tasks` lock; upserts `_ab_experiments`; writes `_ab_results`. With `--notify`, reads and writes `_ab_notify_states` (the verdict-change dedup). Reads `_ab_results` for the planner anti-join. With `assignment.cohort_copy.enabled: true` only, appends incrementally to `_ab_exposures` (or rebuilds it with `--resync-cohort`); the no-copy default never touches that table. |
-| `abk validate` | Claims its own `_ab_tasks` lock (`process_type=validate`); writes `_ab_aa_runs`. Never writes `_ab_exposures` — a placebo split is in-memory only. |
+| `abk validate` | Claims its own `_ab_tasks` lock (`process_type=validate`); writes `_ab_aa_runs`. With `--notify`, reads and writes its sentinel row in `_ab_notify_states`. Never writes `_ab_exposures` — a placebo split is in-memory only. |
 | `abk explore` | Read-only over `_ab_results`; reads `_ab_aa_runs` for the calibration chip (Auto mode can write `_ab_aa_runs`). |
 | `abk plan` | Read-only pre-launch sizing — no internal-table writes. |
 | `abk clean` | Prunes orphaned result series (`delete_results`) and, with `--orphaned-experiments`, purges every experiment-keyed table (`_ab_experiments`, `_ab_exposures`, `_ab_results`, `_ab_tasks`, `_ab_notify_states`). Never touches `_ab_aa_runs` or `_ab_unit_state`. |

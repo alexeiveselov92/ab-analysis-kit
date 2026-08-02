@@ -4,7 +4,9 @@ Pure — no warehouse, no config objects — because the one thing a notificatio
 system can get wrong SILENTLY is deciding not to speak. D2 (maintainer-signed
 2026-08-02) is the contract under test: a change always announces, an unchanged
 value never re-announces, and ``cooldown_seconds`` is not consulted for verdict
-dedup at all.
+dedup at all. NTF-5 adds the recurring half: the two kinds whose condition
+survives the run that reports it, where an unchanged value CAN repeat — but
+only on the cooldown, and never at the cost of a change.
 """
 
 from __future__ import annotations
@@ -17,7 +19,9 @@ from abkit.notify.cooldown import (
     EMPTY_STATE,
     announcement_signature,
     is_in_cooldown,
+    recurring_signature,
     should_announce,
+    should_announce_recurring,
 )
 
 NOW = datetime(2026, 8, 3, 12, 0, 0)
@@ -81,9 +85,72 @@ class TestShouldAnnounce:
         assert announcement_signature("WIN", True) != announcement_signature("WIN", False)
 
 
+class TestRecurringSignature:
+    def test_it_is_order_and_duplicate_free(self):
+        assert recurring_signature(["b", "a", "b"]) == recurring_signature(["a", "b"])
+
+    def test_nothing_wrong_is_the_empty_signature(self):
+        assert recurring_signature([]) == ""
+
+    def test_a_second_item_is_a_different_condition(self):
+        assert recurring_signature(["a"]) != recurring_signature(["a", "b"])
+
+
+class TestShouldAnnounceRecurring:
+    """The `stale` / `calibration_red` rule (m12 NTF-5): the same condition
+    persists across runs, so unlike a verdict it needs a cooldown to ever
+    repeat — and, like a verdict, a CHANGE must never wait for one."""
+
+    def test_a_first_occurrence_announces(self):
+        assert should_announce_recurring(EMPTY_STATE, "arpu", None, NOW) is True
+
+    def test_an_unchanged_condition_stays_quiet_without_a_cooldown(self):
+        previous = state(last_verdict="arpu", last_notified_at=NOW, notify_count=1)
+
+        assert should_announce_recurring(previous, "arpu", None, NOW) is False
+
+    def test_none_and_zero_are_different_windows(self):
+        """`is_in_cooldown` mutes neither, so deferring to it alone would make
+        the DEFAULT re-announce an unchanged condition on every run."""
+        previous = state(last_verdict="arpu", last_notified_at=NOW, notify_count=1)
+
+        assert should_announce_recurring(previous, "arpu", None, NOW) is False
+        assert should_announce_recurring(previous, "arpu", 0, NOW) is True
+
+    def test_a_widened_condition_announces_inside_the_cooldown(self):
+        """A second metric falling behind is news the timer may not swallow —
+        D2's rule, applied to the kinds the cooldown actually governs."""
+        previous = state(
+            last_verdict=recurring_signature(["arpu"]),
+            last_notified_at=NOW - timedelta(seconds=1),
+            notify_count=1,
+        )
+
+        assert (
+            should_announce_recurring(previous, recurring_signature(["arpu", "cr"]), 86_400, NOW)
+            is True
+        )
+
+    def test_an_unchanged_condition_repeats_once_the_cooldown_elapses(self):
+        previous = state(
+            last_verdict="arpu", last_notified_at=NOW - timedelta(hours=2), notify_count=1
+        )
+
+        assert should_announce_recurring(previous, "arpu", 3600, NOW) is True
+        assert should_announce_recurring(previous, "arpu", 86_400, NOW) is False
+
+    def test_a_cleared_then_recurring_condition_is_news_again(self):
+        """The recovery reset: an empty signature is recorded when the
+        condition goes away, so its return does not dedup against a row from
+        months ago."""
+        cleared = state(last_verdict="", last_notified_at=NOW, notify_count=2)
+
+        assert should_announce_recurring(cleared, "arpu", None, NOW) is True
+
+
 class TestIsInCooldown:
-    """The primitive a future recurring kind needs — deliberately NOT consulted
-    by `should_announce` (D2)."""
+    """The primitive the recurring kinds need — deliberately NOT consulted by
+    `should_announce` (D2)."""
 
     @pytest.mark.parametrize("cooldown", [None, 0, -5])
     def test_no_configured_window_is_never_a_cooldown(self, cooldown):

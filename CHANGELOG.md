@@ -14,6 +14,36 @@ number change).
 ## [Unreleased]
 
 ### Added
+- **NTF-5 — the two signals about the machinery: `calibration_red` and
+  `stale`.** Both are conditions abkit already detected and only ever printed;
+  neither adds a detector. Both RECUR — the condition is still true on the next
+  run — so they are deduped on WHAT is wrong rather than on the message.
+  - **`abk validate --notify` (new flag)** sends `calibration_red` naming every
+    cell whose measured A/A false-positive rate exceeded its budget: the
+    matrix's "do not use" verdict, delivered to the people not watching the
+    terminal. Best-effort on `--report`'s terms — a delivery failure never turns
+    a successful validation into a failed one.
+  - **`abk run --notify` now also sends `stale`** when a metric's computed
+    series was more than three cadence steps behind the looks already due when
+    the run planned it.
+  - **The `stale` message is retrospective, and says so.** The run that detects
+    a backlog is the run that computes the missing looks, so what is behind is
+    the SCHEDULE — a run that never fired, was locked out, or failed — not the
+    warehouse. Its notice word changed from NTF-2's placeholder "Data is stale"
+    to "Schedule fell behind" for that reason.
+  - **Dedup is by signature, not by sentence**: which metrics are behind, which
+    cells are red — never the lag or the FPR, both of which drift on every run
+    and would re-announce forever. A widened condition (a second metric behind,
+    a second cell red) always sends; a condition that CLEARS is recorded as
+    cleared, so the same one recurring next month is news again rather than a
+    dedup hit against a months-old row.
+  - **`notify.cooldown_seconds` (new experiment-level field)** re-announces an
+    unchanged recurring condition after that many seconds. It applies to these
+    two kinds only: D2 is unchanged, and a verdict flip never waits for a timer.
+    NTF-3 deliberately withheld this field until a signal consulted it.
+  - `verdict_change` remains the one declared kind nothing emits — NTF-6 either
+    wires it or drops it from the vocabulary.
+
 - **NTF-4 — four more channels: `discord`, `teams`, `googlechat`, `ntfy`
   (nine in total).** Thin adapters in abkit's own idiom: each takes its
   platform's **wire format** (and its limits) as fact, and its **content** from
@@ -131,6 +161,15 @@ number change).
     number in a message is copied off a `PairVerdict`.
 
 ### Fixed
+- **A finished experiment no longer reports a growing backlog forever.** The
+  `abk run` backlog warning measured the computed series against the WATERMARK
+  (wall-clock − `data_lag`), which keeps advancing after an experiment's cutoffs
+  stop at its horizon: a fully computed, past-horizon series reported a backlog
+  of "now − horizon" that grew by a day every day, loudest when there was
+  nothing left to do. It is now measured against the last cutoff that was
+  actually DUE (`last_due_cutoff`). Found by NTF-5, which would otherwise have
+  routed that warning as a notification to every experiment a team has ever
+  finished. Cosmetic for the warning; load-bearing for the signal.
 - **A `notification_channels:` entry can now declare abkit's own keys without
   breaking the channel.** The block is `extra="allow"` and every sibling key
   was forwarded verbatim to the channel constructor, so the new `on:` routing

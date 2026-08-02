@@ -8,8 +8,11 @@
 > (the additive read path made discoverable; the scaffold flipped to
 > `incremental_reads: true`). All tagged and on PyPI; `[Unreleased]` is empty.
 > M3's WP9 testcontainers hardening deferred to a Docker-equipped environment.
-> **M12 is open** (`0.7.0`, notifications): NTF-1 — the send seam
-> `abk run --notify` — is merged and sits in `[Unreleased]`.
+> **M12 is open** (`0.7.0`, notifications): NTF-1…NTF-5 are merged and sit in
+> `[Unreleased]` — the send seam (`abk run --notify`), the urgent half
+> (srm/error), the dedup state machine, four more channels (nine in total), and
+> the two recurring signals (`stale`, `calibration_red` — the latter behind the
+> new `abk validate --notify`). NTF-6 (exit gate + docs) closes the milestone.
 > Design contracts for what is being *built next* (the M12–M17 polish track)
 > live in [docs/specs/](../../docs/specs/) + [ROADMAP.md](../../ROADMAP.md);
 > this file must never claim unbuilt code exists.
@@ -104,7 +107,10 @@ abkit/
                          #   (`abk test-report`'s synthetic smoke test);
                          #   ✅ M12 NTF-1: dispatch (the `abk run --notify` seam —
                          #   persisted rows → readout.evaluate → one payload per
-                         #   verdict) + factory.ROUTING_KEYS. `dispatch` is NOT
+                         #   verdict) + factory.ROUTING_KEYS; ✅ NTF-3: cooldown
+                         #   (the pure dedup rule); ✅ NTF-5: the recurring half
+                         #   of both (dispatch_stale / dispatch_calibration_red
+                         #   + should_announce_recurring). `dispatch` is NOT
                          #   re-exported from the package __init__: it pulls in
                          #   config+pipeline, and `test-report` must resolve a
                          #   channel without either
@@ -882,6 +888,48 @@ two-process lock race) is deferred to a Docker-equipped environment.
   because the report block's `if report_path is None: continue` would skip
   everything after it. Both share one lazily-built manager, now honestly named
   `readback_*` rather than `report_*`.
+- **NTF-5: the backlog warning was measured against the WATERMARK, and routing
+  it is what exposed that.** The watermark is wall-clock − `data_lag` and never
+  stops advancing; an experiment's cutoffs stop at its horizon. So a finished,
+  fully computed series reported "now − horizon" of backlog, growing daily —
+  invisible as a printed warning, an alarm about every finished experiment once
+  notified. `backlog_seconds` now takes `last_due_cutoff(grid, watermark_ts)`
+  ("the newest look this run could already have computed"). The §0.4 "zero new
+  detection" clause has this limit: routing a signal is a test OF the signal.
+- **`stale` is RETROSPECTIVE and its wording is load-bearing.** PLAN detects the
+  gap, COMPUTE drains it in the same run, so by delivery it is closed — the news
+  is that the SCHEDULE slipped (a run that never fired, was locked out, failed).
+  A "still behind" flag is dead code by construction (the loop drains `pending`);
+  the presentation word is "Schedule fell behind", not NTF-2's placeholder "Data
+  is stale". The condition rides `RunOutcome.backlog` (`BacklogEntry`), not the
+  warning string: the prose carries a lag that drifts every run.
+- **The two RECURRING kinds (`stale`, `calibration_red`) dedup on a SIGNATURE,
+  not on the message.** `should_announce_recurring` is D2's shape for a condition
+  that outlives the run: a changed signature always announces, an unchanged one
+  waits for `notify.cooldown_seconds` (the field NTF-3 withheld until something
+  consulted it) — and `None` ≠ `0`, because `is_in_cooldown` mutes NEITHER, so
+  deferring to it alone would make the DEFAULT re-announce every run. The
+  signature is WHICH things are wrong (metrics behind; red cells keyed
+  `metric·method_config_id`, never the method NAME — one metric can carry two
+  cells of one method), never the lag or the FPR.
+- **A cleared condition is written back as an EMPTY signature.** Not a violation
+  of NTF-3's "only what a channel accepted becomes history": that rule protects
+  an ANNOUNCEMENT, and this records an OBSERVATION nobody had to receive.
+  Without it the stored signature outlives the condition and the second outage —
+  months later, same metric — dedups against the first and is never sent.
+- **Notice state rows share `_ab_notify_states` under `notice_state_key(kind)`**
+  (`metric='__stale__'`, empty arm pair; compose it ONLY there). The
+  `_ab_aa_runs` `__family__` precedent — but the sentinel NAME is not the
+  guarantee (`MetricConfig` accepts underscores), the EMPTY arm pair is, since a
+  variant name cannot be empty.
+- **`abk validate` has its own `--notify`**, best-effort on `--report`'s terms,
+  inside the lock's try; it dispatches even when nothing is red, because that is
+  how a previously announced failure gets cleared. Explore-Apply calibration-red
+  stays out of scope (`tuning/server.py` has no diff).
+- **`verdict_change` is declared and emitted by nothing**, so `on:
+  [verdict_change]` matches NOTHING. NTF-3 made every delivered readout a change
+  by construction; NTF-6 either emits it beside `readout` or drops it from
+  `SignalKind`.
 
 ## The stats core (`abkit.stats`) — the implemented system
 

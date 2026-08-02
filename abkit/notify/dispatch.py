@@ -22,9 +22,17 @@ this milestone was written to avoid:
   2026-08-02) — an operator who wired channels up in ``profiles.yml`` never has
   to touch experiment YAML to hear from them.
 
-Only the ``readout`` kind fires in NTF-1; the filter surface accepts all six
-kinds already, so an ``on:`` written today does not silently widen when NTF-2..5
-wire the rest.
+Five of the six kinds fire from here: ``readout`` and its ``srm``
+re-classification (NTF-1/NTF-2) off the persisted rows, ``error`` off a failed
+run (NTF-2), and the two RECURRING ones — ``stale`` and ``calibration_red``
+(NTF-5) — whose condition survives the run that reports it and is therefore
+deduped by signature plus an optional cooldown.
+
+``verdict_change`` is the one declared kind nothing emits: NTF-3 made every
+delivered readout a change by construction, so an ``on: [verdict_change]``
+filter today matches NOTHING and is silent for a reason no operator could
+guess. NTF-6 owns the choice — emit it alongside ``readout`` for a payload
+that survived the dedup gate, or drop it from the vocabulary.
 """
 
 from __future__ import annotations
@@ -37,9 +45,15 @@ from typing import Any
 from abkit.config.experiment_config import ComparisonConfig, ExperimentConfig
 from abkit.config.project_config import ProjectConfig
 from abkit.database.internal_tables import InternalTablesManager
+from abkit.database.internal_tables._notify_states import notice_state_key
 from abkit.notify.base import ReadoutData, describe_error
 from abkit.notify.branding import READOUT_GUIDE_URL
-from abkit.notify.cooldown import should_announce
+from abkit.notify.cooldown import (
+    recurring_signature,
+    should_announce,
+    should_announce_recurring,
+)
+from abkit.pipeline._types import BacklogEntry
 from abkit.pipeline.readout import ExperimentReadout, PairVerdict, evaluate
 from abkit.utils.datetime_utils import now_utc_naive, to_naive_utc
 
@@ -469,3 +483,201 @@ def dispatch_pipeline_error(
     # No dedup: an error is not a verdict, and a run that fails twice failed
     # twice. NTF-3's state store is deliberately not consulted here.
     return sum(_deliver(experiment=experiment, payloads=[payload], channels=channels, echo=echo))
+
+
+def _recurring_notice(
+    experiment: ExperimentConfig,
+    kind: str,
+    sentence: str,
+    *,
+    project_name: str | None = None,
+) -> ReadoutData:
+    """The payload shape both recurring signals share (m12 NTF-5).
+
+    Statistics stay ``None`` for the reason NTF-2's error notice leaves them
+    empty: neither a backlog nor a red calibration cell is a measurement OF the
+    experiment, and a channel rendering "Effect: N/A" beside it would imply
+    somebody looked. ``timestamp`` is wall-clock — the news is the condition
+    observed just now, not any particular look.
+    """
+    return ReadoutData(
+        experiment=experiment.name,
+        metric="",
+        verdict="",
+        name_1="",
+        name_2="",
+        kind=kind,
+        notice=sentence,
+        timestamp=now_utc_naive(),
+        timezone=experiment.timezone,
+        project_name=project_name,
+        description=experiment.description,
+        mentions=list(experiment.notify.mentions) if experiment.notify is not None else [],
+    )
+
+
+def _dispatch_recurring(
+    *,
+    experiment: ExperimentConfig,
+    kind: str,
+    items: Sequence[str],
+    sentence: str,
+    channels_cfg: dict[str, Any],
+    project_name: str | None = None,
+    states: InternalTablesManager | None,
+    echo: Echo,
+) -> int:
+    """Announce a recurring condition — once per distinct condition (m12 NTF-5).
+
+    *items* is what the condition IS (the backlogged metrics, the red cells);
+    *sentence* is how it reads. Two arguments, because the dedup signature is
+    built from the first while the second carries numbers that drift on every
+    run — a lag that grows, an FPR that moves with the resample.
+
+    An EMPTY *items* is the condition going away, and it is handled here rather
+    than by the caller: nothing is sent (a "backlog cleared" message is not in
+    this milestone), but the stored signature is RESET, so the same condition
+    recurring next month announces again instead of deduping against a stale
+    row. That write is not the NTF-3 hazard it resembles — recording an
+    OBSERVATION nobody had to receive loses nothing, whereas recording an
+    unreceived ANNOUNCEMENT would lose the flip permanently.
+    """
+    signature = recurring_signature(items)
+    state_key = notice_state_key(kind)
+    state = None if states is None else states.get_notify_state(experiment.name, *state_key)
+
+    if not signature:
+        if states is not None and state is not None and state.get("last_verdict"):
+            states.record_notification(experiment.name, *state_key, verdict="", srm_flag=False)
+        return 0
+
+    if state is not None:
+        cooldown = experiment.notify.cooldown_seconds if experiment.notify is not None else None
+        if not should_announce_recurring(state, signature, cooldown, now_utc_naive()):
+            echo(f"{experiment.name}: {kind} unchanged since the last message — not re-sent")
+            return 0
+
+    channels, warnings = resolve_channels(experiment, channels_cfg)
+    for warning in warnings:
+        echo(warning)
+    if not channels:
+        return 0
+
+    payload = _recurring_notice(experiment, kind, sentence, project_name=project_name)
+    sent = sum(_deliver(experiment=experiment, payloads=[payload], channels=channels, echo=echo))
+    if sent and states is not None:
+        # Only a received message becomes history (the NTF-3 rule): a signature
+        # recorded after every channel failed would mute the condition until it
+        # changed shape.
+        states.record_notification(experiment.name, *state_key, verdict=signature, srm_flag=False)
+    return sent
+
+
+def backlog_sentence(entries: Sequence[BacklogEntry]) -> str:
+    """The `stale` message body — retrospective, because the condition is.
+
+    The run that reports a backlog is the run that computes the missing looks
+    (the PLAN stage detects it, the COMPUTE stage drains it), so the news is
+    that the SCHEDULE slipped — a run that never fired, was locked out, or
+    failed — not that the warehouse is behind at this moment. Claiming
+    otherwise would alarm an operator about a gap that is already closed.
+    """
+    listed = ", ".join(f"{entry.metric} by {entry.lag_seconds / 3600.0:.1f}h" for entry in entries)
+    plural = "series was" if len(entries) == 1 else "series were"
+    return (
+        f"{len(entries)} metric {plural} more than 3 cadence steps behind the watermark "
+        f"when this run planned it: {listed}. This run computed the missing looks — "
+        "what is behind is the SCHEDULE (a run that never fired, was locked out, or "
+        "failed), not the warehouse."
+    )
+
+
+def dispatch_stale(
+    *,
+    experiment: ExperimentConfig,
+    entries: Sequence[BacklogEntry],
+    channels_cfg: dict[str, Any],
+    project_name: str | None = None,
+    states: InternalTablesManager | None,
+    echo: Echo,
+) -> int:
+    """Route ``abk run``'s existing backlog detection as the `stale` signal.
+
+    Zero new detection: ``driver.py``'s PLAN stage has decided what a backlog
+    is since m2 (`backlog_seconds` > 3 tail-cadence steps) — this formats and
+    delivers what it found.
+    """
+    return _dispatch_recurring(
+        experiment=experiment,
+        kind="stale",
+        items=[entry.metric for entry in entries],
+        sentence=backlog_sentence(entries),
+        channels_cfg=channels_cfg,
+        project_name=project_name,
+        states=states,
+        echo=echo,
+    )
+
+
+def red_cells(cells: Sequence[Any]) -> list[Any]:
+    """The A/A cells whose measured FPR exceeded their budget — "do not use".
+
+    The EXACT condition ``validate/runner.py``'s ``_verdict`` renders as text
+    (``fpr > budget``), read off the same ``CellResult`` objects, so a message
+    and the matrix printed beside it cannot disagree about which cells are red.
+    """
+    return [
+        cell
+        for cell in cells
+        if cell.fpr is not None and cell.budget is not None and cell.fpr > cell.budget
+    ]
+
+
+def calibration_sentence(cells: Sequence[Any]) -> str:
+    """The `calibration_red` message body: which cells are red, and by how much."""
+    red = red_cells(cells)
+    listed = "; ".join(
+        f"{cell.method_name} on {cell.metric}: FPR {cell.fpr:.1%} (budget {cell.budget:.1%})"
+        for cell in red
+    )
+    plural = "cell" if len(red) == 1 else "cells"
+    return (
+        f"{len(red)} of {len(cells)} A/A {plural} exceeded the false-positive budget: "
+        f"{listed}. Those comparisons reject the null more often than their alpha "
+        "allows — do not decide on them until the method or the metric changes."
+    )
+
+
+def dispatch_calibration_red(
+    *,
+    experiment: ExperimentConfig,
+    cells: Sequence[Any],
+    channels_cfg: dict[str, Any],
+    project_name: str | None = None,
+    states: InternalTablesManager | None,
+    echo: Echo,
+) -> int:
+    """Route ``abk validate``'s over-budget cells as the `calibration_red` signal.
+
+    Zero new detection: the cells arrive already scored, carrying the same
+    ``fpr``/``budget`` pair the matrix prints and ``_ab_aa_runs`` persists.
+    The dedup identity is ``metric·method_config_id`` rather than the method
+    NAME — one metric can carry two cells of the same method with different
+    params, and collapsing them would let a newly-red second cell dedup
+    against the first.
+
+    The signature describes what THIS validation measured, so alternating a
+    ``--metric``-narrowed run with a full one legitimately re-announces: each
+    message is true about the cells it scored, and the alternative — merging
+    with a previous run's cells — would report redness nobody just measured.
+    """
+    return _dispatch_recurring(
+        experiment=experiment,
+        kind="calibration_red",
+        items=[f"{cell.metric}·{cell.method_config_id}" for cell in red_cells(cells)],
+        sentence=calibration_sentence(cells),
+        channels_cfg=channels_cfg,
+        project_name=project_name,
+        states=states,
+        echo=echo,
+    )

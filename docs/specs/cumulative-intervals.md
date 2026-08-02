@@ -431,7 +431,13 @@ strong reason to enable it for a heavy assignment source at sub-day cadence,
 while the no-copy default stays correct-by-construction at a higher live
 re-validation cost. `abk plan`/config-lint echo the projected look count
 and cost before accepting a sub-day grid; `run` warns when
-`watermark_ts − max(computed end_ts)` exceeds a few cadence steps (backlog).
+`last_due_cutoff − max(computed end_ts)` exceeds three tail-cadence steps
+(backlog). **Against the last DUE cutoff, not the watermark** (m12 NTF-5): the
+watermark is wall-clock − `data_lag` and keeps advancing, while an experiment's
+cutoffs stop at its horizon, so the original formula reported a backlog of
+"now − horizon" — growing daily — for a finished series with nothing left to
+compute. The same condition is what `abk run --notify` sends as the `stale`
+signal, which is why the difference stopped being cosmetic.
 
 ### 6.5 Statistics at sub-day grain (details in the companion specs)
 

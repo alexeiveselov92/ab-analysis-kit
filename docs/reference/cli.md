@@ -240,7 +240,11 @@ add a message: the readout already built answers to the `srm` kind as well, so a
 readouts. **Only a CHANGE is announced**: abkit records what each comparison last
 said in `_ab_notify_states` and stays quiet until the verdict — or its SRM gate —
 moves, so a scheduled run every hour is not a message every hour. A message no
-channel accepted is not recorded, so the next run retries it. See the
+channel accepted is not recorded, so the next run retries it. A completed run
+also sends a **`stale`** notice when a metric's computed series was more than
+three cadence steps behind the looks already due when the run planned it — a
+retrospective signal about the SCHEDULE (the same run computes the missing
+looks), deduped on WHICH metrics were behind, never on how far. See the
 [notification-channels guide](../guides/notification-channels.md).
 
 The effective per-comparison alphas (the inspectable two-tier Bonferroni scheme —
@@ -404,7 +408,7 @@ false-positive + power matrix (aa-false-positive-matrix). It is **not** a config
 ```bash
 abk validate [--select <exp>]... [--method <m>]... [--metric <m>] [--iterations N] \
              [--family-sweep] [--inject-effect PCT] [--scoring fpr|power|mde] \
-             [--report [PATH]] [--force] [--profile NAME]
+             [--report [PATH]] [--notify] [--force] [--profile NAME]
 ```
 
 | Option | Default | Meaning |
@@ -417,6 +421,7 @@ abk validate [--select <exp>]... [--method <m>]... [--metric <m>] [--iterations 
 | `--inject-effect` | none | Inject this relative effect (e.g. `0.05`) to measure power / achieved MDE / coverage |
 | `--scoring` | `fpr` | Selection objective for the "Recommended" row (`fpr`, `power`, `mde`) |
 | `--report [PATH]` | off | Emit a self-contained HTML matrix report (best-effort) |
+| `--notify` / `--no-notify` | off | Send a **`calibration_red`** notice naming every cell whose measured FPR exceeded its budget — the matrix's "do not use" verdict, delivered. Best-effort like `--report`; deduped on WHICH cells are red, so a nightly validation is not a nightly message ([guide](../guides/notification-channels.md#calibration-and-schedule-signals)) |
 | `--force` | off | Take over a held validate lock (use with care) |
 | `--profile` | `default_profile` | Connection profile to use |
 

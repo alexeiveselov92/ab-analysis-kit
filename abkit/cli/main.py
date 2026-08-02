@@ -328,6 +328,15 @@ cli.add_command(dashboard, name="ui")
 )
 @click.option("--force", is_flag=True, help="Take over a held validate lock (use with care)")
 @click.option("--profile", help="Profile name (default: profiles.yml default_profile)")
+@click.option(
+    "--notify/--no-notify",
+    default=False,
+    help=(
+        "Push a calibration_red notice to the profiles.yml notification_channels "
+        "when a cell's measured FPR exceeds its budget (best-effort — never fails "
+        "the validation). Route per experiment with a notify: block."
+    ),
+)
 def validate(
     select: tuple[str, ...],
     method: tuple[str, ...],
@@ -339,6 +348,7 @@ def validate(
     report_path: str | None,
     force: bool,
     profile: str | None,
+    notify: bool,
 ) -> None:
     """Score each method's empirical false-positive rate on placebo A/A splits.
 
@@ -360,6 +370,7 @@ def validate(
         force,
         profile,
         family_sweep=family_sweep,
+        notify=notify,
     )
 
 

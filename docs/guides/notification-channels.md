@@ -213,6 +213,8 @@ into a scheduler:
 - **Only a CHANGE is announced.** The first message about a comparison always
   goes; after that abkit stays quiet until something moves, so a run every hour
   is not a message every hour. See [What counts as a change](#what-counts-as-a-change).
+- **A run whose schedule slipped also says so** — see
+  [Calibration and schedule signals](#calibration-and-schedule-signals).
 
 ### Routing per experiment
 
@@ -227,6 +229,7 @@ notify:
   channels: [team_slack]        # subset of notification_channels (default: all)
   mentions: [growth-team]       # rendered in each channel's own @-syntax
   on: [readout]                 # signal kinds this experiment sends (default: all)
+  cooldown_seconds: 86400       # repeat an unchanged stale/calibration_red (default: never)
 ```
 
 ### Sending only what a channel is for
@@ -250,9 +253,10 @@ channel's to be delivered. The experiment narrows what it sends; the channel
 narrows what it accepts; neither re-opens what the other closed.
 
 The kinds are `readout`, `verdict_change`, `srm`, `calibration_red`, `stale` and
-`error`. **`readout`, `srm` and `error` fire today**; `verdict_change`,
-`calibration_red` and `stale` are accepted now so that a filter you write today
-keeps its meaning (rather than silently widening) as those signals ship.
+`error`. **All of them fire except `verdict_change`**, which is accepted now so
+that a filter you write today keeps its meaning (rather than silently widening)
+when it ships. Note that `calibration_red` comes from `abk validate --notify`,
+not from `abk run` — see [Calibration and schedule signals](#calibration-and-schedule-signals).
 
 ## Urgent signals: SRM and pipeline errors
 
@@ -274,6 +278,64 @@ into a success.
 
 Both signals obey the same intersection rule as everything else — an experiment
 whose `notify.on` omits `error` will not report its own failures, on any channel.
+
+## Calibration and schedule signals
+
+Two signals describe the *machinery* rather than an experiment's result. Neither
+carries an effect or a p-value — nothing was measured — so both render as a
+notice with a sentence in it.
+
+### `calibration_red` — a method you should not decide on
+
+```bash
+abk validate --select my_experiment --notify
+```
+
+[`abk validate`](validate.md) measures each method's false-positive rate on
+placebo A/A splits. A cell whose measured FPR exceeds its budget is the matrix's
+"do not use" verdict, and `--notify` is how it reaches you when nobody is
+watching the terminal. The message names each red cell, its FPR and the budget
+it broke.
+
+Like `--report`, the flag is best-effort: a notification failure never turns a
+successful validation into a failed one, and a validation that genuinely fails
+still exits non-zero.
+
+### `stale` — the schedule fell behind
+
+`abk run --notify` sends this when a metric's computed series was more than
+three cadence steps behind the looks that were already due when the run planned
+them.
+
+It is deliberately **retrospective**, and the message says so: the run that
+detects a backlog is the run that computes the missing looks, so what is behind
+is your *schedule* — a run that never fired, was locked out, or failed — not
+your warehouse. An experiment that has passed its horizon with every look
+computed is never "behind", however long ago it finished.
+
+### How often they repeat
+
+Both conditions survive the run that reports them, so unlike a verdict they
+would otherwise re-send forever. abkit remembers *which* metrics are behind and
+*which* cells are red (never how far behind or by how much — those numbers drift
+on every run) and sends again only when that set changes:
+
+| Situation | Sends? |
+|---|---|
+| First time | **yes** |
+| Same metrics behind / same cells red | no |
+| Another metric falls behind, another cell goes red | **yes** |
+| The condition cleared, then came back | **yes** — recovery is remembered, so a second outage is news |
+
+To be reminded about an unchanged condition, set a cooldown on the experiment:
+
+```yaml
+notify:
+  cooldown_seconds: 86400       # re-send an unchanged stale/calibration_red once a day
+```
+
+It never applies to verdicts: a WIN→LOSE flip always sends immediately, whatever
+the cooldown says.
 
 ## What counts as a change
 
