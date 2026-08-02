@@ -141,6 +141,15 @@ def init_claude(target_dir: str) -> None:
         "selects the DB connection."
     ),
 )
+@click.option(
+    "--notify/--no-notify",
+    default=False,
+    help=(
+        "After the run, push each completed experiment's readout to the "
+        "profiles.yml notification_channels (best-effort — never fails the "
+        "run). Route per experiment with a notify: block."
+    ),
+)
 def run(
     select: tuple[str, ...],
     exclude: tuple[str, ...],
@@ -155,6 +164,7 @@ def run(
     workers: int,
     report_path: str | None,
     cost_report: bool,
+    notify: bool,
 ) -> None:
     """Run the pipeline: validate → plan → load → SRM → state → compute → persist."""
     from abkit.cli.commands.run import run_run
@@ -173,6 +183,7 @@ def run(
         resync_cohort=resync_cohort,
         cost_report=cost_report,
         metric=metric,
+        notify=notify,
     )
 
 

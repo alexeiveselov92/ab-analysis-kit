@@ -83,6 +83,11 @@ readout:                         # READ-TIME verdict knobs — never enter metho
   stabilization_days: 7          # trailing elapsed-days window for persistent significance (default: 7)
   guardrail_policy: block        # block (default) | warn
 
+# notify:                        # optional routing for `abk run --notify` (see the
+#   channels: [team_slack]       # notification-channels guide). Routing only: with no block, a
+#   mentions: [growth-team]      # notified run sends to every configured channel
+#   on: [readout]                # signal kinds this experiment sends (default: all)
+
 comparisons:                     # required — each binds one metric to one method
   - metric: signup_cr
     is_main_metric: true

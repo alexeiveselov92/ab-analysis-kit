@@ -1,0 +1,306 @@
+"""Turn a just-completed experiment's PERSISTED rows into channel messages.
+
+The seam ``abk run --notify`` calls (m12-implementation-plan.md NTF-1). Three
+properties hold it together, and each exists because its opposite is a defect
+this milestone was written to avoid:
+
+* **Nothing here computes a statistic.** The verdict is
+  :func:`abkit.pipeline.readout.evaluate`'s — the same function
+  ``build_report_payload`` calls — over the same persisted ``_ab_results``
+  rows, so a message can never disagree with the report or the dashboard about
+  the same experiment. Every number is copied off a :class:`PairVerdict`.
+* **Fail-soft is the contract, not a courtesy.** A channel that raises, a
+  channel misconfigured, a warehouse that answers nothing — none of it may
+  change the run's exit code. Each channel is sent inside its own
+  ``try/except`` here, and ``run.py`` wraps the whole call again
+  (deliberate defense-in-depth, §0.4 point 1 — a later simplify pass must not
+  collapse the two into one).
+* **Opt-in twice over, in the two places that mean different things.** The
+  ``--notify`` flag is the operator saying "send"; ``experiment.notify`` is the
+  experiment saying "to whom, and about what". With the flag and NO experiment
+  block, every configured channel receives every kind (D1, maintainer-signed
+  2026-08-02) — an operator who wired channels up in ``profiles.yml`` never has
+  to touch experiment YAML to hear from them.
+
+Only the ``readout`` kind fires in NTF-1; the filter surface accepts all six
+kinds already, so an ``on:`` written today does not silently widen when NTF-2..5
+wire the rest.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Sequence
+from itertools import combinations
+from typing import Any
+
+from abkit.config.experiment_config import ComparisonConfig, ExperimentConfig
+from abkit.config.project_config import ProjectConfig
+from abkit.config.signals import SignalKind
+from abkit.database.internal_tables import InternalTablesManager
+from abkit.notify.base import ReadoutData, describe_error
+from abkit.notify.branding import READOUT_GUIDE_URL
+from abkit.pipeline.readout import ExperimentReadout, PairVerdict, evaluate
+from abkit.utils.datetime_utils import to_naive_utc
+
+#: What a caller passes to receive the yellow one-liners this module produces.
+#: ``run.py`` hands it ``click.echo``-with-style; tests hand it a list append.
+Echo = Callable[[str], None]
+
+
+def declared_pairs_only(experiment: ExperimentConfig, rows: Sequence[dict]) -> list[dict]:
+    """Drop rows whose arm pair is not among the CURRENTLY declared variants.
+
+    The third copy of a filter ``reporting/builder.py`` and ``tuning/overview.py``
+    each carry, and it is load-bearing on all three: ``readout._filter_rows``
+    drops rows by metric and ``method_config_id`` only, while the read-time
+    Benjamini-Hochberg family is built from EVERY informative row at a cutoff —
+    so rows left behind by a mid-flight arm rename would tighten every member's
+    threshold and this surface would contradict ``abk run --report`` on
+    identical rows (the m11 DASH-2 finding). A fourth copy should force the
+    extraction; three still read better mirrored than routed through a new
+    shared module.
+    """
+    declared = set(combinations(experiment.assignment.variants, 2))
+    return [row for row in rows if (str(row["name_1"]), str(row["name_2"])) in declared]
+
+
+def load_experiment_readout(
+    experiment: ExperimentConfig,
+    tables: InternalTablesManager,
+    *,
+    project: ProjectConfig | None = None,
+) -> tuple[ExperimentReadout, list[dict]] | None:
+    """The readout for *experiment* over its persisted rows, or ``None``.
+
+    ``None`` means "there is nothing to say": no ``_ab_results`` table (a
+    project that has never run) or no rows for this experiment. Both must stay
+    silent rather than notify — ``evaluate()`` over zero rows answers
+    INCONCLUSIVE, which is a verdict about DATA, and sending it for an
+    experiment nobody computed would report a finding where there is not even
+    an observation (the m11 DASH-7 finding, in message form).
+
+    The rows ride back with the readout because the verdict does not carry
+    per-arm sample sizes and the message renders them.
+    """
+    if not tables.results_table_exists():
+        return None
+    loaded = tables.load_results(experiment.name)
+    if not loaded:
+        return None
+    rows = declared_pairs_only(experiment, loaded)
+    if not rows:
+        return None
+    return evaluate(experiment, rows, project=project), rows
+
+
+def passes_filter(
+    kind: str,
+    channel_on: Sequence[str] | None,
+    experiment_on: Sequence[str] | None,
+) -> bool:
+    """Does *kind* survive both ``on:`` filters? ``None`` means "every kind".
+
+    An INTERSECTION, never a union: the experiment's filter narrows what it
+    ever sends, the channel's narrows what it ever accepts, and the two answer
+    different questions ("do I care about this experiment's SRM?" vs "is this
+    channel the on-call one?"). A union would let either side re-open what the
+    other closed.
+    """
+    if experiment_on is not None and kind not in experiment_on:
+        return False
+    if channel_on is not None and kind not in channel_on:
+        return False
+    return True
+
+
+def resolve_channels(
+    experiment: ExperimentConfig,
+    channels_cfg: dict[str, Any],
+) -> tuple[list[tuple[str, Any]], list[str]]:
+    """The (name, config) channels this experiment sends to, plus warnings.
+
+    D1: no ``notify.channels`` means EVERY configured channel. A named channel
+    that does not exist in ``profiles.yml`` is a warning, never an error — this
+    path may not fail a run, and a typo that silently sent to nothing would be
+    worse than a loud line naming what is configured.
+    """
+    warnings: list[str] = []
+    names = list(experiment.notify.channels) if experiment.notify is not None else []
+    if not names:
+        return list(channels_cfg.items()), warnings
+
+    resolved: list[tuple[str, Any]] = []
+    for name in dict.fromkeys(names):  # honour the declared order, drop repeats
+        cfg = channels_cfg.get(name)
+        if cfg is None:
+            configured = ", ".join(sorted(channels_cfg)) or "(none)"
+            warnings.append(
+                f"{experiment.name}: notify.channels names '{name}', which is not "
+                f"in profiles.yml notification_channels (configured: {configured})"
+            )
+            continue
+        resolved.append((name, cfg))
+    return resolved, warnings
+
+
+def _is_relative(comparison: ComparisonConfig | None) -> bool:
+    """Is this comparison's persisted effect a relative lift or an absolute one?
+
+    Read off the CONFIG rather than the row: ``evaluate`` has already dropped
+    every row whose ``method_config_id`` is not the configured one, so the two
+    agree by construction — and the config is where the dedup key's
+    ``method_config_id`` comes from too (one lookup, one source). The default
+    comes from the method's own ``ParamSpec``, mirroring ``readout.py``'s MDE
+    path, never a hardcoded "relative".
+    """
+    if comparison is None:
+        return True
+    params = comparison.method.params
+    if "test_type" in params:
+        return str(params["test_type"]) == "relative"
+    from abkit.stats import UnknownMethodError, get_method_class
+
+    try:
+        method_cls = get_method_class(comparison.method.name)
+    except UnknownMethodError:  # unreachable through a validated config
+        return True
+    default = next(
+        (spec.default for spec in method_cls.param_specs if spec.name == "test_type"),
+        "relative",
+    )
+    return str(default) == "relative"
+
+
+def _pair_sizes(verdict: PairVerdict, rows: Sequence[dict]) -> tuple[int | None, int | None]:
+    """Per-arm sample sizes off the verdict's OWN look, or ``(None, None)``.
+
+    The look, not the latest row: another metric — or another arm pair — can be
+    ahead, and a message pairing this pair's effect with that pair's n would be
+    a number nothing computed. ``PairVerdict.end_ts`` is ``None`` only when the
+    pair had no rows at all.
+    """
+    anchor = to_naive_utc(verdict.end_ts)
+    if anchor is None:
+        return None, None
+    for row in rows:
+        if (
+            str(row["metric"]) == verdict.metric
+            and str(row["name_1"]) == verdict.name_1
+            and str(row["name_2"]) == verdict.name_2
+            and to_naive_utc(row["end_ts"]) == anchor
+        ):
+            size_1, size_2 = row.get("size_1"), row.get("size_2")
+            return (
+                int(size_1) if size_1 is not None else None,
+                int(size_2) if size_2 is not None else None,
+            )
+    return None, None
+
+
+def readout_data_from_verdict(
+    experiment: ExperimentConfig,
+    verdict: PairVerdict,
+    readout: ExperimentReadout,
+    *,
+    project_name: str | None = None,
+    rows: Sequence[dict] = (),
+    dashboard_url: str | None = None,
+) -> ReadoutData:
+    """One channel-facing payload, copied field-for-field off the verdict.
+
+    ``srm_flag``/``srm_pvalue`` come from the sibling :class:`ExperimentReadout`
+    (the gate is a whole-experiment property, not a per-pair one) and are never
+    re-derived. ``timestamp`` is the look the numbers are AS OF — the cutoff's
+    ``end_ts``, not "now": a message that arrives an hour after the run must
+    still say which cutoff it describes.
+    """
+    comparison = next((c for c in experiment.comparisons if c.metric == verdict.metric), None)
+    n_1, n_2 = _pair_sizes(verdict, rows)
+    mentions = list(experiment.notify.mentions) if experiment.notify is not None else []
+    return ReadoutData(
+        experiment=experiment.name,
+        metric=verdict.metric,
+        verdict=verdict.verdict,
+        name_1=verdict.name_1,
+        name_2=verdict.name_2,
+        effect=verdict.effect,
+        left_bound=verdict.left_bound,
+        right_bound=verdict.right_bound,
+        pvalue=verdict.pvalue,
+        alpha=verdict.alpha,
+        relative=_is_relative(comparison),
+        srm_flag=readout.srm_flag,
+        srm_pvalue=readout.srm_pvalue,
+        weekly_cycle_pct=verdict.weekly_cycle_pct,
+        n_1=n_1,
+        n_2=n_2,
+        timestamp=to_naive_utc(verdict.end_ts),
+        timezone=experiment.timezone,
+        elapsed_days=verdict.elapsed_days,
+        project_name=project_name,
+        description=experiment.description,
+        mentions=mentions,
+        dashboard_url=dashboard_url,
+        help_url=READOUT_GUIDE_URL,
+    )
+
+
+def dispatch_experiment_signals(
+    *,
+    experiment: ExperimentConfig,
+    readout: ExperimentReadout,
+    rows: Sequence[dict] = (),
+    channels_cfg: dict[str, Any],
+    project_name: str | None = None,
+    echo: Echo,
+) -> int:
+    """Send one message per verdict through every channel that accepts it.
+
+    Returns how many sends reported success — the caller prints it. Nothing
+    raises: a channel that cannot even be CONSTRUCTED (a rotated secret, an
+    unknown type) is one yellow line, and the remaining channels still go.
+    """
+    from abkit.notify.factory import ChannelFactory
+
+    kind: SignalKind = "readout"
+    experiment_on = experiment.notify.on if experiment.notify is not None else None
+
+    channels, warnings = resolve_channels(experiment, channels_cfg)
+    for warning in warnings:
+        echo(warning)
+    if not channels:
+        return 0
+
+    payloads = [
+        readout_data_from_verdict(
+            experiment, verdict, readout, project_name=project_name, rows=rows
+        )
+        for verdict in readout.verdicts
+    ]
+    if not payloads:
+        return 0
+
+    sent = 0
+    for name, cfg in channels:
+        channel_on = getattr(cfg, "on", None)
+        if not passes_filter(kind, channel_on, experiment_on):
+            continue
+        try:
+            channel = ChannelFactory.create_from_config(cfg.model_dump())
+        except Exception as exc:
+            echo(f"{experiment.name}: notify channel '{name}' skipped — {exc}")
+            continue
+        for payload in payloads:
+            try:
+                if channel.send(payload):
+                    sent += 1
+                else:
+                    echo(f"{experiment.name}: notify channel '{name}' reported a failed send")
+            except Exception as exc:  # a channel that raises despite the bool contract
+                # `describe_error`, never the raw exception: `requests` embeds
+                # the full URL in its exception strings, and a webhook/bot URL
+                # carries the credential in its PATH — this line goes to stdout
+                # and into CI logs (the discipline `webhook.py`/`telegram.py`
+                # already follow for their own handled failures).
+                echo(f"{experiment.name}: notify channel '{name}' failed — {describe_error(exc)}")
+    return sent

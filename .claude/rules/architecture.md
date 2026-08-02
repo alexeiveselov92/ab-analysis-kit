@@ -8,6 +8,8 @@
 > (the additive read path made discoverable; the scaffold flipped to
 > `incremental_reads: true`). All tagged and on PyPI; `[Unreleased]` is empty.
 > M3's WP9 testcontainers hardening deferred to a Docker-equipped environment.
+> **M12 is open** (`0.7.0`, notifications): NTF-1 — the send seam
+> `abk run --notify` — is merged and sits in `[Unreleased]`.
 > Design contracts for what is being *built next* (the M12–M17 polish track)
 > live in [docs/specs/](../../docs/specs/) + [ROADMAP.md](../../ROADMAP.md);
 > this file must never claim unbuilt code exists.
@@ -97,6 +99,14 @@ abkit/
                          #   fallback; opt-in --family-sweep; per-cell auto-N
   planning/              # ✅ M5: sizing (pure required-N/MDE/power over stats.power) —
                          #   the `abk plan` engine; read-only, refuses ratio/bootstrap
+  notify/                # ✅ M6: the 5 channels + BaseChannel/ReadoutData/factory
+                         #   (`abk test-report`'s synthetic smoke test);
+                         #   ✅ M12 NTF-1: dispatch (the `abk run --notify` seam —
+                         #   persisted rows → readout.evaluate → one payload per
+                         #   verdict) + factory.ROUTING_KEYS. `dispatch` is NOT
+                         #   re-exported from the package __init__: it pulls in
+                         #   config+pipeline, and `test-report` must resolve a
+                         #   channel without either
   stats/                 # ✅ M1: the pure numpy core (details below);
                          #   ✅ M7: supports_vectorized + from_suffstats_array
                          #   (5-method roster) + effects._libm_pow batch kernels;
@@ -774,6 +784,50 @@ two-process lock race) is deferred to a Docker-equipped environment.
   landed AND re-parses to confirm, and each leg proves from `--cost-report`
   output which path it actually took. Any new test scaffolding a project must
   state the flag rather than rely on silence.
+
+### M12 NTF-1 facts an assistant must know (the notification send seam)
+
+- **`abkit/notify/dispatch.py` computes nothing.** It loads the persisted rows,
+  calls `readout.evaluate()` — the function `build_report_payload` and the
+  dashboard already call — and copies each `PairVerdict` field onto a
+  `ReadoutData`. This is the M11 launcher discipline applied to a second
+  surface: a message that re-derived a number could disagree with the report
+  about the same experiment, and the operator would have no way to tell which
+  was right.
+- **Two `on:` filters, INTERSECTED.** `NotificationChannelConfig.on` (what a
+  channel accepts) and `ExperimentConfig.notify.on` (what an experiment sends)
+  answer different questions; `passes_filter` requires both, so neither can
+  re-open what the other closed. Both accept all six `SignalKind`s
+  (`abkit/config/signals.py` — a leaf module, because both config models need
+  the literal and neither may import the other's dependency tree). Only
+  `readout` fires until NTF-2.
+- **A declared field on `notification_channels` reaches the channel
+  constructor unless the factory strips it.** The block is `extra="allow"`, so
+  every sibling key is a kwarg — and because `on:` is *declared*,
+  `model_dump()` emits `on: None` even for a config that never writes it.
+  Without `ChannelFactory.ROUTING_KEYS`, adding the field alone breaks **every**
+  channel, `abk test-report` included (18 tests red under the mutation probe).
+  The gate is `test_every_declared_field_is_classified`: declared fields minus
+  `type` must EQUAL `ROUTING_KEYS`, so a future routing key cannot be added
+  without classifying it.
+- **D1 (signed off 2026-08-02): `--notify` is the switch, `notify:` is only
+  routing.** An experiment with no block — or a block with no `channels` —
+  sends to every configured channel. `--notify` with *no* configured channels
+  prints a loud line: silence there is indistinguishable from a broken flag.
+- **Fail-soft is doubled on purpose** (§0.4 point 1): `dispatch` catches per
+  channel (one bad channel cannot block the rest) and `run.py` wraps the whole
+  call (a failure before any channel — a warehouse read, a config surprise —
+  cannot fail the run). A simplify pass must not collapse them.
+- **Nothing is sent about an experiment nobody computed.**
+  `load_experiment_readout` returns `None` for a missing results table, zero
+  rows, or rows only for undeclared arm pairs — the m11 DASH-7 finding in
+  message form (`evaluate()` over zero rows answers INCONCLUSIVE, a verdict
+  about *data*). Only `completed` outcomes notify: a locked/skipped/failed run
+  produced no new look.
+- **The notify block sits BEFORE the report block in `run.py`'s outcome loop**,
+  because the report block's `if report_path is None: continue` would skip
+  everything after it. Both share one lazily-built manager, now honestly named
+  `readback_*` rather than `report_*`.
 
 ## The stats core (`abkit.stats`) — the implemented system
 

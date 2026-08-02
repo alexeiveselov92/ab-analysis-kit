@@ -111,7 +111,7 @@ state → compute → persist.
 abk run [--select <exp>]... [--exclude <sel>]... [--metric <m>] \
         [--steps validate,plan,load,state,compute] \
         [--from TS] [--to TS] [--full-refresh] [--resync-cohort] [--workers N] \
-        [--report [PATH]] [--force] [--profile NAME]
+        [--report [PATH]] [--notify] [--force] [--profile NAME]
 ```
 
 | Option | Default | Meaning |
@@ -126,6 +126,7 @@ abk run [--select <exp>]... [--exclude <sel>]... [--metric <m>] \
 | `--resync-cohort` | off | Copy mode only: delete the persisted cohort and rebuild it from the experiment start through the incremental engine |
 | `--workers` | `1` | Worker threads across experiments (each gets its own DB connection) |
 | `--report [PATH]` | off | Emit a self-contained HTML readout per experiment |
+| `--notify` / `--no-notify` | off | Push each **completed** experiment's readout to the configured `notification_channels` — the same `readout.evaluate()` decision the report bakes, never recomputed. Best-effort: a failing channel is a yellow line, never a non-zero exit. Route it per experiment with a `notify:` block ([guide](../guides/notification-channels.md)) |
 | `--cost-report` | off | Print per-stage warehouse cost (wall-time, queries, rows returned, rows scanned where the backend reports them), plus the **day-additive slice** of COMPUTE and what the other read path would have done with it — the evidence for turning `compute.incremental_reads` on. Unrelated to `--profile`. |
 | `--force` | off | Take over a held lock (use with care) |
 | `--profile` | `profiles.yml` `default_profile` | Connection profile to use |
@@ -226,6 +227,15 @@ rejected when more than one experiment is selected). The readout reads persisted
 so it is emitted even when zero cutoffs were pending — the "just give me the report"
 path. Report emission is **best-effort**: a report failure yellow-skips and never
 fails the run (the one recorded exception to the exit-non-zero rule).
+
+**`--notify` is best-effort on the same terms**, and it is the only other flag
+that reads rows back after the pipeline (both share one connection). It fires
+for **completed** experiments only — a locked, skipped or failed run produced no
+new look — and it sends the verdicts `readout.evaluate()` returns, one message
+per verdict, to the channels an experiment's `notify:` block selects (or to all
+configured channels when it has none). Every completed run sends: verdict-change
+dedup is the next NTF work package. See the
+[notification-channels guide](../guides/notification-channels.md).
 
 The effective per-comparison alphas (the inspectable two-tier Bonferroni scheme —
 main metric vs the rest, declarative-config §6) are echoed before compute.

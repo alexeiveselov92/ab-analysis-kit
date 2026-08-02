@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from abkit.config.signals import SignalKind
 from abkit.utils.env_interpolation import interpolate_env_vars
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -202,20 +203,29 @@ class ProfileConfig(BaseModel):
 
 
 class NotificationChannelConfig(BaseModel):
-    """One notification channel for ``abk test-report`` (profiles.yml
-    ``notification_channels:``).
+    """One notification channel (profiles.yml ``notification_channels:``).
 
     A flat block mirroring the channel constructor: a ``type`` discriminator
     (webhook / slack / mattermost / telegram / email) plus channel-specific
     params as sibling keys (``extra='allow'`` keeps them). Secrets are
     env-interpolated by :meth:`ProfilesConfig.from_yaml` before validation, so
     they are never stored in plaintext. Instantiate via
-    ``abkit.notify.ChannelFactory.create_from_config(cfg.model_dump())``.
+    ``abkit.notify.ChannelFactory.create_from_config(cfg.model_dump())`` — the
+    factory drops the routing keys below, which are abkit's own and would
+    otherwise reach the channel constructor as unexpected kwargs.
+
+    ``on`` is the per-channel urgency filter (m12 NTF-1): which signal kinds
+    this channel accepts, ``None`` meaning every kind. It composes with the
+    experiment's own ``notify.on`` as an INTERSECTION — the channel narrows
+    what it receives, the experiment narrows what it sends.
     """
 
     model_config = ConfigDict(extra="allow")
 
     type: str = Field(..., description="Channel type: webhook|slack|mattermost|telegram|email")
+    on: list[SignalKind] | None = Field(
+        default=None, description="Signal kinds this channel accepts (None -> all kinds)"
+    )
 
 
 class ProfilesConfig(BaseModel):

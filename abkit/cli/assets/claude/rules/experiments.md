@@ -54,6 +54,11 @@ readout:                         # READ-TIME verdict knobs — NEVER enter metho
   stabilization_days: 7          # trailing elapsed-DAYS window for "persistent significance" (default 7)
   guardrail_policy: block        # block (default): regressed guardrail caps WIN at INCONCLUSIVE; warn: keep WIN + caveat
 
+# notify:                        # optional ROUTING for `abk run --notify` (0.7.0). Omitting it does
+#   channels: [team_slack]       # NOT silence the experiment — a notified run with no block goes to
+#   mentions: [growth-team]      # every configured channel. `on` = the signal kinds this experiment
+#   on: [readout]                # sends (default all); it INTERSECTS a channel's own `on:`
+
 comparisons:                     # required — each binds one library metric to one method
   - metric: signup_cr            # references metrics/signup_cr.yml by name
     is_main_metric: true         # primary winner criterion (drives the verdict + two-tier Bonferroni)

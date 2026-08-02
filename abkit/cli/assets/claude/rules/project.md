@@ -176,13 +176,13 @@ Keep the internal location **separate** from your analytics location so the
 `_ab_*` tables don't clutter shared schemas. Override per run with
 `abk run --profile prod`.
 
-### `notification_channels` (optional — for `abk test-report`)
+### `notification_channels` (optional — where readouts are sent)
 
 A top-level `notification_channels:` block in `profiles.yml`, keyed by channel
 name, declares where readouts can be sent. Each entry has a `type`
 (`slack` \| `mattermost` \| `webhook` \| `telegram` \| `email`) plus that
 transport's fields (put secrets behind `env_var`/`${VAR}` — an unresolved
-channel secret **is** rejected):
+channel secret **is** rejected), and an optional `on:` filter:
 
 ```yaml
 notification_channels:
@@ -193,12 +193,25 @@ notification_channels:
     type: telegram
     bot_token: "${TELEGRAM_BOT_TOKEN}"
     chat_id: "-1001234567890"
+    on: [srm, error]       # urgent only — no routine readouts (0.7.0)
 ```
 
-`abk test-report <exp> [--channel <name>]... [--profile <p>]` sends a **mock**
-WIN readout through them (no lock, no warehouse read, no stats) and prints a
-per-channel ✓/✗, exiting non-zero if any channel fails — a connectivity/format
-smoke test before wiring channels into an orchestrator.
+Two commands use them:
+
+- `abk test-report <exp> [--channel <name>]... [--profile <p>]` sends a **mock**
+  WIN readout (no lock, no warehouse read, no stats) and prints a per-channel
+  ✓/✗, exiting non-zero if any channel fails — the connectivity/format smoke
+  test to run before wiring channels into an orchestrator.
+- `abk run --notify` (0.7.0) sends the **real** readout of each completed
+  experiment — the same `readout.evaluate()` decision `--report` bakes. Opt-in
+  and best-effort: a failing channel never fails the run. Narrow it per
+  experiment with a `notify:` block; with no block, every configured channel
+  receives it.
+
+`on:` accepts `readout`, `verdict_change`, `srm`, `calibration_red`, `stale`,
+`error` — **only `readout` fires today**, the rest are accepted now so a filter
+does not silently widen later. A channel's `on:` and an experiment's `notify.on`
+INTERSECT: the experiment narrows what it sends, the channel what it accepts.
 
 ## The two-tier alpha (why the effective alpha isn't the alpha you set)
 

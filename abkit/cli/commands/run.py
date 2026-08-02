@@ -12,6 +12,11 @@ value matching NOWHERE is a loud error, never a silent no-op. The alphas below
 are echoed — and persisted — unfiltered: the two-tier scheme is a property of
 the config, not of what one invocation recomputes.
 
+``--notify`` (m12 NTF-1) pushes each completed experiment's readout through the
+configured ``notification_channels``. Opt-in, and fail-soft on the same terms as
+``--report``: a channel that raises is a yellow line, never a non-zero exit. It
+reads the rows the run just persisted — it computes nothing.
+
 ``--report`` (tri-state: absent / bare / path — the donor's flag shape) emits
 one self-contained HTML readout per experiment after its pipeline, inside
 try/except: a report failure yellow-skips and NEVER fails the run — the one
@@ -166,6 +171,7 @@ def run_run(
     resync_cohort: bool = False,
     cost_report: bool = False,
     metric: str | None = None,
+    notify: bool = False,
 ) -> None:
     try:
         parsed_steps = PipelineStep.parse(steps)
@@ -177,6 +183,13 @@ def run_run(
         raise click.BadParameter(
             "--report needs pipeline steps (validate-only runs never touch the DB)",
             param_hint="--report",
+        )
+    if validate_only and notify:
+        # Same shape as --report: a notification carries a readout, and a
+        # validate-only run never reads a result row to build one from.
+        raise click.BadParameter(
+            "--notify needs pipeline steps (validate-only runs never touch the DB)",
+            param_hint="--notify",
         )
     if validate_only and metric is not None:
         # The config lint is whole-project by construction (every metric SQL,
@@ -358,9 +371,39 @@ def run_run(
     click.echo()
     failed = 0
     experiments_by_name = {experiment.name: experiment for _, experiment in selected}
-    report_manager = None
-    report_tables = None
+
+    # m12 NTF-1: resolved once. An operator who passed --notify with nothing
+    # configured must hear about it — silence there reads as a broken flag.
+    notify_channels: dict = {}
+    if notify:
+        notify_channels = dict(context.profiles.notification_channels)
+        if not notify_channels:
+            click.echo(
+                click.style(
+                    "  ⚠ --notify: no notification_channels in profiles.yml — "
+                    "nothing to send to (see docs/guides/notification-channels.md)",
+                    fg="yellow",
+                )
+            )
+
+    # ONE manager per invocation, shared by --report and --notify (both read
+    # back the rows this run just persisted); built on first use so a run with
+    # neither flag opens no extra connection.
+    readback_manager = None
+    readback_tables = None
     generated_at = None
+
+    def readback():
+        nonlocal readback_manager, readback_tables, generated_at
+        if readback_tables is None:
+            from abkit.database.internal_tables import InternalTablesManager
+            from abkit.utils.datetime_utils import now_utc_naive
+
+            readback_manager = context.manager_factory(profile)()
+            readback_tables = InternalTablesManager(readback_manager)
+            generated_at = now_utc_naive().strftime("%Y-%m-%d %H:%M UTC")
+        return readback_tables
+
     try:
         for outcome in outcomes:
             if outcome.status == "completed":
@@ -406,6 +449,52 @@ def run_run(
                 failed += 1
                 echo_error(outcome.experiment, outcome.error or "failed")
 
+            # ── notify (m12 NTF-1): the just-persisted readout, pushed to the
+            # configured channels. Sits BEFORE the report block on purpose —
+            # that block's `continue` would skip everything after it. The whole
+            # call is wrapped again here on top of dispatch's own per-channel
+            # catch (§0.4 point 1): the inner one keeps one bad channel from
+            # blocking the rest, this one keeps ANY notify failure — a
+            # warehouse read, a config surprise — from failing the run.
+            #
+            # `completed` only: this signal is "a new look landed", and a
+            # locked/skipped/failed experiment produced none. Re-sending the
+            # previous look's verdict on every no-op run is exactly the noise
+            # NTF-3's dedup exists to prevent.
+            if notify and notify_channels and outcome.status == "completed":
+                try:
+                    from abkit.notify.dispatch import (
+                        dispatch_experiment_signals,
+                        load_experiment_readout,
+                    )
+
+                    experiment = experiments_by_name[outcome.experiment]
+                    loaded = load_experiment_readout(
+                        experiment, readback(), project=context.project
+                    )
+                    if loaded is None:
+                        click.echo(
+                            click.style("  │ Notify skipped: no persisted results yet", fg="yellow")
+                        )
+                    else:
+                        experiment_readout, result_rows = loaded
+                        sent = dispatch_experiment_signals(
+                            experiment=experiment,
+                            readout=experiment_readout,
+                            rows=result_rows,
+                            channels_cfg=notify_channels,
+                            project_name=context.project.name,
+                            echo=lambda line: click.echo(
+                                click.style(f"  │ Notify: {line}", fg="yellow")
+                            ),
+                        )
+                        if sent:
+                            click.echo(
+                                click.style(f"  │ Notify → {sent} message(s) sent", fg="cyan")
+                            )
+                except Exception as notify_error:  # never fail the run on a notification
+                    click.echo(click.style(f"  │ Notify skipped: {notify_error}", fg="yellow"))
+
             # ── the readout (D8): per experiment, after its pipeline, inside
             # try/except — never fail the run on a report ─────────────────────
             if report_path is None:
@@ -419,27 +508,20 @@ def run_run(
                 )
                 continue
             try:
-                if report_tables is None:
-                    from abkit.database.internal_tables import InternalTablesManager
-                    from abkit.utils.datetime_utils import now_utc_naive
-
-                    report_manager = context.manager_factory(profile)()
-                    report_tables = InternalTablesManager(report_manager)
-                    generated_at = now_utc_naive().strftime("%Y-%m-%d %H:%M UTC")
                 _emit_experiment_report(
                     experiments_by_name[outcome.experiment],
-                    report_tables,
+                    readback(),
                     context,
                     report_path,
                     generated_at or "",
-                    manager=report_manager,
+                    manager=readback_manager,
                     cohort_counts=outcome.exposure_counts or None,
                 )
             except Exception as report_error:  # never fail the run on a report
                 click.echo(click.style(f"  │ Report skipped: {report_error}", fg="yellow"))
     finally:
-        if report_manager is not None:
-            report_manager.close()
+        if readback_manager is not None:
+            readback_manager.close()
 
     total_rows = sum(o.results_written for o in outcomes)
     echo_done(
