@@ -206,7 +206,8 @@ class NotificationChannelConfig(BaseModel):
     """One notification channel (profiles.yml ``notification_channels:``).
 
     A flat block mirroring the channel constructor: a ``type`` discriminator
-    (webhook / slack / mattermost / telegram / email) plus channel-specific
+    (webhook / slack / mattermost / telegram / email / discord / teams /
+    googlechat / ntfy) plus channel-specific
     params as sibling keys (``extra='allow'`` keeps them). Secrets are
     env-interpolated by :meth:`ProfilesConfig.from_yaml` before validation, so
     they are never stored in plaintext. Instantiate via
@@ -222,7 +223,12 @@ class NotificationChannelConfig(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    type: str = Field(..., description="Channel type: webhook|slack|mattermost|telegram|email")
+    type: str = Field(
+        ...,
+        description=(
+            "Channel type: webhook|slack|mattermost|telegram|email|" "discord|teams|googlechat|ntfy"
+        ),
+    )
     on: list[SignalKind] | None = Field(
         default=None, description="Signal kinds this channel accepts (None -> all kinds)"
     )

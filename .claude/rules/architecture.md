@@ -99,7 +99,8 @@ abkit/
                          #   fallback; opt-in --family-sweep; per-cell auto-N
   planning/              # ✅ M5: sizing (pure required-N/MDE/power over stats.power) —
                          #   the `abk plan` engine; read-only, refuses ratio/bootstrap
-  notify/                # ✅ M6: the 5 channels + BaseChannel/ReadoutData/factory
+  notify/                # ✅ M6: BaseChannel/ReadoutData/factory + 5 channels
+                         #   (✅ M12 NTF-4: +discord/teams/googlechat/ntfy = 9)
                          #   (`abk test-report`'s synthetic smoke test);
                          #   ✅ M12 NTF-1: dispatch (the `abk run --notify` seam —
                          #   persisted rows → readout.evaluate → one payload per
@@ -863,6 +864,20 @@ two-process lock race) is deferred to a Docker-equipped environment.
   deduped away. `states` is a REQUIRED keyword on
   `dispatch_experiment_signals` (explicit `None` disables dedup) so no caller
   can turn the quiet off by forgetting it.
+- **NTF-4: nine channels, and three of the four new ones bend a rule the others
+  do not.** Discord's embed colour is a DECIMAL int and a mention inside an embed
+  never pings (it rides in top-level `content` with `allowed_mentions`, and is
+  stripped from the body so handles do not print twice); Teams takes a NAMED
+  Adaptive Card colour (`Good`/`Attention`/…), so it is the one channel where the
+  brand hex cannot be passed through, and its Workflows path posts as the flow's
+  identity (no per-message bot name/avatar); Google Chat Cards v2 ignore `\n` and
+  need `<br>`, so every string is HTML-escaped THEN converted; ntfy caps the body
+  in BYTES, not characters. All four still take their CONTENT from
+  `build_context()` — never a donor-shaped alert object — so a notice renders as
+  a notice everywhere for free.
+- **The ntfy priority override is deliberately partial**: it raises only
+  LOSE/SRM/error/calibration_red. A WIN is good news, and a channel must not be
+  configurable into buzzing a phone at 3am over one.
 - **The notify block sits BEFORE the report block in `run.py`'s outcome loop**,
   because the report block's `if report_path is None: continue` would skip
   everything after it. Both share one lazily-built manager, now honestly named

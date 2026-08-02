@@ -602,7 +602,7 @@ no live users to hurry for, and sweeping the previous release's status lines
   surface, not an addendum to a closing interstitial. Revisit **after M12**,
   with its own design pass.
 
-### M12 — notifications → `0.7.0` 🚧 IN PROGRESS (NTF-1, NTF-2, NTF-3 shipped)
+### M12 — notifications → `0.7.0` 🚧 IN PROGRESS (NTF-1…NTF-4 shipped)
 Design contract: [m12-implementation-plan.md](docs/specs/m12-implementation-plan.md).
 `abkit/notify/` (shipped M6, reachable only via `abk test-report`) gets wired
 to six real signals behind opt-in `--notify`, with dedup/cooldown state in
@@ -661,6 +661,22 @@ for the exit gate — no NTF WP depends on them.
   - **No sixth brand hex.** The five tokens are verdict tokens; notices reuse
     `--srm` `#B23A6B` and the word/emoji carry the distinction. Adding a real
     error token is a designer's call, and it is one map away.
+- **NTF-4 ✅ SHIPPED — nine channels.** `discord`, `teams`, `googlechat`, `ntfy`
+  as thin adapters: platform wire format + limits taken as fact, content always
+  from `build_context()`, zero donor alerting semantics. ~2 sessions —
+  **actual: <1 session** (the notice/verdict split NTF-2 built meant each
+  channel needed one branch, not two renderers). Three platform rules that bend
+  the house pattern, all pinned by tests: Discord's decimal colour + mentions
+  that only ping from top-level `content`; Teams' NAMED Adaptive Card colour
+  (the one channel where the brand hex cannot pass through) over the Power
+  Automate Workflows path; Cards v2 ignoring `\n`; and ntfy's BYTE-budget body
+  cap. The ntfy `priority` override is deliberately partial — urgent kinds only,
+  so a WIN can never be configured into buzzing a phone.
+  **Not done, and named:** the plan's live-webhook smoke against a real Teams
+  workflow. It needs credentials this environment does not have; the JSON shape
+  is unit-pinned, but the Workflows contract is an actively migrating Microsoft
+  surface, so the first operator to wire one should run `abk test-report`.
+
 - **NTF-3 ✅ SHIPPED — the dedup, and the flag becomes schedulable.** The new
   `_ab_notify_states` table + the pure `notify/cooldown.py` rule: a change always
   announces, an unchanged value never re-announces (D2, signed off before

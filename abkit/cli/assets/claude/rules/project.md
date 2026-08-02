@@ -180,7 +180,8 @@ Keep the internal location **separate** from your analytics location so the
 
 A top-level `notification_channels:` block in `profiles.yml`, keyed by channel
 name, declares where readouts can be sent. Each entry has a `type`
-(`slack` \| `mattermost` \| `webhook` \| `telegram` \| `email`) plus that
+(`slack` \| `mattermost` \| `webhook` \| `telegram` \| `email` \| `discord` \|
+`teams` \| `googlechat` \| `ntfy` — nine) plus that
 transport's fields (put secrets behind `env_var`/`${VAR}` — an unresolved
 channel secret **is** rejected), and an optional `on:` filter:
 
