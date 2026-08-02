@@ -702,6 +702,66 @@ named in §5.
 
 **Session estimate:** 1–2 sessions.
 
+**As built (shipped 2026-08-03; the routing was the easy half):**
+
+- **Step 1 is void, and deliberately so.** It asked for two NEW brand hexes for
+  `CALIBRATION`/`STALE`; NTF-2 had already shipped all three notice kinds under
+  the rule that the five brand tokens are VERDICT tokens and a notice is not a
+  verdict, so every notice reuses `--srm`. What did change in
+  `_NOTICE_PRESENTATION` is the WORD: `stale` said "Data is stale", which the
+  signal does not mean (below). Adding a real error token stays a designer's
+  call, one map away.
+- **The detector NTF-5 was told to route was broken, and only routing it showed
+  that.** `backlog_seconds(computed, watermark_ts)` measures against the
+  watermark — wall-clock minus `data_lag`, which keeps advancing — while an
+  experiment's cutoffs stop at its horizon. A finished, fully computed series
+  therefore reported a backlog of "now − horizon" growing by a day every day: as
+  a printed warning, noise nobody had complained about; as a notification, an
+  alarm about every experiment a team has ever finished. It now measures against
+  `last_due_cutoff(grid, watermark_ts)` — "the newest look this run could
+  already have computed". This is the §0.4-point-4 "zero new detection" clause
+  meeting its limit: routing a signal is a test OF that signal.
+- **`stale` is retrospective, and the message had to say so.** Detection sits in
+  PLAN, inside a run that then computes every pending look, so by delivery the
+  gap is closed. A "still behind" flag would have been dead code (the compute
+  loop drains `pending` by construction — a `cleared` field was drafted and
+  removed for exactly that reason), and the honest news is that the SCHEDULE
+  slipped: a run that never fired, was locked out, or failed.
+- **Step 3's `"backlog" in w` substring became a structured field.**
+  `RunOutcome.backlog: list[BacklogEntry]`, filled at the same condition, same
+  place. The warning string carries the lag in hours, so a signature built from
+  it would differ on every run and dedup nothing — and a reworded warning would
+  silently kill the signal.
+- **The recurring kinds needed a dedup rule of their own** (the plan has none;
+  NTF-3 reserved `is_in_cooldown` for exactly this). `should_announce_recurring`
+  = D2's shape for a condition that persists: a CHANGED signature always
+  announces, an unchanged one waits for `notify.cooldown_seconds` (the field
+  NTF-3 withheld until something consulted it), and `None` ≠ `0` — both are
+  "no window" to `is_in_cooldown`, so deferring to it alone would have made the
+  DEFAULT re-announce on every run. The signature is WHICH things are wrong
+  (metrics behind, `metric·method_config_id` red cells), never the drifting lag
+  or FPR. A CLEARED condition is written back as an empty signature — an
+  observation, not an announcement, so NTF-3's "only what a channel accepted
+  becomes history" is untouched — because otherwise a second outage months later
+  dedups against the first and is never announced.
+- **The notice state rows live in `_ab_notify_states` under a sentinel key**
+  (`notice_state_key(kind)` → `metric='__stale__'`, empty arm pair). The
+  `_ab_aa_runs` `__family__` precedent, but the sentinel NAME is not what makes
+  it safe — `MetricConfig` accepts underscores — the EMPTY arm pair is, since a
+  variant name cannot be empty.
+- **`abk validate` gained `--notify`** (the plan's step 2 assumed it existed).
+  It is best-effort on `--report`'s terms, inside the lock's try, and the
+  dispatch runs even when nothing is red — that is how a previously announced
+  failure is cleared.
+- **Step 5 held: explore-Apply is untouched.** `tuning/server.py` and
+  `cli/commands/explore.py` have no diff.
+- **Named, not fixed:** `verdict_change` is the one declared kind nothing emits,
+  so `on: [verdict_change]` matches NOTHING and is silent for a reason no
+  operator could guess. NTF-3 made every delivered readout a change by
+  construction, so wiring it is a two-line change — but which way to go (emit it
+  beside `readout`, or drop it from `SignalKind`) is a vocabulary decision NTF-6
+  owns.
+
 ---
 
 ### NTF-6 — Pipeline-error hardening, docs rewrite, and the NTF exit gate

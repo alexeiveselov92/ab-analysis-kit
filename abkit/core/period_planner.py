@@ -397,11 +397,29 @@ def pending_cutoffs(
     return pending
 
 
-def backlog_seconds(computed_end_ts: set[datetime], watermark_ts: datetime) -> float | None:
-    """How far the computed series trails the watermark (§6.4 backlog warning).
+def last_due_cutoff(grid: Grid, watermark_ts: datetime) -> datetime | None:
+    """The newest cutoff this run COULD already have computed, or None.
+
+    The reference point :func:`backlog_seconds` measures against. It is not the
+    watermark, and the difference is the whole point (m12 NTF-5): the watermark
+    is wall-clock minus ``data_lag`` and keeps advancing forever, while an
+    experiment's cutoffs stop at its horizon. Measured against the raw
+    watermark, a FINISHED experiment whose every look is computed reports a
+    backlog of "now − horizon" that grows by a day every day — a warning that
+    is loudest exactly when there is nothing left to do, and (once routed as a
+    notification) an alarm about every experiment a team has ever finished.
+    """
+    due = [cutoff.end_ts for cutoff in grid.cutoffs if cutoff.end_ts <= watermark_ts]
+    return max(due) if due else None
+
+
+def backlog_seconds(computed_end_ts: set[datetime], reference_ts: datetime) -> float | None:
+    """How far the computed series trails *reference_ts* (§6.4 backlog warning).
 
     None when nothing is computed yet (a fresh experiment isn't "backlogged").
+    Callers pass :func:`last_due_cutoff`, not the watermark — see its docstring
+    for why the two differ.
     """
     if not computed_end_ts:
         return None
-    return (watermark_ts - max(computed_end_ts)).total_seconds()
+    return (reference_ts - max(computed_end_ts)).total_seconds()

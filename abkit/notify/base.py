@@ -131,10 +131,14 @@ class BaseChannel(ABC):
     # one token that already means "there is no trustworthy result — look at
     # this". The word and emoji carry the distinction; a designer adding a real
     # error token later changes this map and nothing else.
+    # NTF-5 corrected `stale`'s word: what the signal actually reports is that
+    # the SCHEDULE fell behind (detected while planning a run that then computes
+    # the missing looks), so "Data is stale" — NTF-2's placeholder — would be
+    # false about the warehouse by the time the message arrived.
     _NOTICE_PRESENTATION = {
         "error": ("Pipeline error", "\U0001f6d1"),  # stop sign
         "calibration_red": ("Calibration failed", "\U0001f9ea"),  # test tube
-        "stale": ("Data is stale", "\U000023f3"),  # hourglass
+        "stale": ("Schedule fell behind", "\U000023f3"),  # hourglass
     }
     _NOTICE_COLOR = "#B23A6B"
 

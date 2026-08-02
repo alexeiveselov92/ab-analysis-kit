@@ -667,6 +667,43 @@ class TestWatermark:
         assert outcome.cutoffs_planned == 1
 
 
+class TestBacklogSignal:
+    """What `abk run --notify` routes as `stale` (m12 NTF-5).
+
+    The warning itself is m2's; NTF-5 gave it a structured twin and, in doing
+    so, found it firing on experiments that are simply over.
+    """
+
+    def test_a_finished_fully_computed_experiment_reports_nothing(self, warehouse, tables):
+        """The regression that made the signal unroutable.
+
+        Both runs are past the July 6 horizon with every look computed. Against
+        the raw watermark the second reported a 336h backlog — and would have
+        kept reporting a larger one every day, on an experiment with nothing
+        left to compute.
+        """
+        run(warehouse, tables)
+        second = run(warehouse, tables)
+
+        assert second.cutoffs_planned == 0
+        assert second.backlog == []
+        assert [w for w in second.warnings if "backlog" in w] == []
+
+    def test_a_series_left_behind_is_reported_with_its_metric_and_lag(self, warehouse, tables):
+        """A long experiment whose looks stopped being computed for two weeks."""
+        experiment = make_experiment(horizon_ts="2024-07-25")
+        seed_events(warehouse, days=24)
+        run(warehouse, tables, experiment=experiment, now_utc=datetime(2024, 7, 4))
+        outcome = run(warehouse, tables, experiment=experiment, now_utc=datetime(2024, 7, 18))
+
+        assert [entry.metric for entry in outcome.backlog] == ["arpu"]
+        # last DUE cutoff (July 18) − last computed (July 4) = 14 days
+        assert outcome.backlog[0].lag_seconds == 14 * 86400
+        # the prose half still fires, and agrees with the data half
+        warning = next(w for w in outcome.warnings if "backlog" in w)
+        assert "336.0h behind the looks already due" in warning and "arpu" in warning
+
+
 class TestFullRefresh:
     def test_window_is_reopened(self, warehouse, tables):
         run(warehouse, tables)

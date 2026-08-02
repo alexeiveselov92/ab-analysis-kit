@@ -401,6 +401,16 @@ class NotifyConfig(BaseModel):
     on: list[SignalKind] | None = Field(
         default=None, description="Signal kinds this experiment sends (None -> all kinds)"
     )
+    cooldown_seconds: float | None = Field(
+        default=None,
+        ge=0.0,
+        description=(
+            "Re-announce an UNCHANGED recurring condition (stale, calibration_red) "
+            "after this many seconds; None (the default) announces each distinct "
+            "condition once. Never consulted for a verdict — a verdict change "
+            "always sends (D2)"
+        ),
+    )
 
 
 class ExperimentConfig(BaseModel):

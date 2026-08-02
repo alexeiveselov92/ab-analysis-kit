@@ -454,7 +454,14 @@ def _notice(**overrides) -> ReadoutData:
     return base
 
 
-@pytest.mark.parametrize("kind,word", [("error", "Pipeline error"), ("stale", "Data is stale")])
+@pytest.mark.parametrize(
+    "kind,word",
+    [
+        ("error", "Pipeline error"),
+        ("stale", "Schedule fell behind"),
+        ("calibration_red", "Calibration failed"),
+    ],
+)
 def test_notice_presentation_is_its_own_kind_not_a_verdict(kind, word):
     """A crashed run must never render as "Flat" — the unknown-verdict fallback
     would say "no detectable effect" about a run that detected nothing at all."""

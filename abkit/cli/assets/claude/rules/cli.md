@@ -159,7 +159,13 @@ on with nothing declared additive, and how many looks fell back to recompute.
   re-sent — so a scheduled run every hour is not a message every hour. A newly
   broken SRM gate counts as a change even when the verdict word is identical
   (a pre-horizon pair says INCONCLUSIVE either way), and a message no channel
-  accepted is not recorded, so the next run retries it.
+  accepted is not recorded, so the next run retries it. A completed run also
+  sends a **`stale`** notice when a metric's series was more than 3 cadence steps
+  behind the looks ALREADY DUE when the run planned it. Read it as "the schedule
+  slipped" — the same run computes the missing looks, so it is retrospective, and
+  an experiment past its horizon with everything computed is never behind. It
+  dedups on WHICH metrics were behind (never how far — that number grows every
+  run) and re-announces once they clear and fall behind again.
 - `--force` — take over a held lock (prefer `abk unlock`; risky with concurrent runs).
 - `--profile` — override `profiles.yml`'s `default_profile` (e.g. run against staging).
 

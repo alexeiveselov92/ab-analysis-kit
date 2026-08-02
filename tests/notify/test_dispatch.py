@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -24,11 +25,14 @@ from abkit.config.experiment_config import ExperimentConfig
 from abkit.config.profile import NotificationChannelConfig
 from abkit.config.signals import SIGNAL_KINDS
 from abkit.database.internal_tables import InternalTablesManager
+from abkit.database.internal_tables._notify_states import notice_state_key
 from abkit.database.internal_tables._results import RESULT_COLUMNS
 from abkit.notify.base import BaseChannel, ReadoutData
 from abkit.notify.dispatch import (
+    dispatch_calibration_red,
     dispatch_experiment_signals,
     dispatch_pipeline_error,
+    dispatch_stale,
     load_experiment_readout,
     passes_filter,
     pipeline_error_notice,
@@ -37,6 +41,7 @@ from abkit.notify.dispatch import (
     signal_kinds_for,
 )
 from abkit.notify.factory import ROUTING_KEYS, ChannelFactory
+from abkit.pipeline._types import BacklogEntry
 from tests._helpers.fake_db import FakeDatabaseManager
 
 START = datetime(2026, 1, 1)
@@ -854,3 +859,330 @@ class TestRoutingKeysNeverReachAChannel:
         declared = set(NotificationChannelConfig.model_fields) - {"type"}
 
         assert declared == set(ROUTING_KEYS)
+
+
+# ------------------------------------------------------- NTF-5: the two recurring kinds
+def make_cell(metric="revenue", fpr=0.05, budget=0.075, method="t-test", config_id="mc1"):
+    """The `fpr`/`budget`/identity slice of a `CellResult` the dispatcher reads.
+
+    Deliberately a stand-in rather than a full `CellResult`: what NTF-5 routes
+    is exactly these five attributes, and pinning the shape here is what keeps
+    a future field addition from silently changing which cells are red.
+    """
+    return SimpleNamespace(
+        metric=metric,
+        method_name=method,
+        method_config_id=config_id,
+        fpr=fpr,
+        budget=budget,
+    )
+
+
+class TestStaleSignal:
+    def test_it_names_the_metrics_and_reads_as_a_notice(self, tables):
+        experiment = make_experiment()
+
+        sent = dispatch_stale(
+            experiment=experiment,
+            entries=[BacklogEntry("revenue", 14 * 86400.0)],
+            channels_cfg={"a": channel("a")},
+            states=tables,
+            echo=lambda line: None,
+        )
+
+        assert sent == 1
+        payload = RecordingChannel.sent[0][1]
+        assert payload.kind == "stale"
+        assert "revenue by 336.0h" in payload.notice
+        # a notice claims no measurement: NTF-2's rule, unchanged here
+        assert (payload.effect, payload.pvalue, payload.verdict) == (None, None, "")
+
+    def test_the_message_does_not_claim_the_data_is_stale_now(self, tables):
+        """The run that reports a backlog is the run that drains it — the PLAN
+        stage detects, the COMPUTE stage computes. What is behind is the
+        SCHEDULE, and a message saying otherwise would send an operator looking
+        at a warehouse that is fine."""
+        experiment = make_experiment()
+
+        dispatch_stale(
+            experiment=experiment,
+            entries=[BacklogEntry("revenue", 14 * 86400.0)],
+            channels_cfg={"a": channel("a")},
+            states=tables,
+            echo=lambda line: None,
+        )
+
+        notice = RecordingChannel.sent[0][1].notice
+        assert "SCHEDULE" in notice and "computed the missing looks" in notice
+        assert RecordingChannel().verdict_word(RecordingChannel.sent[0][1]) == (
+            "Schedule fell behind"
+        )
+
+    def test_no_backlog_sends_nothing(self, tables):
+        experiment = make_experiment()
+
+        sent = dispatch_stale(
+            experiment=experiment,
+            entries=[],
+            channels_cfg={"a": channel("a")},
+            states=tables,
+            echo=lambda line: None,
+        )
+
+        assert (sent, RecordingChannel.sent) == (0, [])
+
+    def test_the_same_backlog_is_announced_once(self, tables):
+        experiment = make_experiment()
+        entries = [BacklogEntry("revenue", 14 * 86400.0)]
+
+        def send(entries):
+            return dispatch_stale(
+                experiment=experiment,
+                entries=entries,
+                channels_cfg={"a": channel("a")},
+                states=tables,
+                echo=lambda line: None,
+            )
+
+        first = send(entries)
+        # the lag grows with every run: a signature built from the SENTENCE
+        # would re-announce forever
+        second = send([BacklogEntry("revenue", 15 * 86400.0)])
+
+        assert (first, second) == (1, 0)
+
+    def test_a_second_metric_falling_behind_announces(self, tables):
+        experiment = make_experiment()
+
+        def send(entries):
+            return dispatch_stale(
+                experiment=experiment,
+                entries=entries,
+                channels_cfg={"a": channel("a")},
+                states=tables,
+                echo=lambda line: None,
+            )
+
+        send([BacklogEntry("revenue", 14 * 86400.0)])
+        widened = send([BacklogEntry("revenue", 14 * 86400.0), BacklogEntry("clicks", 86400.0)])
+
+        assert widened == 1
+
+    def test_a_gap_that_returns_after_clearing_is_news_again(self, tables):
+        """The recovery reset. Without it the stored signature outlives the
+        condition, and the SAME metric falling behind again next month — the
+        second outage — dedups against the first and is never announced."""
+        experiment = make_experiment()
+
+        def send(entries):
+            return dispatch_stale(
+                experiment=experiment,
+                entries=entries,
+                channels_cfg={"a": channel("a")},
+                states=tables,
+                echo=lambda line: None,
+            )
+
+        assert send([BacklogEntry("revenue", 14 * 86400.0)]) == 1
+        assert send([]) == 0  # caught up: nothing sent, the signature is cleared
+        assert send([BacklogEntry("revenue", 20 * 86400.0)]) == 1
+
+    def test_a_cooldown_lets_an_unchanged_backlog_repeat(self, tables):
+        experiment = make_experiment(notify={"cooldown_seconds": 0})
+
+        def send():
+            return dispatch_stale(
+                experiment=experiment,
+                entries=[BacklogEntry("revenue", 14 * 86400.0)],
+                channels_cfg={"a": channel("a")},
+                states=tables,
+                echo=lambda line: None,
+            )
+
+        assert (send(), send()) == (1, 1)
+
+    def test_a_message_nobody_received_is_not_recorded(self, tables):
+        """The NTF-3 rule, on this path too: every channel failing must not
+        make the next run treat the condition as old news."""
+        experiment = make_experiment()
+
+        def send(mode):
+            return dispatch_stale(
+                experiment=experiment,
+                entries=[BacklogEntry("revenue", 14 * 86400.0)],
+                channels_cfg={"a": channel("a", mode=mode)},
+                states=tables,
+                echo=lambda line: None,
+            )
+
+        assert send("raise") == 0
+        assert send("ok") == 1
+
+    def test_the_experiment_filter_still_applies(self, tables):
+        experiment = make_experiment(notify={"on": ["readout"]})
+
+        sent = dispatch_stale(
+            experiment=experiment,
+            entries=[BacklogEntry("revenue", 14 * 86400.0)],
+            channels_cfg={"a": channel("a")},
+            states=tables,
+            echo=lambda line: None,
+        )
+
+        assert sent == 0
+
+
+class TestCalibrationRedSignal:
+    def test_only_over_budget_cells_fire(self, tables):
+        experiment = make_experiment()
+
+        sent = dispatch_calibration_red(
+            experiment=experiment,
+            cells=[make_cell(fpr=0.05, budget=0.075), make_cell(metric="clicks", fpr=0.07)],
+            channels_cfg={"a": channel("a")},
+            states=tables,
+            echo=lambda line: None,
+        )
+
+        assert (sent, RecordingChannel.sent) == (0, [])
+
+    def test_a_red_cell_names_itself_and_its_budget(self, tables):
+        experiment = make_experiment()
+
+        sent = dispatch_calibration_red(
+            experiment=experiment,
+            cells=[make_cell(fpr=0.12, budget=0.075), make_cell(metric="clicks", fpr=0.04)],
+            channels_cfg={"a": channel("a")},
+            states=tables,
+            echo=lambda line: None,
+        )
+
+        assert sent == 1
+        payload = RecordingChannel.sent[0][1]
+        assert payload.kind == "calibration_red"
+        assert "t-test on revenue" in payload.notice
+        assert "12.0%" in payload.notice and "7.5%" in payload.notice
+        assert "1 of 2" in payload.notice
+
+    def test_an_unmeasurable_cell_is_not_red(self, tables):
+        """A degenerate cell scores `fpr=None` — "could not measure", which is
+        not "exceeds its budget"; claiming otherwise would alarm on missing
+        data (the same `is not None` guard `_verdict` uses)."""
+        experiment = make_experiment()
+
+        sent = dispatch_calibration_red(
+            experiment=experiment,
+            cells=[make_cell(fpr=None), make_cell(metric="clicks", budget=None, fpr=0.9)],
+            channels_cfg={"a": channel("a")},
+            states=tables,
+            echo=lambda line: None,
+        )
+
+        assert sent == 0
+
+    def test_the_same_red_cell_is_announced_once(self, tables):
+        experiment = make_experiment()
+
+        def send(fpr):
+            return dispatch_calibration_red(
+                experiment=experiment,
+                cells=[make_cell(fpr=fpr)],
+                channels_cfg={"a": channel("a")},
+                states=tables,
+                echo=lambda line: None,
+            )
+
+        # the second validation measures a different FPR on the same red cell:
+        # a signature carrying the NUMBER would re-announce every run
+        assert (send(0.12), send(0.13)) == (1, 0)
+
+    def test_two_cells_of_one_method_on_one_metric_are_distinct(self, tables):
+        """Identity is `metric·method_config_id`, not the method name: one
+        metric can carry two cells of the same method with different params,
+        and collapsing them would dedup the second one away."""
+        experiment = make_experiment()
+
+        def send(cells):
+            return dispatch_calibration_red(
+                experiment=experiment,
+                cells=cells,
+                channels_cfg={"a": channel("a")},
+                states=tables,
+                echo=lambda line: None,
+            )
+
+        first = send([make_cell(fpr=0.12, config_id="mc1")])
+        second = send([make_cell(fpr=0.12, config_id="mc1"), make_cell(fpr=0.12, config_id="mc2")])
+
+        assert (first, second) == (1, 1)
+
+    def test_a_fixed_calibration_is_news_when_it_breaks_again(self, tables):
+        experiment = make_experiment()
+
+        def send(fpr):
+            return dispatch_calibration_red(
+                experiment=experiment,
+                cells=[make_cell(fpr=fpr)],
+                channels_cfg={"a": channel("a")},
+                states=tables,
+                echo=lambda line: None,
+            )
+
+        assert send(0.12) == 1
+        assert send(0.05) == 0  # back inside budget: cleared, nothing sent
+        assert send(0.12) == 1
+
+
+class TestRecurringStateIsolation:
+    def test_the_two_kinds_do_not_share_a_row(self, tables):
+        """One experiment can be behind AND miscalibrated; a shared key would
+        let one condition dedup the other away."""
+        experiment = make_experiment()
+
+        stale = dispatch_stale(
+            experiment=experiment,
+            entries=[BacklogEntry("revenue", 14 * 86400.0)],
+            channels_cfg={"a": channel("a")},
+            states=tables,
+            echo=lambda line: None,
+        )
+        red = dispatch_calibration_red(
+            experiment=experiment,
+            cells=[make_cell(fpr=0.12)],
+            channels_cfg={"a": channel("a")},
+            states=tables,
+            echo=lambda line: None,
+        )
+
+        assert (stale, red) == (1, 1)
+
+    def test_a_notice_row_cannot_collide_with_a_comparison(self, tables):
+        """The sentinel key's real guarantee is the EMPTY arm pair — a variant
+        name cannot be empty — not the `__stale__` name, which a metric may
+        legitimately carry."""
+        assert notice_state_key("stale") == ("__stale__", "", "", "")
+
+        experiment = make_experiment()
+        seed(tables, experiment)
+        dispatch(experiment, tables, {"a": channel("a")}, states=tables)
+        dispatch_stale(
+            experiment=experiment,
+            entries=[BacklogEntry("revenue", 86400.0)],
+            channels_cfg={"a": channel("a")},
+            states=tables,
+            echo=lambda line: None,
+        )
+
+        # the verdict's own state row is untouched by the notice
+        verdict_state = tables.get_notify_state(
+            experiment.name,
+            "revenue",
+            "control",
+            "treatment",
+            experiment.get_comparison("revenue").method.method_config_id,
+        )
+        assert verdict_state["last_verdict"] not in (None, "")
+        assert (
+            tables.get_notify_state(experiment.name, *notice_state_key("stale"))["last_verdict"]
+            == "revenue"
+        )

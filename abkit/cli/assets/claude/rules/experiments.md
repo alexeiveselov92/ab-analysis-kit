@@ -58,6 +58,9 @@ readout:                         # READ-TIME verdict knobs — NEVER enter metho
 #   channels: [team_slack]       # NOT silence the experiment — a notified run with no block goes to
 #   mentions: [growth-team]      # every configured channel. `on` = the signal kinds this experiment
 #   on: [readout]                # sends (default all); it INTERSECTS a channel's own `on:`
+#   cooldown_seconds: 86400      # repeat an UNCHANGED stale/calibration_red this often
+#                                # (default: announce each distinct condition once). Never
+#                                # applies to a verdict — a flip always sends immediately.
 
 comparisons:                     # required — each binds one library metric to one method
   - metric: signup_cr            # references metrics/signup_cr.yml by name

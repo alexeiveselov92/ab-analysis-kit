@@ -18,6 +18,7 @@ from abkit.core.period_planner import (
     GridLimitExceeded,
     backlog_seconds,
     generate_grid,
+    last_due_cutoff,
     pending_cutoffs,
 )
 
@@ -459,3 +460,28 @@ class TestBacklog:
     def test_measures_trailing_gap(self):
         computed = {datetime(2024, 7, 5), datetime(2024, 7, 8)}
         assert backlog_seconds(computed, datetime(2024, 7, 10)) == 2 * 86400
+
+
+class TestLastDueCutoff:
+    """The reference the backlog is measured against (m12 NTF-5)."""
+
+    def test_it_is_the_newest_cutoff_at_or_before_the_watermark(self):
+        grid = generate_grid(START, HORIZON, DAILY)
+        assert last_due_cutoff(grid, datetime(2024, 7, 10, 6)) == datetime(2024, 7, 10)
+
+    def test_it_stops_at_the_horizon_however_far_the_watermark_runs(self):
+        """The whole reason it exists: a finished experiment has no more looks.
+
+        Measured against the raw watermark, a fully computed past-horizon
+        series reports a backlog of "now − horizon" that grows by a day every
+        day — the loudest possible warning about the one state that needs no
+        action at all.
+        """
+        grid = generate_grid(START, HORIZON, DAILY)
+        last = datetime(2024, 7, 29)  # the horizon cutoff itself
+        assert last_due_cutoff(grid, datetime(2025, 1, 1)) == last
+        assert backlog_seconds({last}, last_due_cutoff(grid, datetime(2025, 1, 1))) == 0.0
+
+    def test_none_before_the_first_cutoff_is_due(self):
+        grid = generate_grid(START, HORIZON, DAILY)
+        assert last_due_cutoff(grid, datetime(2024, 6, 30)) is None

@@ -10,7 +10,9 @@ Lock discipline (D5): a distinct ``(experiment, "pipeline", "validate")`` claim 
 validate writes only ``_ab_aa_runs`` (never read by the run pipeline), so it need not
 serialize behind nightly runs. Failures are recorded on the lock row before
 propagating; ``abk unlock`` clears both the run and validate locks. Any failed
-experiment exits NON-ZERO. ``--report`` is best-effort (the one exception).
+experiment exits NON-ZERO. ``--report`` and ``--notify`` (m12 NTF-5 — a
+``calibration_red`` notice for the cells whose FPR exceeded their budget) are
+best-effort: neither may turn a successful validation into a failed one.
 """
 
 from __future__ import annotations
@@ -64,9 +66,24 @@ def run_validate(
     profile: str | None,
     *,
     family_sweep: bool = False,
+    notify: bool = False,
 ) -> None:
     context = load_project_context(require_profiles=True)
     click.echo(f"Project root: {context.root}")
+
+    # m12 NTF-5: resolved once, like `abk run --notify`. A --notify with nothing
+    # configured is loud — silence there is indistinguishable from a broken flag.
+    notify_channels: dict = {}
+    if notify:
+        notify_channels = dict(context.profiles.notification_channels)
+        if not notify_channels:
+            click.echo(
+                click.style(
+                    "  ⚠ --notify: no notification_channels in profiles.yml — "
+                    "nothing will be sent",
+                    fg="yellow",
+                )
+            )
 
     # ── config lint (no DB) ──────────────────────────────────────────────────
     report = validate_level2(context.root, context.project, context.experiments, context.metrics)
@@ -109,6 +126,8 @@ def run_validate(
             report_path,
             force,
             family_sweep,
+            notify_channels,
+            context.project.name,
         )
         if status == "failed":
             failed += 1
@@ -130,6 +149,8 @@ def _validate_one(
     report_path,
     force,
     family_sweep,
+    notify_channels: dict | None = None,
+    project_name: str | None = None,
 ) -> str:
     from abkit.database.internal_tables import InternalTablesManager
     from abkit.loaders.exposure_source import build_cohort_backend
@@ -225,6 +246,32 @@ def _validate_one(
                         fg="yellow",
                     )
                 )
+            # m12 NTF-5: the over-budget cells, routed as `calibration_red`.
+            # INSIDE the lock's try, before the release, for the same reason
+            # `_emit_matrix` is: these are this validation's own findings. The
+            # call is made even when nothing is red — that is how a previously
+            # announced failure is cleared, so the same cell going red again
+            # later is news rather than a dedup hit. Wrapped like `_emit_report`
+            # (validate.py's own precedent): a notification may never turn a
+            # successful validation into a failed one.
+            if notify_channels:
+                try:
+                    from abkit.notify.dispatch import dispatch_calibration_red
+
+                    sent = dispatch_calibration_red(
+                        experiment=experiment,
+                        cells=result.cells,
+                        channels_cfg=notify_channels,
+                        project_name=project_name,
+                        states=tables,
+                        echo=lambda line: click.echo(
+                            click.style(f"  │ Notify: {line}", fg="yellow")
+                        ),
+                    )
+                    if sent:
+                        click.echo(click.style(f"  │ Notify → {sent} message(s) sent", fg="cyan"))
+                except Exception as notify_error:
+                    click.echo(click.style(f"  │ Notify skipped: {notify_error}", fg="yellow"))
             tables.release_lock(experiment.name, "pipeline", "validate", status="completed")
         except BaseException as exc:  # incl. KeyboardInterrupt/SystemExit — never strand the lock
             tables.release_lock(

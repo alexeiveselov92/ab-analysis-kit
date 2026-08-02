@@ -602,7 +602,7 @@ no live users to hurry for, and sweeping the previous release's status lines
   surface, not an addendum to a closing interstitial. Revisit **after M12**,
   with its own design pass.
 
-### M12 — notifications → `0.7.0` 🚧 IN PROGRESS (NTF-1…NTF-4 shipped)
+### M12 — notifications → `0.7.0` 🚧 IN PROGRESS (NTF-1…NTF-5 shipped)
 Design contract: [m12-implementation-plan.md](docs/specs/m12-implementation-plan.md).
 `abkit/notify/` (shipped M6, reachable only via `abk test-report`) gets wired
 to six real signals behind opt-in `--notify`, with dedup/cooldown state in
@@ -695,6 +695,42 @@ for the exit gate — no NTF WP depends on them.
     experiment name would otherwise inherit the old history and have its first
     verdict deduped away. Two roster tests that hand-listed six tables are now
     derived from `INTERNAL_TABLES` instead.
+
+- **NTF-5 ✅ SHIPPED — the two signals about the machinery.** `abk validate
+  --notify` (new flag) sends `calibration_red` for every cell whose measured FPR
+  exceeded its budget; `abk run --notify` also sends `stale` for a series more
+  than 3 cadence steps behind the looks already due. Zero new detection, as
+  designed. ~1–2 sessions — **actual: 1 session**. Four as-built deltas, one of
+  them a real defect the WP existed to expose:
+  - **The backlog detector was wrong, and routing it is what proved it.** It
+    measured against the WATERMARK, which keeps advancing after an experiment's
+    cutoffs stop at its horizon — so a finished, fully computed series reported
+    a backlog of "now − horizon" growing by a day every day. As a printed
+    warning that was noise; as a notification it would have alarmed about every
+    experiment a team has ever finished. Now measured against
+    `last_due_cutoff(grid, watermark)`, pinned both ways in
+    `tests/pipeline/test_pipeline.py::TestBacklogSignal`.
+  - **`stale` is retrospective and the message says so.** The run that detects a
+    backlog is the run that drains it (PLAN detects, COMPUTE computes), so the
+    news is that the SCHEDULE slipped, never that the warehouse is behind. The
+    plan's word for it — NTF-2's placeholder "Data is stale" — is now "Schedule
+    fell behind". A "still stale" variant would need a condition nothing in the
+    pipeline measures.
+  - **Recurring kinds needed a dedup of their own**, so the plan's step 4 grew a
+    rule: the signature is WHICH things are wrong (metrics behind, red cells),
+    never the lag or the FPR — both drift every run and would re-announce
+    forever. A cleared condition is RECORDED as cleared (an observation, not an
+    announcement, so the NTF-3 "only what was received becomes history" rule is
+    untouched), or a second outage months later would dedup against the first.
+    `notify.cooldown_seconds` — the field NTF-3 deliberately withheld — ships
+    here as the knob that lets an unchanged condition repeat, and `None` is
+    distinct from `0` (`is_in_cooldown` mutes neither, so deferring to it alone
+    would have made the DEFAULT re-announce on every run).
+  - **No new brand hexes** (the plan asked for two): NTF-4's rule stands —
+    the five tokens are VERDICT tokens, all notices reuse `--srm`.
+  **Not done, and named:** `verdict_change` is still the one declared kind
+  nothing emits, so an `on: [verdict_change]` filter matches nothing. NTF-6
+  decides — emit it for a payload that survived the dedup gate, or drop it.
 
 ### M13 — versioned statistical improvements (bucket B, core) → `0.8.0` 📐 contour
 Holm over Bonferroni (strictly more power, same FWER); unpooled SE in the

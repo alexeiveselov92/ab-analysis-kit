@@ -310,3 +310,52 @@ class TestRouting:
 
         assert result.exit_code == 0, result.output
         assert SpyChannel.sent[0].mentions == ["growth"]
+
+
+class TestStaleSignal:
+    """NTF-5 through the CLI: the backlog the PLAN stage already warns about,
+    delivered as a `stale` notice."""
+
+    def _run_at(self, when: datetime, monkeypatch, *args: str):
+        import abkit.pipeline.driver as driver_mod
+
+        monkeypatch.setattr(driver_mod, "now_utc_naive", lambda: when)
+        return runner.invoke(cli, ["run", "--select", EXP, *args])
+
+    def test_a_schedule_that_slipped_is_announced_once(self, scaffolded, monkeypatch):
+        """Looks computed to July 5, then nothing until August: ten cadence
+        steps behind on looks that were already due."""
+        configure_channels(team={"type": "spy", "label": "team"})
+        assert self._run_at(datetime(2024, 7, 6), monkeypatch).exit_code == 0
+
+        caught_up = self._run_at(datetime(2024, 8, 1), monkeypatch, "--notify")
+
+        assert caught_up.exit_code == 0, caught_up.output
+        stale = [r for r in SpyChannel.sent if r.kind == "stale"]
+        assert len(stale) == 1
+        assert "behind the watermark" in stale[0].notice
+        # and it is not repeated on the next run over the same series
+        again = self._run_at(datetime(2024, 8, 2), monkeypatch, "--notify")
+        assert again.exit_code == 0, again.output
+        assert len([r for r in SpyChannel.sent if r.kind == "stale"]) == 1
+
+    def test_a_healthy_series_never_mentions_staleness(self, scaffolded, monkeypatch):
+        """The regression NTF-5 found: measured against the raw watermark, a
+        finished experiment reported a backlog that grew by a day every day —
+        so every scheduled run would have alarmed about work that is done."""
+        configure_channels(team={"type": "spy", "label": "team"})
+        assert self._run_at(datetime(2024, 8, 1), monkeypatch, "--notify").exit_code == 0
+
+        second = self._run_at(datetime(2024, 9, 1), monkeypatch, "--notify")
+
+        assert second.exit_code == 0, second.output
+        assert [r for r in SpyChannel.sent if r.kind == "stale"] == []
+
+    def test_an_urgent_only_channel_hears_it(self, scaffolded, monkeypatch):
+        configure_channels(oncall={"type": "spy", "label": "oncall", "on": ["stale", "error"]})
+        assert self._run_at(datetime(2024, 7, 6), monkeypatch).exit_code == 0
+
+        result = self._run_at(datetime(2024, 8, 1), monkeypatch, "--notify")
+
+        assert result.exit_code == 0, result.output
+        assert [r.kind for r in SpyChannel.sent] == ["stale"]

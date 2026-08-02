@@ -24,6 +24,26 @@ from abkit.utils.datetime_utils import now_utc_naive, to_naive_utc
 NOTIFY_STATE_KEY = ("experiment", "metric", "name_1", "name_2", "method_config_id")
 
 
+def notice_state_key(kind: str) -> tuple[str, str, str, str]:
+    """The ``(metric, name_1, name_2, method_config_id)`` a NOTICE's row uses.
+
+    A recurring notice (m12 NTF-5) is a property of the whole experiment, not
+    of one comparison, so it needs a key in the same table that no comparison
+    can ever collide with. The sentinel-metric name is this repo's own idiom
+    (``_ab_aa_runs`` stores the composed family sweep under
+    ``metric='__family__'``) but it is NOT what makes the key safe —
+    ``MetricConfig`` accepts underscores, so a metric may legitimately be
+    called ``__stale__``. What separates the rows is the EMPTY arm pair: every
+    comparison row carries two declared variant names, and a variant name
+    cannot be empty.
+
+    Compose it ONLY here: the two dispatchers and every test must agree on the
+    row a signal reads and writes, and a hand-copied tuple is how the m9 state
+    identity went wrong.
+    """
+    return (f"__{kind}__", "", "", "")
+
+
 class _NotifyStatesMixin(_InternalTablesBase):
     def notify_states_table_exists(self) -> bool:
         """True when ``_ab_notify_states`` exists.

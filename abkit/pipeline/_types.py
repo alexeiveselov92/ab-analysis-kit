@@ -129,6 +129,29 @@ class AdditiveReadStatus:
         )
 
 
+@dataclass(frozen=True)
+class BacklogEntry:
+    """One metric series that trailed its DUE looks when this run PLANNED it.
+
+    The same condition the §6.4 backlog warning already reports, recorded as
+    data as well as prose (m12 NTF-5 routes it as the `stale` signal). The
+    structure is not decoration: the warning string carries the lag in hours,
+    so a notifier deduping on the sentence would re-announce on every run as
+    that number drifts, while the metric NAME is what actually changed or did
+    not.
+
+    Strictly RETROSPECTIVE, and the notice says so. Detection sits in the PLAN
+    stage of a run that goes on to compute every pending look, so by the time
+    the message is delivered the gap it reports is closed — what it tells the
+    operator is that the schedule slipped (runs failed, were locked out, or
+    never fired), not that the warehouse is behind right now. A "still stale"
+    variant would need a condition nothing in the pipeline measures.
+    """
+
+    metric: str
+    lag_seconds: float
+
+
 @dataclass
 class RunOutcome:
     """One experiment's run summary (the driver's return value)."""
@@ -148,6 +171,10 @@ class RunOutcome:
     #: (m9 WP3 — the write-only STATE stage; 0 when the stage did not run)
     state_days_materialized: int = 0
     warnings: list[str] = field(default_factory=list)
+    #: metric series more than 3 cadence steps behind the looks already DUE
+    #: when this run planned them (m12 NTF-5 — the `stale` signal's data half;
+    #: the prose half is the matching ``warnings`` line, unchanged)
+    backlog: list[BacklogEntry] = field(default_factory=list)
     #: per-stage warehouse cost, keyed by stage name (m9 WP5 — the evidence
     #: behind ``abk run --cost-report`` and the incremental-read default-flip
     #: decision). Always collected (the counters are ~free); the flag only

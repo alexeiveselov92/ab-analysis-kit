@@ -203,6 +203,8 @@ Two commands use them:
   WIN readout (no lock, no warehouse read, no stats) and prints a per-channel
   ✓/✗, exiting non-zero if any channel fails — the connectivity/format smoke
   test to run before wiring channels into an orchestrator.
+- `abk validate --notify` (0.7.0) sends a `calibration_red` notice when a cell's
+  measured FPR exceeds its budget — best-effort, exactly like its `--report`.
 - `abk run --notify` (0.7.0) sends the **real** readout of each completed
   experiment — the same `readout.evaluate()` decision `--report` bakes. Opt-in
   and best-effort: a failing channel never fails the run. Narrow it per
@@ -210,10 +212,22 @@ Two commands use them:
   receives it.
 
 `on:` accepts `readout`, `verdict_change`, `srm`, `calibration_red`, `stale`,
-`error` — **`readout`, `srm` and `error` fire today**, the rest are accepted now
-so a filter does not silently widen later. A channel's `on:` and an experiment's
-`notify.on` INTERSECT: the experiment narrows what it sends, the channel what it
-accepts.
+`error` — **all fire except `verdict_change`**, which is accepted now so a filter
+does not silently widen later. A channel's `on:` and an experiment's `notify.on`
+INTERSECT: the experiment narrows what it sends, the channel what it accepts.
+
+Two of them describe the MACHINERY rather than a result, and both are recurring —
+their condition survives the run that reports it, so they are deduped on WHICH
+things are wrong (never on the drifting numbers) and repeat only when that set
+changes, or after `notify.cooldown_seconds` if the experiment sets one:
+
+- **`calibration_red`** comes from `abk validate --notify`, not from `abk run`:
+  the cells whose measured A/A false-positive rate exceeded their budget — the
+  matrix's "do not use" verdict, delivered.
+- **`stale`** comes from `abk run --notify`: a metric series more than 3 cadence
+  steps behind the looks already due at PLAN time. Retrospective by construction
+  (that same run computes them), so it reports a slipped SCHEDULE, not a stale
+  warehouse.
 
 `srm` is not a second message — an SRM-failed readout answers to BOTH kinds, so
 an `on: [srm, error]` channel is the on-call one: it hears about a broken split
