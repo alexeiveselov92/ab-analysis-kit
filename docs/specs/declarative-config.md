@@ -80,6 +80,17 @@ alpha: 0.05                      # experiment-level significance (see §6 — in
 correction: bonferroni           # none | bonferroni (config-time, legacy) | benjamini_hochberg (read-time)
 sequential: {enabled: false, scheme: always_valid}   # opt-in peeking-correct CIs (default off = legacy)
 
+notify:                          # OPTIONAL routing for `abk run --notify` (M12 NTF-1). Routing
+                                 # only — omitting the block does NOT silence the experiment:
+                                 # a notified run with no block sends to every configured
+                                 # channel (D1). Never enters method_config_id.
+  channels: [team_slack]         # subset of profiles.yml notification_channels (default: all)
+  mentions: [growth-team]        # handles, rendered in each channel's own @-syntax
+  on: [readout]                  # signal kinds this experiment sends (default: all). Composes
+                                 # with a channel's own `on:` as an INTERSECTION. Kinds:
+                                 # readout | verdict_change | srm | calibration_red | stale |
+                                 # error — only `readout` fires as of NTF-1
+
 readout:                         # READ-TIME verdict knobs (M3, plan D5) — never enter method_config_id
   stabilization_days: 7          # trailing elapsed-days window for "persistent significance"
                                  # (judged over elapsed time, never look count; default 7 = one weekly cycle)

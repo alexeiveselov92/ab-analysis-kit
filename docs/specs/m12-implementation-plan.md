@@ -265,6 +265,31 @@ start, even though only the `readout` kind fires yet.
 
 **Session estimate:** 1 session.
 
+**As built (shipped 2026-08-02; the design's shape held, two additions):**
+
+- **`ChannelFactory` had to learn that some keys are abkit's, not the
+  channel's.** `notification_channels` is `extra="allow"`, so every sibling key
+  reaches the constructor — and a *declared* field is worse than an undeclared
+  one, because `model_dump()` emits `on: None` even for a config that never
+  writes it. Landing step 2 alone would therefore have broken **every** channel
+  in `abk test-report`, which never asked about routing (18 tests red under a
+  mutation probe). `ROUTING_KEYS` lives beside the factory — the single funnel
+  every caller goes through — and the test asserts the classification is
+  exhaustive over the model's declared fields, not that the constant equals
+  itself.
+- **`SignalKind` lives in `abkit/config/signals.py`, a leaf module.** Both
+  config models declare an `on:` filter, and neither `profile.py` nor
+  `experiment_config.py` may import the other's dependency tree to share a
+  literal.
+- Smaller, deliberate: `run.py`'s lazy `report_*` manager is now `readback_*`
+  and shared by both flags (step 6, honestly named); the notify block sits
+  **before** the report block because the report block's `continue` would skip
+  it; `--notify` on a validate-only run is refused the way `--report` is;
+  `ReadoutData.timestamp` carries the verdict's own `end_ts` (the look the
+  numbers are as of) rather than wall-clock "now"; and per-arm `n` is read off
+  **that pair's own look**, since another metric's later row would otherwise
+  lend it sizes nothing computed.
+
 ---
 
 ### NTF-2 — SRM-breach + pipeline-error urgency, per-channel `on:` filter enforcement
@@ -808,17 +833,24 @@ plus the track's common discipline):
 From the design pass's `open_questions` (NTF-relevant subset) plus the
 track plan's "Перед стартом" line for M12, translated and carried forward:
 
-1. **Default channel selection when `experiment.notify` is absent** (D1): this
-   plan defaults to "all profile-configured channels" once `--notify` is
-   passed at the run level. **Confirm this is the intended default** versus
-   "no channels unless the experiment explicitly opts in with a `notify:`
-   block." (Track plan's explicit "перед стартом" item — recommendation: the
-   D1 reading above, but surfaced for sign-off before NTF-1 merges.)
-2. **NTF-3's cooldown-vs-verdict-change-dedup interaction** (D2): a verdict
-   flip always overrides cooldown; an unchanged verdict is never re-sent
-   regardless of `cooldown_seconds`. Needs explicit maintainer sign-off since
-   getting it backwards is a silent-correctness bug, not a crash. (Track
-   plan's explicit "перед стартом" item — **confirm before NTF-3 merges.**)
+1. **Default channel selection when `experiment.notify` is absent** (D1):
+   **SIGNED OFF 2026-08-02 (maintainer, in conversation) — as recommended:**
+   once `--notify` is passed at the run level, an experiment with no `notify:`
+   block sends to **all profile-configured channels**. The block is *routing*
+   (which channels, which mentions, which kinds), never the switch — the flag
+   is the switch. The rejected reading ("no channels unless the experiment
+   opts in") makes `--notify` on a freshly-configured project silent, and
+   silence is indistinguishable from a broken flag. NTF-1 implements this in
+   `dispatch.resolve_channels`; the CLI additionally prints a loud line when
+   `--notify` is passed with **no** `notification_channels` at all.
+2. **NTF-3's cooldown-vs-verdict-change-dedup interaction** (D2):
+   **SIGNED OFF 2026-08-02 (maintainer, in conversation) — as recommended:** a
+   verdict flip **always** sends, even inside the cooldown window; an unchanged
+   verdict is **never** re-sent regardless of `cooldown_seconds`, which stays
+   reserved for a future recurring kind (a repeating `stale`) that legitimately
+   re-fires with the same value. The rejected reading lets a cooldown swallow
+   the single WIN→LOSE message the whole feature exists to deliver. Binding on
+   NTF-3.
 3. **Explore-Apply calibration-red is deferred out of this milestone's first
    cut** (D5, §0.4 point 5): `abk explore` gains no `--notify` flag and
    `_ExploreServer` gains no notify-config plumbing in M12. Confirm this

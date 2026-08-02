@@ -7,7 +7,9 @@ reshaped from detectkit's alerting channels (m6-implementation-plan.md WP5) — 
 transport/envelope kept, every anomaly/detector/severity/recovery semantic
 dropped. Secrets come only from env interpolation.
 
-``branding`` is imported by its full dotted path (not re-exported here).
+``branding`` and ``dispatch`` are imported by their full dotted paths (not
+re-exported here) — ``dispatch`` pulls in the config and pipeline packages, and
+``abk test-report`` must keep resolving a channel without any of that.
 """
 
 from __future__ import annotations

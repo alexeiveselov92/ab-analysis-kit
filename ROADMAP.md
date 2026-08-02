@@ -602,7 +602,7 @@ no live users to hurry for, and sweeping the previous release's status lines
   surface, not an addendum to a closing interstitial. Revisit **after M12**,
   with its own design pass.
 
-### M12 — notifications → `0.7.0` 📋
+### M12 — notifications → `0.7.0` 🚧 IN PROGRESS (NTF-1 shipped)
 Design contract: [m12-implementation-plan.md](docs/specs/m12-implementation-plan.md).
 `abkit/notify/` (shipped M6, reachable only via `abk test-report`) gets wired
 to six real signals behind opt-in `--notify`, with dedup/cooldown state in
@@ -613,6 +613,35 @@ SRM/error urgency with `on:` filters (NTF-2), the dedup state machine (NTF-3),
 four new channels — discord/teams/googlechat/ntfy — as thin adapters (NTF-4),
 calibration-red + staleness from existing signals (NTF-5), and the exit gate +
 5→9 channel docs (NTF-6).
+
+**Both "before start" decisions are signed off** (maintainer, 2026-08-02, in
+conversation — recorded in the plan's §5): **D1** — under `--notify` an
+experiment with no `notify:` block sends to **every configured channel**
+(the block is routing, never the switch); **D2** — a verdict FLIP always sends
+even inside a cooldown window, an UNCHANGED verdict is never re-sent, and
+`cooldown_seconds` is reserved for future recurring kinds. The two remaining
+§5 questions (whether explore-Apply calibration-red is deferred *permanently*,
+and whether `abk explore` should ever carry `--notify`) are deliberately left
+for the exit gate — no NTF WP depends on them.
+
+- **NTF-1 ✅ SHIPPED — the send seam.** `abkit/notify/dispatch.py` +
+  `abk run --notify`: the just-persisted rows go through `readout.evaluate()`
+  (the report's own function) and out as one payload per verdict. The
+  experiment-level `notify:` block (`channels`/`mentions`/`on`) and the
+  per-channel `on:` land with it and are honoured for the `readout` kind, so
+  neither is decorative until NTF-2. ~1 session — **actual: 1 session**. Two
+  things the design did not have:
+  - **The `on:` field breaks every channel unless the factory strips it.**
+    `notification_channels` is `extra="allow"`, so each sibling key is a
+    constructor kwarg — and because the field is *declared*, `model_dump()`
+    emits `on: None` even for a config that never mentions it. Left alone,
+    NTF-1 would have broken `abk test-report` for every existing user
+    (18 tests red under the mutation probe). `ChannelFactory` now owns a
+    `ROUTING_KEYS` strip, pinned by a test that requires every declared field
+    to be classified.
+  - **`SignalKind` needed a leaf module** (`abkit/config/signals.py`): both
+    config models declare an `on:` filter and neither may import the other's
+    dependency tree to share the literal.
 
 ### M13 — versioned statistical improvements (bucket B, core) → `0.8.0` 📐 contour
 Holm over Bonferroni (strictly more power, same FWER); unpooled SE in the

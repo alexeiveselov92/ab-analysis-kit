@@ -24,6 +24,11 @@ from abkit.notify.telegram import TelegramChannel
 from abkit.notify.webhook import WebhookChannel
 from abkit.utils import interpolate_env_vars
 
+#: Keys in a ``notification_channels:`` block that address abkit's dispatcher
+#: rather than the channel itself (m12 NTF-1). Kept beside the factory because
+#: this is where every channel is constructed — see ``create_from_config``.
+ROUTING_KEYS: frozenset[str] = frozenset({"on"})
+
 
 class ChannelFactory:
     CHANNEL_TYPES: dict[str, type[BaseChannel]] = {
@@ -53,6 +58,13 @@ class ChannelFactory:
         channel_type = config.pop("type", None)
         if not channel_type:
             raise ValueError("Channel config must have a 'type' field")
+        # abkit's own routing keys are NOT channel constructor params. The
+        # block is `extra='allow'` and every sibling key is forwarded verbatim,
+        # so a config carrying `on:` would reach `SlackChannel(on=[...])` and
+        # die as "Invalid parameters" — in `abk test-report` too, which never
+        # asked about routing. Strip here, the single funnel every caller uses.
+        for routing_key in ROUTING_KEYS:
+            config.pop(routing_key, None)
         return cls.create(channel_type, config)
 
     @classmethod

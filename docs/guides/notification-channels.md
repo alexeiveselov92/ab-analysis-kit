@@ -1,4 +1,4 @@
-# Notification channels (abk test-report)
+# Notification channels
 
 abkit is **not** a monitoring system — it has no alerting subsystem, no
 severities, no recovery/no-data events. What it *does* have is a way to push a
@@ -15,8 +15,8 @@ check — it does not read your warehouse, take a lock, or run any statistics; t
 payload is synthetic. Use it after wiring up a channel (or rotating a secret) to
 confirm messages arrive and look right.
 
-> Delivering *real* readouts on a schedule, and project-level error notification,
-> are separate concerns not yet built — `test-report` is the smoke test only.
+Once the plumbing works, `abk run --notify` sends the **real** readout — see
+[Sending real readouts](#sending-real-readouts) below.
 
 ## Configuring channels
 
@@ -112,3 +112,68 @@ The `EXPERIMENT` argument only labels the mock (it borrows the experiment's arm
 names, main metric, and effective alpha for a realistic-looking message). The
 command exits **non-zero** if any channel fails to send or is misconfigured, so
 it is safe to wire into CI or a pre-flight check.
+
+## Sending real readouts
+
+```bash
+abk run --select my_experiment --notify
+```
+
+After each experiment finishes, abkit reads the rows it just persisted, runs the
+**same** readout `abk run --report` bakes into its HTML, and sends one message
+per verdict. Nothing is recomputed for the message — a notification cannot
+disagree with the report or the dashboard about the same experiment.
+
+Three things follow from that, and they are worth knowing before you wire it
+into a scheduler:
+
+- **It is opt-in and it never fails your run.** Without `--notify` no channel is
+  even constructed. With it, a channel that is down, misconfigured, or throwing
+  is one yellow line — the run's exit code is decided by the pipeline alone.
+- **An experiment nobody computed sends nothing.** No results yet (or only rows
+  for arm names you have since renamed) is silence, not an "INCONCLUSIVE"
+  message. So is a run that failed, was locked, or had nothing to do.
+- **Every completed run sends.** Verdict-change dedup — send on a flip, stay
+  quiet on an unchanged verdict — is the next piece of this milestone; until it
+  lands, a run every hour is a message every hour. Point `--notify` at the runs
+  you actually want announced.
+
+### Routing per experiment
+
+An experiment YAML may add a `notify:` block. It is *routing*, never the switch:
+without `--notify` it does nothing, and without a block a notified run goes to
+**every** channel in `profiles.yml`.
+
+```yaml
+name: my_experiment
+# ...
+notify:
+  channels: [team_slack]        # subset of notification_channels (default: all)
+  mentions: [growth-team]       # rendered in each channel's own @-syntax
+  on: [readout]                 # signal kinds this experiment sends (default: all)
+```
+
+### Sending only what a channel is for
+
+A channel can declare which kinds it accepts:
+
+```yaml
+notification_channels:
+  team_slack:
+    type: slack
+    webhook_url: "${SLACK_WEBHOOK_URL}"
+  oncall_telegram:
+    type: telegram
+    bot_token: "${TELEGRAM_BOT_TOKEN}"
+    chat_id: "${TELEGRAM_CHAT_ID}"
+    on: [srm, error]            # urgent only — no routine readouts
+```
+
+The two filters **intersect**: a kind must pass the experiment's `on:` *and* the
+channel's to be delivered. The experiment narrows what it sends; the channel
+narrows what it accepts; neither re-opens what the other closed.
+
+The kinds are `readout`, `verdict_change`, `srm`, `calibration_red`, `stale` and
+`error`. **Only `readout` fires today** — the rest are accepted now so that a
+filter you write today keeps its meaning (rather than silently widening) as the
+remaining signals ship.

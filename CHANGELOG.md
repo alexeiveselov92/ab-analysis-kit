@@ -11,6 +11,52 @@ recorded here alongside an `ALGORITHM_VERSION` bump and a
 [`statistics-changes.md`](docs/specs/statistics-changes.md) entry (never a silent
 number change).
 
+## [Unreleased]
+
+### Added
+- **NTF-1 — `abk run --notify`: the readout finally leaves the terminal.**
+  `abkit/notify/` has shipped five channels since `0.1.0`, and the only thing
+  that ever called them was `abk test-report`, which sends a **synthetic**
+  readout. A real verdict has never been deliverable. The new
+  `abkit/notify/dispatch.py` is the seam: after each completed experiment,
+  `abk run --notify` reads the rows the run just persisted, evaluates them
+  through **`readout.evaluate()`** — the same function `abk run --report` and
+  the dashboard call, so a message cannot disagree with either — and sends one
+  payload per verdict through every configured channel.
+  - **Opt-in twice over, and the two opt-ins mean different things.** The flag
+    is the operator saying *send*; the new experiment-level `notify:` block
+    (`channels` / `mentions` / `on`) says *to whom, and about what*. With the
+    flag and no block, every configured channel receives every kind — an
+    operator who wired up `notification_channels:` never has to touch
+    experiment YAML to hear from them.
+  - **Two `on:` filters that INTERSECT.** A channel's `on:` (new on
+    `notification_channels`) narrows what that channel accepts; an
+    experiment's `notify.on` narrows what it sends. Neither can re-open what
+    the other closed. Only the `readout` kind fires in this WP; all six kinds
+    are accepted from the start, so a filter written today does not silently
+    widen when the remaining signals land.
+  - **Fail-soft is the contract.** A channel that raises, one that cannot be
+    constructed (a rotated secret), one that returns `False`, or a warehouse
+    read that fails — each is one yellow line and the run's exit code is
+    untouched. The `--report` precedent, applied to the same loop.
+  - **Nothing is sent about an experiment nobody computed.** No results table,
+    no rows of its own, or only rows for arm pairs the config no longer
+    declares ⇒ silence: `evaluate()` over zero rows answers INCONCLUSIVE,
+    which is a verdict about *data*, and delivering it would report a finding
+    where there is not even an observation.
+  - Zero statistical numbers moved (no `ALGORITHM_VERSION` bump) — every
+    number in a message is copied off a `PairVerdict`.
+
+### Fixed
+- **A `notification_channels:` entry can now declare abkit's own keys without
+  breaking the channel.** The block is `extra="allow"` and every sibling key
+  was forwarded verbatim to the channel constructor, so the new `on:` routing
+  key would have reached `SlackChannel(on=[...])` and failed as "Invalid
+  parameters" — including in `abk test-report`, which never asked about
+  routing. `ChannelFactory.create_from_config` now strips the routing keys it
+  owns, and a test asserts every field *declared* on the config model is
+  classified as either the `type` discriminator or routing.
+
 ## [0.6.4] - 2026-08-02
 
 ### Added

@@ -19,9 +19,10 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from abkit.config.method_config import MethodConfig
+from abkit.config.signals import SignalKind
 from abkit.core.interval import Interval
 from abkit.core.period_planner import Grid, as_local_datetime, resolve_instant
 from abkit.database.tables import MAX_EXPERIMENT_NAME_LENGTH, MAX_VARIANT_NAME_LENGTH
@@ -378,6 +379,30 @@ class ReadoutConfig(BaseModel):
     )
 
 
+class NotifyConfig(BaseModel):
+    """Per-experiment notification routing (m12 NTF-1).
+
+    Routing only — never a switch: sending at all is the ``abk run --notify``
+    opt-in. ``channels`` NARROWS the profile's ``notification_channels`` roster
+    (empty = every configured channel, the D1 default); ``on`` narrows the
+    signal kinds this experiment ever sends, and a channel's own ``on`` narrows
+    what it accepts — a kind must pass BOTH (intersection).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    channels: list[str] = Field(
+        default_factory=list,
+        description="Channel names from profiles.yml (empty -> every configured channel)",
+    )
+    mentions: list[str] = Field(
+        default_factory=list, description="Handles to @-mention, rendered in the channel's syntax"
+    )
+    on: list[SignalKind] | None = Field(
+        default=None, description="Signal kinds this experiment sends (None -> all kinds)"
+    )
+
+
 class ExperimentConfig(BaseModel):
     """The experiment — see the module docstring and declarative-config.md §2."""
 
@@ -445,6 +470,10 @@ class ExperimentConfig(BaseModel):
     )
     sequential: SequentialConfig = Field(default_factory=SequentialConfig)
     readout: ReadoutConfig = Field(default_factory=ReadoutConfig)
+    #: m12 NTF-1. ABSENT means "no per-experiment routing" — under `--notify`
+    #: every configured channel receives every kind (D1), so an operator who
+    #: wired channels up in profiles.yml never has to touch experiment YAML.
+    notify: NotifyConfig | None = Field(default=None)
     comparisons: list[ComparisonConfig] = Field(...)
 
     # ── field validators ─────────────────────────────────────────────────────
