@@ -469,7 +469,11 @@ Added 2026-08-02 (maintainer request, in conversation). Like the PLAN
 interstitial above it **renumbers nothing** (M12–M17 keep their numbers and
 their minor versions), moves no `_ab_results` number and needs no schema
 change. Sequenced ahead of M12 only where it is cheap; UI-1 can also follow it.
-**Status: UI-1 + UI-2 shipped (in `[Unreleased]`, one PR); PERF-1 open.**
+**Status: UI-1 + UI-2 shipped (PR #83, in `[Unreleased]`); PERF-1 open.**
+**Release plan (decided 2026-08-02): ONE `0.6.4` when PERF-1 lands**, not a
+cut per WP — the interstitial is a coherent unit, the library has no live
+users to hurry for, and sweeping the previous release's status lines (the
+lesson that has bitten twice in three releases) is then done once.
 
 - **`0.6.3` cut ✅ DONE** (PR #82, `8c86a46`, tagged `v0.6.3`, on PyPI). It
   carried the `paths.experiments` selection fix (#81, `16edfce`): a project
@@ -533,6 +537,36 @@ change. Sequenced ahead of M12 only where it is cheap; UI-1 can also follow it.
      loud rather than flipping it blind. Decide with evidence: run §4.1's
      criteria on the scaffolded project and publish the `--cost-report`
      numbers. ~1 session for (1); (2) is a decision, not code.
+
+  **Decided 2026-08-02, ahead of the WP** (so the session executes rather than
+  re-asks; any of these is revisable if the measured numbers contradict it):
+
+  - **Both halves land in ONE session, and the numbers go in the PR.** Splitting
+    the evidence off into a session of its own would leave the flip undecided
+    for another release, which is exactly how the current justification went
+    stale — it has been correct-and-unrevisited since `0.4.0`.
+  - **The library default stays `false`.** The flag guards one thing: a backfill
+    arriving later than `data_lag` freezing in day state. That is a property of
+    the operator's ingestion SLA, not of abkit, and a default that depends on
+    someone else's SLA is the wrong default to flip. What is actually broken is
+    the silence, and that is what (1) fixes.
+  - **The SCAFFOLD flips to `incremental_reads: true`, with a comment saying
+    why.** The incoherence is the defect, and it can be fixed in either
+    direction — but M9 chose `example_arpu` as the additive demo deliberately,
+    so a scaffold that pays the STATE write and then *demonstrates the read* is
+    strictly more useful than one that demonstrates neither. `abk
+    verify-incremental` over the scaffold is the proof that ships with it. Note
+    the test impact: the e2e gates run over the scaffold, so this changes which
+    path they exercise by default — pin BOTH paths rather than swapping which
+    one is covered.
+- **UI-3 📋 — metric YAML editing: deliberately NOT in this interstitial**
+  (decided 2026-08-02). UI-1 edits experiments only. A metric edit without its
+  `sql/` file is half a feature — a metric references SQL by path — so it needs
+  a second editor surface whose validation story is different (there is no
+  pydantic model for a `.sql` file; only the render smoke and the macro lint),
+  plus a metric list the dashboard does not have. That is a full WP of new
+  surface, not an addendum to a closing interstitial. Revisit **after M12**,
+  with its own design pass.
 
 ### M12 — notifications → `0.7.0` 📋
 Design contract: [m12-implementation-plan.md](docs/specs/m12-implementation-plan.md).
