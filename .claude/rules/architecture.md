@@ -2,12 +2,13 @@
 
 > The contributor/assistant condensation of the system **as it exists in code**.
 > Reflects: **M1–M11 shipped** + the WHOLE `0.6.x` `abk plan` interstitial
-> (PLAN-1 + PLAN-2; `__version__ = 0.6.2`, release-ready — the `v0.6.2`
-> tag/publish is the maintainer's step; latest on PyPI is `0.6.1`;
+> **released** (PLAN-1 as `0.6.1`, PLAN-2 as `0.6.2`, both tagged and on PyPI);
+> `__version__ = 0.6.3`, release-ready — the `v0.6.3` tag/publish is the
+> maintainer's step; latest on PyPI is `0.6.2`;
 > M3's WP9 testcontainers hardening deferred to a Docker-equipped
-> environment).
+> environment.
 > Design contracts for what is being *built next* (the M12–M17 polish track +
-> the `0.6.x` PLAN-1/PLAN-2 interstitial)
+> the `0.6.x` UI-1/UI-2/PERF-1 interstitial)
 > live in [docs/specs/](../../docs/specs/) + [ROADMAP.md](../../ROADMAP.md);
 > this file must never claim unbuilt code exists.
 > Keep in sync with `docs/` and the packaged `init-claude` payload
@@ -824,10 +825,14 @@ contract
 [m9](../../docs/specs/m9-implementation-plan.md),
 [m10](../../docs/specs/m10-implementation-plan.md) and
 [m11](../../docs/specs/m11-implementation-plan.md) are now implementation
-records); M13–M17 are contours, each opens with a design session), plus the
-`0.6.x` **PLAN-1/PLAN-2** interstitial (the two `abk plan` sizing gaps; design
+records); M13–M17 are contours, each opens with a design session). The `0.6.x`
+**PLAN-1/PLAN-2** interstitial is closed (released as `0.6.1`/`0.6.2`; design
 contract: [cli-and-dx.md](../../docs/specs/cli-and-dx.md) "`abk plan` sizing
-gaps"). One WP = one session =
+gaps"); a second `0.6.x` interstitial — **UI-1** (CRUD YAML editing in `abk
+dashboard`, which must restate the launcher invariant it does not actually
+violate), **UI-2** (`abk ui` alias) and **PERF-1** (make the incremental read
+path discoverable, then re-decide its default) — sits ahead of M12 and is
+mapped in [ROADMAP.md](../../ROADMAP.md). One WP = one session =
 one PR; **M7–M12 move no statistical number** (parity gates + empty
 `ALGORITHM_VERSION` grep); M13/M15 use full change control. Two binding
 inter-milestone contracts: the M8→M9 one (honored — STATE/tail-scan SQL builds

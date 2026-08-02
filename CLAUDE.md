@@ -22,7 +22,7 @@ The as-built condensation for contributors/assistants (detectkit-style):
 Design contracts for what is being *built next* stay in [docs/specs/](docs/specs/)
 (canonical for M2+ work — table below). Keep rules ↔ docs in sync per milestone.
 
-## Status: M1–M11 shipped + the `0.6.x` `abk plan` interstitial — `0.6.2` release-ready (latest on PyPI: `0.6.1`); polish track M12–M17 in flight
+## Status: M1–M11 shipped + the `0.6.x` `abk plan` interstitial released (`0.6.1`/`0.6.2`) — `0.6.3` release-ready (latest on PyPI: `0.6.2`); polish track M12–M17 in flight
 
 **Done — M1, the pure statistical core** (`abkit.stats`, importable standalone;
 see [ROADMAP.md](ROADMAP.md) for the deferred-cleanup list): data model with the
@@ -247,10 +247,12 @@ changed** (no `ALGORITHM_VERSION` bump). CRUD config editing is explicitly
 phase 2. **Released as `0.6.0`** — tagged and published to PyPI.
 
 **Next — the polish track continues: M12–M17 → `0.7.0`…`0.12.0`
-(track approved 2026-07-18)**, plus the `0.6.x` interstitial **PLAN-1/PLAN-2**
-(the two `abk plan` sizing gaps — size CUPED on the persisted ρ, and
-`--from-history` baselines for a never-run experiment; added 2026-07-29, it
-renumbers nothing). The code-verified pain audit
+(track approved 2026-07-18)**. The `0.6.x` **PLAN-1/PLAN-2** interstitial is
+closed (released as `0.6.1`/`0.6.2`); a second `0.6.x` interstitial —
+**UI-1/UI-2/PERF-1** (CRUD YAML editing in `abk dashboard`, an `abk ui` alias,
+and making the incremental read path discoverable before its default is
+re-decided; added 2026-08-02) — sits ahead of M12 and renumbers nothing
+either. The code-verified pain audit
 ([docs/research/2026-07-data-flow-audit/REPORT.md](docs/research/2026-07-data-flow-audit/REPORT.md))
 plus the entire hardening backlog, one minor release per milestone: M12
 notifications → M13–M17 (versioned stats, multi-arm decisions, new methods,
