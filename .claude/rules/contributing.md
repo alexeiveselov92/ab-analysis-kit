@@ -5,6 +5,20 @@
 > [architecture.md](architecture.md) (as-built) and
 > [docs/specs/](../../docs/specs/) (design contracts).
 
+## Session skills (`.claude/skills/`)
+
+Three repo-local skills encode the rituals this track re-derives every session.
+Invoke them by name (`/abk-wp`, …) or let them trigger on the work:
+
+| Skill | When |
+|---|---|
+| `abk-wp` | one work package end to end — branch → implement → adversarial review → sync the three doc bodies → the full gate → PR → 10 CI jobs → squash → memory + handoff |
+| `abk-release` | a version cut: bump, cut `[Unreleased]`, **sweep the previous release's status lines**, tag `vX.Y.Z` (that is what publishes), verify from PyPI in a clean venv |
+| `abk-web-bundle` | any `web/src/**` edit — rebuild, commit the artifact in the SAME PR, and the build/CI gates (globals, §4 markers, the `</script` hazard, brand-token lockstep, jsdom) |
+
+They are contributor context and are **not** shipped in the wheel — the
+`abk init-claude` payload for a *user's* project is `abkit/cli/assets/claude/`.
+
 ## Setup
 
 ```bash
