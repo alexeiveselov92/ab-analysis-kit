@@ -26,6 +26,7 @@ from click.testing import CliRunner
 
 import abkit.config.profile as profile_mod
 from abkit.cli.main import cli
+from tests._helpers.scaffold import set_incremental_reads
 from tests.e2e.test_first_run import SeedMirrorWarehouse
 
 runner = CliRunner()
@@ -39,6 +40,10 @@ def _scaffold(tmp_path, monkeypatch, name: str, copy_enabled: bool) -> SeedMirro
     monkeypatch.chdir(tmp_path)
     assert runner.invoke(cli, ["init", name]).exit_code == 0
     monkeypatch.chdir(tmp_path / name)
+    # M8 parity is copy-vs-direct, and its row comparison is BYTE-exact.
+    # The additive read path promises rel-1e-9, never byte, so this gate
+    # stays on recompute rather than riding a path with a weaker contract.
+    set_incremental_reads(Path("abkit_project.yml"), False)
     if copy_enabled:
         yml = Path("experiments") / f"{EXP}.yml"
         text = yml.read_text(encoding="utf-8")

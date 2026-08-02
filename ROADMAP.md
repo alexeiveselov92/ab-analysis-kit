@@ -314,8 +314,10 @@ rounds each defeated a textual additivity check with a new SQL shape; the text
 check survives as a veto-only filter and `abk verify-incremental` is the
 empirical oracle — which caught the scaffolded `example_signup_cr`
 (`max()` + a literal trial count) inflating `size_1` 11×. `incremental_reads`
-ships **default off** with the flip criteria recorded in
-[cumulative-intervals.md §4.1](docs/specs/cumulative-intervals.md).
+shipped **default off** with the flip criteria recorded in
+[cumulative-intervals.md §4.1](docs/specs/cumulative-intervals.md); PERF-1
+has since run them (§4.2) — `abk init` scaffolds it ON, the library default
+stays off.
 Measured: recompute scans `N·D(D+1)/2` fact rows across a D-day series,
 the additive path `N·D` — and zero inside COMPUTE at daily cadence.
 Zero statistical numbers moved (no `ALGORITHM_VERSION` bump; the flag-off/on
@@ -469,7 +471,8 @@ Added 2026-08-02 (maintainer request, in conversation). Like the PLAN
 interstitial above it **renumbers nothing** (M12–M17 keep their numbers and
 their minor versions), moves no `_ab_results` number and needs no schema
 change. Sequenced ahead of M12 only where it is cheap; UI-1 can also follow it.
-**Status: UI-1 + UI-2 shipped (PR #83, in `[Unreleased]`); PERF-1 open.**
+**Status: UI-1 + UI-2 + PERF-1 all shipped and sitting in `[Unreleased]` — the
+interstitial is code-complete and cuts as `0.6.4`.**
 **Release plan (decided 2026-08-02): ONE `0.6.4` when PERF-1 lands**, not a
 cut per WP — the interstitial is a coherent unit, the library has no live
 users to hurry for, and sweeping the previous release's status lines (the
@@ -516,8 +519,36 @@ lesson that has bitten twice in three releases) is then done once.
   anyone running both tools. Folded into UI-1's PR, registered as the SAME
   callback object (`cli.add_command(dashboard, name="ui")`) so the two names
   cannot drift in options or help text.
-- **PERF-1 📋 — make the incremental path discoverable, then re-decide its
-  default.** `compute.incremental_reads` is `false` with the reason recorded in
+- **PERF-1 ✅ SHIPPED — the incremental path is discoverable, and the default is
+  decided with numbers.** Both halves landed in one session as designed. The
+  three as-built deltas the design did not have:
+  - **An absent key and an explicit `false` had to become different things.**
+    The design said "make it loud"; it did not say how the noise stops. A
+    warning that fires forever on a project that has decided *no* is just a
+    different defect, so `declared` reads pydantic's `model_fields_set` — the
+    field stays a plain `bool`, every reader is untouched, and writing the flag
+    either way is the answer that silences it.
+  - **The threshold is LOOKS, not days.** §4.1 says "D ≲ 5 days" because it
+    assumed a daily grid; the recompute scan is quadratic in *looks*, and an
+    hourly cadence re-reads the window 24× a day. The hint fires at ≥ 6 looks
+    and the spec now says which variable it is.
+  - **The scaffold flip made the milestone's №1 assertion vacuous, exactly as
+    predicted — and the full suite went green anyway.** `test_incremental_run`'s
+    "flag off" leg turned the flag on by *not* appending a `compute:` block, so
+    the parity gate compared the incremental path against itself and still
+    passed. Both legs now go through one helper that asserts the edit landed,
+    and each leg proves from `--cost-report` output which path it took. Fixing
+    it also removed a duplicate-YAML-key hazard four test files shared.
+  Evidence, published in [cumulative-intervals.md §4.2](docs/specs/cumulative-intervals.md):
+  three consecutive clean `verify-incremental` runs over the scaffold (zero
+  divergences, zero `unverified`), and fact-scan savings of 2.5× / 3.5× / 5.0× /
+  8.5× / 11.0× at 2 / 4 / 7 / 14 / 19 looks — TOTAL fact rows scanned, each
+  reproducing `N·L(L+1)/2 + N·L` vs `N·L` exactly, with **zero** fact rows
+  inside COMPUTE at daily cadence. Decisions held: library default stays `false` (criterion 3 is the
+  operator's ingestion SLA, not abkit's to assume), scaffold ships `true`. Zero
+  statistical numbers moved.
+
+  *The original contract, for the record:* `compute.incremental_reads` is `false` with the reason recorded in
   the field itself — *"Default false until verify-incremental (m9 WP5) bakes"*
   — which was right at M9 (`0.4.0`) and has not been revisited four releases
   later. Two halves, in order:

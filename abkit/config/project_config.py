@@ -158,8 +158,13 @@ class ProjectComputeConfig(BaseModel):
         "re-materializes and recomputes a backfilled window. Distinct from "
         "`mode` (the reserved v2 backend selector): this flag changes HOW a "
         "number is computed, never the number. Experiments override via "
-        "their own `incremental_reads`. Default false until "
-        "verify-incremental (m9 WP5) bakes.",
+        "their own `incremental_reads`. Default false — not because the path "
+        "is unproven (`abk verify-incremental` reconciles it at rel-1e-9 and "
+        "any state gap falls back to recompute on its own), but because the "
+        "one thing it cannot defend against is a backfill later than your "
+        "data_lag, which is a property of YOUR ingestion SLA. `abk run` says "
+        "so when the flag is unset and the fast path would pay off; writing "
+        "it explicitly either way records the decision and silences that.",
     )
 
 

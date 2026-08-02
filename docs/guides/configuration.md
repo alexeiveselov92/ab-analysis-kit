@@ -39,8 +39,9 @@ subdirectory of the project.
 ## `abkit_project.yml`
 
 The only two required keys are `name` and `default_profile`; everything else has
-a default, so the minimal file `abk init` writes is essentially those two lines
-with the rest commented. The fields below are the authoritative pydantic model
+a default. `abk init` writes those two, a `compute:` block (see below — the
+scaffold decides `incremental_reads` explicitly rather than leaving it unset),
+and the rest commented. The fields below are the authoritative pydantic model
 (`abkit/config/project_config.py`).
 
 ```yaml
@@ -71,10 +72,26 @@ timeouts:                        # per-step, in seconds (each 1..86400)
 
 compute:
   mode: recompute                # v1 ships full-window recompute only — the only accepted value today
-  incremental_reads: false       # opt-in (m9): eligible comparisons read _ab_unit_state day moments
+  incremental_reads: true        # opt-in (m9): eligible comparisons read _ab_unit_state day moments
                                  # instead of re-scanning the fact window; any gap falls back to
                                  # recompute. Changes HOW a number is computed, never the number.
+                                 # `abk init` writes `true`; the library default (an ABSENT key) is
+                                 # false, and `abk run` says so once the series is long enough to
+                                 # matter. Writing it explicitly — either way — records the decision
+                                 # and silences that.
 ```
+
+### The `compute` block
+
+**Why the library default is `false` when the fast path is verified.** It is not
+doubt about the numbers: `abk verify-incremental` reconciles both read paths at
+`rel-1e-9` across the whole computed series, and any gap in day state falls back
+to full recompute on its own. The flag guards exactly one thing — an event
+**backfilled later than your `data_lag`** freezes in already-materialized day
+state, where the recompute path would pick it up at the next look. That is a
+property of *your* ingestion SLA, not of abkit, so abkit will not assume it. Set
+`data_lag` to your real delay, run `abk verify-incremental`, and then decide;
+the scaffolded example project (whose seed data never backfills) ships `true`.
 
 ### The `statistics` block
 

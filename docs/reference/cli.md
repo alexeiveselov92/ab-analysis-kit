@@ -126,7 +126,7 @@ abk run [--select <exp>]... [--exclude <sel>]... [--metric <m>] \
 | `--resync-cohort` | off | Copy mode only: delete the persisted cohort and rebuild it from the experiment start through the incremental engine |
 | `--workers` | `1` | Worker threads across experiments (each gets its own DB connection) |
 | `--report [PATH]` | off | Emit a self-contained HTML readout per experiment |
-| `--cost-report` | off | Print per-stage warehouse cost (wall-time, queries, rows returned, rows scanned where the backend reports them) — the evidence for turning `compute.incremental_reads` on. Unrelated to `--profile`. |
+| `--cost-report` | off | Print per-stage warehouse cost (wall-time, queries, rows returned, rows scanned where the backend reports them), plus the **day-additive slice** of COMPUTE and what the other read path would have done with it — the evidence for turning `compute.incremental_reads` on. Unrelated to `--profile`. |
 | `--force` | off | Take over a held lock (use with care) |
 | `--profile` | `profiles.yml` `default_profile` | Connection profile to use |
 
@@ -186,8 +186,8 @@ they were. Three properties are worth knowing:
 
 **`--steps` tokens** are `validate`, `plan`, `load`, `state`, `compute` (any unknown
 token errors with the valid list). The `state` step (M9) materializes per-unit,
-per-day moments for closed-form metrics into `_ab_unit_state`; with the default
-`compute.incremental_reads: false` nothing reads them, and skipping the step
+per-day moments for closed-form metrics into `_ab_unit_state`; with
+`compute.incremental_reads` off nothing reads them, and skipping the step
 skips only that write, never a result. With `incremental_reads: true` eligible
 comparisons read those moments instead of re-scanning the fact window, so
 skipping `state` there just means the reads fall back to full recompute
@@ -198,6 +198,26 @@ the only meaning of "validate" on `run`; it is a *config* gate and is **not**
 `abk validate` (the A/A matrix). Because the lint never touches the DB — and lints the
 whole project by construction — combining `--steps validate` with `--report` or
 `--metric` is rejected.
+
+**`abk run` tells you when the fast path would pay off.** If a comparison is on
+the additive contract — the metric declares `state_additive: true` AND the
+comparison is closed-form, unstratified and has no explicit covariate, so the
+`state` step materializes its day moments on every run — but
+`compute.incremental_reads` is **not written anywhere**, the run
+prints a warning once the series reaches six looks: the write is being paid for
+and the read is not, which is the one configuration strictly worse than either
+choice. Writing the flag **either way** records the decision and silences it;
+`false` is a legitimate answer (see
+[configuration](../guides/configuration.md#the-compute-block) for what it
+actually guards). Two related disclosures: with the flag **on** but no metric
+declaring `state_additive`, the run says the flag is doing nothing; and when
+eligible reads **fell back** to full recompute, it reports how many looks did so
+(the per-reason warnings above it say why).
+
+Add `--cost-report` for the numbers behind that: under the `compute:` line it
+prints `of which day-additive:` — the same measured cost, attributed to the
+eligible comparisons only — and then what the other path would do with it. The
+slice is **part of** the `compute` total, not a sibling; never add them.
 
 **`--report` is tri-state** (the donor's flag shape): omit it for no report; a bare
 `--report` writes `reports/<experiment>.html`; a directory value writes

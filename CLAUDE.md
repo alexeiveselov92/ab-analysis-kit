@@ -22,7 +22,7 @@ The as-built condensation for contributors/assistants (detectkit-style):
 Design contracts for what is being *built next* stay in [docs/specs/](docs/specs/)
 (canonical for M2+ work — table below). Keep rules ↔ docs in sync per milestone.
 
-## Status: M1–M11 shipped; `0.6.1`–`0.6.3` released (latest on PyPI: `0.6.3`); the second `0.6.x` interstitial in flight — UI-1 + UI-2 built (unreleased), PERF-1 open; polish track M12–M17 next
+## Status: M1–M11 shipped; `0.6.1`–`0.6.3` released (latest on PyPI: `0.6.3`); the second `0.6.x` interstitial CODE-COMPLETE and unreleased — UI-1 + UI-2 + PERF-1 all in `[Unreleased]`, cutting as `0.6.4`; polish track M12–M17 next
 
 **Done — M1, the pure statistical core** (`abkit.stats`, importable standalone;
 see [ROADMAP.md](ROADMAP.md) for the deferred-cleanup list): data model with the
@@ -169,8 +169,10 @@ declaration** (`state_additive: true`, default off): three review rounds each
 defeated a textual additivity check with a new SQL shape, so the text check
 is veto-only and `verify-incremental` is the empirical oracle — it caught the
 scaffolded `example_signup_cr` (`max()` + a literal trial count) inflating
-`size_1` 11×. `incremental_reads` stays **default off** with the flip
-criteria in [cumulative-intervals.md §4.1](docs/specs/cumulative-intervals.md).
+`size_1` 11×. `incremental_reads` stayed **default off** with the flip
+criteria in [cumulative-intervals.md §4.1](docs/specs/cumulative-intervals.md);
+PERF-1 has since run them (§4.2) — `abk init` now scaffolds it ON, the library
+default stays off.
 **Zero statistical numbers moved** (the flag on/off parity gate is the
 milestone's №1 assertion; no `ALGORITHM_VERSION` bump). **Released as
 `0.4.0`** — tagged and published to PyPI.
@@ -251,13 +253,18 @@ phase 2 — it shipped in the `0.6.x` **UI-1** interstitial. **Released as
 **Next — the polish track continues: M12–M17 → `0.7.0`…`0.12.0`
 (track approved 2026-07-18)**. The `0.6.x` **PLAN-1/PLAN-2** interstitial is
 closed (released as `0.6.1`/`0.6.2`); the second `0.6.x` interstitial —
-**UI-1/UI-2/PERF-1**, added 2026-08-02 — is two thirds done: **UI-1** (CRUD
+**UI-1/UI-2/PERF-1**, added 2026-08-02 — is CODE-COMPLETE: **UI-1** (CRUD
 YAML editing in `abk dashboard`, `abkit/tuning/config_files.py` — validate both
 levels → archive byte-verbatim → atomic write, with the boot snapshot replaced
-by a re-resolution seam) and **UI-2** (`abk ui`) are built and sit in
-`[Unreleased]`; **PERF-1** (make the incremental read path discoverable before
-its default is re-decided) is open, and the interstitial cuts as ONE `0.6.4`
-when it lands. The interstitial renumbers nothing either. Metric-YAML editing
+by a re-resolution seam), **UI-2** (`abk ui`) and **PERF-1** (the M9 additive
+read path made discoverable — `abk run` warns about an undecided
+`compute.incremental_reads` when a metric is day-additive and the series has
+reached six looks, `--cost-report` prints the measured day-additive slice of
+COMPUTE beside the counterfactual, and `abk init` now scaffolds
+`incremental_reads: true`; the library default stays `false` because the flag
+guards the operator's ingestion SLA, and §4.1's criteria were finally executed
+— evidence in [cumulative-intervals.md §4.2](docs/specs/cumulative-intervals.md))
+all sit in `[Unreleased]`, cutting as ONE `0.6.4`. The interstitial renumbers nothing either. Metric-YAML editing
 (UI-3) is deliberately deferred past M12 — a metric edit needs its `sql/` file
 too, which is new surface rather than an addendum. The code-verified pain audit
 ([docs/research/2026-07-data-flow-audit/REPORT.md](docs/research/2026-07-data-flow-audit/REPORT.md))

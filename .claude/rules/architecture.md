@@ -4,12 +4,12 @@
 > Reflects: **M1–M11 shipped**, the WHOLE `0.6.x` `abk plan` interstitial
 > **released** (PLAN-1 as `0.6.1`, PLAN-2 as `0.6.2`) and `0.6.3` released
 > (the `paths.experiments` selection fix) — all three tagged and on PyPI;
-> plus the second `0.6.x` interstitial's **UI-1** (the dashboard's YAML editor)
-> and **UI-2** (`abk ui`), built and sitting in `[Unreleased]` — PERF-1 is the
-> open one. M3's WP9 testcontainers hardening deferred to a Docker-equipped
-> environment.
-> Design contracts for what is being *built next* (the M12–M17 polish track +
-> the `0.6.x` UI-1/UI-2/PERF-1 interstitial)
+> plus the second `0.6.x` interstitial COMPLETE and sitting in `[Unreleased]`:
+> **UI-1** (the dashboard's YAML editor), **UI-2** (`abk ui`) and **PERF-1**
+> (the additive read path made discoverable; the scaffold flipped to
+> `incremental_reads: true`). M3's WP9 testcontainers hardening deferred to a
+> Docker-equipped environment.
+> Design contracts for what is being *built next* (the M12–M17 polish track)
 > live in [docs/specs/](../../docs/specs/) + [ROADMAP.md](../../ROADMAP.md);
 > this file must never claim unbuilt code exists.
 > Keep in sync with `docs/` and the packaged `init-claude` payload
@@ -731,6 +731,51 @@ two-process lock race) is deferred to a Docker-equipped environment.
   callback object, so options and help cannot drift. `dashboard`/`explore` name
   the surface where `ui` does not, so the canonical name stays.
 
+### PERF-1 facts an assistant must know (the additive read path, made loud)
+
+- **`AdditiveReadStatus` (`pipeline/_types.py`) is the whole surface**, and it is
+  PURE — `hint()` takes no config and no warehouse, so the rules about when
+  abkit nags are unit-tested without a DB. The driver fills it on every run that REACHES COMPUTE
+  (eligibility is measured even with the flag off — that is the point; a
+  `--steps …,state` run that stops before COMPUTE reports nothing, since
+  eligibility is resolved per comparison inside that loop) and
+  `abk run` echoes `hint()` through `outcome.warnings`, because that is the
+  channel which reaches the terminal (the M7 `decision_log` lesson).
+- **An ABSENT `compute.incremental_reads` and an explicit `false` are different
+  things**, distinguished by pydantic's `model_fields_set` (the field is still a
+  plain `bool`; nothing that reads it changed). They resolve identically — only
+  the first is *undecided*, and only the first is nagged. Without the
+  distinction the warning could never be answered, and an unanswerable warning
+  is just a different silence. An experiment-level override counts as declared
+  iff it is not `None`.
+- **The threshold is LOOKS, not days** (`MIN_LOOKS_TO_MATTER = 6`).
+  cumulative-intervals §4.1 states it in days because it assumed a daily grid;
+  the recompute scan is quadratic in looks and an hourly cadence re-reads the
+  window 24× a day. `series_looks` is `len(computed) + len(pending)` — disjoint
+  by construction — maxed over the eligible comparisons.
+- **`_stage_cost` is variadic and `compute.additive` is a SLICE, not a sibling.**
+  An eligible look's measured delta lands in both `"compute"` and
+  `"compute.additive"`; summing the two printed lines double-counts. Every
+  COMPUTE load for an eligible comparison goes through the same `cost_stages`
+  tuple, the sequential τ² load included.
+- **Fallback extent comes from `on_fallback`, never from the warnings.** The
+  reader's `_warn_once` is deduped per (metric, reason), so it can name the
+  cause but can never say how many looks paid for it; `on_fallback` fires at
+  most once per `load_cutoff` (the reader returns the recompute result
+  immediately after), so counting calls counts cutoffs.
+- **`abk init` writes `incremental_reads: true`; the library default is still
+  `false`.** The two differ on purpose (§4.2): the scaffold's seed data never
+  backfills, and the flag guards exactly one thing — a backfill later than
+  `data_lag` freezing in day state — which is the operator's ingestion SLA.
+- **The scaffold flip made the M9 parity gate vacuous and the suite stayed
+  green.** `test_incremental_run`'s "flag off" leg used to turn the flag ON by
+  *not* appending a `compute:` block, so leg 4 compared the incremental path
+  against itself. Both legs now call
+  `tests/_helpers/scaffold.py::set_incremental_reads`, which asserts the edit
+  landed AND re-parses to confirm, and each leg proves from `--cost-report`
+  output which path it actually took. Any new test scaffolding a project must
+  state the flag rather than rely on silence.
+
 ## The stats core (`abkit.stats`) — the implemented system
 
 **Purity invariant (hard):** numpy/scipy/statsmodels + stdlib only; never
@@ -857,9 +902,12 @@ numbers moved** (cross-mode parity gates; no `ALGORITHM_VERSION` bump).
 published to PyPI): the additive compute engine + CUPED
 Tier-E — see "M9 facts an assistant must know" above for the working
 contracts. **Zero statistical numbers moved** (the flag on/off parity gate;
-no `ALGORITHM_VERSION` bump). `compute.incremental_reads` ships **default
-off** with the flip criteria in
-[cumulative-intervals.md §4.1](../../docs/specs/cumulative-intervals.md).
+no `ALGORITHM_VERSION` bump). The **library** default of
+`compute.incremental_reads` is still off, but since PERF-1 `abk init` writes
+`true` and `abk run` will not stay quiet about an undecided project — the flip
+criteria in
+[cumulative-intervals.md §4.1](../../docs/specs/cumulative-intervals.md) have
+been executed, with the numbers in §4.2 (facts below).
 
 **M10 shipped** (the record is
 [m10-implementation-plan.md](../../docs/specs/m10-implementation-plan.md) —
@@ -905,12 +953,12 @@ contract
 records); M13–M17 are contours, each opens with a design session). The `0.6.x`
 **PLAN-1/PLAN-2** interstitial is closed (released as `0.6.1`/`0.6.2`; design
 contract: [cli-and-dx.md](../../docs/specs/cli-and-dx.md) "`abk plan` sizing
-gaps"); the second `0.6.x` interstitial is two thirds done — **UI-1** (CRUD
-YAML editing in `abk dashboard`; it restated the launcher invariant it does not
-actually violate — facts above) and **UI-2** (`abk ui` alias) are built and sit
-in `[Unreleased]`, while **PERF-1** (make the incremental read path
-discoverable, then re-decide its default) is open and mapped in
-[ROADMAP.md](../../ROADMAP.md). One WP = one session =
+gaps"); the second `0.6.x` interstitial is COMPLETE and awaiting its `0.6.4`
+cut — **UI-1** (CRUD YAML editing in `abk dashboard`; it restated the launcher
+invariant it does not actually violate — facts above), **UI-2** (`abk ui`
+alias) and **PERF-1** (the additive read path made discoverable; the scaffold
+flipped to `incremental_reads: true`) all sit in `[Unreleased]`.
+One WP = one session =
 one PR; **M7–M12 move no statistical number** (parity gates + empty
 `ALGORITHM_VERSION` grep); M13/M15 use full change control. Two binding
 inter-milestone contracts: the M8→M9 one (honored — STATE/tail-scan SQL builds

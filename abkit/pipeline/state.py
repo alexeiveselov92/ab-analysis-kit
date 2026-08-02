@@ -260,9 +260,12 @@ def _role_projections_are_additive(metric: MetricConfig, metric_sql: str) -> boo
 
     It remains a NECESSARY, not sufficient, condition — SQL is not parsed
     here, and the body is the pre-Jinja source. The authoritative additivity
-    oracle is ``abk verify-incremental`` (m9 WP5), which is precisely why
-    ``compute.incremental_reads`` defaults off and the flip criteria
-    (cumulative-intervals.md §4.1) demand clean reconciliation runs first.
+    oracle is ``abk verify-incremental`` (m9 WP5), which is why the flip
+    criteria (cumulative-intervals.md §4.1) demand clean reconciliation runs
+    first. Those criteria have since been run (§4.2): the LIBRARY default of
+    ``compute.incremental_reads`` stays off not because the path is unproven
+    but because it cannot defend against a backfill later than ``data_lag`` —
+    the operator's ingestion SLA. ``abk init`` scaffolds it ON.
     """
     body = _strip_sql_noise(metric_sql)
     if _MULTI_BRANCH.search(body):

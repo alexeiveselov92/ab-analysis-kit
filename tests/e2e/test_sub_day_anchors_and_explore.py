@@ -53,6 +53,7 @@ from test_first_run import EXPOSURE_TS, SeedMirrorWarehouse
 import abkit.config.profile as profile_mod
 from abkit.cli.main import cli
 from abkit.config import ExperimentConfig
+from tests._helpers.scaffold import set_incremental_reads
 
 runner = CliRunner()
 
@@ -378,8 +379,6 @@ SUB_DAY_HORIZON = "2024-07-04"
 SUB_DAY_EXP = "example_signup_test"
 STATE_METRIC = "example_arpu"
 
-_INCREMENTAL_BLOCK = "\ncompute:\n  incremental_reads: true\n"
-
 
 def _sub_day_project(
     tmp_path, monkeypatch, *, incremental=False, anchor="midnight", name="demo_subday"
@@ -398,9 +397,9 @@ def _sub_day_project(
     document["interval_anchor"] = anchor
     path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
 
-    if incremental:
-        project_yml = Path("abkit_project.yml")
-        project_yml.write_text(project_yml.read_text() + _INCREMENTAL_BLOCK, encoding="utf-8")
+    # written for BOTH legs — the scaffold's own default is `true` since
+    # PERF-1, so a silent leg would no longer mean "recompute".
+    set_incremental_reads(Path("abkit_project.yml"), incremental)
 
     warehouse = SeedMirrorWarehouse()
     monkeypatch.setattr(profile_mod.ProfileConfig, "create_manager", lambda self: warehouse)

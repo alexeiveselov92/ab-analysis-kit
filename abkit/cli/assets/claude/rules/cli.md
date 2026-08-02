@@ -90,6 +90,15 @@ It is incremental by
 an anti-join — only cutoffs past the `data_lag` watermark and not already computed
 are (re)computed, so re-running is idempotent.
 
+**The run says so when the fast path is being left on the table.** A comparison
+on the additive contract (`state_additive: true` on the metric, plus a
+closed-form unstratified comparison with no explicit covariate) while
+`compute.incremental_reads` is unwritten means every run pays the STATE write
+and then re-scans the full window anyway;
+at six looks or more `abk run` warns and names both ways out (`true` to take it,
+`false` to record the refusal). It also discloses the two mirror cases: the flag
+on with nothing declared additive, and how many looks fell back to recompute.
+
 - `--metric <m>` (0.6.0) — recompute only that metric's comparison(s); the same
   metric axis `explore`/`validate`/`plan`/`verify-incremental` take. Other
   metrics' **results** are left exactly as they are, and the **alphas do not
@@ -128,7 +137,10 @@ are (re)computed, so re-running is idempotent.
   `reports/<exp>.html`; a directory → `<dir>/<exp>.html`; a `.html` path → that
   file. Reads persisted rows, so even a load-only run can produce one.
 - `--cost-report` — print per-stage warehouse cost (wall-time, queries, rows returned,
-  rows scanned where the backend reports them). The evidence for turning
+  rows scanned where the backend reports them), plus `of which day-additive:` — the
+  same measured cost attributed to the state-eligible comparisons only, followed by
+  what the other read path would have done with it. That slice is PART OF the
+  `compute` total, never a sibling; do not add them. The evidence for turning
   `compute.incremental_reads` on; unrelated to `--profile` (the DB connection).
 - `--force` — take over a held lock (prefer `abk unlock`; risky with concurrent runs).
 - `--profile` — override `profiles.yml`'s `default_profile` (e.g. run against staging).

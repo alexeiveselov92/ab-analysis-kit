@@ -20,6 +20,7 @@ from fake_db import FakeDatabaseManager, serve_assignment_pushdown
 
 import abkit.config.profile as profile_mod
 from abkit.cli.main import cli
+from tests._helpers.scaffold import set_incremental_reads
 
 USERS = 600
 EXP_START = date(2024, 7, 1)
@@ -141,6 +142,12 @@ def scaffolded(tmp_path, monkeypatch):
     result = runner.invoke(cli, ["init", "demo"])
     assert result.exit_code == 0, result.output
     monkeypatch.chdir(tmp_path / "demo")
+    # PERF-1 flipped the scaffold to `incremental_reads: true`. Pinned OFF
+    # here so this file keeps covering the RECOMPUTE path it was written
+    # for — the additive path has its own gate in test_incremental_run.py,
+    # which also pins the two agree. Swapping which path is covered would
+    # have left recompute asserted only against itself.
+    set_incremental_reads(Path("abkit_project.yml"), False)
     warehouse = SeedMirrorWarehouse()
     monkeypatch.setattr(profile_mod.ProfileConfig, "create_manager", lambda self: warehouse)
     import abkit.pipeline.driver as driver_mod

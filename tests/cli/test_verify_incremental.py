@@ -17,6 +17,7 @@ from click.testing import CliRunner
 
 import abkit.config.profile as profile_mod
 from abkit.cli.main import cli
+from tests._helpers.scaffold import set_incremental_reads
 from tests.e2e.test_first_run import SeedMirrorWarehouse
 
 runner = CliRunner()
@@ -26,13 +27,9 @@ METRIC = "example_signup_cr"
 #: trial count, so it is (correctly) NOT day-additive and never materializes
 STATE_METRIC = "example_arpu"
 
-#: turn the opt-in read path on for the scaffolded project
-_INCREMENTAL_BLOCK = "\ncompute:\n  incremental_reads: true\n"
-
 
 def _enable_incremental_reads() -> None:
-    project_yml = Path("abkit_project.yml")
-    project_yml.write_text(project_yml.read_text() + _INCREMENTAL_BLOCK)
+    set_incremental_reads(Path("abkit_project.yml"), True)
 
 
 @pytest.fixture

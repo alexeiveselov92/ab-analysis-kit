@@ -119,9 +119,10 @@ is rendered exactly once, by the STATE stage) and its COMPUTE stage touches the
 fact table not at all. A sub-day grid adds at most the current day's tail
 (§6.4).
 
-**`incremental_reads` stays `false` by default.** Flip it per project only
-when all of the following hold — this is the concrete threshold §4 asks for,
-not a vibe:
+**`incremental_reads` stays `false` by default** (as the *library* default —
+`abk init` writes `true`; §4.2 records why the two differ). Flip it per project
+only when all of the following hold — this is the concrete threshold §4 asks
+for, not a vibe:
 
 1. **Three consecutive clean `abk verify-incremental` runs** over the
    project's live experiments, each reporting zero divergences AND zero
@@ -131,6 +132,9 @@ not a vibe:
    fact-table cost dropping by a factor worth the STATE stage's write cost
    for that project's D — at D ≲ 5 days the two are within noise, and the
    saving grows linearly with D thereafter.
+   *(Superseded by §4.2: measurement puts the crossover at ONE look, not five
+   days, and the right variable is looks. The criterion stands; its stated
+   threshold does not.)*
 3. **`data_lag` is honest**: it covers the project's real ingestion delay.
    The incremental path freezes an out-of-SLA backfill in day state (the
    documented m9 WP4 limitation, the m8 copy-mode precedent), and
@@ -140,6 +144,74 @@ not a vibe:
 A project that cannot satisfy (3) should stay on recompute: it self-heals
 late data prospectively, which is exactly what an unreliable ingestion SLA
 needs.
+
+### 4.2 PERF-1 (`0.6.4`): the criteria run, and what they decided
+
+M9 wrote the criteria above and nothing ever executed them; four releases
+later the flag's own field text still said *"default false until
+verify-incremental bakes"*, which had been true at `0.4.0` and unrevisited
+since. PERF-1 ran them on the scaffolded project and settled the question.
+
+**Criterion 1 — clean reconciliation.** Three consecutive
+`abk verify-incremental` runs over the scaffolded `example_signup_test`:
+exit 0, `14 matched at rel_tol=1e-09`, **zero `unverified` cutoffs** each
+time. ✅
+
+**Criterion 2 — a measured win.** Fact rows scanned, from the executable perf
+harness (`tests/compute/test_incremental_perf.py`, N = 40 units, daily
+cadence, one fact row per unit per day). Every row reproduces the closed form
+exactly — recompute `N·L(L+1)/2` in COMPUTE, incremental `N·L` in total:
+
+| looks `L` | recompute (total) | incremental (total) | recompute (COMPUTE) | incremental (COMPUTE) | saving |
+|---:|---:|---:|---:|---:|---:|
+| 2 | 200 | 80 | 120 | **0** | 2.5× |
+| 4 | 560 | 160 | 400 | **0** | 3.5× |
+| 7 | 1 400 | 280 | 1 120 | **0** | 5.0× |
+| 14 | 4 760 | 560 | 4 200 | **0** | 8.5× |
+| 19 | 8 360 | 760 | 7 600 | **0** | 11.0× |
+
+**This corrects §4.1 in two ways.**
+
+*The crossover is not at ~5 days — it is at one look.* §4.1 guessed "at D ≲ 5
+days the two are within noise"; the measurement says the additive path already
+scans **60% fewer** fact rows at **two** looks, and is never worse. The saving
+at 2 looks is small in ABSOLUTE terms (120 rows), which is a different claim
+and the one that survives. So `MIN_LOOKS_TO_MATTER = 6` is a **restraint**
+threshold — the point past which the saving is worth interrupting an operator
+about — not a break-even, and the code comment says so.
+
+*The variable is LOOKS, not days.* §4.1 states it in days because it assumes a
+daily grid; the recompute scan is quadratic in looks, so an hourly cadence
+re-reads the window 24× a day and arrives in a fraction of the calendar time.
+The `abk run` hint thresholds on looks (≥ 6), and counts them from the GRID —
+never from `computed ∪ pending`, which overlap under `--full-refresh`.
+
+*Provenance.* The harness is `tests/compute/test_incremental_perf.py`, which
+asserts the closed forms at 4 and 8 looks; the five rows above were produced by
+driving the same `_run_series` helper at each L and are reproduced by the
+closed forms exactly. The ratios are total-over-total (`(L+3)/2`, since the
+recompute total also carries the STATE write it never reads), not the
+COMPUTE-only `(L+1)/2`.
+
+**Criterion 3 — an honest `data_lag`.** Not decidable by abkit: it is a
+statement about the operator's ingestion, and it is the *only* thing the flag
+guards (the numbers are pinned at rel-1e-9 and a state gap falls back to
+recompute unaided). So:
+
+- **The library default stays `false`** — a default that depends on someone
+  else's SLA is the wrong default to flip.
+- **The scaffold ships `true`**, because its seed dataset never backfills and
+  M9 chose `example_arpu` as the additive demo deliberately. A scaffold that
+  pays the STATE write and demonstrates the read beats one that demonstrates
+  neither — which is what it did from M9 to `0.6.3`.
+- **The real defect was the silence**, and that is what PERF-1 fixed: `abk
+  run` warns when a project is in the strictly-worst configuration (something
+  declared `state_additive`, the flag unwritten, the series at six looks or more),
+  `--cost-report` prints the measured day-additive slice of COMPUTE beside the
+  counterfactual, and writing the flag **either way** records the decision and
+  silences the warning. An absent key and an explicit `false` resolve to the
+  same behaviour and are deliberately distinguished (`model_fields_set`), or
+  the nag could never terminate.
 
 ## 5. Compute must-fixes (from the quorum — blocking)
 

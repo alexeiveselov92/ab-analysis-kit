@@ -39,6 +39,7 @@ from click.testing import CliRunner
 
 import abkit.config.profile as profile_mod
 from abkit.cli.main import cli
+from tests._helpers.scaffold import set_incremental_reads
 from tests.e2e.test_first_run import _WINDOW_RE, SeedMirrorWarehouse
 
 runner = CliRunner()
@@ -48,9 +49,6 @@ EXP = "example_signup_test"
 STATE_METRIC = "example_arpu"
 #: the scaffolded metric that must never materialize (max() + `1 AS visits`)
 RECOMPUTE_METRIC = "example_signup_cr"
-
-#: the opt-in read path, appended to the scaffolded project config
-_INCREMENTAL_BLOCK = "\ncompute:\n  incremental_reads: true\n"
 
 #: columns that legitimately differ between two runs of the same numbers
 VOLATILE = {"created_at", "loaded_at", "run_id", "watermark_ts", "metric_rendered_query"}
@@ -63,9 +61,10 @@ def _scaffold(tmp_path, monkeypatch, name: str, incremental: bool) -> SeedMirror
     monkeypatch.chdir(tmp_path)
     assert runner.invoke(cli, ["init", name]).exit_code == 0
     monkeypatch.chdir(tmp_path / name)
-    if incremental:
-        project_yml = Path("abkit_project.yml")
-        project_yml.write_text(project_yml.read_text() + _INCREMENTAL_BLOCK, encoding="utf-8")
+    # ALWAYS written, never only for one leg: PERF-1 made `true` the scaffold's
+    # own default, so a leg that stayed silent would agree with the other one
+    # and leg 4 below would compare the incremental path against itself.
+    set_incremental_reads(Path("abkit_project.yml"), incremental)
     warehouse = SeedMirrorWarehouse()
     monkeypatch.setattr(profile_mod.ProfileConfig, "create_manager", lambda self: warehouse)
     import abkit.pipeline.driver as driver_mod
@@ -80,6 +79,27 @@ def incremental_project(tmp_path, monkeypatch) -> SeedMirrorWarehouse:
     result = runner.invoke(cli, ["run", "--select", EXP])
     assert result.exit_code == 0, result.output
     return warehouse
+
+
+def _count_additive_reads(monkeypatch) -> list[tuple]:
+    """Record every `IncrementalBackend.load_cutoff` the run makes.
+
+    The only observation that distinguishes the two read paths from outside:
+    the resolved flag, the persisted numbers and `verify-incremental` (which
+    builds its own backends) are all identical when the driver stops routing
+    to the additive reader at all.
+    """
+    import abkit.compute.incremental_backend as incremental_mod
+
+    reads: list[tuple] = []
+    original = incremental_mod.IncrementalBackend.load_cutoff
+
+    def counted(self, *args, **kwargs):
+        reads.append((args, tuple(sorted(kwargs))))
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(incremental_mod.IncrementalBackend, "load_cutoff", counted)
+    return reads
 
 
 def _keyed(rows: list[dict]) -> dict[tuple, dict]:
@@ -282,8 +302,7 @@ class TestDriftIsCaughtAndHealed:
         monkeypatch.chdir(tmp_path)
         assert runner.invoke(cli, ["init", "demo_drift"]).exit_code == 0
         monkeypatch.chdir(tmp_path / "demo_drift")
-        project_yml = Path("abkit_project.yml")
-        project_yml.write_text(project_yml.read_text() + _INCREMENTAL_BLOCK, encoding="utf-8")
+        set_incremental_reads(Path("abkit_project.yml"), True)
         warehouse = _BackfillingWarehouse()
         monkeypatch.setattr(profile_mod.ProfileConfig, "create_manager", lambda self: warehouse)
         import abkit.pipeline.driver as driver_mod
@@ -381,8 +400,20 @@ class TestFlagOffChangesNoNumber:
         persisted: dict[str, list[dict]] = {}
         for mode, incremental in (("incremental", True), ("recompute", False)):
             warehouse = _scaffold(tmp_path, monkeypatch, f"demo_{mode}", incremental)
-            result = runner.invoke(cli, ["run", "--select", EXP])
+            # PERF-1: count REAL additive reads, so each leg proves the path it
+            # is named for. Asserting on the run's own reporting would only
+            # prove the resolved FLAG — with the driver's routing removed, this
+            # file stayed 9/9 green. Same idiom (and same trap) as
+            # test_sub_day_anchors_and_explore's whole-series leg.
+            reads = _count_additive_reads(monkeypatch)
+            result = runner.invoke(cli, ["run", "--select", EXP, "--cost-report"])
             assert result.exit_code == 0, result.output
+            if incremental:
+                # one additive read per cutoff of the one state-eligible metric
+                assert len(reads) == 14, len(reads)
+                assert "fell back" not in result.output.lower(), result.output
+            else:
+                assert reads == [], "the recompute leg must never touch the additive reader"
             persisted[mode] = [dict(row) for row in warehouse._rows["_ab_results"]]
             state_rows = warehouse._rows.get("_ab_unit_state", [])
             if incremental:

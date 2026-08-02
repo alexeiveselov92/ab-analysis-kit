@@ -81,12 +81,17 @@ def _noop_log(_: str) -> None:  # pragma: no cover - trivial
 
 
 @contextmanager
-def _stage_cost(outcome: RunOutcome, manager: BaseDatabaseManager, stage: str) -> Iterator[None]:
+def _stage_cost(outcome: RunOutcome, manager: BaseDatabaseManager, *stages: str) -> Iterator[None]:
     """Accumulate one stage's wall-time + warehouse cost into the outcome.
 
     The m9 WP5 observability seam. Re-entering the same stage name ADDS to it
     (COMPUTE is entered once per comparison), so the reported number is the
     whole stage, not its last slice.
+
+    PERF-1 passes TWO names for a day-additive look — `"compute"` and the
+    derived `"compute.additive"` — so the same measured delta lands in the
+    stage total and in its additive slice. They overlap by construction: the
+    slice is part of the total, never a sibling of it.
     """
     before = manager.query_cost
     started = perf_counter()
@@ -95,14 +100,15 @@ def _stage_cost(outcome: RunOutcome, manager: BaseDatabaseManager, stage: str) -
     finally:
         elapsed = perf_counter() - started
         delta = manager.query_cost - before
-        previous = outcome.stage_costs.get(stage)
-        if previous is None:
-            outcome.stage_costs[stage] = StageCost(seconds=elapsed, queries=delta)
-        else:
-            outcome.stage_costs[stage] = StageCost(
-                seconds=previous.seconds + elapsed,
-                queries=previous.queries + delta,
-            )
+        for stage in stages:
+            previous = outcome.stage_costs.get(stage)
+            if previous is None:
+                outcome.stage_costs[stage] = StageCost(seconds=elapsed, queries=delta)
+            else:
+                outcome.stage_costs[stage] = StageCost(
+                    seconds=previous.seconds + elapsed,
+                    queries=previous.queries + delta,
+                )
 
 
 def _sequential_tau2(
@@ -450,6 +456,24 @@ def run_experiment(
             if experiment.incremental_reads is not None
             else project.compute.incremental_reads
         )
+        # PERF-1: an ABSENT flag is not the same as an explicit `false`. m9
+        # shipped the fast path silent, so the hint below nags an undecided
+        # project — and writing `incremental_reads: false` records the decision
+        # and silences it. `model_fields_set` is what distinguishes the two
+        # (the field itself stays a plain bool, so every reader is untouched);
+        # an experiment-level override is declared iff it is not None.
+        outcome.additive.declared = (
+            experiment.incremental_reads is not None
+            or "incremental_reads" in project.compute.model_fields_set
+        )
+        outcome.additive.configured = incremental_reads
+        outcome.additive.total_comparisons = len(
+            [
+                comparison
+                for comparison in experiment.comparisons
+                if metric_filter is None or comparison.metric == metric_filter
+            ]
+        )
         # A skipped STATE step can only leave day state ABSENT (the gap
         # fallback's territory) — except under --full-refresh/--resync-cohort,
         # which re-plan results while leaving already-materialized days
@@ -467,6 +491,24 @@ def run_experiment(
                 "--steps to re-materialize it"
             )
             incremental_reads = False
+        outcome.additive.enabled = incremental_reads
+
+        # PERF-1: the hook fires at most once per load_cutoff (the reader
+        # returns the recompute result immediately after), so counting calls
+        # counts CUTOFFS — unlike `on_warning`, which is deduped per (metric,
+        # reason) and therefore cannot measure extent. But `load_cutoff` has
+        # TWO callers on this backend: the look loop, and the sequential τ²
+        # anchor scan, which walks `grid.cutoffs` (NOT `pending`) and runs even
+        # when nothing is pending. Counting those too made `fallbacks` exceed
+        # `looks_computed` — "fell back for 15 of 14 looks", and a negative
+        # served count in --cost-report. So the counter is armed only while the
+        # look loop is running.
+        counting_looks = False
+
+        def _count_fallback(_metric: str, _kind: str, _end_ts: datetime) -> None:
+            if counting_looks:
+                outcome.additive.fallbacks += 1
+
         incremental_backend: IncrementalBackend | None = None
         if incremental_reads:
             # ONE construction path, shared with `abk verify-incremental`
@@ -481,6 +523,7 @@ def run_experiment(
                 grid,
                 project_root=project_root,
                 on_warning=outcome.warnings.append,
+                on_fallback=_count_fallback,
             )
 
         # ── PLAN + COMPUTE per comparison (backend built by the WP4 factory) ─
@@ -494,12 +537,20 @@ def run_experiment(
             method_config_id = comparison.method.method_config_id
             metric_sql = metric.get_query_text(project_root)
             effective_alpha = comparison_alpha(comparison, alphas)
+            # PERF-1 measures eligibility even when the flag is OFF: the whole
+            # point of the hint is that a project pays the STATE write for
+            # these comparisons and then re-scans the window anyway.
+            eligible = comparison_state_eligible(comparison, metric, metric_sql)
+            if eligible:
+                outcome.additive.eligible_comparisons += 1
             comp_backend: IncrementalBackend | RecomputeBackend = (
-                incremental_backend
-                if incremental_backend is not None
-                and comparison_state_eligible(comparison, metric, metric_sql)
-                else backend
+                incremental_backend if incremental_backend is not None and eligible else backend
             )
+            # Every COMPUTE load for an eligible comparison lands in the stage
+            # total AND in the additive slice --cost-report prints (the
+            # counterfactual: this is the part the fast path would move off the
+            # fact table). The sequential τ² load below is one of them.
+            cost_stages = ("compute", "compute.additive") if eligible else ("compute",)
 
             method_cls = get_method_class(comparison.method.name)
             seq_eligible = experiment.sequential.enabled and method_cls.supports_sequential
@@ -528,7 +579,7 @@ def run_experiment(
                 # compute path, and leaving it unattributed made --cost-report
                 # (and the perf gate built on it) understate the stage (an R1
                 # review finding).
-                with _stage_cost(outcome, manager, "compute"):
+                with _stage_cost(outcome, manager, *cost_stages):
                     sequential_tau2 = _sequential_tau2(
                         comp_backend,
                         experiment,
@@ -566,6 +617,20 @@ def run_experiment(
                 )
 
             outcome.cutoffs_planned += len(pending)
+            if eligible:
+                # The series the recompute scan is quadratic in: every complete
+                # look re-reads the whole window once. Derived from the GRID,
+                # never from `computed ∪ pending` — those two are NOT disjoint
+                # (`pending_cutoffs` deliberately re-includes an already-
+                # computed cutoff inside a --full-refresh window), and
+                # `computed` is not intersected with the current grid either,
+                # so cutoffs orphaned by a cadence/horizon edit would inflate
+                # it. Summing them read a 14-look series as 27 and could nag
+                # about a 4-look one.
+                outcome.additive.series_looks = sum(
+                    1 for cutoff in grid.cutoffs if cutoff.end_ts <= watermark_ts
+                )
+                outcome.additive.looks_computed += len(pending)
             log(
                 f"PLAN  {experiment.name}/{metric.name}: {len(pending)} pending "
                 f"of {len(grid)} looks (alpha={effective_alpha:.6g})"
@@ -600,8 +665,9 @@ def run_experiment(
             # readable; the final look always prints.
             n_pending = len(pending)
             beat_every = max(1, n_pending // 20)
+            counting_looks = True
             for look_index, cutoff in enumerate(pending, start=1):
-                with _stage_cost(outcome, manager, "compute"):
+                with _stage_cost(outcome, manager, *cost_stages):
                     loaded = comp_backend.load_cutoff(comparison, metric, metric_sql, grid, cutoff)
                 outcomes = analyze_cutoff(
                     experiment,
@@ -639,6 +705,7 @@ def run_experiment(
                         f"LOOK  {experiment.name}/{metric.name}: "
                         f"{look_index}/{n_pending} looks computed"
                     )
+            counting_looks = False
             log(f"RESULT {experiment.name}/{metric.name}: " f"{outcome.results_written} rows total")
 
     except BaseException as exc:
