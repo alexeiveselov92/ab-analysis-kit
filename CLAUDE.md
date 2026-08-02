@@ -22,7 +22,7 @@ The as-built condensation for contributors/assistants (detectkit-style):
 Design contracts for what is being *built next* stay in [docs/specs/](docs/specs/)
 (canonical for M2+ work — table below). Keep rules ↔ docs in sync per milestone.
 
-## Status: M1–M11 shipped; `0.6.1`–`0.6.3` released (latest on PyPI: `0.6.3`); the second `0.6.x` interstitial CODE-COMPLETE and unreleased — UI-1 + UI-2 + PERF-1 all in `[Unreleased]`, cutting as `0.6.4`; polish track M12–M17 next
+## Status: M1–M11 shipped; `0.6.1`–`0.6.4` released (latest on PyPI: `0.6.4`); BOTH `0.6.x` interstitials closed — PLAN-1/PLAN-2 in `0.6.1`/`0.6.2`, UI-1 + UI-2 + PERF-1 in `0.6.4`; polish track M12–M17 next (M12 = notifications → `0.7.0`)
 
 **Done — M1, the pure statistical core** (`abkit.stats`, importable standalone;
 see [ROADMAP.md](ROADMAP.md) for the deferred-cleanup list): data model with the
@@ -253,7 +253,7 @@ phase 2 — it shipped in the `0.6.x` **UI-1** interstitial. **Released as
 **Next — the polish track continues: M12–M17 → `0.7.0`…`0.12.0`
 (track approved 2026-07-18)**. The `0.6.x` **PLAN-1/PLAN-2** interstitial is
 closed (released as `0.6.1`/`0.6.2`); the second `0.6.x` interstitial —
-**UI-1/UI-2/PERF-1**, added 2026-08-02 — is CODE-COMPLETE: **UI-1** (CRUD
+**UI-1/UI-2/PERF-1**, added 2026-08-02 — is closed too: **UI-1** (CRUD
 YAML editing in `abk dashboard`, `abkit/tuning/config_files.py` — validate both
 levels → archive byte-verbatim → atomic write, with the boot snapshot replaced
 by a re-resolution seam), **UI-2** (`abk ui`) and **PERF-1** (the M9 additive
@@ -264,7 +264,8 @@ COMPUTE beside the counterfactual, and `abk init` now scaffolds
 `incremental_reads: true`; the library default stays `false` because the flag
 guards the operator's ingestion SLA, and §4.1's criteria were finally executed
 — evidence in [cumulative-intervals.md §4.2](docs/specs/cumulative-intervals.md))
-all sit in `[Unreleased]`, cutting as ONE `0.6.4`. The interstitial renumbers nothing either. Metric-YAML editing
+shipped together as ONE **`0.6.4`** — tagged and published to PyPI. The
+interstitial renumbers nothing either. Metric-YAML editing
 (UI-3) is deliberately deferred past M12 — a metric edit needs its `sql/` file
 too, which is new surface rather than an addendum. The code-verified pain audit
 ([docs/research/2026-07-data-flow-audit/REPORT.md](docs/research/2026-07-data-flow-audit/REPORT.md))

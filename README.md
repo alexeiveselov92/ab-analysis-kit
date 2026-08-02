@@ -11,7 +11,7 @@ stabilization chart), writes them to a clean warehouse table any BI can read, an
 gives you a local cockpit to tune the analysis and a harness to prove your method is
 actually calibrated.
 
-> **Status: `0.6.3` (Alpha) — release-ready; `0.6.2` is the latest on PyPI**
+> **Status: `0.6.4` (Alpha) — the latest on PyPI**
 > (milestones **M1–M11** shipped — M11 added **`abk dashboard`**, the
 > project-level cockpit: one row per experiment with its headline verdict,
 > effect + CI, p/α and a sparkline of the cumulative series, plus buttons that
@@ -23,7 +23,13 @@ actually calibrated.
 > correlation its own results row already persists — required-N is `(1 − ρ²)×` the
 > old raw-variance bound (`0.6.1`) — and `--from-history <N d>` gives an experiment
 > that has **never run** a baseline from the days before its start, instead of
-> `SKIPPED: no baseline` (`0.6.2`)). The statistical core, the
+> `SKIPPED: no baseline` (`0.6.2`). A second `0.6.x` interstitial then gave the
+> dashboard **CRUD YAML editing** — edit, create, delete an experiment from the
+> cockpit, validated at both levels and archived byte-verbatim before every write
+> — added `abk ui` as its alias, and made M9's additive read path **discoverable**:
+> `abk run` no longer stays quiet about an undecided `compute.incremental_reads`,
+> `--cost-report` prints the counterfactual, and `abk init` scaffolds it on
+> (`0.6.4`)). The statistical core, the
 > declarative config / DB / pipeline layer, the explore cockpit +
 > self-contained reports, `abk validate` (numpy-vectorized — minutes → sub-seconds),
 > opt-in sequential analysis + `abk plan`, and the DX layer (`abk init-claude`, docs site,
@@ -36,10 +42,9 @@ pip install ab-analysis-kit          # Python 3.10+; add a DB extra for real dat
 pip install "ab-analysis-kit[clickhouse]"   # or [postgres] / [mysql] / [all-db]
 ```
 
-(`pip install ab-analysis-kit` gets `0.6.2` — `abk dashboard`, CUPED-aware `abk plan`
-sizing and `abk plan --from-history` all included. `0.6.3` is a fix release — a
-renamed `paths.experiments` now reaches selection — and lands with its tag; until
-then install from source for it: `pip install -e ".[dev]"`.)
+(`pip install ab-analysis-kit` gets `0.6.4` — `abk dashboard` with its YAML editor,
+`abk ui`, CUPED-aware `abk plan` sizing, `abk plan --from-history` and the
+discoverable additive read path all included.)
 
 `abk --version` and `abk --help` work with no database driver; you can even lint a
 config (`abk run --steps validate`) with no database at all. See the

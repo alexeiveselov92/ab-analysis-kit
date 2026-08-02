@@ -11,7 +11,7 @@ recorded here alongside an `ALGORITHM_VERSION` bump and a
 [`statistics-changes.md`](docs/specs/statistics-changes.md) entry (never a silent
 number change).
 
-## [Unreleased]
+## [0.6.4] - 2026-08-02
 
 ### Added
 - **PERF-1 — the M9 additive read path is no longer silent, and the flip

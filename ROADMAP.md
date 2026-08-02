@@ -466,17 +466,17 @@ control (M13 design session, or M15 with the new methods — `abk plan` refuses
 them today rather than inventing math, D10), and **multi-arm sizing** (the
 planner sizes the first declared pair only) belongs to M14's decision layer.
 
-### Interstitial — the cockpit's next gaps + the incremental default → `0.6.x` 🚧
+### Interstitial — the cockpit's next gaps + the incremental default ✅ SHIPPED (`0.6.4`) → `0.6.x`
 Added 2026-08-02 (maintainer request, in conversation). Like the PLAN
 interstitial above it **renumbers nothing** (M12–M17 keep their numbers and
 their minor versions), moves no `_ab_results` number and needs no schema
 change. Sequenced ahead of M12 only where it is cheap; UI-1 can also follow it.
-**Status: UI-1 + UI-2 + PERF-1 all shipped and sitting in `[Unreleased]` — the
-interstitial is code-complete and cuts as `0.6.4`.**
-**Release plan (decided 2026-08-02): ONE `0.6.4` when PERF-1 lands**, not a
-cut per WP — the interstitial is a coherent unit, the library has no live
-users to hurry for, and sweeping the previous release's status lines (the
-lesson that has bitten twice in three releases) is then done once.
+**Status: CLOSED — UI-1 + UI-2 + PERF-1 all shipped and released together as
+`0.6.4`** (tagged `v0.6.4`, on PyPI).
+**Release plan (decided 2026-08-02): ONE `0.6.4` when PERF-1 lands** — honored;
+not a cut per WP, because the interstitial is a coherent unit, the library has
+no live users to hurry for, and sweeping the previous release's status lines
+(the lesson that has bitten twice in three releases) is then done once.
 
 - **`0.6.3` cut ✅ DONE** (PR #82, `8c86a46`, tagged `v0.6.3`, on PyPI). It
   carried the `paths.experiments` selection fix (#81, `16edfce`): a project
@@ -590,6 +590,9 @@ lesson that has bitten twice in three releases) is then done once.
     the test impact: the e2e gates run over the scaffold, so this changes which
     path they exercise by default — pin BOTH paths rather than swapping which
     one is covered.
+- **`0.6.4` cut ✅ DONE** — the whole interstitial in one release (UI-1 + UI-2
+  = #83 `351cf8e`, PERF-1 = #86 `9489b33`), tagged `v0.6.4` and published to
+  PyPI, with the `0.6.3` status lines swept in the same PR.
 - **UI-3 📋 — metric YAML editing: deliberately NOT in this interstitial**
   (decided 2026-08-02). UI-1 edits experiments only. A metric edit without its
   `sql/` file is half a feature — a metric references SQL by path — so it needs

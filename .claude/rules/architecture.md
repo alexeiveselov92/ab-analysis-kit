@@ -1,14 +1,13 @@
 # abkit architecture — as built
 
 > The contributor/assistant condensation of the system **as it exists in code**.
-> Reflects: **M1–M11 shipped**, the WHOLE `0.6.x` `abk plan` interstitial
-> **released** (PLAN-1 as `0.6.1`, PLAN-2 as `0.6.2`) and `0.6.3` released
-> (the `paths.experiments` selection fix) — all three tagged and on PyPI;
-> plus the second `0.6.x` interstitial COMPLETE and sitting in `[Unreleased]`:
+> Reflects: **M1–M11 shipped** and **BOTH `0.6.x` interstitials released** —
+> the `abk plan` one (PLAN-1 as `0.6.1`, PLAN-2 as `0.6.2`), `0.6.3` (the
+> `paths.experiments` selection fix), and the cockpit/perf one as `0.6.4`:
 > **UI-1** (the dashboard's YAML editor), **UI-2** (`abk ui`) and **PERF-1**
 > (the additive read path made discoverable; the scaffold flipped to
-> `incremental_reads: true`). M3's WP9 testcontainers hardening deferred to a
-> Docker-equipped environment.
+> `incremental_reads: true`). All tagged and on PyPI; `[Unreleased]` is empty.
+> M3's WP9 testcontainers hardening deferred to a Docker-equipped environment.
 > Design contracts for what is being *built next* (the M12–M17 polish track)
 > live in [docs/specs/](../../docs/specs/) + [ROADMAP.md](../../ROADMAP.md);
 > this file must never claim unbuilt code exists.
@@ -953,11 +952,11 @@ contract
 records); M13–M17 are contours, each opens with a design session). The `0.6.x`
 **PLAN-1/PLAN-2** interstitial is closed (released as `0.6.1`/`0.6.2`; design
 contract: [cli-and-dx.md](../../docs/specs/cli-and-dx.md) "`abk plan` sizing
-gaps"); the second `0.6.x` interstitial is COMPLETE and awaiting its `0.6.4`
-cut — **UI-1** (CRUD YAML editing in `abk dashboard`; it restated the launcher
+gaps"); the second `0.6.x` interstitial is closed too, released as `0.6.4` —
+**UI-1** (CRUD YAML editing in `abk dashboard`; it restated the launcher
 invariant it does not actually violate — facts above), **UI-2** (`abk ui`
 alias) and **PERF-1** (the additive read path made discoverable; the scaffold
-flipped to `incremental_reads: true`) all sit in `[Unreleased]`.
+flipped to `incremental_reads: true`), tagged and published to PyPI.
 One WP = one session =
 one PR; **M7–M12 move no statistical number** (parity gates + empty
 `ALGORITHM_VERSION` grep); M13/M15 use full change control. Two binding
