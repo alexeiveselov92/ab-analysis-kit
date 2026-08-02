@@ -22,7 +22,8 @@ stays coherent as it grows and as multiple authors (human and AI) contribute.
    crown-jewel mechanism as detectkit.
 5. **App-seed-shaped.** Keep the renderer/payload split framework-free, `abkit.stats`
    pure, and the data contract BI-first, so this composes into a future app
-   (agentic analysis + detectkit + abkit + embedded Lightdash) without a rewrite.
+   (agentic analysis + detectkit + abkit) without a rewrite. Embedding a BI tool is
+   explicitly not a goal — the BI-first data contract is what makes abkit BI-agnostic.
 
 ## Statistical principles
 
