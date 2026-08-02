@@ -329,6 +329,49 @@ def get_tasks_table_model() -> TableModel:
     )
 
 
+def get_notify_states_table_model() -> TableModel:
+    """``_ab_notify_states`` — what each comparison last ANNOUNCED (m12 NTF-3).
+
+    One row per FULL comparison identity — ``(experiment, metric, name_1,
+    name_2, method_config_id)`` — so a re-tuned comparison starts a fresh dedup
+    track instead of inheriting the old method's announcement history.
+
+    ``last_verdict`` and ``last_srm_flag`` together are the dedup signature: the
+    verdict word alone is not enough, because a pair that was already
+    INCONCLUSIVE (pre-horizon — the common case early in an experiment) and
+    then breaks its sample-ratio gate keeps the SAME word while becoming a
+    genuinely new, urgent fact. Comparing the pair means the SRM notification
+    NTF-2 built cannot be swallowed by NTF-3's dedup.
+
+    ``last_notified_at`` is stamped only when a channel actually ACCEPTED the
+    message (see ``notify/dispatch.py``): recording an announcement nobody
+    received would lose the flip permanently. detectkit's
+    ``last_recovery_sent`` is deliberately absent — abkit has no recovery
+    concept (a verdict flipping back is just another flip).
+
+    Engine ``ReplacingMergeTree(updated_at)``; written through the generic
+    ``upsert_record``, so a stale duplicate cannot outlive a merge.
+    """
+    return TableModel(
+        columns=[
+            ColumnDefinition("experiment", "String", max_length=MAX_EXPERIMENT_NAME_LENGTH),
+            ColumnDefinition("metric", "String", max_length=MAX_METRIC_NAME_LENGTH),
+            ColumnDefinition("name_1", "String", max_length=MAX_VARIANT_NAME_LENGTH),
+            ColumnDefinition("name_2", "String", max_length=MAX_VARIANT_NAME_LENGTH),
+            ColumnDefinition("method_config_id", "String", max_length=64),
+            ColumnDefinition("last_verdict", "Nullable(String)", nullable=True),
+            ColumnDefinition("last_srm_flag", "Bool"),
+            ColumnDefinition("last_notified_at", "Nullable(DateTime64(3, 'UTC'))", nullable=True),
+            ColumnDefinition("notify_count", "Int32"),
+            ColumnDefinition("updated_at", "DateTime64(3, 'UTC')"),
+        ],
+        primary_key=["experiment", "metric", "name_1", "name_2", "method_config_id"],
+        engine="ReplacingMergeTree(updated_at)",
+        order_by=["experiment", "metric", "name_1", "name_2", "method_config_id"],
+        version_column="updated_at",
+    )
+
+
 # Table names as constants
 TABLE_EXPERIMENTS = "_ab_experiments"
 TABLE_EXPOSURES = "_ab_exposures"
@@ -336,6 +379,7 @@ TABLE_UNIT_STATE = "_ab_unit_state"
 TABLE_RESULTS = "_ab_results"
 TABLE_AA_RUNS = "_ab_aa_runs"
 TABLE_TASKS = "_ab_tasks"
+TABLE_NOTIFY_STATES = "_ab_notify_states"
 
 # Map of table names to model factories
 INTERNAL_TABLES = {
@@ -345,4 +389,5 @@ INTERNAL_TABLES = {
     TABLE_RESULTS: get_results_table_model,
     TABLE_AA_RUNS: get_aa_runs_table_model,
     TABLE_TASKS: get_tasks_table_model,
+    TABLE_NOTIFY_STATES: get_notify_states_table_model,
 }

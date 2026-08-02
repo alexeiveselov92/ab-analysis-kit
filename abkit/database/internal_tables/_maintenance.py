@@ -19,16 +19,22 @@ from abkit.database.internal_tables._base import _InternalTablesBase
 from abkit.database.tables import (
     TABLE_EXPERIMENTS,
     TABLE_EXPOSURES,
+    TABLE_NOTIFY_STATES,
     TABLE_RESULTS,
     TABLE_TASKS,
 )
 
-#: tables keyed by ``experiment`` (a removed experiment orphans rows in each)
+#: tables keyed by ``experiment`` (a removed experiment orphans rows in each).
+#: ``_ab_notify_states`` (m12 NTF-3) belongs here for a reason beyond tidiness:
+#: an experiment name that is deleted and later REUSED would otherwise inherit
+#: the old one's announcement history, and its first real verdict would be
+#: deduped away as "unchanged".
 EXPERIMENT_KEYED_TABLES: tuple[str, ...] = (
     TABLE_EXPERIMENTS,
     TABLE_EXPOSURES,
     TABLE_RESULTS,
     TABLE_TASKS,
+    TABLE_NOTIFY_STATES,
 )
 
 

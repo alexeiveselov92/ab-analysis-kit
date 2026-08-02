@@ -172,7 +172,9 @@ def channel(label: str, mode: str = "ok", **extra) -> NotificationChannelConfig:
     return NotificationChannelConfig(type="recording", label=label, mode=mode, **extra)
 
 
-def dispatch(experiment, tables, channels, echo=None, project=PROJECT):
+def dispatch(experiment, tables, channels, echo=None, project=PROJECT, states=None):
+    """One dispatch pass. ``states=None`` disables NTF-3's dedup, which is what
+    the routing/rendering tests want — pass ``states=tables`` to exercise it."""
     loaded = load_experiment_readout(experiment, tables, project=project)
     assert loaded is not None
     readout, rows = loaded
@@ -182,6 +184,7 @@ def dispatch(experiment, tables, channels, echo=None, project=PROJECT):
         rows=rows,
         channels_cfg=channels,
         project_name=project.name,
+        states=states,
         echo=echo if echo is not None else (lambda line: None),
     )
 
@@ -686,6 +689,148 @@ class TestPipelineErrorNotice:
 
         with pytest.raises(ValueError, match="send_notice expects"):
             RecordingChannel().send_notice(verdict_payload)
+
+
+class TestVerdictDedup:
+    """NTF-3 end to end: the state store decides whether a message goes at all."""
+
+    def test_an_unchanged_verdict_is_sent_once_not_twice(self, tables):
+        experiment = make_experiment()
+        seed(tables, experiment)
+
+        first = dispatch(experiment, tables, {"a": channel("a")}, states=tables)
+        second = dispatch(experiment, tables, {"a": channel("a")}, states=tables)
+
+        assert (first, second) == (1, 0)
+        assert len(RecordingChannel.sent) == 1
+
+    def test_a_flip_between_runs_sends_again(self, tables):
+        experiment = make_experiment()
+        seed(tables, experiment)
+        assert dispatch(experiment, tables, {"a": channel("a")}, states=tables) == 1
+        first_verdict = RecordingChannel.sent[0][1].verdict
+
+        # a later look that inverts the effect — a genuinely new decision
+        save_rows(
+            tables,
+            [
+                make_row(
+                    experiment,
+                    day=15,
+                    effect=-0.2,
+                    left_bound=-0.3,
+                    right_bound=-0.1,
+                    pvalue=0.0001,
+                )
+            ],
+        )
+        second = dispatch(experiment, tables, {"a": channel("a")}, states=tables)
+
+        assert second == 1
+        assert RecordingChannel.sent[-1][1].verdict != first_verdict
+
+    def test_the_state_row_records_what_was_announced(self, tables):
+        experiment = make_experiment()
+        seed(tables, experiment)
+
+        dispatch(experiment, tables, {"a": channel("a")}, states=tables)
+
+        comparison = experiment.get_comparison("revenue")
+        state = tables.get_notify_state(
+            experiment.name,
+            "revenue",
+            "control",
+            "treatment",
+            comparison.method.method_config_id,
+        )
+        assert state["notify_count"] == 1
+        assert state["last_verdict"] == RecordingChannel.sent[0][1].verdict
+        assert state["last_notified_at"] is not None
+
+    def test_a_message_nobody_received_is_not_recorded(self, tables):
+        """The flip must survive a broken channel: recording an announcement
+        that reached nobody would make the next run treat it as old news and
+        lose it permanently."""
+        experiment = make_experiment()
+        seed(tables, experiment)
+
+        first = dispatch(experiment, tables, {"bad": channel("bad", mode="raise")}, states=tables)
+        assert first == 0
+
+        second = dispatch(experiment, tables, {"good": channel("good")}, states=tables)
+
+        assert second == 1
+
+    def test_a_filtered_out_verdict_is_not_recorded_either(self, tables):
+        experiment = make_experiment()
+        seed(tables, experiment)
+
+        dispatch(experiment, tables, {"urgent": channel("urgent", on=["srm"])}, states=tables)
+        # nothing was announced, so the next run with a routine channel still speaks
+        assert dispatch(experiment, tables, {"a": channel("a")}, states=tables) == 1
+
+    def test_a_new_srm_breach_reannounces_the_same_word(self, tables):
+        """The hazard in dispatch form (the unit rule is pinned in
+        test_cooldown): a pre-horizon pair keeps saying INCONCLUSIVE, so the SRM
+        alarm must not be deduped away."""
+        experiment = make_experiment()
+        seed(tables, experiment, days=3)  # pre-horizon ⇒ INCONCLUSIVE
+        assert dispatch(experiment, tables, {"a": channel("a")}, states=tables) == 1
+        first = RecordingChannel.sent[0][1]
+        assert first.verdict == "INCONCLUSIVE" and first.srm_flag is False
+
+        save_rows(tables, [make_row(experiment, day=4, srm_flag=True, srm_pvalue=1e-9)])
+        second = dispatch(experiment, tables, {"a": channel("a")}, states=tables)
+
+        assert second == 1
+        assert RecordingChannel.sent[-1][1].verdict == "INCONCLUSIVE"
+        assert RecordingChannel.sent[-1][1].srm_flag is True
+
+    def test_each_comparison_dedups_independently(self, tables):
+        experiment = make_experiment(
+            assignment={
+                "query": "SELECT 1",
+                "variants": ["control", "t1", "t2"],
+                "expected_split": {"control": 0.34, "t1": 0.33, "t2": 0.33},
+            }
+        )
+        seed(tables, experiment, name_2="t1")
+        seed(tables, experiment, name_2="t2")
+
+        assert dispatch(experiment, tables, {"a": channel("a")}, states=tables) == 2
+        assert dispatch(experiment, tables, {"a": channel("a")}, states=tables) == 0
+
+    def test_without_a_state_store_nothing_is_deduped(self, tables):
+        """`states=None` is explicit, not a default — but it must still work
+        (the pipeline-error path never consults the store)."""
+        experiment = make_experiment()
+        seed(tables, experiment)
+
+        assert dispatch(experiment, tables, {"a": channel("a")}, states=None) == 1
+        assert dispatch(experiment, tables, {"a": channel("a")}, states=None) == 1
+
+    def test_a_pipeline_error_is_never_deduped(self, tables):
+        """A run that failed twice failed twice."""
+        experiment = make_experiment()
+
+        for _ in range(2):
+            sent = dispatch_pipeline_error(
+                experiment=experiment,
+                error="warehouse down",
+                channels_cfg={"a": channel("a")},
+                echo=lambda line: None,
+            )
+            assert sent == 1
+
+    def test_the_skip_is_announced_to_the_operator(self, tables):
+        experiment = make_experiment()
+        seed(tables, experiment)
+        lines: list[str] = []
+
+        dispatch(experiment, tables, {"a": channel("a")}, states=tables)
+        dispatch(experiment, tables, {"a": channel("a")}, echo=lines.append, states=tables)
+
+        assert any("unchanged" in line for line in lines)
 
 
 class TestRoutingKeysNeverReachAChannel:

@@ -135,10 +135,9 @@ into a scheduler:
   message. A run that was **locked** or had nothing to do is silent too.
 - **A run that FAILED sends an error notice** instead of a readout — see
   [Urgent signals](#urgent-signals-srm-and-pipeline-errors).
-- **Every completed run sends.** Verdict-change dedup — send on a flip, stay
-  quiet on an unchanged verdict — is the next piece of this milestone; until it
-  lands, a run every hour is a message every hour. Point `--notify` at the runs
-  you actually want announced.
+- **Only a CHANGE is announced.** The first message about a comparison always
+  goes; after that abkit stays quiet until something moves, so a run every hour
+  is not a message every hour. See [What counts as a change](#what-counts-as-a-change).
 
 ### Routing per experiment
 
@@ -200,3 +199,35 @@ into a success.
 
 Both signals obey the same intersection rule as everything else — an experiment
 whose `notify.on` omits `error` will not report its own failures, on any channel.
+
+## What counts as a change
+
+Point `--notify` at a scheduled run and you want it quiet until something
+happens. abkit remembers, per comparison, what it last told you (in
+`_ab_notify_states`) and sends only when that changes:
+
+| Situation | Sends? |
+|---|---|
+| First message about a comparison | **yes** |
+| Same verdict as last time | no |
+| WIN → LOSE, INCONCLUSIVE → WIN, any flip | **yes** |
+| Same verdict, but the SRM gate just broke | **yes** |
+| Same verdict, SRM still broken | no |
+| A run that failed | **yes, every time** — an error is not a verdict, and a run that fails twice failed twice |
+
+The SRM row is the subtle one and it is deliberate: before its horizon an
+experiment sits at INCONCLUSIVE for days, so a broken split would keep the
+verdict word identical. Remembering the gate alongside the verdict is what keeps
+that alarm from being deduped away.
+
+Two consequences worth knowing:
+
+- **A message nobody received is not remembered.** If every channel was down,
+  the next run tries again rather than treating the flip as old news.
+- **Re-tuning a comparison starts a fresh history.** The memory is keyed by the
+  method identity, so changing a method param means the next run announces the
+  new comparison's verdict even if the word is the same.
+
+To make abkit repeat itself — after a channel migration, say — purge the
+experiment's rows with `abk clean --orphaned-experiments` (it resets the dedup
+along with everything else) or delete from `_ab_notify_states` directly.

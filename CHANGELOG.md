@@ -14,6 +14,33 @@ number change).
 ## [Unreleased]
 
 ### Added
+- **NTF-3 — `--notify` stops repeating itself.** Until now every completed run
+  re-announced the same verdict, which makes the flag unusable on the schedule
+  it was built for. The new `_ab_notify_states` table records what each
+  comparison last ANNOUNCED, and only a change is sent.
+  - **The rule (maintainer-signed as D2 before implementation): a change always
+    sends, an unchanged value never re-sends.** `cooldown_seconds` is
+    deliberately not consulted for verdict dedup — a timer that could swallow a
+    WIN→LOSE flip would be a silence, not a crash, and silence is the failure
+    mode a notification system cannot afford. `is_in_cooldown` ships as the
+    primitive a future recurring signal will need.
+  - **"Unchanged" means the verdict AND its SRM gate.** A pair sits at
+    INCONCLUSIVE for days before its horizon, so a newly broken sample-ratio
+    gate keeps the verdict word identical — deduping on the word alone would
+    have swallowed the SRM alarm NTF-2 just built, on exactly the experiments
+    most likely to need it.
+  - **A message nobody received is not recorded.** If every channel was down or
+    filtered out, no state is written and the next run tries again: an
+    announcement that reached no one must not become history, because nothing
+    re-derives what was never sent.
+  - **The dedup key is the FULL comparison identity** — experiment, metric, arm
+    pair and `method_config_id` — so re-tuning a comparison starts a fresh
+    announcement history instead of inheriting the previous method's.
+  - `abk clean --orphaned-experiments` purges the new table with the rest, which
+    resets the dedup. That is not tidiness: an experiment name deleted and later
+    reused would otherwise inherit the old one's history and have its first real
+    verdict deduped away.
+  - Zero statistical numbers moved (no `ALGORITHM_VERSION` bump).
 - **NTF-2 — the urgent half: a failed run and a broken split now reach the
   on-call channel.** `--notify` shipped able to say only one thing ("here is a
   verdict"), which is the half an operator is least likely to be woken for.

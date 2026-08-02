@@ -237,8 +237,10 @@ stay silent. Messages go to the channels an experiment's `notify:` block selects
 or to all configured channels when it has none. A **failed SRM gate** does not
 add a message: the readout already built answers to the `srm` kind as well, so an
 `on: [srm, error]` channel hears about a broken split without receiving routine
-readouts. Every completed run sends: verdict-change dedup is the next NTF work
-package. See the
+readouts. **Only a CHANGE is announced**: abkit records what each comparison last
+said in `_ab_notify_states` and stays quiet until the verdict — or its SRM gate —
+moves, so a scheduled run every hour is not a message every hour. A message no
+channel accepted is not recorded, so the next run retries it. See the
 [notification-channels guide](../guides/notification-channels.md).
 
 The effective per-comparison alphas (the inspectable two-tier Bonferroni scheme —

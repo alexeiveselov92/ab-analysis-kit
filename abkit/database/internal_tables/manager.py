@@ -6,6 +6,7 @@ from abkit.database.internal_tables._aa_runs import _AaRunsMixin
 from abkit.database.internal_tables._experiments import _ExperimentsMixin
 from abkit.database.internal_tables._exposures import _ExposuresMixin
 from abkit.database.internal_tables._maintenance import _MaintenanceMixin
+from abkit.database.internal_tables._notify_states import _NotifyStatesMixin
 from abkit.database.internal_tables._results import _ResultsMixin
 from abkit.database.internal_tables._schema import _SchemaMixin
 from abkit.database.internal_tables._tasks import _TasksMixin
@@ -20,6 +21,7 @@ class InternalTablesManager(
     _ResultsMixin,
     _AaRunsMixin,
     _TasksMixin,
+    _NotifyStatesMixin,
     _MaintenanceMixin,
 ):
     """High-level façade over a :class:`BaseDatabaseManager` for ``_ab_*`` tables.

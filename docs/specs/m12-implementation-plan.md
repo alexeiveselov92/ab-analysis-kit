@@ -486,6 +486,36 @@ cooldown floor reserved for future recurring kinds.
 
 **Session estimate:** 1–2 sessions.
 
+**As built (shipped 2026-08-03; the rule held, the KEY did not):**
+
+- **The dedup signature is `(last_verdict, last_srm_flag)`, not the verdict
+  alone**, so the table carries an extra `Bool` column the plan did not have.
+  Step 1's word-only key reads fine until you notice that a pair sits at
+  INCONCLUSIVE for its whole pre-horizon life: a sample-ratio gate breaking
+  keeps the word identical, so the word-only dedup would have swallowed the
+  `srm` signal NTF-2 had just built, on precisely the experiments most likely to
+  need it. `announcement_signature()` names the pair; `should_announce()` is the
+  single comparison over it.
+- **State is written only after a channel ACCEPTED the message.** `_deliver`
+  returns per-payload success counts for this reason. The plan's step 6 says
+  "else send, then upsert"; recording an announcement that reached nobody (every
+  channel down, or all filtered out) makes the next run treat the flip as old
+  news and loses it permanently, because nothing re-derives what was never sent.
+- **`_ab_notify_states` is experiment-keyed and joins the `abk clean` sweep.**
+  Not tidiness: an experiment name deleted and later REUSED would inherit the
+  old one's announcement history and have its first real verdict deduped away.
+  Adding it turned two hand-listed roster tests ("all six tables") into ones
+  derived from `INTERNAL_TABLES` — the plan did not name them, and they are the
+  gate that made the addition visible.
+- Smaller: `NotifyConfig.cooldown_seconds` is NOT added (step 6's config field).
+  Nothing consults a cooldown for verdict dedup by D2, and shipping a knob that
+  changes nothing is the "decorative knob" failure this track has recorded
+  twice. `is_in_cooldown()` ships as the tested primitive; the config field
+  lands with the first recurring kind that needs it (NTF-5's `stale`).
+- `states` is a REQUIRED keyword on `dispatch_experiment_signals`, explicitly
+  `None` where dedup does not apply — a default would let a caller silently
+  disable the quiet by forgetting it.
+
 ---
 
 ### NTF-4 — Port the 4 missing channels: discord, teams, googlechat, ntfy

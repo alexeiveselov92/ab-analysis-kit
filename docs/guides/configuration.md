@@ -135,8 +135,8 @@ window. These gates bound that (declarative-config §8, cumulative-intervals §6
 
 ### The `tables` block
 
-The six internal tables (`_ab_experiments`, `_ab_exposures`, `_ab_unit_state`,
-`_ab_results`, `_ab_aa_runs`, `_ab_tasks`) have a `tables:` block for forward
+The seven internal tables (`_ab_experiments`, `_ab_exposures`, `_ab_unit_state`,
+`_ab_results`, `_ab_aa_runs`, `_ab_tasks`, `_ab_notify_states`) have a `tables:` block for forward
 compatibility, but it **rejects any override today** — the `_ab_*` names are
 canonical. You do not need to set it.
 
