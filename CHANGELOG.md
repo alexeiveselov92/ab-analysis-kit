@@ -11,7 +11,7 @@ recorded here alongside an `ALGORITHM_VERSION` bump and a
 [`statistics-changes.md`](docs/specs/statistics-changes.md) entry (never a silent
 number change).
 
-## [Unreleased]
+## [0.6.3] - 2026-08-02
 
 ### Fixed
 - **A renamed `paths.experiments` now reaches selection — it used to reach

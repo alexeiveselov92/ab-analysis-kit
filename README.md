@@ -11,7 +11,7 @@ stabilization chart), writes them to a clean warehouse table any BI can read, an
 gives you a local cockpit to tune the analysis and a harness to prove your method is
 actually calibrated.
 
-> **Status: `0.6.2` (Alpha) — release-ready; `0.6.1` is the latest on PyPI**
+> **Status: `0.6.3` (Alpha) — release-ready; `0.6.2` is the latest on PyPI**
 > (milestones **M1–M11** shipped — M11 added **`abk dashboard`**, the
 > project-level cockpit: one row per experiment with its headline verdict,
 > effect + CI, p/α and a sparkline of the cumulative series, plus buttons that
@@ -36,9 +36,10 @@ pip install ab-analysis-kit          # Python 3.10+; add a DB extra for real dat
 pip install "ab-analysis-kit[clickhouse]"   # or [postgres] / [mysql] / [all-db]
 ```
 
-(`pip install ab-analysis-kit` gets `0.6.1` — `abk dashboard` and CUPED-aware
-`abk plan` sizing included. `0.6.2`'s `abk plan --from-history` lands with its tag;
-until then install from source for it: `pip install -e ".[dev]"`.)
+(`pip install ab-analysis-kit` gets `0.6.2` — `abk dashboard`, CUPED-aware `abk plan`
+sizing and `abk plan --from-history` all included. `0.6.3` is a fix release — a
+renamed `paths.experiments` now reaches selection — and lands with its tag; until
+then install from source for it: `pip install -e ".[dev]"`.)
 
 `abk --version` and `abk --help` work with no database driver; you can even lint a
 config (`abk run --steps validate`) with no database at all. See the
