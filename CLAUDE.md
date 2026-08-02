@@ -256,7 +256,10 @@ YAML editing in `abk dashboard`, `abkit/tuning/config_files.py` — validate bot
 levels → archive byte-verbatim → atomic write, with the boot snapshot replaced
 by a re-resolution seam) and **UI-2** (`abk ui`) are built and sit in
 `[Unreleased]`; **PERF-1** (make the incremental read path discoverable before
-its default is re-decided) is open. The interstitial renumbers nothing either. The code-verified pain audit
+its default is re-decided) is open, and the interstitial cuts as ONE `0.6.4`
+when it lands. The interstitial renumbers nothing either. Metric-YAML editing
+(UI-3) is deliberately deferred past M12 — a metric edit needs its `sql/` file
+too, which is new surface rather than an addendum. The code-verified pain audit
 ([docs/research/2026-07-data-flow-audit/REPORT.md](docs/research/2026-07-data-flow-audit/REPORT.md))
 plus the entire hardening backlog, one minor release per milestone: M12
 notifications → M13–M17 (versioned stats, multi-arm decisions, new methods,
