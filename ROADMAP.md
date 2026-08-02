@@ -463,6 +463,60 @@ control (M13 design session, or M15 with the new methods — `abk plan` refuses
 them today rather than inventing math, D10), and **multi-arm sizing** (the
 planner sizes the first declared pair only) belongs to M14's decision layer.
 
+### Interstitial — the cockpit's next gaps + the incremental default → `0.6.x` 📋
+Added 2026-08-02 (maintainer request, in conversation). Like the PLAN
+interstitial above it **renumbers nothing** (M12–M17 keep their numbers and
+their minor versions), moves no `_ab_results` number and needs no schema
+change. Sequenced ahead of M12 only where it is cheap; UI-1 can also follow it.
+
+- **`0.6.3` cut — pending, not a WP.** `[Unreleased]` already holds the
+  `paths.experiments` selection fix (#81, `16edfce`): a project whose
+  experiments live outside `experiments/` answered "Nothing selected." to all
+  ten commands. Cut it before M12 opens so the milestone starts on an empty
+  `[Unreleased]`.
+- **UI-1 📋 — CRUD YAML editing in `abk dashboard`** (the M11 "phase 2" item,
+  now requested). The donor has the shape: `detectkit/ui/metric_files.py` (271
+  lines, validate-before-write + a `.history` archive), and our own
+  `tuning/config_writer.py` already implements the archive + orphan discipline
+  for explore's Apply seam — so this is a save endpoint over existing parts,
+  not new machinery. DASH-4's edit route stays the read path.
+  **The one thing to get right**: M11's binding invariant is *launcher, never a
+  worker*, gated twice (an AST scan over `dashboard_server.py` + a spy over
+  every job route). A config write does not violate what that invariant
+  protects — no statistic is computed, no pipeline lock is taken — but it does
+  contradict the gate's current wording, so the WP must restate the invariant
+  as "computes no statistic and takes no pipeline lock" and re-point the AST
+  gate at the lock API specifically. Writing the endpoint without touching the
+  gate wording will fail the WP's own CI. ~1 session.
+- **UI-2 📋 — `abk ui` as an alias for `abk dashboard`.** The donor's
+  project-level cockpit is `dtk ui` (`dtk tune` is the per-metric sibling we
+  ship as `abk explore`); abkit renamed both, and the rename was never
+  arbitrated in a decisions table — it fell out of the pair. `dashboard`/
+  `explore` say which surface you want where `ui` does not, so the canonical
+  name stays; a Click alias costs three lines and keeps the muscle memory of
+  anyone running both tools. Fold into UI-1's PR.
+- **PERF-1 📋 — make the incremental path discoverable, then re-decide its
+  default.** `compute.incremental_reads` is `false` with the reason recorded in
+  the field itself — *"Default false until verify-incremental (m9 WP5) bakes"*
+  — which was right at M9 (`0.4.0`) and has not been revisited four releases
+  later. Two halves, in order:
+  1. **The silence is the actual defect.** Nothing in `abk run` or
+     `--cost-report` ever tells the operator the fast path exists; it lives
+     only in [cumulative-intervals.md §4.1](docs/specs/cumulative-intervals.md).
+     Worse, the scaffold declares `state_additive: true` on `example_arpu`, so
+     a default project **pays the STATE write and never takes the read** — the
+     one configuration that is strictly worse than either endpoint. `abk run`
+     should say so when a series is long enough for it to matter, and
+     `--cost-report` should print the counterfactual scan it would have paid.
+  2. **Only then the default.** The flag does not guard against a wrong number
+     (parity is rel-1e-9 pinned; any state gap falls back to recompute on its
+     own) — it guards against one thing: a backfill arriving later than
+     `data_lag` freezing in day state. That is a property of the operator's
+     ingestion, not of abkit, which argues for keeping the opt-in and making it
+     loud rather than flipping it blind. Decide with evidence: run §4.1's
+     criteria on the scaffolded project and publish the `--cost-report`
+     numbers. ~1 session for (1); (2) is a decision, not code.
+
 ### M12 — notifications → `0.7.0` 📋
 Design contract: [m12-implementation-plan.md](docs/specs/m12-implementation-plan.md).
 `abkit/notify/` (shipped M6, reachable only via `abk test-report`) gets wired
