@@ -641,12 +641,14 @@ cohort generation written through the existing exposures path, the SRM gate as
 a sanity check of our own split. **Never a default**; no-copy semantics per
 M8. Design session mandatory (boundary questions). ~3–4 sessions.
 
-### M17 — app integration (agentic + embedded Lightdash) → `0.12.0` 📐 contour
+### M17 — app integration (agentic) → `0.12.0` 📐 contour
 The most open-ended piece, fixed as a milestone contour: its design session
-decides the form (a read-only MCP server as in dtk? embedded Lightdash? an
-agentic layer over the `abk` CLI?) and cuts the WPs. Parked items are
-re-evaluated here (other DBs — REPORT #15). Estimate ~4+ sessions, conditional
-until the design session.
+decides the form (a read-only MCP server as in dtk? an agentic layer over the
+`abk` CLI?) and cuts the WPs. **Embedding a BI tool is explicitly OUT** (owner
+decision, 2026-08-02): abkit stays BI-agnostic — `_ab_results` is the contract
+and operators point their own Grafana/Metabase/Superset/Lightdash at it. Parked
+items are re-evaluated here (other DBs — REPORT #15). Estimate ~4+ sessions,
+conditional until the design session.
 
 > **M13–M17 have no detailed WP breakdowns yet — each opens with its own
 > design session** (verification pass → WP breakdown → design doc in
@@ -708,7 +710,7 @@ A/A revalidation).
   `run --profile` observability to trigger it on a concrete cost threshold.
 - Cross-fitted CUPED/CUPAC, Student-t (Welch–Satterthwaite), BCa bootstrap,
   Mann-Whitney, cluster-robust SE; full PG/MySQL incremental parity (if needed);
-  optional owned randomization; app integration (agentic analysis + embedded Lightdash).
+  optional owned randomization; app integration (agentic analysis — no embedded BI).
 
 ## Backlog / open items for the user
 Tracked in the RU initiation spec ([docs/ru/project-initiation-spec.md](docs/ru/project-initiation-spec.md))
