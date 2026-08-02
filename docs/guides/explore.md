@@ -172,10 +172,10 @@ rows in place, and flips the live chip to `calibrated` — no explore restart. A
 is for the tuning loop; to make the calibration **stick for the whole team**, run
 `abk validate` for real so the `_ab_aa_runs` rows persist to the warehouse.
 
-## Apply — the only write-back
+## Apply — the structured write-back
 
-Nothing is written while you tune. **Apply is the sole mutation seam**, it is
-always explicit, and its order is **validate → archive → re-emit**
+Nothing is written while you tune. **Apply is explore's sole mutation seam**, it
+is always explicit, and its order is **validate → archive → re-emit**
 (`explore.md` operator rule; `data-contract-and-reporting.md §5.1`):
 
 1. **Validate** — the edited config is validated as a whole (`ExperimentConfig`)
@@ -190,7 +190,13 @@ always explicit, and its order is **validate → archive → re-emit**
 
 **Caveat: re-emit uses `safe_dump`, so YAML comments are lost on Apply.** The
 verbatim `.history/` archive is your recovery path — restore from there if you
-need the original file with its comments.
+need the original file with its comments. That caveat is also the difference
+between the two surfaces that write a config: Apply merges a **structured** edit
+(the tuned `method_params`) into a parsed document and re-emits the whole file,
+while the [dashboard](dashboard.md)'s YAML editor round-trips the **raw text**
+verbatim, comments and layout intact — so edit the file there, and Apply here
+when what you are shipping is a tuned method. Both archive into the same
+`.history/` tree.
 
 **Apply does not run the pipeline.** After you Apply, compute the new series under
 the new params:
@@ -232,7 +238,8 @@ abk clean --select signup_test    # prune the orphaned old series (dry-run by de
 - **An uncalibrated chip is not a bug.** It means no A/A run matches these params
   at this effective alpha — run [`abk validate`](validate.md) (or Auto mode).
 - **Apply loses comments; the archive keeps them.** Recover from
-  `experiments/.history/<experiment>/` if you need the original file.
+  `experiments/.history/<experiment>/` if you need the original file — or edit
+  the YAML as text in [`abk dashboard`](dashboard.md), which preserves it.
 - **Retuning strands old rows.** After any identity-param change, recompute
   (`abk run`) then `abk clean`, or BI shows duplicate stabilization lines.
 - **SRM still gates.** A tuned significant effect on an SRM-failed experiment is

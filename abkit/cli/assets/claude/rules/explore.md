@@ -93,10 +93,10 @@ of a cutoff discards them, and any knob that feeds the draw itself
   rows in place, and flips the live chip to `calibrated` without an explore
   restart. To make it stick for the whole team, run `abk validate` for real.
 
-## Apply — the only write-back
+## Apply — this cockpit's write-back
 
-Apply is **explicit** (nothing is written while you tune) and is the sole mutation
-seam. Order is **validate → archive → re-emit**:
+Apply is **explicit** (nothing is written while you tune) and is this cockpit's
+only mutation seam. Order is **validate → archive → re-emit**:
 
 1. The edited config is validated as a whole (`ExperimentConfig`) before anything
    is written.
@@ -108,7 +108,10 @@ seam. Order is **validate → archive → re-emit**:
    re-emitted header names what was updated vs preserved.
 
 Caveat: re-emit uses `safe_dump` today, so **YAML comments are lost** on Apply —
-the verbatim `.history/` archive is the recovery path.
+the verbatim `.history/` archive is the recovery path. `abk dashboard`'s YAML
+editor is the other surface that writes an experiment config, and it does NOT
+re-emit: it round-trips the raw text, so comments survive there. Both write into
+the same `.history/` tree.
 
 **Apply does not run the pipeline.** After Apply, run
 `abk run --select <experiment>` to compute the new series under the new params.

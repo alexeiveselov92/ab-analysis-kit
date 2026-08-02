@@ -102,6 +102,26 @@ class TestSelection:
         assert sorted(exp.name for _, exp in call["experiments"]) == [EXP, SECOND]
         assert "2 experiment(s) selected" in result.output
 
+    def test_the_selectors_travel_to_the_server_for_ui1s_reload(self, two_experiments, serve):
+        """UI-1: the editor re-resolves THIS selection, not the whole project.
+
+        Re-deriving them server-side is the failure this pins: an edit would
+        then widen a `--select`-ed page to every experiment in the project.
+        """
+        result = runner.invoke(
+            cli, ["dashboard", "--select", EXP, "--exclude", SECOND, "--no-open"]
+        )
+        assert result.exit_code == 0, result.output
+        assert serve.calls[0]["selectors"] == (EXP,)
+        assert serve.calls[0]["excludes"] == (SECOND,)
+
+    def test_ui_is_the_same_command_under_the_donors_name(self, two_experiments, serve):
+        """UI-2: `abk ui` is an alias, not a second implementation."""
+        result = runner.invoke(cli, ["ui", "--select", "*", "--no-open"])
+        assert result.exit_code == 0, result.output
+        assert len(serve.calls[0]["experiments"]) == 2
+        assert cli.commands["ui"] is cli.commands["dashboard"]
+
     def test_exclude_removes_a_match(self, two_experiments, serve):
         result = runner.invoke(
             cli, ["dashboard", "--select", "*", "--exclude", "second", "--no-open"]

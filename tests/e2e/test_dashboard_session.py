@@ -398,15 +398,81 @@ class TestDashboardSession:
         assert second.proc.poll() is not None, "the spawned job outlived the dashboard"
         assert not _pid_alive(pid), "the stopped child is still running"
 
+    def test_the_editor_edits_the_scaffolded_project_over_real_http(self, served):
+        """UI-1 end to end, on the project `abk init` actually writes.
+
+        The unit suites build a hand-written project; this one edits the
+        SCAFFOLD, which is the only place the §8 matrix runs against real
+        packaged SQL, the packaged assignment macro and a real metric library.
+        A save that passed the fakes and failed here would be a save no operator
+        could ever make.
+        """
+        status, source = served.get(f"/api/experiment-source/{EXP}")
+        assert status == 200, source
+        assert source["editable"] is True
+        assert source["digest"]
+
+        edited = source["yaml_text"].replace("alpha: 0.05", "alpha: 0.01")
+        assert edited != source["yaml_text"], "the scaffold no longer declares alpha: 0.05"
+        status, reply = served.post(
+            "/api/experiment/save",
+            {"select": EXP, "text": edited, "digest": source["digest"]},
+        )
+        assert status == 200, reply
+
+        on_disk = (Path("experiments") / f"{EXP}.yml").read_text(encoding="utf-8")
+        assert on_disk == edited  # verbatim, comments and all
+        assert Path(reply["archived"]).read_text(encoding="utf-8") == source["yaml_text"]
+        # the reload made it visible to every other route, with no restart
+        assert served.server.experiment_entry(EXP)[1].alpha == 0.01
+        assert served.get(f"/api/stats/{EXP}")[0] == 200
+
+        # a second save with the FIRST digest is the two-tabs case: refused,
+        # and the file that is there stays there
+        status, detail = served.post(
+            "/api/experiment/save",
+            {"select": EXP, "text": "name: x\n", "digest": source["digest"]},
+        )
+        assert status == 400
+        assert "changed on disk" in detail
+        assert (Path("experiments") / f"{EXP}.yml").read_text(encoding="utf-8") == edited
+
+    def test_create_and_delete_move_the_served_selection(self, served):
+        text = (Path("experiments") / f"{EXP}.yml").read_text(encoding="utf-8")
+        status, reply = served.post(
+            "/api/experiment/create", {"text": text.replace(f"name: {EXP}", "name: made_here")}
+        )
+        assert status == 200, reply
+        assert reply["path"] == "experiments/made_here.yml"
+        assert "made_here" in {entry["name"] for entry in reply["experiments"]}
+        assert served.get("/api/stats/made_here")[0] == 200
+
+        status, reply = served.post("/api/experiment/delete", {"select": "made_here"})
+        assert status == 200, reply
+        assert not (Path("experiments") / "made_here.yml").exists()
+        assert Path(reply["archived"]).exists()
+        assert any("--orphaned-experiments" in w for w in reply["warnings"])
+        assert served.get("/api/stats/made_here")[0] == 404
+
     def test_the_whole_session_took_no_pipeline_lock_and_no_self_shutdown(self, served):
         """§0.5(d) + §0.5(b) delta 2, over a session that exercised every read
-        route: a lock here would block the very `abk run` the buttons launch,
-        and a self-shutdown would make the cockpit disappear under the operator.
+        route AND every write route: a lock here would block the very `abk run`
+        the buttons launch, and a self-shutdown would make the cockpit
+        disappear under the operator.
+
+        The write routes are in this list since UI-1 — the invariant's
+        restatement ("computes no statistic and takes no pipeline lock") is
+        exactly what makes editing compatible with it, so the routes that edit
+        have to be the ones proving it.
         """
         assert served.get("/")[0] == 200
         assert served.get(f"/api/stats/{EXP}")[0] == 200
         assert served.get(f"/api/experiment-source/{EXP}")[0] == 200
         assert served.get("/api/jobs")[0] == 200
+        assert served.get("/api/experiments")[0] == 200
+        text = (Path("experiments") / f"{EXP}.yml").read_text(encoding="utf-8")
+        assert served.post("/api/experiment/save", {"select": EXP, "text": text})[0] == 200
+        assert served.post("/api/reload", {})[0] == 200
         assert served.locks == [], f"the dashboard took a pipeline lock: {served.locks}"
         # still serving: nothing asked the HTTP server to stop
         assert served.get("/api/jobs")[0] == 200

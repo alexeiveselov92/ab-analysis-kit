@@ -1,6 +1,10 @@
 """Write a tuned experiment config back to its YAML — safely (WP5, D4).
 
-The ONLY mutation seam of ``abk explore``. Order is validate → archive →
+The mutation seam of ``abk explore`` (the dashboard's own editor is
+:mod:`abkit.tuning.config_files`, which round-trips the raw TEXT instead of
+merging a structured edit; the two share that module's archive and atomic-write
+primitives, so both surfaces land in the same ``.history`` tree). Order is
+validate → archive →
 re-emit (the donor's discipline): a broken config never lands, and the
 previous file is always recoverable **byte-verbatim** from
 ``<dir>/.history/<experiment>/`` (discovery excludes hidden dirs, so archives
@@ -29,11 +33,9 @@ swap in later without touching the Apply contract (the ROADMAP backlog note).
 
 from __future__ import annotations
 
-import os
-import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +46,7 @@ from abkit.config.method_config import MethodConfig
 from abkit.config.metric_config import MetricConfig
 from abkit.database.internal_tables import InternalTablesManager
 from abkit.stats import create_method, get_method_class
+from abkit.tuning.config_files import archive_config_text, atomic_write_bytes, stamp
 
 _RULE = "# " + "─" * 61
 
@@ -102,12 +105,6 @@ class AppliedConfig:
             f"{parts} (the BI chart will show duplicate stabilization lines) — run "
             f"`abk clean`, then `abk run --select {self.experiment}`"
         )
-
-
-def _stamp(now: datetime | None = None) -> str:
-    """UTC filesystem-safe timestamp (``20260704T101530Z``)."""
-    now = now or datetime.now(timezone.utc)
-    return now.strftime("%Y%m%dT%H%M%SZ")
 
 
 def _reemit_yaml(document: dict[str, Any], original_bytes: bytes) -> bytes:
@@ -350,16 +347,13 @@ def apply_tuned_config(
                     OrphanedSeries(metric=metric, old_id=old_id, new_id=new_id, rows=rows)
                 )
 
-    # Archive the previous file byte-verbatim; only then overwrite.
-    stamp = _stamp(now)
-    archive_dir = original_path.parent / ".history" / experiment_name
-    archive_dir.mkdir(parents=True, exist_ok=True)
-    archive_path = archive_dir / f"{experiment_name}-{stamp}.yml"
-    suffix = 1
-    while archive_path.exists():  # rapid same-second Applies must not clobber
-        suffix += 1
-        archive_path = archive_dir / f"{experiment_name}-{stamp}-{suffix}.yml"
-    archive_path.write_bytes(original_bytes)
+    # Archive the previous file byte-verbatim; only then overwrite. The archive
+    # seam is shared with the dashboard's editor (`tuning/config_files.py`), so
+    # an operator recovering a file never has to know which surface wrote it.
+    at = stamp(now)
+    archive_path = archive_config_text(
+        config_path=original_path, name=experiment_name, original=original_bytes, now=now
+    )
 
     try:
         archive_rel = str(archive_path.relative_to(project_root))
@@ -379,31 +373,13 @@ def apply_tuned_config(
     header = _header(
         experiment_name,
         archive_rel,
-        stamp,
+        at,
         updated_metrics,
         preserved_metrics,
         experiment_fields,
         result.orphan_warning,
     )
-    _atomic_write_bytes(
+    atomic_write_bytes(
         original_path, header.encode("utf-8") + b"\n" + _reemit_yaml(raw, original_bytes)
     )
     return result
-
-
-def _atomic_write_bytes(path: Path, data: bytes) -> None:
-    """temp + ``os.replace`` in the target's own directory (same filesystem)
-    so a mid-write failure (ENOSPC, SIGKILL, power loss) can never truncate
-    the user's live config — "a broken config never lands" applies to the
-    filesystem, not just the validator."""
-    fd, tmp_name = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
-    try:
-        with os.fdopen(fd, "wb") as handle:
-            handle.write(data)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp_name, path)
-    except BaseException:
-        if os.path.exists(tmp_name):
-            os.unlink(tmp_name)
-        raise

@@ -11,7 +11,8 @@ dashboard being a **launcher, not a reader**:
 
 * **No single-experiment restriction.** ``--select``/``--exclude`` resolve the
   whole selection, exactly as ``abk run`` does; the dashboard is the surface that
-  exists to show them side by side.
+  exists to show them side by side. They are also handed to the server, which
+  re-resolves them after every YAML edit (UI-1's reload).
 * **No never-run noop.** ``abk explore`` refuses a project with no persisted rows
   (there is nothing to tune). Here that project is the normal first case: rows
   render "no data — press Run", and the Run button is the answer. So a missing
@@ -142,6 +143,11 @@ def run_dashboard(
             # SRM chip's observed counts. Both degrade in the open without us.
             metrics=context.metrics_by_name,
             manager=manager,
+            # UI-1: the editor's reload re-resolves THIS selection, so the
+            # selectors have to travel with it — re-deriving them server-side
+            # would silently widen an edited page to the whole project.
+            selectors=select,
+            excludes=exclude,
             open_browser=not no_open,
             echo=click.echo,
         )

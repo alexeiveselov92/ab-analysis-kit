@@ -14,13 +14,28 @@ off the persisted ``_ab_results``, with every verdict sourced from
 ``pipeline.readout.evaluate`` — it computes no statistic and holds no session.
 ``dashboard_server`` (DASH-3) serves those two: the metadata-only boot page
 plus one lazily-fetched row per experiment, token-gated on EVERY request and
-never shutting itself down — a launcher that takes no pipeline lock. Its job
-routes (DASH-4) spawn the real ``abk`` CLI through ``jobs`` — run / unlock /
-clean one at a time, explore deduped per experiment — and read an experiment's
-YAML back out for the read-only "open in your editor" affordance; none of them
-writes a config or computes anything.
+never shutting itself down — a launcher that computes no statistic and takes no
+pipeline lock. Its job routes (DASH-4) spawn the real ``abk`` CLI through
+``jobs`` — run / unlock / clean one at a time, explore deduped per experiment;
+none of them computes anything.
+
+``config_files`` (UI-1) is the cockpit's editor seam: create / update / delete
+an experiment YAML, validated on both levels, archived byte-verbatim and
+written atomically. Unlike ``config_writer`` — ``abk explore``'s Apply, which
+merges a structured edit and RE-EMITS the document — it round-trips the raw
+text, so comments survive; the two share this package's archive and
+atomic-write primitives so both land in the same ``.history`` tree. Writing a
+config is not a pipeline action: no statistic comes from it and no lock is
+taken, which is exactly what the launcher invariant says.
 """
 
+from abkit.tuning.config_files import (
+    ConfigWrite,
+    create_experiment_file,
+    delete_experiment_file,
+    text_digest,
+    update_experiment_file,
+)
 from abkit.tuning.config_writer import (
     AppliedConfig,
     OrphanedSeries,
@@ -74,6 +89,7 @@ __all__ = [
     "AppliedConfig",
     "CalibrationStatus",
     "ComparisonSeries",
+    "ConfigWrite",
     "ExplorePoint",
     "ExploreSession",
     "Job",
@@ -95,6 +111,8 @@ __all__ = [
     "build_explore_payload",
     "build_explore_server",
     "build_overview_boot_entries",
+    "create_experiment_file",
+    "delete_experiment_file",
     "find_calibration",
     "load_session",
     "render_dashboard_html",
@@ -102,5 +120,7 @@ __all__ = [
     "resolve_fpr_budget",
     "serve_dashboard",
     "serve_explore",
+    "text_digest",
+    "update_experiment_file",
     "validate_window_preset",
 ]

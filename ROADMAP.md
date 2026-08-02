@@ -388,7 +388,8 @@ capability a per-metric Run button needs (DASH-4a — a pipeline/CLI WP, not a
 dashboard one), job routes (DASH-4),
 `dashboard.ts` written from scratch — the donor has no TS sources (DASH-5),
 the third build entry + `abk dashboard` CLI (DASH-6), and the exit gate
-(DASH-7). CRUD editing is explicitly phase 2, out of the milestone.
+(DASH-7). CRUD editing is explicitly phase 2, out of the milestone (it shipped
+in the `0.6.x` UI-1 interstitial below).
 **Zero statistical numbers moved** (no `ALGORITHM_VERSION` bump).
 
 **Load-bearing as-built deltas.** DASH-2's prescribed step 3 — window the rows,
@@ -463,38 +464,54 @@ control (M13 design session, or M15 with the new methods — `abk plan` refuses
 them today rather than inventing math, D10), and **multi-arm sizing** (the
 planner sizes the first declared pair only) belongs to M14's decision layer.
 
-### Interstitial — the cockpit's next gaps + the incremental default → `0.6.x` 📋
+### Interstitial — the cockpit's next gaps + the incremental default → `0.6.x` 🚧
 Added 2026-08-02 (maintainer request, in conversation). Like the PLAN
 interstitial above it **renumbers nothing** (M12–M17 keep their numbers and
 their minor versions), moves no `_ab_results` number and needs no schema
 change. Sequenced ahead of M12 only where it is cheap; UI-1 can also follow it.
+**Status: UI-1 + UI-2 shipped (in `[Unreleased]`, one PR); PERF-1 open.**
 
-- **`0.6.3` cut — pending, not a WP.** `[Unreleased]` already holds the
-  `paths.experiments` selection fix (#81, `16edfce`): a project whose
-  experiments live outside `experiments/` answered "Nothing selected." to all
-  ten commands. Cut it before M12 opens so the milestone starts on an empty
-  `[Unreleased]`.
-- **UI-1 📋 — CRUD YAML editing in `abk dashboard`** (the M11 "phase 2" item,
-  now requested). The donor has the shape: `detectkit/ui/metric_files.py` (271
-  lines, validate-before-write + a `.history` archive), and our own
-  `tuning/config_writer.py` already implements the archive + orphan discipline
-  for explore's Apply seam — so this is a save endpoint over existing parts,
-  not new machinery. DASH-4's edit route stays the read path.
-  **The one thing to get right**: M11's binding invariant is *launcher, never a
-  worker*, gated twice (an AST scan over `dashboard_server.py` + a spy over
-  every job route). A config write does not violate what that invariant
-  protects — no statistic is computed, no pipeline lock is taken — but it does
-  contradict the gate's current wording, so the WP must restate the invariant
-  as "computes no statistic and takes no pipeline lock" and re-point the AST
-  gate at the lock API specifically. Writing the endpoint without touching the
-  gate wording will fail the WP's own CI. ~1 session.
-- **UI-2 📋 — `abk ui` as an alias for `abk dashboard`.** The donor's
+- **`0.6.3` cut ✅ DONE** (PR #82, `8c86a46`, tagged `v0.6.3`, on PyPI). It
+  carried the `paths.experiments` selection fix (#81, `16edfce`): a project
+  whose experiments live outside `experiments/` answered "Nothing selected." to
+  all ten commands.
+- **UI-1 ✅ SHIPPED — CRUD YAML editing in `abk dashboard`** (the M11 "phase 2"
+  item). `abkit/tuning/config_files.py` is the new seam: validate (BOTH levels —
+  `ExperimentConfig`, then the §8 matrix `abk run --steps validate` runs) →
+  archive byte-verbatim under `<experiments>/.history/<name>/` → atomic write,
+  behind `POST /api/experiment/{save,create,delete}` + `POST /api/reload` +
+  `GET /api/experiments`. ~1 session — **actual: 1 session**. Three things the
+  design did not have and the build needed:
+  - **It could not be built on `config_writer`.** Apply merges a *structured*
+    edit and RE-EMITS the document, so comments die; an editor must round-trip
+    the operator's own TEXT. The two seams stay different shapes and share only
+    the archive + atomic-write primitives.
+  - **The boot snapshot had to go.** M11 read the selection once and told the
+    operator to restart; with a create button that is a page that cannot show
+    what it just wrote. Every mutation now re-resolves the cockpit's own
+    `--select`/`--exclude`, re-bakes the page and returns the refreshed list —
+    and a reload that FAILS keeps the previous selection and warns, because the
+    write has already landed and a 500 would report a successful save as a
+    failure.
+  - **Level 2 needed an override.** Refusing every save until the whole project
+    lints makes the editor useless in the one situation it is opened for; so
+    §8 errors are forceable (and come back as `SAVED WITH AN ERROR — abk run
+    will refuse this: …`) while level 1, which decides whether the row can be
+    served at all, never is.
+  The invariant was restated as predicted — *computes no statistic and takes no
+  pipeline lock* — and the restatement cost nothing, because both gates were
+  already lock-API-specific; what they lacked was **coverage of the writing
+  routes**, now added (plus an AST honesty check for the POST route list, which
+  was hand-maintained where the GET one was not).
+- **UI-2 ✅ SHIPPED — `abk ui` as an alias for `abk dashboard`.** The donor's
   project-level cockpit is `dtk ui` (`dtk tune` is the per-metric sibling we
   ship as `abk explore`); abkit renamed both, and the rename was never
   arbitrated in a decisions table — it fell out of the pair. `dashboard`/
   `explore` say which surface you want where `ui` does not, so the canonical
   name stays; a Click alias costs three lines and keeps the muscle memory of
-  anyone running both tools. Fold into UI-1's PR.
+  anyone running both tools. Folded into UI-1's PR, registered as the SAME
+  callback object (`cli.add_command(dashboard, name="ui")`) so the two names
+  cannot drift in options or help text.
 - **PERF-1 📋 — make the incremental path discoverable, then re-decide its
   default.** `compute.incremental_reads` is `false` with the reason recorded in
   the field itself — *"Default false until verify-incremental (m9 WP5) bakes"*

@@ -558,30 +558,271 @@ test('Unlock posts {select}', async () => {
   assert.deepEqual(state.calls.find((c) => c.path === '/api/unlock').body, { select: 'dash_exp' });
 });
 
-test('Show YAML reads the read-only source route — there is no save button', async () => {
+const SOURCE = {
+  name: 'dash_exp',
+  path: 'experiments/dash_exp.yml',
+  yaml_text: 'name: dash_exp\n',
+  truncated: false,
+  digest: 'd1',
+  editable: true,
+};
+
+const writeReply = (over = {}) => ({
+  name: 'dash_exp',
+  path: 'experiments/dash_exp.yml',
+  archived: 'experiments/.history/dash_exp/dash_exp-20260802T101530Z.yml',
+  digest: 'd2',
+  renamed_from: null,
+  in_selection: true,
+  warnings: [],
+  experiments: makeDashboardPayload().experiments,
+  ...over,
+});
+
+/** Open a row's editor and wait for the source load to land. */
+async function openEditor(mount, state, name = 'dash_exp') {
+  const row = rowFor(mount, name);
+  row.querySelector('.abk-disclose').click();
+  const detail = row.querySelector('.abk-detail');
+  buttonNamed(detail, 'Edit YAML').click();
+  await until(() => state.calls.some((c) => c.path === `/api/experiment-source/${name}`));
+  await until(() => detail.querySelector('.abk-yaml').value !== '');
+  return { row, detail, area: detail.querySelector('.abk-yaml') };
+}
+
+test('Edit YAML loads the source into a textarea and Save posts the text back', async () => {
+  const { impl, state } = fakeFetch(
+    defaultHandler({
+      '/api/experiment-source/dash_exp': () => ({ status: 200, json: SOURCE }),
+      '/api/experiment/save': () => ({ status: 200, json: writeReply() }),
+    }),
+  );
+  const { mount } = renderInJsdom(makeDashboardPayload(), { fetchImpl: impl });
+  const { detail, area } = await openEditor(mount, state);
+
+  assert.equal(area.value, 'name: dash_exp\n');
+  area.value = 'name: dash_exp\nalpha: 0.01\n';
+  buttonNamed(detail, 'Save').click();
+
+  await until(() => state.calls.some((c) => c.path === '/api/experiment/save'));
+  const call = state.calls.find((c) => c.path === '/api/experiment/save');
+  assert.equal(call.method, 'POST');
+  assert.equal(call.query.get('token'), TOKEN);
+  // the digest the read handed out rides back — the concurrency token
+  assert.deepEqual(call.body, {
+    select: 'dash_exp',
+    text: 'name: dash_exp\nalpha: 0.01\n',
+    digest: 'd1',
+    force: false,
+  });
+  await until(() => /saved experiments\/dash_exp\.yml/.test(
+    detail.querySelector('.abk-editor-msg').textContent,
+  ));
+});
+
+test('a refused save shows the reason and offers no override for bad YAML', async () => {
+  const { impl, state } = fakeFetch(
+    defaultHandler({
+      '/api/experiment-source/dash_exp': () => ({ status: 200, json: SOURCE }),
+      '/api/experiment/save': () => ({ status: 400, text: 'invalid YAML: while parsing' }),
+    }),
+  );
+  const { mount } = renderInJsdom(makeDashboardPayload(), { fetchImpl: impl });
+  const { detail } = await openEditor(mount, state);
+  buttonNamed(detail, 'Save').click();
+
+  await until(() => /invalid YAML/.test(detail.querySelector('.abk-editor-msg').textContent));
+  // level 1 is never forceable, so no "Save anyway" appears
+  assert.equal(buttonNamed(detail, 'Save anyway'), undefined);
+});
+
+test('a level-2 refusal offers Save anyway, which re-posts with force', async () => {
+  const { impl, state } = fakeFetch(
+    defaultHandler({
+      '/api/experiment-source/dash_exp': () => ({ status: 200, json: SOURCE }),
+      '/api/experiment/save': (_p, body) =>
+        body.force
+          ? { status: 200, json: writeReply({ warnings: ['SAVED WITH AN ERROR — …'] }) }
+          : {
+              status: 400,
+              text: "the config is valid YAML but not valid for this project:\n  - no metric named 'nope'",
+            },
+    }),
+  );
+  const { mount } = renderInJsdom(makeDashboardPayload(), { fetchImpl: impl });
+  const { detail } = await openEditor(mount, state);
+  buttonNamed(detail, 'Save').click();
+
+  await until(() => buttonNamed(detail, 'Save anyway') !== undefined);
+  buttonNamed(detail, 'Save anyway').click();
+
+  await until(() => state.calls.filter((c) => c.path === '/api/experiment/save').length === 2);
+  assert.equal(state.calls.filter((c) => c.path === '/api/experiment/save')[1].body.force, true);
+  await until(() => /SAVED WITH AN ERROR/.test(
+    detail.querySelector('.abk-editor-msg').textContent,
+  ));
+});
+
+test('a file too large to show is loaded read-only, with Save disabled', async () => {
   const { impl, state } = fakeFetch(
     defaultHandler({
       '/api/experiment-source/dash_exp': () => ({
         status: 200,
+        json: { ...SOURCE, truncated: true, digest: null, editable: false },
+      }),
+    }),
+  );
+  const { mount } = renderInJsdom(makeDashboardPayload(), { fetchImpl: impl });
+  const { detail } = await openEditor(mount, state);
+
+  await until(() => /too large to edit here/.test(
+    detail.querySelector('.abk-editor-msg').textContent,
+  ));
+  assert.equal(buttonNamed(detail, 'Save').disabled, true);
+});
+
+test('Delete needs the confirm, then posts and drops the row', async () => {
+  const { impl, state } = fakeFetch(
+    defaultHandler({
+      '/api/experiment-source/dash_exp': () => ({ status: 200, json: SOURCE }),
+      '/api/experiment/delete': () => ({
+        status: 200,
         json: {
           name: 'dash_exp',
           path: 'experiments/dash_exp.yml',
-          yaml_text: 'name: dash_exp\n',
-          truncated: false,
+          archived: 'experiments/.history/dash_exp/dash_exp-x-deleted.yml',
+          warnings: ['… `abk clean --orphaned-experiments` prunes them'],
+          experiments: makeDashboardPayload().experiments.filter((e) => e.name !== 'dash_exp'),
         },
       }),
     }),
   );
   const { mount } = renderInJsdom(makeDashboardPayload(), { fetchImpl: impl });
-  const row = rowFor(mount, 'dash_exp');
-  row.querySelector('.abk-disclose').click();
-  const detail = row.querySelector('.abk-detail');
-  buttonNamed(detail, 'Show YAML').click();
+  const { detail } = await openEditor(mount, state);
 
-  await until(() => /name: dash_exp/.test(detail.querySelector('.abk-source').textContent));
-  assert.ok(state.calls.some((c) => c.path === '/api/experiment-source/dash_exp'));
-  const labels = [...detail.querySelectorAll('button')].map((b) => b.textContent);
-  assert.ok(!labels.some((l) => /save/i.test(l)), 'read-only: no save affordance exists');
+  buttonNamed(detail, 'Delete…').click();
+  assert.ok(!state.calls.some((c) => c.path === '/api/experiment/delete'));
+  buttonNamed(detail, 'Delete anyway').click();
+
+  await until(() => state.calls.some((c) => c.path === '/api/experiment/delete'));
+  await until(() => rowFor(mount, 'dash_exp') === null);
+});
+
+test('New experiment posts the template and adopts the returned selection', async () => {
+  const created = [
+    ...makeDashboardPayload().experiments,
+    { ...makeDashboardPayload().experiments[0], name: 'dash_new', file: 'experiments/dash_new.yml' },
+  ];
+  const { impl, state } = fakeFetch(
+    defaultHandler({
+      '/api/experiment/create': () => ({
+        status: 200,
+        json: writeReply({ name: 'dash_new', path: 'experiments/dash_new.yml', archived: null, experiments: created }),
+      }),
+    }),
+  );
+  const { mount } = renderInJsdom(makeDashboardPayload(), { fetchImpl: impl });
+  buttonNamed(mount, 'New experiment').click();
+  const panel = mount.querySelector('.abk-create');
+  assert.match(panel.querySelector('.abk-yaml').value, /name: my_experiment/);
+  panel.querySelector('.abk-text').value = 'growth';
+  buttonNamed(panel, 'Create').click();
+
+  await until(() => state.calls.some((c) => c.path === '/api/experiment/create'));
+  const call = state.calls.find((c) => c.path === '/api/experiment/create');
+  assert.equal(call.body.folder, 'growth');
+  assert.match(call.body.text, /horizon_ts/);
+  await until(() => rowFor(mount, 'dash_new') !== null);
+});
+
+test('Reload configs repaints a metadata-only change (same names, new rows)', async () => {
+  // The regression this pins: comparing NAME LISTS made a reload that changed
+  // an experiment's comparisons/tags repaint nothing at all — and that is the
+  // button documented as what you press after editing a YAML in your own
+  // editor, where the name almost never moves.
+  const base = makeDashboardPayload();
+  const edited = base.experiments.map((e) =>
+    e.name === 'dash_exp' ? { ...e, tags: ['freshly-edited'] } : e,
+  );
+  const { impl, state } = fakeFetch(
+    defaultHandler({
+      '/api/reload': () => ({ status: 200, json: { experiments: edited, generated_at: 0, warnings: [] } }),
+    }),
+  );
+  const { mount } = renderInJsdom(base, { fetchImpl: impl });
+  await until(() => state.calls.filter((c) => c.path.startsWith('/api/stats/')).length >= 1);
+  buttonNamed(mount, 'Reload configs').click();
+
+  await until(() => state.calls.some((c) => c.path === '/api/reload'));
+  await until(() => /freshly-edited/.test(rowFor(mount, 'dash_exp').textContent));
+});
+
+test('a delete shows the archive path where the removed row cannot swallow it', async () => {
+  const { impl, state } = fakeFetch(
+    defaultHandler({
+      '/api/experiment-source/dash_exp': () => ({ status: 200, json: SOURCE }),
+      '/api/experiment/delete': () => ({
+        status: 200,
+        json: {
+          name: 'dash_exp',
+          path: 'experiments/dash_exp.yml',
+          archived: 'experiments/.history/dash_exp/dash_exp-x-deleted.yml',
+          warnings: ['… `abk clean --orphaned-experiments` prunes them'],
+          experiments: makeDashboardPayload().experiments.filter((e) => e.name !== 'dash_exp'),
+        },
+      }),
+    }),
+  );
+  const { mount } = renderInJsdom(makeDashboardPayload(), { fetchImpl: impl });
+  const { detail } = await openEditor(mount, state);
+  buttonNamed(detail, 'Delete…').click();
+  buttonNamed(detail, 'Delete anyway').click();
+
+  await until(() => rowFor(mount, 'dash_exp') === null);
+  const banner = mount.querySelector('.abk-banner').textContent;
+  assert.match(banner, /dash_exp-x-deleted\.yml/);
+  assert.match(banner, /orphaned-experiments/);
+});
+
+test('Reload configs re-reads the selection and surfaces a failed reload once', async () => {
+  const { impl, state } = fakeFetch(
+    defaultHandler({
+      '/api/reload': () => ({
+        status: 200,
+        json: {
+          experiments: makeDashboardPayload().experiments,
+          generated_at: 0,
+          warnings: ['the project could not be re-read after the change'],
+        },
+      }),
+    }),
+  );
+  const { mount } = renderInJsdom(makeDashboardPayload(), { fetchImpl: impl });
+  buttonNamed(mount, 'Reload configs').click();
+
+  await until(() => state.calls.some((c) => c.path === '/api/reload'));
+  await until(() => /could not be re-read/.test(mount.querySelector('.abk-banner').textContent));
+  // one banner, not one message per row
+  assert.equal(mount.querySelectorAll('.abk-banner').length, 1);
+});
+
+test('a hostile server message in the editor pane stays text', async () => {
+  const { impl, state } = fakeFetch(
+    defaultHandler({
+      '/api/experiment-source/dash_exp': () => ({ status: 200, json: SOURCE }),
+      '/api/experiment/save': () => ({
+        status: 400,
+        text: '<img src=x onerror="window.__pwned=1"> invalid YAML',
+      }),
+    }),
+  );
+  const { mount, dom } = renderInJsdom(makeDashboardPayload(), { fetchImpl: impl });
+  const { detail } = await openEditor(mount, state);
+  buttonNamed(detail, 'Save').click();
+
+  await until(() => /invalid YAML/.test(detail.querySelector('.abk-editor-msg').textContent));
+  assert.equal(dom.window.__pwned, undefined);
+  assert.equal(detail.querySelectorAll('img').length, 0);
 });
 
 // ---------------------------------------------------------------------------
