@@ -14,6 +14,35 @@ number change).
 ## [Unreleased]
 
 ### Added
+- **NTF-4 — four more channels: `discord`, `teams`, `googlechat`, `ntfy`
+  (nine in total).** Thin adapters in abkit's own idiom: each takes its
+  platform's **wire format** (and its limits) as fact, and its **content** from
+  the same `build_context()` every existing channel uses — so a notice renders
+  as a notice on all nine without any of them knowing what a signal kind is.
+  None of the donor's alerting semantics (severity, anomaly/recovery/no-data)
+  came along; abkit still has none.
+  - **`discord`** — one embed per readout. Its colour is a *decimal* int (the
+    one channel that will not take `#RRGGBB`), and mentions ride in the
+    top-level message content with `allowed_mentions`, because a mention inside
+    an embed renders as text and pings nobody. They are stripped from the embed
+    body so a handle does not appear twice.
+  - **`teams`** — an Adaptive Card over a **Power Automate "Workflows"**
+    webhook, not the retired O365 connector. Two Microsoft consequences: the
+    message posts as the flow's identity (no per-message bot name or avatar),
+    and the status colour is a named card token, so this is the only channel
+    where the brand hex is mapped rather than passed through.
+  - **`googlechat`** — Cards v2, where `\n` is not a line break: text is
+    HTML-escaped and then newlines become `<br>`, or the message arrives as one
+    run-on paragraph.
+  - **`ntfy`** — JSON publish to a topic, with the status cue carried by the
+    tag emoji and the priority. The `priority` override applies **only** to the
+    urgent kinds (LOSE, a failed SRM gate, errors): a WIN is good news, and the
+    channel must not be configurable into buzzing a phone over one. The body is
+    capped on a **byte** budget, since ntfy's limit is bytes and a multibyte
+    body would pass a character count and be rejected by the server.
+  - `abk test-report` now exercises all nine types end to end — a type its smoke
+    test cannot construct and send through is a type that does not really ship.
+  - Zero statistical numbers moved (no `ALGORITHM_VERSION` bump).
 - **NTF-3 — `--notify` stops repeating itself.** Until now every completed run
   re-announced the same verdict, which makes the flag unusable on the schedule
   it was built for. The new `_ab_notify_states` table records what each

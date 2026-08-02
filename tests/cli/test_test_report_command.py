@@ -22,8 +22,7 @@ EXP = "example_signup_test"
 WH = "https://webhook.test/team"
 WH2 = "https://webhook.test/ops"
 
-PROFILES = textwrap.dedent(
-    f"""\
+PROFILES = textwrap.dedent(f"""\
     default_profile: dev
     profiles:
       dev:
@@ -37,8 +36,7 @@ PROFILES = textwrap.dedent(
       ops:
         type: webhook
         webhook_url: "{WH2}"
-    """
-)
+    """)
 
 
 @pytest.fixture
@@ -114,3 +112,95 @@ def test_mock_readout_is_synthetic_no_db(project):
         result = runner.invoke(cli, ["test-report", EXP])
     assert result.exit_code == 0, result.output
     assert "mock WIN readout" in result.output
+
+
+# ── NTF-4: the smoke test must cover all nine channel types ───────────────────
+NINE_URLS = {
+    "discord": "https://discord.com/api/webhooks/1/tok",
+    "teams": "https://prod-1.westus.logic.azure.com/workflows/a/triggers/x/paths/invoke",
+    "googlechat": "https://chat.googleapis.com/v1/spaces/A/messages?key=k&token=t",
+    "ntfy": "https://ntfy.sh",
+}
+
+PROFILES_NINE = textwrap.dedent(f"""\
+    default_profile: dev
+    profiles:
+      dev:
+        type: clickhouse
+        host: localhost
+        port: 9000
+    notification_channels:
+      c_webhook:
+        type: webhook
+        webhook_url: "{WH}"
+      c_slack:
+        type: slack
+        webhook_url: "{WH}"
+      c_mattermost:
+        type: mattermost
+        webhook_url: "{WH}"
+      c_telegram:
+        type: telegram
+        bot_token: "1:abc"
+        chat_id: "-100"
+      c_email:
+        type: email
+        smtp_host: smtp.example.com
+        smtp_port: 587
+        from_email: bot@x
+        to_emails: [a@x]
+      c_discord:
+        type: discord
+        webhook_url: "{NINE_URLS['discord']}"
+      c_teams:
+        type: teams
+        webhook_url: "{NINE_URLS['teams']}"
+      c_googlechat:
+        type: googlechat
+        webhook_url: "{NINE_URLS['googlechat']}"
+      c_ntfy:
+        type: ntfy
+        topic: abkit-smoke
+    """)
+
+
+def test_every_channel_type_sends_the_mock_readout(tmp_path, monkeypatch):
+    """`abk test-report` is the connectivity check operators run after wiring a
+    channel — a type it cannot construct or send through is a type that does not
+    really ship."""
+    monkeypatch.chdir(tmp_path)
+    assert runner.invoke(cli, ["init", "demo"]).exit_code == 0
+    proj = tmp_path / "demo"
+    (proj / "profiles.yml").write_text(PROFILES_NINE)
+    monkeypatch.chdir(proj)
+
+    import abkit.notify.email as email_mod
+
+    class _FakeSMTP:
+        def __init__(self, *a, **k):
+            pass
+
+        def starttls(self):
+            pass
+
+        def login(self, *a):
+            pass
+
+        def sendmail(self, *a):
+            pass
+
+        def quit(self):
+            pass
+
+    monkeypatch.setattr(email_mod.smtplib, "SMTP", _FakeSMTP)
+
+    with requests_mock.Mocker() as m:
+        m.post(WH, status_code=200)
+        m.post("https://api.telegram.org/bot1:abc/sendMessage", json={"ok": True})
+        for url in NINE_URLS.values():
+            m.post(url, status_code=200)
+        result = runner.invoke(cli, ["test-report", EXP])
+
+    assert result.exit_code == 0, result.output
+    assert "9/9 channel(s)" in result.output
+    assert "✗" not in result.output

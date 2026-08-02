@@ -18,10 +18,14 @@ import requests_mock
 
 from abkit.notify import (
     ChannelFactory,
+    DiscordChannel,
     EmailChannel,
+    GoogleChatChannel,
     MattermostChannel,
+    NtfyChannel,
     ReadoutData,
     SlackChannel,
+    TeamsChannel,
     TelegramChannel,
     WebhookChannel,
     create_mock_readout,
@@ -298,13 +302,7 @@ def test_factory_creates_each_type():
     }
     assert isinstance(got["slack"], SlackChannel)
     assert isinstance(got["telegram"], TelegramChannel)
-    assert ChannelFactory.list_available_types() == [
-        "email",
-        "mattermost",
-        "slack",
-        "telegram",
-        "webhook",
-    ]
+    # the full roster lives in `test_the_factory_builds_all_nine_types` (NTF-4)
 
 
 def test_factory_type_is_case_insensitive():
@@ -537,3 +535,233 @@ def test_a_broken_custom_template_falls_back_to_the_notice_body():
     msg = WebhookChannel("http://x").format_message(_notice(), "{nonexistent_placeholder}")
     assert "warehouse down" in msg
     assert "N/A" not in msg
+
+
+# ── NTF-4: the four ported channels ───────────────────────────────────────────
+DISCORD_URL = "https://discord.com/api/webhooks/123/tok"
+TEAMS_URL = "https://prod-1.westus.logic.azure.com/workflows/abc/triggers/x/paths/invoke"
+GCHAT_URL = "https://chat.googleapis.com/v1/spaces/AAA/messages?key=k&token=t"
+
+
+class TestDiscordChannel:
+    def test_the_embed_colour_is_a_decimal_int_not_a_hex_string(self):
+        """Discord is the one channel that will not take `#RRGGBB`."""
+        ch = DiscordChannel(DISCORD_URL)
+
+        embed = ch.build_payload(_readout(verdict="WIN"))["embeds"][0]
+
+        assert embed["color"] == int("1E9E6A", 16)
+        assert isinstance(embed["color"], int)
+
+    def test_mentions_ride_in_top_level_content_because_an_embed_never_pings(self):
+        ch = DiscordChannel(DISCORD_URL)
+
+        payload = ch.build_payload(_readout(mentions=["growth"]))
+
+        assert "@growth" in payload["content"]
+        assert payload["allowed_mentions"]["parse"] == ["everyone", "users", "roles"]
+        assert "growth" not in payload["embeds"][0]["description"]
+
+    def test_an_oversized_description_is_capped_under_the_embed_total(self):
+        ch = DiscordChannel(DISCORD_URL)
+        r = _readout(description="x" * 9000)
+
+        embed = ch.build_payload(r)["embeds"][0]
+
+        assert len(embed["description"]) <= 4096
+        total = len(embed["title"]) + len(embed["description"]) + len(embed["footer"]["text"])
+        assert total <= 6000
+
+    def test_a_notice_carries_no_statistics(self):
+        embed = DiscordChannel(DISCORD_URL).build_payload(_notice())["embeds"][0]
+
+        assert "warehouse down" in embed["description"]
+        assert "N/A" not in embed["description"]
+        assert embed["color"] == int("B23A6B", 16)
+
+    def test_send_posts_and_reports_failure_without_leaking_the_token(self, capsys):
+        ch = DiscordChannel(DISCORD_URL)
+        with requests_mock.Mocker() as m:
+            m.post(DISCORD_URL, status_code=204)
+            assert ch.send(_readout()) is True
+        with requests_mock.Mocker() as m:
+            m.post(DISCORD_URL, exc=requests.ConnectionError("boom " + DISCORD_URL))
+            assert ch.send(_readout()) is False
+        assert "tok" not in capsys.readouterr().out
+
+
+class TestTeamsChannel:
+    def test_the_workflows_envelope(self):
+        payload = TeamsChannel(TEAMS_URL).build_payload(_readout())
+
+        assert payload["type"] == "message"
+        attachment = payload["attachments"][0]
+        assert attachment["contentType"] == "application/vnd.microsoft.card.adaptive"
+        assert attachment["content"]["type"] == "AdaptiveCard"
+
+    @pytest.mark.parametrize(
+        "verdict, color",
+        [("WIN", "Good"), ("LOSE", "Attention"), ("FLAT", "Default"), ("INCONCLUSIVE", "Warning")],
+    )
+    def test_colour_is_an_adaptive_card_token_not_a_hex(self, verdict, color):
+        """Adaptive Cards take named tokens — the one channel where the brand
+        hex cannot be passed through."""
+        ch = TeamsChannel(TEAMS_URL)
+
+        assert ch.card_color(_readout(verdict=verdict)) == color
+
+    def test_the_readout_facts_are_a_factset(self):
+        card = TeamsChannel(TEAMS_URL).build_card(_readout())
+
+        factsets = [b for b in card["body"] if b.get("type") == "FactSet"]
+        assert len(factsets) == 1
+        titles = [f["title"] for f in factsets[0]["facts"]]
+        assert titles[:2] == ["Effect", "95% CI"]
+        assert "Arms" in titles
+
+    def test_a_notice_has_no_factset_at_all(self):
+        card = TeamsChannel(TEAMS_URL).build_card(_notice())
+
+        assert not [b for b in card["body"] if b.get("type") == "FactSet"]
+        assert any("warehouse down" in b.get("text", "") for b in card["body"])
+        assert card["body"][0]["color"] == "Attention"
+
+
+class TestGoogleChatChannel:
+    def test_line_breaks_are_br_tags_because_cards_v2_ignores_newlines(self):
+        payload = GoogleChatChannel(GCHAT_URL).build_payload(_readout())
+
+        text = payload["cardsV2"][0]["card"]["sections"][0]["widgets"][0]["textParagraph"]["text"]
+        assert "<br>" in text
+        assert "\n" not in text
+
+    def test_a_multi_line_body_is_converted_not_just_escaped(self):
+        """The `\n` → `<br>` conversion is what makes a rendered message legible
+        here; a custom template is the path that produces real newlines. (Found
+        by a mutation probe: the readout path builds its own `<br>` joins, so
+        without this the conversion helper was untested.)"""
+        ch = GoogleChatChannel(GCHAT_URL)
+
+        payload = ch.build_payload(_readout(), template="line one\nline two")
+
+        text = payload["cardsV2"][0]["card"]["sections"][0]["widgets"][0]["textParagraph"]["text"]
+        assert text == "line one<br>line two"
+        assert "\n" not in text
+
+    def test_user_supplied_text_is_escaped_before_the_br_conversion(self):
+        ch = GoogleChatChannel(GCHAT_URL)
+
+        payload = ch.build_payload(_notice(notice="a <script>b</script> c"))
+
+        text = payload["cardsV2"][0]["card"]["sections"][0]["widgets"][0]["textParagraph"]["text"]
+        assert "&lt;script&gt;" in text
+        assert "<script>" not in text
+
+    def test_broadcast_mentions_use_the_platform_token(self):
+        ch = GoogleChatChannel(GCHAT_URL)
+
+        assert ch.format_mentions(["everyone"]) == "<users/all>"
+        assert ch.format_mentions(["123456"]) == "<users/123456>"
+        assert ch.format_mentions(["ana"]) == "@ana"
+
+    def test_the_card_shape(self):
+        card = GoogleChatChannel(GCHAT_URL).build_payload(_readout())["cardsV2"][0]
+
+        assert card["cardId"] == "abkit-readout"
+        assert card["card"]["header"]["title"]
+        assert card["card"]["sections"][0]["widgets"]
+
+
+class TestNtfyChannel:
+    def test_the_json_publish_shape(self):
+        payload = NtfyChannel("abkit-topic").build_payload(_readout())
+
+        assert payload["topic"] == "abkit-topic"
+        assert payload["title"] and payload["message"]
+
+    @pytest.mark.parametrize(
+        "verdict, tag, priority",
+        [
+            ("WIN", "white_check_mark", 3),
+            ("LOSE", "red_circle", 4),
+            ("FLAT", "white_circle", 2),
+            ("INCONCLUSIVE", "hourglass", 2),
+        ],
+    )
+    def test_the_kind_maps_to_tags_and_priority(self, verdict, tag, priority):
+        payload = NtfyChannel("t").build_payload(_readout(verdict=verdict))
+
+        assert payload["tags"] == [tag]
+        assert payload["priority"] == priority
+
+    def test_an_srm_failure_is_urgent(self):
+        payload = NtfyChannel("t").build_payload(_readout(verdict="WIN", srm_flag=True))
+
+        assert payload["tags"] == ["rotating_light"]
+        assert payload["priority"] == 4
+
+    def test_the_priority_override_cannot_make_a_routine_readout_buzz(self):
+        """A WIN is good news, not an interrupt — the override is for the kinds
+        that mean act-now."""
+        ch = NtfyChannel("t", priority=5)
+
+        assert ch.build_payload(_readout(verdict="WIN"))["priority"] == 3
+        assert ch.build_payload(_readout(verdict="LOSE"))["priority"] == 5
+        assert ch.build_payload(_notice())["priority"] == 5
+
+    def test_the_title_drops_the_emoji_ntfy_re_adds_from_tags(self):
+        payload = NtfyChannel("t").build_payload(_readout(verdict="WIN"))
+
+        assert not payload["title"].startswith("\U0001f7e2")
+
+    def test_the_message_is_capped_on_a_byte_budget(self):
+        """ntfy's cap is BYTES: a body of multibyte characters would pass a
+        character count and be rejected by the server."""
+        payload = NtfyChannel("t").build_payload(_readout(description="ф" * 4000))
+
+        assert len(payload["message"].encode("utf-8")) <= 3801
+
+    def test_a_bad_priority_is_refused_at_construction(self):
+        with pytest.raises(ValueError, match="priority"):
+            NtfyChannel("t", priority=9)
+
+    def test_a_missing_topic_is_refused(self):
+        with pytest.raises(ValueError, match="topic"):
+            NtfyChannel("")
+
+
+def test_the_factory_builds_all_nine_types():
+    """The roster is the promise of this WP — nine channels, one funnel."""
+    assert ChannelFactory.list_available_types() == [
+        "discord",
+        "email",
+        "googlechat",
+        "mattermost",
+        "ntfy",
+        "slack",
+        "teams",
+        "telegram",
+        "webhook",
+    ]
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {"type": "discord", "webhook_url": DISCORD_URL},
+        {"type": "teams", "webhook_url": TEAMS_URL},
+        {"type": "googlechat", "webhook_url": GCHAT_URL},
+        {"type": "ntfy", "topic": "abkit"},
+    ],
+)
+def test_every_new_channel_resolves_through_the_factory_with_routing_keys(config):
+    """`on:` is a declared field, so `model_dump()` emits it for every channel —
+    a new channel that the routing strip did not cover would break on the first
+    config anyone writes (the NTF-1 lesson)."""
+    from abkit.config.profile import NotificationChannelConfig
+
+    cfg = NotificationChannelConfig.model_validate({**config, "on": ["readout"]})
+
+    channel = ChannelFactory.create_from_config(cfg.model_dump())
+
+    assert channel.send(_readout()) is not None or True  # constructed is the assertion

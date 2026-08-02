@@ -17,9 +17,13 @@ import re
 from typing import Any
 
 from abkit.notify.base import BaseChannel
+from abkit.notify.discord import DiscordChannel
 from abkit.notify.email import EmailChannel
+from abkit.notify.googlechat import GoogleChatChannel
 from abkit.notify.mattermost import MattermostChannel
+from abkit.notify.ntfy import NtfyChannel
 from abkit.notify.slack import SlackChannel
+from abkit.notify.teams import TeamsChannel
 from abkit.notify.telegram import TelegramChannel
 from abkit.notify.webhook import WebhookChannel
 from abkit.utils import interpolate_env_vars
@@ -37,6 +41,10 @@ class ChannelFactory:
         "slack": SlackChannel,
         "telegram": TelegramChannel,
         "email": EmailChannel,
+        "discord": DiscordChannel,
+        "teams": TeamsChannel,
+        "googlechat": GoogleChatChannel,
+        "ntfy": NtfyChannel,
     }
 
     @classmethod

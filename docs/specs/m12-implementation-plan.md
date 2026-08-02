@@ -603,6 +603,28 @@ NTF-1/2/3/5 — can be built/merged in parallel with the rest of the track.**
 
 **Session estimate:** 2 sessions.
 
+**As built (shipped 2026-08-03; the shape held, the cost did not):**
+
+- **Under a session, not two** — because NTF-2 had already split notice from
+  verdict. Each channel needed ONE branch (statistics block or the sentence),
+  not a second renderer, and `format_message` picks the template by kind.
+- **Three platform rules that bend the house pattern**, each pinned by a test
+  rather than a comment: Discord's colour is a DECIMAL int and a mention inside
+  an embed never pings (top-level `content` + `allowed_mentions`, and stripped
+  from the body so a handle is not printed twice); Teams takes a NAMED Adaptive
+  Card colour, so it is the only channel where the brand token layer cannot be
+  the literal source; Cards v2 ignores `\n` (escape, THEN convert to `<br>`);
+  ntfy caps in BYTES, so the ellipsis has to fit inside the budget.
+- **The ntfy priority override is partial by design** (`_OVERRIDABLE_KINDS`):
+  a WIN or a FLAT stays calm however the channel is configured. The donor has
+  the same idea for a different kind vocabulary; the mapping itself is fresh.
+- `abk test-report` grew a nine-channel leg. Step 5's "9 total" is only true if
+  the smoke test proves it, and the roster assertion moved to one place.
+- **Not done, and named:** the §Risks live-webhook smoke against a real Teams
+  Workflows endpoint. It needs credentials this environment does not have. The
+  JSON shape is unit-pinned; the Workflows contract is an actively migrating
+  Microsoft surface, so `abk test-report` is the first operator's job.
+
 ---
 
 ### NTF-5 — Calibration-red + stale/backlog signals (validate-only first cut)

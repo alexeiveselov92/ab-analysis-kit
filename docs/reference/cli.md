@@ -608,8 +608,8 @@ abk test-report <experiment> [--channel NAME]... [--profile NAME]
 
 Prints a per-channel ✓/✗ line and **exits non-zero if any channel fails or is
 misconfigured** — so you can wire it into CI before trusting an orchestrator to
-deliver real readouts. Supported channel types: `slack`, `mattermost`, `webhook`,
-`telegram`, `email`.
+deliver real readouts. Supported channel types (nine): `slack`, `mattermost`,
+`webhook`, `telegram`, `email`, `discord`, `teams`, `googlechat`, `ntfy`.
 
 ## Common workflows
 

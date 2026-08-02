@@ -53,8 +53,10 @@ sending a literal `${...}` placeholder.
 
 ## The channel types
 
-Every non-`type` key is passed straight to the channel, so the field names below
-are the full surface.
+Nine of them: `webhook`, `slack`, `mattermost`, `telegram`, `email`, `discord`,
+`teams`, `googlechat`, `ntfy`. Every non-`type` key (except the `on:` routing
+filter) is passed straight to the channel, so the field names below are the full
+surface.
 
 ### `slack` / `mattermost`
 
@@ -97,6 +99,79 @@ Send over SMTP as a plain-text + branded-HTML message.
 | `smtp_username` / `smtp_password` | no | Login is attempted only when both are set (open relays need neither). |
 | `use_tls` | no | `true` (default) = STARTTLS on 587; `false` = implicit TLS via SMTP_SSL on 465 (never plaintext). |
 | `from_name` | no | From display name (default `abkit`). |
+
+### `discord`
+
+One embed per readout, via an "Execute Webhook" URL.
+
+| Field | Required | Notes |
+|---|---|---|
+| `webhook_url` | yes | `https://discord.com/api/webhooks/<id>/<token>`. |
+| `username` | no | Bot name override (default `abkit`). |
+| `avatar_url` | no | Bot avatar override. |
+| `timeout` | no | Request timeout, seconds (default 10). |
+
+Mentions are delivered in the message's top-level content, not inside the embed
+— Discord never pings from inside an embed.
+
+### `teams`
+
+An Adaptive Card posted to a **Power Automate "Workflows"** webhook. This is
+*not* the retired Office 365 connector: create a flow with the "When a Teams
+webhook request is received" trigger and use its URL. Two consequences of that
+path, both Microsoft's: the message posts as the flow's identity (no per-message
+bot name or avatar), and the card's status colour is a named Adaptive Card token
+rather than a hex.
+
+| Field | Required | Notes |
+|---|---|---|
+| `webhook_url` | yes | The Workflows trigger URL. |
+| `timeout` | no | Request timeout, seconds (default 10). |
+
+### `googlechat`
+
+A Cards v2 message posted to a space's incoming webhook.
+
+| Field | Required | Notes |
+|---|---|---|
+| `webhook_url` | yes | The space webhook (carries `key` and `token` query params — treat it as a secret). |
+| `timeout` | no | Request timeout, seconds (default 10). |
+
+Mentions accept `everyone` / `all` / `here` (rendered as the space-wide ping) or
+a numeric user id; anything else renders as plain text.
+
+### `ntfy`
+
+Push notifications to an [ntfy](https://ntfy.sh) topic — the public server or
+your own.
+
+| Field | Required | Notes |
+|---|---|---|
+| `topic` | yes | The topic to publish to. |
+| `server` | no | Base URL (default `https://ntfy.sh`). |
+| `token` | no | Bearer token for a protected topic. |
+| `user` / `password` | no | Basic-auth alternative to `token`. |
+| `priority` | no | 1–5 override. Applied **only** to the urgent verdicts (LOSE, a failed SRM gate, errors) — a WIN or a FLAT stays calm however you set it, so this cannot be configured into buzzing a phone over routine news. |
+| `timeout` | no | Request timeout, seconds (default 10). |
+
+ntfy renders no colour; the status cue is the tag emoji and the priority.
+
+```yaml
+notification_channels:
+  team_discord:
+    type: discord
+    webhook_url: "${DISCORD_WEBHOOK_URL}"
+  eng_teams:
+    type: teams
+    webhook_url: "${TEAMS_WORKFLOW_URL}"
+  space_chat:
+    type: googlechat
+    webhook_url: "${GOOGLE_CHAT_WEBHOOK_URL}"
+  phone_push:
+    type: ntfy
+    topic: "${NTFY_TOPIC}"
+    priority: 5
+```
 
 ## Running the check
 
