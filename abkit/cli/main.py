@@ -8,7 +8,7 @@ from the detectkit donor's swallow-and-return-0 behaviour).
 
 Surface: ``init``, ``run``, ``unlock``, ``clean`` (M2) + ``explore`` (M3) +
 ``validate`` (M4) + ``plan`` (M5) + ``init-claude`` / ``test-report`` (M6) +
-``verify-incremental`` (M9) + ``dashboard`` (M11).
+``verify-incremental`` (M9) + ``dashboard`` (M11, aliased ``ui`` since UI-2).
 """
 
 from __future__ import annotations
@@ -238,12 +238,25 @@ def dashboard(
     One row per experiment — verdict, effect and a sparkline, each fetched on
     demand from the persisted results. The buttons spawn real `abk` commands
     (run / explore / unlock / clean) as subprocesses and stream their logs, so
-    the dashboard itself never computes, never takes the pipeline lock, and
-    never edits a config. Serves until Ctrl-C.
+    the dashboard itself never computes and never takes the pipeline lock. It
+    does edit experiment YAML (validated, with a .history archive) from the
+    page. Serves until Ctrl-C.
+
+    Also available as `abk ui`.
     """
     from abkit.cli.commands.dashboard import run_dashboard
 
     run_dashboard(select, exclude, profile, window, no_open)
+
+
+# UI-2: `abk ui` is the same command under the donor's name. dtk's
+# project-level cockpit is `dtk ui` (`dtk tune` is the per-metric sibling abkit
+# ships as `abk explore`), and abkit renamed both — `dashboard`/`explore` say
+# WHICH surface you want where `ui` does not, so the canonical name stays and
+# this is muscle memory for anyone running both tools. Registered by aliasing
+# the SAME callback object rather than by re-decorating a wrapper, so the two
+# names can never drift in options or help text; only `name` differs.
+cli.add_command(dashboard, name="ui")
 
 
 @cli.command()

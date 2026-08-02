@@ -217,10 +217,9 @@ export interface StopReply {
   ok: true;
 }
 
-/** `GET /api/experiment-source/<name>` — the raw YAML text for the read-only
- * "open in your editor" affordance (there is no save endpoint in this
- * milestone). Read live off disk, so it can legitimately disagree with the
- * parsed config every other route uses. */
+/** `GET /api/experiment-source/<name>` — the raw YAML text the editor opens
+ * with. Read live off disk, so it can legitimately disagree with the parsed
+ * config every other route uses (that is what `digest` is for). */
 export interface SourceReply {
   name: string;
   /** the same root-relative string the row carries as `file` */
@@ -228,6 +227,62 @@ export interface SourceReply {
   yaml_text: string;
   /** the file exceeded the server's 512 kB cap */
   truncated: boolean;
+  /** the concurrency token a save echoes back; `null` when truncated */
+  digest: string | null;
+  /** false when the text above is a PREFIX — saving it would drop the tail */
+  editable: boolean;
+}
+
+/** `POST /api/experiment/save` — `{select, text}` plus the optimistic-
+ * concurrency `digest` and the level-2 override `force`. */
+export interface SaveRequest {
+  select: string;
+  text: string;
+  digest?: string | null;
+  force?: boolean;
+}
+
+/** `POST /api/experiment/create` — no `select`: the target does not exist yet,
+ * and the file name comes from the config's own `name:`. */
+export interface CreateRequest {
+  text: string;
+  folder?: string;
+  force?: boolean;
+}
+
+/** `POST /api/experiment/save` | `/api/experiment/create` (UI-1). Carries the
+ * refreshed selection, so a client never has to poll to find out whether the
+ * row it just edited still exists. */
+export interface WriteReply {
+  name: string;
+  path: string;
+  /** the verbatim copy of the previous file; `null` for a create */
+  archived: string | null;
+  /** the digest of what is now on disk — the editor's next save token */
+  digest: string;
+  /** set when the saved text changed the experiment's `name:` */
+  renamed_from: string | null;
+  /** false when the written experiment is outside this cockpit's `--select` */
+  in_selection: boolean;
+  warnings: string[];
+  experiments: BootEntry[];
+}
+
+/** `POST /api/experiment/delete` — the YAML only; the persisted rows stay. */
+export interface DeleteReply {
+  name: string;
+  path: string;
+  archived: string;
+  warnings: string[];
+  experiments: BootEntry[];
+}
+
+/** `GET /api/experiments` and `POST /api/reload` — the refreshable half of the
+ * boot payload. */
+export interface SelectionReply {
+  experiments: BootEntry[];
+  generated_at: number;
+  warnings: string[];
 }
 
 /** The dashboard renderer's global entry, exposed by the bundled IIFE. */

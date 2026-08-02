@@ -428,7 +428,9 @@ class TestAtomicFinalWrite:
         """(milestone-review) 'a broken config never lands' applies to the
         filesystem too: the final overwrite goes through temp + os.replace,
         so an ENOSPC/kill mid-write leaves the live YAML byte-identical."""
-        import abkit.tuning.config_writer as config_writer_mod
+        # The primitive lives in `tuning/config_files.py` since UI-1 — one
+        # atomic write shared by Apply and the dashboard's editor.
+        import abkit.tuning.config_files as config_files_mod
 
         root, path = project
         original = path.read_text(encoding="utf-8")
@@ -436,7 +438,7 @@ class TestAtomicFinalWrite:
         def boom(_src, _dst):
             raise OSError("No space left on device")
 
-        monkeypatch.setattr(config_writer_mod.os, "replace", boom)
+        monkeypatch.setattr(config_files_mod.os, "replace", boom)
         with pytest.raises(OSError):
             apply(
                 root=root,

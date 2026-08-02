@@ -19,7 +19,8 @@ Ported from detectkit's lazy-import Click group (shared flag vocabulary:
 | `abk init-claude [--target-dir DIR]` | Install AI-assistant context: managed `CLAUDE.md` block + `.claude/rules/ab-analysis-kit/` + `.claude/skills/`; idempotent, version-stamped, re-runnable after upgrade |
 | `abk run --select <exp> [--metric <m>] [--steps validate,plan,load,state,compute] [--from/--to] [--full-refresh] [--resync-cohort] [--profile] [--report]` | The pipeline: validate → plan → load → SRM → maintain unit-state → compute → persist → optional HTML readout. *(`--metric`, M11 DASH-4a: recompute only that metric's comparison(s) — the metric axis `explore`/`validate`/`plan`/`verify-incremental` already have. The alphas are unaffected (`effective_alphas` reads the config, not the run); the cohort load, the SRM gate and copy-mode `--resync-cohort`'s day-state rebuild stay experiment-level; a scoped `--full-refresh` TRUNCATES the withheld metrics' day state from the first touched day through the end of the series (a stale-but-contiguous day is invisible to the M9 gap check); both day-state effects follow the `state` step and are decided per experiment; `--steps validate` + `--metric` is rejected.)* *(`--resync-cohort`, M8: copy mode only — delete + rebuild the persisted `_ab_exposures` copy through the incremental engine, recovering rows the watermark cannot heal; a documented no-op in the direct/no-copy default. Distinct from `--full-refresh`, which keeps its results-window semantics.)* Streams `VALIDATE → PLAN → LOAD → SRM → STATE → COMPUTE → RESULT` (`STATE` wired write-only in M9 WP3; `--steps state` is a supported standalone token per m9-implementation-plan.md §8 Q4). *(The readout surface is `--report` — tri-state: bare → `reports/<exp>.html`, a directory → `<dir>/<exp>.html`, a `.html` path → that file; emitted best-effort per experiment after its pipeline, even with zero pending cutoffs. A former `readout` `--steps` token was never wired and is superseded by `--report` — m3-implementation-plan.md D8.)* |
 | `abk explore --select <exp> [--metric <m>] [--no-serve] [--no-open]` | **PRIORITY:** the localhost cockpit — live `method_params` tuning + the stabilization chart + always-visible A/A calibration + write-back |
-| `abk dashboard [--select <sel>]... [--exclude <sel>]... [--window 24h\|7d\|30d\|90d\|all] [--no-open] [--profile NAME]` | (M11) The **project-level** cockpit: one row per selected experiment (verdict, effect + CI, p/α, elapsed, sparkline), lazily filled per row, with Run (whole experiment or one metric) / Unlock / Clean / Explore / Open-report buttons that spawn real `abk` subprocesses and stream their logs. **A launcher, never a worker** — no route computes a statistic, turns a knob, writes a config or takes the pipeline lock, so every verdict is `readout.evaluate()`'s over the FULL cumulative series (`--window`/the page's selector bound only the sparkline's x-range). Unlike `abk explore` it serves the WHOLE selection, serves a never-run project (its rows are the "press Run" state) and runs no startup orphan scan. Design contract + as-built: [m11-implementation-plan.md](m11-implementation-plan.md); user docs: `docs/guides/dashboard.md`. CRUD config editing is phase 2. |
+| `abk dashboard [--select <sel>]... [--exclude <sel>]... [--window 24h\|7d\|30d\|90d\|all] [--no-open] [--profile NAME]` | (M11) The **project-level** cockpit: one row per selected experiment (verdict, effect + CI, p/α, elapsed, sparkline), lazily filled per row, with Run (whole experiment or one metric) / Unlock / Clean / Explore / Open-report buttons that spawn real `abk` subprocesses and stream their logs, **plus (UI-1) CRUD editing of the experiment YAML** — Edit / Save / Delete per row, New experiment + Reload configs in the header. **A launcher, never a worker** — no route computes a statistic or takes the pipeline lock, so every verdict is `readout.evaluate()`'s over the FULL cumulative series (`--window`/the page's selector bound only the sparkline's x-range); a config write is the operator's own declaration, not a result (§below). Unlike `abk explore` it serves the WHOLE selection, serves a never-run project (its rows are the "press Run" state) and runs no startup orphan scan. Design contract + as-built: [m11-implementation-plan.md](m11-implementation-plan.md) and the editor sub-section below; user docs: `docs/guides/dashboard.md`. |
+| `abk ui …` | (UI-2) An **alias** for `abk dashboard`, registered as `cli.add_command(dashboard, name="ui")` — the same callback object, so options and help can never drift. `dashboard` stays the canonical name (`dashboard`/`explore` say WHICH surface you want where `ui` does not); the alias exists because the donor tool calls its project-level cockpit `dtk ui` (and its per-metric sibling `dtk tune`, which abkit ships as `abk explore`). |
 | `abk validate --select <exp> [--method <m>] [--metric <m>] [--iterations N] [--family-sweep] [--inject-effect <pct>] [--scoring fpr\|power\|mde] [--report] [--force]` | The A/A false-positive + power matrix (incl. honest peeking FPR) → `_ab_aa_runs` + recommendation. Streams `LOAD → RESAMPLE → SCORE → PERSIST` — a **distinct** stage vocabulary from `abk run`'s config-lint `VALIDATE` step (`--steps validate`): the two never share copy (the word "validate" is deliberately not reused between the config gate and the A/A matrix). Its own out-of-band lock (`process_type='validate'`, D5), cleared by `abk unlock`; exits non-zero on any cell/harness failure; `--report` is best-effort. `--method` (not `--select`) is the method-grid axis (§below). |
 | `abk plan --select <exp> [--metric <m>] [--mde <pct>] [--power 0.8] [--alpha 0.05] [--baseline <metric>:mean=..,std=..,n=..]` | Pre-launch power / sample-size planner (no detectkit analog). **Read-only** (no lock, no `_ab_*` writes). Reports required-N / achievable-MDE / achieved-power at the effective two-tier alpha + the projected look count & cost shape + **runtime** (days-to-N from an arrival rate) and **ASN** (average sample number for a sequential design); refuses ratio/bootstrap methods it cannot size honestly. (Runtime/ASN shipped in M6 WP-A — see amendment below.) |
 | `abk clean --select <exp> \| --orphaned-experiments [--execute] [--yes]` | Config-hash drift GC (prune `_ab_results` rows whose `method_config_id` the YAML no longer produces; purge removed experiments). Dry-run by default |
@@ -269,6 +270,109 @@ the cohort, and its direct-mode branch validates an assignment source that, befo
 launch, is empty — it would raise `EmptyCohortError` on the very experiment being
 planned. Backend construction still lives in that one module, so the exception is
 visible beside the rule it excepts.
+
+### The `abk dashboard` config editor — UI-1 (✅ built) / `abk ui` — UI-2 (✅ built)
+
+M11 shipped the dashboard as a read-and-launch surface and deferred CRUD config editing
+to "phase 2"; UI-1 is that phase, scheduled with UI-2 and PERF-1 as the second `0.6.x`
+interstitial in [ROADMAP.md](../../ROADMAP.md) (added 2026-08-02). The editor writes YAML
+and nothing else — it computes no statistic, takes no lock, and moves no `_ab_results`
+number, so it is not an `ALGORITHM_VERSION` event.
+
+**UI-1 — CRUD YAML editing in the cockpit.**
+
+*Why it is a gap, not a design choice.* The cockpit already enumerates the project, shows
+each experiment's YAML and spawns every command that consumes it — so the one thing an
+operator has to leave it for is the edit that any of those commands is about to read. M11
+also read the configs **once at boot**: an edit made in an editor (or by `abk explore`'s
+Apply, which the dashboard itself can spawn) required a restart to appear.
+
+*The routes.* Every request carries `?token=` (the dashboard gates GET as well as POST);
+every POST body is JSON.
+
+| Route | Body | Purpose |
+|---|---|---|
+| `POST /api/experiment/save` | `{select, text, digest?, force?}` | Overwrite one experiment's YAML |
+| `POST /api/experiment/create` | `{text, folder?, force?}` | New file — **no `select`**: the name comes from the config's own `name:`, `folder` is an optional subdirectory of `paths.experiments` (charset-checked; absolute, `..` and hidden components refused) |
+| `POST /api/experiment/delete` | `{select, digest?}` | Remove the YAML |
+| `POST /api/reload` | `{}` | Re-read the project's configs from disk (the "Reload configs" button) |
+| `GET /api/experiments` | — | The served selection in the boot payload's shape |
+| `GET /api/experiment-source/<name>` | — | The existing source view, now also returning `digest` and `editable` |
+
+*The write order is validate → archive → write*, in `abkit/tuning/config_files.py`:
+
+1. **Validation is BOTH levels** — `ExperimentConfig` (pydantic) **and**
+   `validate_experiment_level2`, the §8 matrix that `abk run --steps validate` runs:
+   reference integrity, the CUPED rules, the cadence/looks gates over the real grid, and
+   the no-DB SQL render smoke. Errors refuse the write; warnings ride back in the reply.
+2. The previous file is archived **byte-verbatim** under
+   `.history/<name>/` beside the file — the SAME archive tree `abk explore`'s Apply
+   writes (the primitives are shared, not duplicated).
+3. The write is atomic (temp + `os.replace`), and **the text round-trips verbatim**:
+   comments and layout survive, normalized only to end with a newline. This is the
+   opposite of Apply, which re-emits a parsed document and loses comments — which is
+   precisely why the editor is not built on Apply.
+
+*Refusals* — all 400 with the detail in the body:
+
+- **A stale digest.** The read hands out a sha256 of the file; a save or delete echoes it
+  and is refused when the on-disk text no longer matches. This covers a second browser tab
+  **and** an `abk explore` Apply on the experiment being edited. It is checked BEFORE the
+  text is parsed: a stale buffer has to be reopened either way.
+- **A running job.** A save or delete is refused while the dashboard has a running
+  run/unlock/clean/explore job on that experiment. A job started from a terminal is
+  invisible to this check — the digest catches the explore half of it after the fact.
+- **Level-2 findings**, unless `force: true`. `force` downgrades §8 errors to loud
+  warnings ("SAVED WITH AN ERROR — `abk run` will refuse this: …"), so the editor is
+  usable ON a project that does not lint yet. **Level 1 is never forceable.**
+- **A file too large to show** (>512 kB, `_MAX_SOURCE_BYTES`) comes back
+  `truncated: true, digest: null, editable: false`, and a save over it is refused
+  SERVER-side as well as hidden client-side — `digest` is optional, so the client's
+  hidden button is not a gate, and writing the shown prefix back would drop the tail.
+- **A duplicate name**, checked over the WHOLE project and across the ONE
+  experiment+metric namespace; and **an existing file** for a create.
+
+*The reload seam.* After every successful mutation the server **re-resolves the
+selection** (the `--select`/`--exclude` it was started with), re-bakes the boot page, and
+returns the refreshed experiment list in the reply — closing M11's read-once-at-boot
+limitation; `POST /api/reload` is the manual form. A reload that FAILS (a broken sibling
+YAML, a name collision) keeps the previous selection and rides back as a **warning**: the
+write has already landed, so it must never become a 500. A create that lands OUTSIDE this
+cockpit's `--select` is reported `in_selection: false` with a warning, never silently
+missing.
+
+*Delete removes the YAML only.* The experiment's rows in `_ab_results` /
+`_ab_unit_state` stay until `abk clean --orphaned-experiments` prunes them, and the reply
+says so. The archive is `<name>-<stamp>-deleted.yml`, so the delete is reversible by hand.
+
+*A rename is allowed* (the YAML's `name:` changed). The file keeps its path; the reply
+carries `renamed_from`; the archive is keyed by the OLD name; and the operator is warned
+that persisted rows keep the old name (`abk clean --orphaned-experiments`).
+
+**The launcher invariant is RESTATED, not weakened.** M11 wrote it as "computes a
+statistic, turns a knob, writes a config or takes the pipeline lock", but the two gates in
+`tests/tuning/test_dashboard_server.py` only ever enforced the **lock** clause (an AST scan
+proving `dashboard_server.py` never names `acquire_lock`/`release_lock`, plus a spy over
+the routes). UI-1 restates it as **"the dashboard computes no statistic and takes no
+pipeline lock"**, drops the never-gated "writes no config" clause, and extends the spy to
+the editor routes (a new test proves they take no lock AND never call `readout.evaluate`).
+The reason this is not a softening: a config write is the operator's own **declaration**,
+not a result — no number on the page comes from it, and it cannot block a pipeline. The
+part of the invariant that protects the numbers is unchanged and is now gated on more
+routes than before. The token gate's hand-maintained POST-route list is AST-checked too
+(it had been GET-only).
+
+*The client* (`web/src/dashboard/` → the committed `abkit/tuning/assets/dashboard.js`
+bundle, M3 build discipline): the row's `Show YAML` button becomes **`Edit YAML`** and
+opens a textarea with **Save**, **Revert** and **Delete…** (whose confirm box names what
+is NOT deleted); a level-2 refusal grows a **Save anyway** button, a level-1 one does not;
+the header controls gain **New experiment** (a seeded template plus an optional subfolder
+field) and **Reload configs**. `Refresh` re-reads the WAREHOUSE for rows, `Reload configs`
+re-reads the YAML on DISK — different buttons on purpose.
+
+**UI-2 — `abk ui`.** An alias for `abk dashboard` (table row above): the same Click
+callback registered under a second name, so options and help cannot drift. The canonical
+name stays `dashboard`.
 
 ## 2. The explore cockpit (priority interface)
 

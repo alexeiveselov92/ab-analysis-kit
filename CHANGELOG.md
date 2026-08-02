@@ -11,6 +11,82 @@ recorded here alongside an `ALGORITHM_VERSION` bump and a
 [`statistics-changes.md`](docs/specs/statistics-changes.md) entry (never a silent
 number change).
 
+## [Unreleased]
+
+### Added
+- **UI-1 — the `abk dashboard` cockpit edits experiment YAML.** M11 shipped
+  `Show YAML` as a read of the file on disk and recorded CRUD as "phase 2"; this
+  is that phase. The row's button is now **`Edit YAML`**, opening the raw text in
+  a textarea with **Save**, **Revert** and **Delete…**, and the header gains
+  **New experiment** and **Reload configs**. The write goes through the new
+  `abkit/tuning/config_files.py` in the house order — **validate → archive →
+  write**: both validation levels run (`ExperimentConfig`, then
+  `validate_experiment_level2` — the §8 matrix `abk run --steps validate` runs,
+  reference integrity and the SQL render smoke included), the previous file is
+  archived **byte-verbatim** under `<experiments>/.history/<name>/`, and the
+  overwrite is atomic. Routes: `POST /api/experiment/{save,create,delete}`,
+  `POST /api/reload`, `GET /api/experiments`.
+  - **The text round-trips verbatim — comments and layout survive.** That is the
+    one thing `abk explore`'s Apply cannot promise: Apply merges a *structured*
+    edit and RE-EMITS the parsed document, so comments die and the archive is the
+    recovery. An editor that silently reformatted the file it had just shown you
+    would be worse than none, so the two seams stay different shapes and share
+    only their archive/atomic-write primitives (both land in the same `.history`
+    tree).
+  - **A save is refused, not merged, when something else wrote first.** The read
+    route hands out a digest of the file; the editor echoes it back and a
+    mismatch refuses the write. Two writers make that ordinary rather than
+    exotic: a second browser tab, and an `abk explore` Apply — which this
+    dashboard can itself spawn, on the very experiment being edited. A save or
+    delete is also refused while the cockpit has a running job on that
+    experiment: a live `abk run` has already read the config it is executing, and
+    a live cockpit will overwrite whatever is saved here on Apply.
+  - **Level 2 is overridable; level 1 never is.** A config that pydantic rejects
+    cannot be served as a row, so it is refused outright. A config that fails the
+    §8 matrix is a statement about the whole *project* — a metric that does not
+    exist yet, an SQL file still being written — and an editor that refuses until
+    the project is coherent is unusable in exactly the situation it is opened
+    for. So the refusal names the findings, offers **Save anyway** (`force:
+    true`), and the saved file carries them back as
+    `SAVED WITH AN ERROR — abk run will refuse this: …`.
+  - **A file too large to display cannot be saved.** The read truncates at 512 kB
+    and now says so with `digest: null, editable: false` — a digest over a prefix
+    would let a save write that prefix back and silently drop the tail.
+  - **Deleting removes the YAML only.** The experiment's rows in `_ab_results` /
+    `_ab_unit_state` stay until `abk clean --orphaned-experiments` prunes them,
+    and the reply says so rather than stranding a series quietly; the archive is
+    a `-deleted.yml` tombstone, so the delete is reversible by hand. A **rename**
+    (the YAML's `name:` changed) is allowed, keeps the file's path, and warns
+    that the persisted history does not follow.
+  - **Configs are no longer read once at boot.** Every mutation re-resolves the
+    cockpit's own `--select`/`--exclude` from disk, re-bakes the page and returns
+    the refreshed list, so a created row appears and a deleted one leaves without
+    a restart; `POST /api/reload` (the **Reload configs** button) is the manual
+    form, which also picks up an edit made by an editor, a `git pull` or an
+    explore Apply. A reload that *fails* — a broken sibling YAML, a name
+    collision — keeps the previous selection and rides back as a warning: the
+    write has already landed, and turning it into a 500 would report a successful
+    save as a failure.
+- **UI-2 — `abk ui` is an alias for `abk dashboard`.** The donor's project-level
+  cockpit is `dtk ui` (its per-metric sibling `dtk tune` is our `abk explore`);
+  abkit renamed both and the rename was never arbitrated. `dashboard`/`explore`
+  say *which* surface you want where `ui` does not, so the canonical name stays
+  and the alias is registered as the same callback object — the two names cannot
+  drift in options or help.
+
+### Changed
+- **The dashboard's launcher invariant is restated: "computes no statistic and
+  takes no pipeline lock".** M11 wrote it as "computes a statistic, turns a knob,
+  writes a config or takes the pipeline lock", which folded in a clause no gate
+  ever checked — the AST scan and the route spy have always been about
+  `acquire_lock`/`release_lock`. A config write is the operator's own
+  declaration, not a result: no number on the page comes from it, and it cannot
+  block a pipeline. The gates now also run over the editor routes (no lock, and
+  `readout.evaluate` is never called), and the token gate's hand-maintained POST
+  route list is AST-checked against what `_route_post` dispatches on — it was
+  GET-only, which left the routes that *mutate* covered by a list nothing
+  verified.
+
 ## [0.6.3] - 2026-08-02
 
 ### Fixed

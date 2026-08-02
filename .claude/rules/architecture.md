@@ -1,11 +1,12 @@
 # abkit architecture — as built
 
 > The contributor/assistant condensation of the system **as it exists in code**.
-> Reflects: **M1–M11 shipped** + the WHOLE `0.6.x` `abk plan` interstitial
-> **released** (PLAN-1 as `0.6.1`, PLAN-2 as `0.6.2`, both tagged and on PyPI);
-> `__version__ = 0.6.3`, release-ready — the `v0.6.3` tag/publish is the
-> maintainer's step; latest on PyPI is `0.6.2`;
-> M3's WP9 testcontainers hardening deferred to a Docker-equipped
+> Reflects: **M1–M11 shipped**, the WHOLE `0.6.x` `abk plan` interstitial
+> **released** (PLAN-1 as `0.6.1`, PLAN-2 as `0.6.2`) and `0.6.3` released
+> (the `paths.experiments` selection fix) — all three tagged and on PyPI;
+> plus the second `0.6.x` interstitial's **UI-1** (the dashboard's YAML editor)
+> and **UI-2** (`abk ui`), built and sitting in `[Unreleased]` — PERF-1 is the
+> open one. M3's WP9 testcontainers hardening deferred to a Docker-equipped
 > environment.
 > Design contracts for what is being *built next* (the M12–M17 polish track +
 > the `0.6.x` UI-1/UI-2/PERF-1 interstitial)
@@ -80,7 +81,12 @@ abkit/
                          #   DASH-2), dashboard_server (the launcher server —
                          #   DASH-3 page/stats routes + DASH-4 job routes),
                          #   html.render_dashboard_html, the committed
-                         #   dashboard.js bundle (DASH-5)
+                         #   dashboard.js bundle (DASH-5);
+                         #   ✅ UI-1: config_files (the editor's CRUD seam —
+                         #   validate both levels → archive verbatim → atomic
+                         #   write; owns the archive/atomic primitives
+                         #   config_writer now imports) + the editor routes
+                         #   and reload_selection in dashboard_server
   validate/              # ✅ M4: the pure A/A engine (panel/resample/inject/
                          #   scoring), load (placebo panel + denser-early grid
                          #   subsample), runner (cell enum + effective alpha +
@@ -137,6 +143,9 @@ tests/
                          #   e2e/test_dashboard_session.py (a real server over
                          #   live HTTP + a real `abk` child), and web/test/
                          #   smoke-dashboard.mjs
+                         # ✅ UI-1: tuning/test_config_files.py + the editor
+                         #   route class in test_dashboard_server.py + the
+                         #   editor legs of the dashboard-session exit gate
   _helpers/fake_db.py    # in-memory manager with SQL-backend semantics
   _helpers/synthetic_ab.py  # SyntheticWarehouse (3 metric kinds, shuffle mode,
                          #   seed_null_events — the exact-null A/A fixture)
@@ -563,15 +572,23 @@ two-process lock race) is deferred to a Docker-equipped environment.
 
 ### M11 dashboard facts an assistant must know (shipped: DASH-1…DASH-7)
 
-- **The dashboard is a LAUNCHER, never a worker — this is the milestone's
-  binding invariant.** No route in `tuning/dashboard_server.py` computes a
-  statistic, turns a knob, writes a config or takes the pipeline lock; the only
-  mutation a button can cause is a real `abk` subprocess doing it in its own
-  process. Gated twice, because one gate cannot see the other's hole: an AST
-  scan proves the module never names the lock API (and the gate is proven to
-  BITE on a hostile source), and a spy over **every job route** proves no
-  helper takes it either (`TestLauncherOnly`). The read-only `check_lock`
-  probe behind a row's `locked` chip does run — that is the distinction.
+- **The dashboard COMPUTES NO STATISTIC and TAKES NO PIPELINE LOCK — this is
+  the milestone's binding invariant, as restated by UI-1.** M11 wrote it as
+  "computes a statistic, turns a knob, writes a config or takes the pipeline
+  lock"; the fourth clause was never gated, and UI-1 (the YAML editor) drops
+  it — a config write is the operator's own declaration, not a result, so no
+  number on the page derives from it and it cannot block a pipeline. What the
+  gates enforce is unchanged and is the real invariant. Gated twice, because
+  one gate cannot see the other's hole: an AST scan proves
+  `tuning/dashboard_server.py` never names the lock API (and the gate is proven
+  to BITE on a hostile source), and a spy proves no helper takes it either —
+  over **every job route** (`TestLauncherOnly`) and, since UI-1, over **every
+  editor route**, which additionally proves `readout.evaluate` is never called
+  there. The read-only `check_lock` probe behind a row's `locked` chip does
+  run — that is the distinction. The token gate's POST route list is now
+  AST-checked against `_route_post` too; M11 checked only the GET list, which
+  left the routes that MUTATE covered by a hand-maintained list nothing
+  verified.
 - **A verdict on the page is `readout.evaluate()`'s over the FULL cumulative
   series.** `_ab_results` rows are cumulative looks from a fixed start, not a
   plain time series, so windowing them is not "a shorter series" — it is a
@@ -653,6 +670,66 @@ two-process lock race) is deferred to a Docker-equipped environment.
   `--full-refresh` **truncates** the withheld metrics' series from the first
   touched day onward instead of leaving it; the cohort load, the SRM gate and
   copy-mode `--resync-cohort`'s rebuild stay experiment-level.
+
+### UI-1 / UI-2 facts an assistant must know (the dashboard's editor)
+
+- **`tuning/config_files.py` is the editor's seam, and it is NOT
+  `config_writer.py`.** Apply (explore) merges a *structured* edit and RE-EMITS
+  the parsed document, so comments die and the archive is the recovery (D4);
+  the editor round-trips the operator's raw TEXT, so comments and layout
+  survive (normalized only to end with a newline). The two share only the
+  filesystem primitives — `archive_config_text` / `atomic_write_bytes` /
+  `stamp` now live in `config_files` and `config_writer` imports them, so both
+  surfaces land in the SAME `<dir>/.history/<name>/` tree.
+- **Order is validate → archive → write, and validation is BOTH levels.**
+  Level 1 is `ExperimentConfig`; level 2 is `validate_experiment_level2`, the
+  §8 matrix `abk run --steps validate` runs (reference integrity, CUPED rules,
+  the cadence/looks gates over the real grid, the no-DB SQL render smoke). The
+  metric library is re-read from disk **per save** rather than taken from the
+  boot snapshot, and leniently — a metric that fails to parse is simply absent,
+  so a broken metric cannot block an unrelated experiment's save.
+- **`force` overrides level 2 and NOTHING else.** A file pydantic rejects
+  cannot be served as a row, so level 1 is never forceable; level 2 is a
+  statement about the whole PROJECT, and an editor that refuses until the
+  project is coherent is unusable in the situation it is opened for. A forced
+  save returns its findings as `SAVED WITH AN ERROR — abk run will refuse
+  this: …`.
+- **The digest is the concurrency token, and it is checked BEFORE the text is
+  parsed.** `GET /api/experiment-source` hands out a sha256 of the file;
+  `save`/`delete` echo it and are refused on a mismatch. Two writers make that
+  ordinary: a second tab, and an `abk explore` Apply — which the dashboard can
+  itself spawn on the experiment being edited. A **truncated** read (>512 kB,
+  `_MAX_SOURCE_BYTES` — the same constant on both sides) returns
+  `digest: null, editable: false`: a digest over a prefix would let a save
+  write the prefix back and drop the tail. A stale buffer has to be reopened
+  either way, which is why the digest is reported before a parse error.
+- **A save/delete is refused while the cockpit has a running job on that
+  experiment** (`_refuse_if_busy`, over the `JOB_KINDS` whitelist). Not a lock —
+  a lock is exactly what this server may not take; it is the narrow check a
+  launcher CAN make, over the jobs it started itself. A job started from a
+  terminal is invisible to it, and the digest catches the explore half of that
+  after the fact.
+- **The boot snapshot is gone: `reload_selection()` is the re-derivation
+  seam.** Every mutation route calls it, `POST /api/reload` is the manual form
+  (M11's named follow-up), and it re-resolves the cockpit's OWN
+  `--select`/`--exclude` — which is why `build_dashboard_server` takes
+  `selectors`/`excludes` and `abk dashboard` passes them: re-deriving them
+  server-side would silently widen an edited page to the whole project. It
+  **never raises**: the write has already landed, so a broken sibling YAML or a
+  name collision keeps the previous selection and rides back in `warnings`
+  ("restart the dashboard"), rather than reporting a successful save as a 500.
+  `experiments` / `_by_name` / `metrics` / `html` are written and read under
+  `selection_lock` and re-baked together.
+- **Delete removes the YAML only** (`-deleted.yml` tombstone in the archive);
+  `_ab_results` / `_ab_unit_state` rows stay until `abk clean
+  --orphaned-experiments`, and the reply says so. A **rename** keeps the file's
+  path, archives under the OLD name, and warns that the persisted history does
+  not follow. Name uniqueness is checked over the WHOLE project and across the
+  ONE experiment+metric namespace (cli-and-dx §1), never against the served
+  selection.
+- **UI-2: `abk ui` is `cli.add_command(dashboard, name="ui")`** — the same
+  callback object, so options and help cannot drift. `dashboard`/`explore` name
+  the surface where `ui` does not, so the canonical name stays.
 
 ## The stats core (`abkit.stats`) — the implemented system
 
@@ -812,8 +889,8 @@ the `abk dashboard` command + docs + both wheel-namelist gates (DASH-6), and
 the live-HTTP exit gate `tests/e2e/test_dashboard_session.py` (DASH-7). See
 "M11 dashboard facts an assistant must know" above for the working contracts.
 **Zero statistical numbers moved** (no `ALGORITHM_VERSION` bump; every verdict
-the page shows is `readout.evaluate()`'s). CRUD config editing is explicitly
-phase 2.
+the page shows is `readout.evaluate()`'s). CRUD config editing was explicitly
+phase 2 — it shipped as the `0.6.x` UI-1 interstitial (facts below).
 
 **Next — the polish track continues: M12–M17 → `0.7.0`…`0.12.0`** (track
 approved 2026-07-18; it absorbs the whole "Post-baseline hardening" backlog —
@@ -828,11 +905,12 @@ contract
 records); M13–M17 are contours, each opens with a design session). The `0.6.x`
 **PLAN-1/PLAN-2** interstitial is closed (released as `0.6.1`/`0.6.2`; design
 contract: [cli-and-dx.md](../../docs/specs/cli-and-dx.md) "`abk plan` sizing
-gaps"); a second `0.6.x` interstitial — **UI-1** (CRUD YAML editing in `abk
-dashboard`, which must restate the launcher invariant it does not actually
-violate), **UI-2** (`abk ui` alias) and **PERF-1** (make the incremental read
-path discoverable, then re-decide its default) — sits ahead of M12 and is
-mapped in [ROADMAP.md](../../ROADMAP.md). One WP = one session =
+gaps"); the second `0.6.x` interstitial is two thirds done — **UI-1** (CRUD
+YAML editing in `abk dashboard`; it restated the launcher invariant it does not
+actually violate — facts above) and **UI-2** (`abk ui` alias) are built and sit
+in `[Unreleased]`, while **PERF-1** (make the incremental read path
+discoverable, then re-decide its default) is open and mapped in
+[ROADMAP.md](../../ROADMAP.md). One WP = one session =
 one PR; **M7–M12 move no statistical number** (parity gates + empty
 `ALGORITHM_VERSION` grep); M13/M15 use full change control. Two binding
 inter-milestone contracts: the M8→M9 one (honored — STATE/tail-scan SQL builds

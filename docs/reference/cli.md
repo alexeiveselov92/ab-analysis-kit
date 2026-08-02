@@ -11,6 +11,10 @@ abk --help             # list commands
 abk <command> --help   # options for one command
 ```
 
+One command carries a second name: **`abk ui` is an alias for `abk dashboard`** — the
+same Click callback registered twice, so the two can never drift. It gets its own entry
+below, pointing at the canonical one.
+
 **`abk` exits non-zero on failure.** This is deliberate (and a recorded deviation
 from the detectkit donor's swallow-and-return-0 behavior, cli-and-dx §1): the CLI is
 the unit of automation — a Prefect task or cron job is one `abk` invocation, so a
@@ -32,7 +36,7 @@ validate-only method axis:
   forms: a bare **name** (`example_signup_test` — do not add `.yml`), a **path or
   glob** (`"experiments/checkout/*.yml"`, `"signup_*"`), a **tag** (`tag:actual`), and
   `"*"` for all. Repeatable. `run`, `validate`, `plan`, `unlock`, `clean`, and
-  `dashboard` default to **all experiments** when `--select` is omitted; `explore`
+  `dashboard` / `ui` default to **all experiments** when `--select` is omitted; `explore`
   requires the selection to resolve to **exactly one**.
 - **`--metric <name>` selects a LIBRARY metric** within the chosen experiment(s) — a
   single metric name, never a glob. It narrows a command to that metric's comparison(s)
@@ -43,7 +47,7 @@ validate-only method axis:
 
 Experiment and metric names share one global namespace and are the database key, so
 selection and uniqueness errors name the namespace and the colliding file. `--exclude`
-(on `run` and `dashboard`) removes matches from a broad selection
+(on `run` and `dashboard` / `ui`) removes matches from a broad selection
 (`--select "*" --exclude "experiments/staging/*"`).
 
 See [experiments](../guides/experiments.md) and
@@ -247,7 +251,8 @@ telling you to `abk run` first. Other failures exit non-zero. Full guide:
 ## `abk dashboard`
 
 Serve the project-level cockpit — one row per experiment, buttons that spawn `abk`
-commands (m11 plan DASH-6).
+commands, and CRUD editing of the experiment YAML (m11 plan DASH-6; the editor is UI-1).
+Also available as **`abk ui`**.
 
 ```bash
 abk dashboard [--select <sel>]... [--exclude <sel>]... [--window 24h|7d|30d|90d|all] \
@@ -268,28 +273,92 @@ flight at a time) from the persisted `_ab_results`, so the verdicts are the same
 **sparkline only** — every verdict, effect and p-value is always the full cumulative
 series', and can be switched on the page without a restart.
 
-**The dashboard is a launcher, not a worker.** It runs no pipeline step, computes no
-statistic, takes **no pipeline lock**, and writes no config: the Run / Explore /
-Unlock / Clean buttons each spawn a real `abk` subprocess (inheriting `--profile`) and
-stream its log into a job drawer. `run`/`unlock`/`clean` are one-at-a-time across the
-project (a second request is refused); `explore` is exempt and deduped per experiment.
-Ctrl-C terminates every job the dashboard spawned. Editing YAML is read-only in this
-version (`Show YAML` + the file path) — the config-writing surface is `abk explore`'s
-Apply.
+**The dashboard is a launcher, not a worker.** It computes no statistic and takes **no
+pipeline lock**: the Run / Explore / Unlock / Clean buttons each spawn a real `abk`
+subprocess (inheriting `--profile`) and stream its log into a job drawer.
+`run`/`unlock`/`clean` are one-at-a-time across the project (a second request is
+refused); `explore` is exempt and deduped per experiment. Ctrl-C terminates every job
+the dashboard spawned. The YAML editor below is the one thing the server writes itself,
+and it does not weaken that invariant: a config is the operator's own declaration, not a
+result — no number on the page comes from it, and it cannot block a pipeline.
 
-Configs are read once at boot (restart to pick up an edited YAML). Nothing here creates
-internal schema: a project that has never run serves fine, with every row reading
-`no data — press Run`.
+**Editing configs.** A row's **Edit YAML** button opens the experiment file in a
+textarea with **Save**, **Revert** and **Delete…**; the header adds **New experiment**
+(a seeded template, plus an optional subfolder of `paths.experiments`) and **Reload
+configs**. A save is **validate → archive → write**: both validation levels run first —
+the pydantic `ExperimentConfig` parse *and* `validate_experiment_level2`, the same §8
+matrix `abk run --steps validate` applies (reference integrity, the CUPED rules, the
+cadence/looks gates over the real grid, the no-DB SQL render smoke) — then the previous
+file is archived byte-verbatim under `.history/<name>/` beside it (the same archive tree
+`abk explore`'s Apply writes), and only then is the new text written
+atomically. **The text round-trips verbatim**: comments and layout survive, normalized
+only to end with a newline. That is the difference from `abk explore`'s Apply, which
+re-emits a parsed document and loses comments — and the reason the editor is not built
+on it.
+
+A save or a delete is refused, with the reason in the panel, when:
+
+- **the file changed under you** — a read hands out a sha256 digest that the write echoes
+  back, so a second browser tab, or an `abk explore` Apply *this dashboard spawned* on
+  the experiment you are editing, is caught instead of clobbered (the digest is checked
+  before the text is parsed: a stale buffer has to be reopened either way);
+- **a job is running** on that experiment — a run / unlock / clean / explore this
+  dashboard started. One started from a terminal is invisible to the check; the digest is
+  what catches its explore half, after the fact;
+- **level-2 findings** — unless you press **Save anyway**, which downgrades the §8 errors
+  to loud warnings (`SAVED WITH AN ERROR — abk run will refuse this: …`) so the editor is
+  usable on a project that does not lint yet. **Level 1 is never forceable**, and no
+  button offers it.
+
+Two more refusals have no override: a file too large to display (>512 kB) is served
+read-only and cannot be saved at all (writing the shown prefix back would drop the tail),
+and a **duplicate name** — checked across the whole project, over the one
+experiment + metric namespace — is rejected, as is a create whose file already exists.
+
+**A rename is allowed** (edit the YAML's `name:`): the file keeps its path, the archive
+is keyed by the *old* name, and the reply warns that persisted rows still carry it
+(`abk clean --orphaned-experiments`). **Delete removes the YAML only** — the rows in
+`_ab_results` / `_ab_unit_state` survive until that same `abk clean` prunes them, and the
+archived copy (`<name>-<stamp>-deleted.yml`) makes the delete reversible by hand. A new
+experiment that lands outside this cockpit's `--select` is reported as such, never
+silently missing.
+
+**Every successful edit re-reads the project.** The server re-resolves the selection it
+was started with, re-bakes the boot page and hands back the refreshed list, so an edit
+takes effect without a restart. **Reload configs** is the manual form of the same thing,
+for a YAML changed outside the page. A reload that *fails* (a broken sibling YAML, a name
+collision) keeps the previous selection and rides back as a warning — the write has
+already landed, so it never turns into a 500. Note that **`Refresh` re-reads the
+warehouse** for row data while **`Reload configs` re-reads the YAML on disk**; they are
+different buttons on purpose. Nothing here creates internal schema: a project that has
+never run serves fine, with every row reading `no data — press Run`.
 
 **Security:** binds `127.0.0.1` only, with a fresh token per start that authorizes
 **every** request, `GET` included (the row reads hit your warehouse; the boot page
 enumerates your experiments). The token rides in the URL, not in the page. Treat that
-URL as a credential — whoever holds it can spawn `abk run` / `abk clean`.
+URL as a credential — whoever holds it can spawn `abk run` / `abk clean` and edit or
+delete your experiment YAML.
 
 **Exit behavior:** an empty selection prints the unmatched-selector warning and exits 0
 without serving; an unknown `--window` is a non-zero error raised at startup, before the
 port is bound. Ctrl-C is the normal exit (0). Full guide:
 [dashboard](../guides/dashboard.md).
+
+## `abk ui`
+
+An alias for [`abk dashboard`](#abk-dashboard) — the *same* Click callback registered
+under a second name, so the two take exactly the same options, defaults, help text and
+exit behavior, and cannot drift apart.
+
+```bash
+abk ui [--select <sel>]... [--exclude <sel>]... [--window 24h|7d|30d|90d|all] \
+       [--no-open] [--profile NAME]
+```
+
+`dashboard` stays the canonical name — `dashboard` and `explore` say *which* surface you
+are opening, where `ui` does not. The alias exists because the donor tool calls its
+project-level cockpit `dtk ui` (its per-metric sibling, `dtk tune`, is abkit's
+`abk explore`).
 
 ## `abk validate`
 

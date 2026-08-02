@@ -22,7 +22,7 @@ The as-built condensation for contributors/assistants (detectkit-style):
 Design contracts for what is being *built next* stay in [docs/specs/](docs/specs/)
 (canonical for M2+ work — table below). Keep rules ↔ docs in sync per milestone.
 
-## Status: M1–M11 shipped + the `0.6.x` `abk plan` interstitial released (`0.6.1`/`0.6.2`) — `0.6.3` release-ready (latest on PyPI: `0.6.2`); polish track M12–M17 in flight
+## Status: M1–M11 shipped; `0.6.1`–`0.6.3` released (latest on PyPI: `0.6.3`); the second `0.6.x` interstitial in flight — UI-1 + UI-2 built (unreleased), PERF-1 open; polish track M12–M17 next
 
 **Done — M1, the pure statistical core** (`abkit.stats`, importable standalone;
 see [ROADMAP.md](ROADMAP.md) for the deferred-cleanup list): data model with the
@@ -222,9 +222,10 @@ the docs-only decisions PR #67): the whole selection as **one row per
 experiment** — headline verdict, effect + CI, p/α, elapsed, a canvas
 sparkline of the cumulative series — with buttons that spawn **real `abk`
 subprocesses** and stream their logs. The binding invariant is that the
-dashboard is a **launcher, never a worker**: no route computes a statistic,
-turns a knob, writes a config or takes the pipeline lock (an AST gate over
-the module *plus* a spy over every job route), so every verdict on the page
+dashboard is a **launcher, never a worker**: no route computes a statistic or
+takes the pipeline lock (an AST gate over the module *plus* a spy over every
+job route; UI-1 dropped the never-gated "writes a config" clause and extended
+the spy to the editor routes), so every verdict on the page
 is `readout.evaluate()`'s — the same one `abk run --report` bakes, over the
 FULL cumulative series (`?window=` bounds only the sparkline's x-range;
 truncating the left edge would read a 14-day WIN as INCONCLUSIVE, because
@@ -243,16 +244,19 @@ gained the one capability a per-metric Run button needs: **`abk run --metric
 (`effective_alphas()` reads the CONFIG, not the run) and which **truncates**
 the withheld metrics' day state rather than leaving a stale-but-contiguous
 `_ab_unit_state` the M9 gap check cannot see. **Zero statistical numbers
-changed** (no `ALGORITHM_VERSION` bump). CRUD config editing is explicitly
-phase 2. **Released as `0.6.0`** — tagged and published to PyPI.
+changed** (no `ALGORITHM_VERSION` bump). CRUD config editing was explicitly
+phase 2 — it shipped in the `0.6.x` **UI-1** interstitial. **Released as
+`0.6.0`** — tagged and published to PyPI.
 
 **Next — the polish track continues: M12–M17 → `0.7.0`…`0.12.0`
 (track approved 2026-07-18)**. The `0.6.x` **PLAN-1/PLAN-2** interstitial is
-closed (released as `0.6.1`/`0.6.2`); a second `0.6.x` interstitial —
-**UI-1/UI-2/PERF-1** (CRUD YAML editing in `abk dashboard`, an `abk ui` alias,
-and making the incremental read path discoverable before its default is
-re-decided; added 2026-08-02) — sits ahead of M12 and renumbers nothing
-either. The code-verified pain audit
+closed (released as `0.6.1`/`0.6.2`); the second `0.6.x` interstitial —
+**UI-1/UI-2/PERF-1**, added 2026-08-02 — is two thirds done: **UI-1** (CRUD
+YAML editing in `abk dashboard`, `abkit/tuning/config_files.py` — validate both
+levels → archive byte-verbatim → atomic write, with the boot snapshot replaced
+by a re-resolution seam) and **UI-2** (`abk ui`) are built and sit in
+`[Unreleased]`; **PERF-1** (make the incremental read path discoverable before
+its default is re-decided) is open. The interstitial renumbers nothing either. The code-verified pain audit
 ([docs/research/2026-07-data-flow-audit/REPORT.md](docs/research/2026-07-data-flow-audit/REPORT.md))
 plus the entire hardening backlog, one minor release per milestone: M12
 notifications → M13–M17 (versioned stats, multi-arm decisions, new methods,

@@ -142,14 +142,19 @@ The recommended way to work is hands-on and iterative:
    cockpit's calibration chip.
 5. **`abk plan --select <experiment>`** sizes an experiment **before** it runs —
    read-only required-N / achievable-MDE / achieved-power at the effective alpha.
-6. **`abk dashboard`** serves the project-level view once you have more than a
-   couple of experiments: one row per experiment (verdict, effect, sparkline),
-   with buttons that spawn the very commands above as subprocesses. It is a
-   **launcher, not a monitor** — it computes nothing and takes no lock. See
+6. **`abk dashboard`** (alias **`abk ui`**) serves the project-level view once you
+   have more than a couple of experiments: one row per experiment (verdict, effect,
+   sparkline), with buttons that spawn the very commands above as subprocesses, plus
+   an editor that creates, edits and deletes the experiment YAML in place —
+   validated at both levels before it lands, archived under `experiments/.history/`,
+   and round-tripping your comments and layout verbatim. It **computes no statistic
+   and takes no pipeline lock**: every verdict on the page is the readout's, and
+   every job is a real `abk` subprocess doing the work in its own process. See
    [dashboard](guides/dashboard.md).
 
-The full command surface is `init`, `init-claude`, `run`, `explore`, `dashboard`,
-`validate`, `plan`, `unlock`, `clean`, `verify-incremental`, and `test-report`
+The full command surface is `init`, `init-claude`, `run`, `explore`, `dashboard`
+(alias `ui`), `validate`, `plan`, `unlock`, `clean`, `verify-incremental`, and
+`test-report`
 (cli-and-dx §1). Two things that are easy to confuse: `abk run --steps validate`
 is the **config lint** (no database), while `abk validate` is the **A/A
 false-positive matrix**.
@@ -201,8 +206,9 @@ your own project. Re-run it after upgrading abkit to refresh the context.
 **Run, read, and trust the numbers**
 
 - [The explore cockpit](guides/explore.md) — live tuning and Apply.
-- [The dashboard](guides/dashboard.md) — the project-level cockpit: one row per
-  experiment, buttons that spawn `abk` commands.
+- [The dashboard](guides/dashboard.md) — the project-level cockpit (`abk
+  dashboard`, alias `abk ui`): one row per experiment, buttons that spawn `abk`
+  commands, and creating / editing / deleting the experiment YAML in place.
 - [Reading a readout](guides/reading-a-readout.md) — WIN/LOSE/FLAT/INCONCLUSIVE,
   SRM, and the horizon gate in depth.
 - [Sequential analysis](guides/sequential.md) — always-valid CIs and safe

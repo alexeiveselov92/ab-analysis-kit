@@ -8,15 +8,30 @@ page and, per row, one lazily-fetched statistics reply built by
 Clean (DASH-4) — sits on top of the :class:`~abkit.tuning.jobs.JobManager` this
 server holds (DASH-1).
 
-**The dashboard is a launcher, never a worker** (§0.5(d)). Nothing here
-acquires the pipeline lock, runs a pipeline step, or computes a statistic: every
-verdict comes from ``readout.evaluate()`` — through ``overview.py`` for a row,
-through ``reporting.build_report_payload`` for the Open button's report page —
-and every mutation is a real ``abk`` subprocess spawned by DASH-4's routes,
+**The dashboard computes no statistic and takes no pipeline lock** (§0.5(d) as
+restated by UI-1). That is the whole of the launcher invariant, and it is what
+the two gates in ``tests/tuning/test_dashboard_server.py`` have always actually
+enforced — an AST scan proving this module never names the lock API, plus a spy
+proving no route reaches it through a helper. Every verdict comes from
+``readout.evaluate()`` — through ``overview.py`` for a row, through
+``reporting.build_report_payload`` for the Open button's report page — and every
+*pipeline* action is a real ``abk`` subprocess spawned by DASH-4's routes,
 exactly as if typed at a terminal. The two reads that do touch the warehouse are
 the row fill and (in the no-copy default) that report page's cohort snapshot;
 both go through the single ``InternalTablesManager``/manager pair serialized by
 ``db_lock`` — a DB-API connection is not thread-safe.
+
+**The editor (UI-1) writes YAML, and that is not a violation of the above.**
+M11 wrote the invariant as "computes a statistic, turns a knob, writes a config
+or takes the pipeline lock", which folded a fourth clause into it that no gate
+ever checked; what the invariant protects is that no number on the page was
+produced here and that nothing here can block a pipeline. A config write does
+neither. ``POST /api/experiment/{save,create,delete}`` go through
+``tuning/config_files.py`` — validate (both levels) → archive verbatim →
+atomic write — and the file they touch is the operator's own declaration, not
+a result. What a write DOES do is make the boot snapshot stale, which is why
+this module now owns a re-resolution seam (``reload_selection``) instead of the
+"restart the dashboard" note M11 left behind.
 
 Two deltas from ``abkit/tuning/server.py`` — that is, from **the dtk-tune
 pattern** ``abkit/tuning/server.py`` mirrors, **not** from dtk-ui, which
@@ -42,11 +57,12 @@ deltas from dtk" phrasing was measured against the wrong donor file):
 
 Read routes (DASH-3): ``GET /`` (the baked page), ``GET
 /api/stats/<experiment>``, ``GET /api/jobs``, ``GET /api/job/<id>?offset=``,
-plus ``GET /api/experiment-source/<name>`` (DASH-4 — the experiment's raw YAML
-for the read-only "open in your editor" affordance) and ``GET
-/experiment/<name>`` (DASH-5 — the full report page behind the Open button, the
-one route that answers HTML rather than JSON). Job routes (DASH-4): ``POST
-/api/run`` (optionally one ``metric``), ``POST /api/unlock``, ``POST
+plus ``GET /api/experiment-source/<name>`` (DASH-4 — the experiment's raw YAML,
+carrying since UI-1 the digest the editor saves against), ``GET
+/api/experiments`` (the served selection, in the boot payload's own shape) and
+``GET /experiment/<name>`` (DASH-5 — the full report page behind the Open
+button, the one route that answers HTML rather than JSON). Job routes (DASH-4):
+``POST /api/run`` (optionally one ``metric``), ``POST /api/unlock``, ``POST
 /api/clean``, ``POST /api/explore`` and ``POST /api/job/<id>/stop``. Every one
 of them spawns — or stops — a real ``abk`` subprocess; none of them computes,
 reads the warehouse, or writes a file. Run / Unlock / Clean answer as soon as the
@@ -55,12 +71,19 @@ long request by design**: it holds the response until the spawned cockpit prints
 its URL, up to ``explore_url_timeout`` (90 s), so a client must give that one
 route a long fetch timeout and a spinner.
 
-Two things a job route deliberately does NOT do. It never mutates a config:
-"edit" is a read of the YAML text (§0.5(g) — validate-before-write plus the
-``.history`` archive, the donor's ``metric_files.py`` shape, is phase 2), so
-there is no save endpoint in this milestone. And it never takes the pipeline
-lock, not even briefly: the one process that does is the spawned child, in its
-own OS process, exactly as if the command had been typed.
+Editor routes (UI-1): ``POST /api/experiment/save``, ``POST
+/api/experiment/create``, ``POST /api/experiment/delete``, plus ``POST
+/api/reload``. They mutate YAML through ``tuning/config_files.py`` and then
+re-resolve the selection; none of them spawns a process, reads the warehouse or
+takes the pipeline lock. Two refusals they own that a job route does not: a
+stale ``digest`` (the file changed on disk since the editor opened it — an
+``abk explore`` Apply, or a second tab), and a live job on the same experiment
+(a running ``abk run`` has already read the config it is running, and a live
+cockpit's Apply would overwrite whatever is saved here).
+
+The one thing a job route deliberately does NOT do: take the pipeline lock, not
+even briefly. The one process that does is the spawned child, in its own OS
+process, exactly as if the command had been typed.
 
 There is deliberately **no caching layer**: every ``/api/stats`` call re-reads
 the DB, matching the donor. DASH-5's fixed-concurrency-3 client pool is what
@@ -70,14 +93,20 @@ sum of its reads, not the slowest one. Acceptable per the donor's own
 one-connection-per-manager precedent (§DASH-3 "Risks / hotspots"): a comment,
 not a fix, in this WP.
 
-Two snapshots taken at boot and never refreshed, both matching the donor: the
-served **selection** (its configs are read once, so an experiment added or a
-YAML edited while the cockpit runs needs a restart to be reflected — including
-after the read-only "open in your editor" affordance, and including the
-``metric`` gate on ``POST /api/run``) and the baked page. The YAML *text* the
-source route returns is read live off disk, so it can legitimately disagree with
-the parsed config every other route uses. A "reload configs" affordance is a
-named follow-up, not a phase-1 gap.
+The served **selection** and the baked page were, in M11, snapshots taken at
+boot and never refreshed — a restart was the only way to pick up an edited
+YAML. UI-1 makes the editor the surface that edits them, so both are now
+re-derived by :meth:`_DashboardServer.reload_selection`: every mutation route
+calls it, ``POST /api/reload`` is the manual form, and the pair
+(``experiments``, its by-name index, ``metrics``, ``html``) is written and read
+under ``selection_lock``, never touched directly — the explore session's
+cache-lock discipline. Two consequences worth knowing: a **failed** reload
+(a broken sibling YAML, a name collision) keeps the previous selection and says
+so in the reply rather than 500-ing after a write that already landed, and a
+newly created experiment outside this cockpit's ``--select`` is reported as
+created-but-not-shown instead of silently missing. The YAML *text* the source
+route returns is still read live off disk, so between two reloads it can
+legitimately disagree with the parsed config every other route uses.
 """
 
 from __future__ import annotations
@@ -97,8 +126,9 @@ from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import parse_qs, unquote, urlparse
 
 from abkit import __version__
+from abkit.tuning import config_files
 from abkit.tuning.html import render_dashboard_html
-from abkit.tuning.jobs import JobManager, JobManagerClosed
+from abkit.tuning.jobs import JOB_KINDS, JobManager, JobManagerClosed
 from abkit.tuning.overview import (
     ALL_WINDOW_PRESETS,
     WINDOW_PRESETS,
@@ -133,16 +163,27 @@ _SOURCE_PREFIX = "/api/experiment-source/"
 _REPORT_PREFIX = "/experiment/"
 _STOP_SUFFIX = "/stop"
 
+#: UI-1's editor verbs. Under ``/api/experiment/`` (singular) rather than the
+#: report page's ``/experiment/`` prefix or the source route's, so no GET route
+#: can ever read one of these as an experiment NAME.
+_SAVE_PATH = "/api/experiment/save"
+_CREATE_PATH = "/api/experiment/create"
+_DELETE_PATH = "/api/experiment/delete"
+_RELOAD_PATH = "/api/reload"
+
 #: Cap on a posted string field (an experiment or metric name). Both are looked
 #: up rather than parsed, so the cap is not about parsing: an unbounded value
 #: would be echoed back inside the "unknown …" 400, turning a 5 MB body into a
 #: 5 MB error.
 _MAX_FIELD = 200
 
-#: Cap on the YAML text ``GET /api/experiment-source`` returns. A config is a
-#: few kB; the bound is what keeps a pathological file out of a JSON reply
-#: (``truncated`` says so on the wire, the house discipline of ``_MAX_LINES`` /
-#: ``MAX_STAT_POINTS``).
+#: Cap on the YAML text ``GET /api/experiment-source`` returns — and, since
+#: UI-1, on the text a save may POST back. A config is a few kB; the bound is
+#: what keeps a pathological file out of a JSON reply (``truncated`` says so on
+#: the wire, the house discipline of ``_MAX_LINES`` / ``MAX_STAT_POINTS``). It
+#: is the SAME constant on both sides on purpose: a file the editor could only
+#: read truncated must not be savable, or the save would write back the prefix
+#: it was shown and silently drop the rest.
 _MAX_SOURCE_BYTES = 512_000
 
 #: How long ``POST /api/explore`` waits for the spawned cockpit to print its
@@ -384,8 +425,8 @@ def _verified_selector(srv: _DashboardServer, entry: tuple[Path, ExperimentConfi
         landed = ", ".join(names) if names else "nothing"
         raise ValueError(
             f"'{selector}' no longer resolves to {experiment.name} (it now matches "
-            f"{landed}) — the dashboard reads its selection once at boot, so "
-            "restart it after moving, renaming or removing an experiment"
+            f"{landed}) — this page's selection is older than the files; press "
+            "Reload configs (or POST /api/reload) to re-read them"
         )
     return selector
 
@@ -473,6 +514,43 @@ def _string_field(payload: dict[str, Any], field: str, *, required: bool = True)
     return value
 
 
+def _text_field(payload: dict[str, Any], field: str) -> str:
+    """A posted YAML document, validated as transport (never as a config).
+
+    Separate from :func:`_string_field` because the cap is four orders of
+    magnitude apart: a name is looked up (200 chars), a document is written
+    (:data:`_MAX_SOURCE_BYTES`, the same bound the read route truncates at, so
+    a file the editor could only show truncated cannot be saved back).
+    Emptiness is refused here rather than by the YAML parser, whose message for
+    ``""`` would be about a mapping.
+    """
+    value = payload.get(field)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"'{field}' must be a non-empty YAML document")
+    if len(value.encode("utf-8")) > _MAX_SOURCE_BYTES:
+        raise ValueError(
+            f"'{field}' is larger than {_MAX_SOURCE_BYTES} bytes — edit a file that "
+            "size in your editor, not here"
+        )
+    return value
+
+
+def _flag_field(payload: dict[str, Any], field: str) -> bool:
+    """A posted boolean, as a boolean and nothing else.
+
+    ``force`` overrides a refusal, so a truthy STRING must not silently arm it:
+    a client sending ``"false"`` would get exactly the behaviour it asked not
+    to have. Absent (or ``null``) is ``False``; anything but a real JSON boolean
+    is a 400.
+    """
+    value = payload.get(field)
+    if value is None:
+        return False
+    if not isinstance(value, bool):
+        raise ValueError(f"'{field}' must be true or false, got {type(value).__name__}")
+    return value
+
+
 def _resolve_target(
     srv: _DashboardServer, payload: dict[str, Any]
 ) -> tuple[Path, ExperimentConfig]:
@@ -520,6 +598,26 @@ class _DashboardServer(ThreadingHTTPServer):
         self.project_root: Path = Path(".")
         self.experiments: list[tuple[Path, ExperimentConfig]] = []
         self._by_name: dict[str, tuple[Path, ExperimentConfig]] = {}
+        # The selectors this cockpit was started with — what `reload_selection`
+        # re-resolves. Empty means `abk dashboard` with no `--select`, i.e. the
+        # whole project, which is `select_experiments`' own default.
+        self.selectors: tuple[str, ...] = ()
+        self.excludes: tuple[str, ...] = ()
+        # Guards the four things a reload rewrites together: `experiments`,
+        # `_by_name`, `metrics` and the baked `html`. A reader taking three of
+        # them across a reload would render a row whose config it cannot look
+        # up (the explore session's cache_lock discipline, m10 WP4).
+        self.selection_lock = threading.RLock()
+        # Serializes the EDITOR's writes end to end. The digest check and the
+        # write are otherwise a check-then-act with the whole two-level
+        # validation between them (measured at 25–180 ms), so two tabs saving
+        # the same file both answered 200 and one edit existed nowhere — not on
+        # disk, not in the archive. `abk explore`'s Apply is serialized for
+        # exactly this reason (`server.py`'s heavy_lock, "two tabs' Applies
+        # must not race the archive/rewrite seam"); this is that discipline for
+        # the second write seam. It is NOT the pipeline lock — nothing outside
+        # this process can see it, and no statistic waits on it.
+        self.editor_lock = threading.Lock()
         self.initial_window: str = DEFAULT_WINDOW_PRESET
         self.profile: str | None = None
         self.echo: Callable[[str], None] = print
@@ -549,11 +647,10 @@ class _DashboardServer(ThreadingHTTPServer):
         the boot list would show two identical rows while every
         ``/api/stats/<name>`` answered from one of them forever.
 
-        Boot-only: called by :func:`build_dashboard_server` before the socket is
-        ever served, which is why the list and its index are written unlocked.
-        A mid-serve reload (the named follow-up in the module docstring) would
-        have to pair them under a lock, exactly like the explore session's
-        cache.
+        The index is built BEFORE either field is replaced, so a duplicate
+        leaves the previously served selection intact rather than half of it —
+        which matters now that UI-1's reload calls this mid-serve, not only
+        :func:`build_dashboard_server` at boot.
         """
         by_name: dict[str, tuple[Path, ExperimentConfig]] = {}
         for path, experiment in experiments:
@@ -564,12 +661,86 @@ class _DashboardServer(ThreadingHTTPServer):
                     f"selection ({first} and {path})"
                 )
             by_name[experiment.name] = (path, experiment)
-        self.experiments = list(experiments)
-        self._by_name = by_name
+        with self.selection_lock:
+            self.experiments = list(experiments)
+            self._by_name = by_name
 
     def experiment_entry(self, name: str) -> tuple[Path, ExperimentConfig] | None:
         """The ``(path, config)`` for *name*, or ``None`` if it is not served."""
-        return self._by_name.get(name)
+        with self.selection_lock:
+            return self._by_name.get(name)
+
+    def served_experiments(self) -> list[tuple[Path, ExperimentConfig]]:
+        """The served selection, snapshotted under the lock."""
+        with self.selection_lock:
+            return list(self.experiments)
+
+    def served_html(self) -> str:
+        """The baked page, snapshotted under the lock (a reload re-bakes it)."""
+        with self.selection_lock:
+            return self.html
+
+    def rebake(self) -> None:
+        """Re-render the boot page from the current selection.
+
+        Cheap and worth doing on every reload: without it a browser refresh
+        after a create would paint the pre-create list, and the client's own
+        refresh would then have to correct a page the operator already read.
+        """
+        with self.selection_lock:
+            self.html = render_dashboard_html(
+                _boot_payload(
+                    project=self.project,
+                    project_root=self.project_root,
+                    experiments=self.experiments,
+                    initial_window=self.initial_window,
+                    profile=self.profile,
+                )
+            )
+
+    def reload_selection(self) -> list[str]:
+        """Re-resolve the selection from disk; return the warnings, never raise.
+
+        THE re-derivation seam (UI-1). Every editor route calls it after a
+        successful write, and ``POST /api/reload`` is its manual form.
+
+        It never raises, and that is the whole design: the write has already
+        landed by the time it runs, so a failure here — a sibling YAML that no
+        longer parses, a name collision the editor could not have known about —
+        must not turn a successful save into a 500 with no reply. The previous
+        selection stays served and the reason rides back in the reply's
+        ``warnings``, where the client shows it beside a "restart the
+        dashboard" hint.
+        """
+        from abkit.config import select_experiments
+
+        # The whole read-modify-write is one critical section, not three. Two
+        # reloads in flight (four independently-clickable buttons produce them)
+        # would otherwise interleave resolve-A → resolve-B → install-B →
+        # install-A, and the STALE resolver wins — the page would silently drop
+        # the change that finished second. `selection_lock` is an RLock so the
+        # accessors below can re-enter it.
+        with self.selection_lock:
+            try:
+                resolved, warnings = select_experiments(
+                    self.project_root, self.selectors, self.excludes
+                )
+            except Exception as exc:  # noqa: BLE001 — a broken project must not kill a save
+                return [
+                    f"the project could not be re-read after the change "
+                    f"({type(exc).__name__}: {exc}) — this page still shows the previous "
+                    "selection; fix the config and press Reload configs"
+                ]
+            try:
+                self.set_experiments(resolved)
+            except ValueError as exc:
+                return [
+                    f"{exc} — this page still shows the previous selection; "
+                    "fix the config and press Reload configs"
+                ]
+            self.metrics = _load_metric_configs(self.project_root, self.project)
+            self.rebake()
+            return list(warnings)
 
     def handle_error(self, request: Any, client_address: Any) -> None:
         """Keep the terminal clean: a client dropping its socket is routine.
@@ -765,7 +936,10 @@ class _Handler(BaseHTTPRequestHandler):
         # window or to offset 0. A blank value is a value, and gets a 400.
         query = parse_qs(parsed.query, keep_blank_values=True)
         if path == "/":
-            self._reply_html(srv.html)
+            self._reply_html(srv.served_html())
+            return
+        if path == "/api/experiments":
+            self._reply_json(_selection_reply(srv))
             return
         if path.startswith(_STATS_PREFIX):
             window = query.get("window", [srv.initial_window])[0]
@@ -814,6 +988,18 @@ class _Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/explore":
             self._handle_explore(srv, body)
+            return
+        if path == _SAVE_PATH:
+            self._handle_save(srv, body)
+            return
+        if path == _CREATE_PATH:
+            self._handle_create(srv, body)
+            return
+        if path == _DELETE_PATH:
+            self._handle_delete(srv, body)
+            return
+        if path == _RELOAD_PATH:
+            self._handle_reload(srv, body)
             return
         if path.startswith(_JOB_PREFIX) and path.endswith(_STOP_SUFFIX):
             job_id = unquote(path[len(_JOB_PREFIX) : -len(_STOP_SUFFIX)]).strip("/")
@@ -868,7 +1054,7 @@ class _Handler(BaseHTTPRequestHandler):
         self._reply_json(srv.jobs.snapshot(job, int(raw_offset)))
 
     def _handle_experiment_source(self, srv: _DashboardServer, name: str) -> None:
-        """One experiment's raw YAML — the read-only "open in your editor" route.
+        """One experiment's raw YAML — what UI-1's editor opens with.
 
         No DB, no config parse: the text on disk as the operator would see it,
         plus the root-relative path the row already carries as ``file`` (one
@@ -900,18 +1086,28 @@ class _Handler(BaseHTTPRequestHandler):
         except FileNotFoundError:
             self._reply_error(
                 404,
-                f"{relative} is gone — the dashboard reads its selection once at "
-                "boot, so restart it after moving or deleting an experiment",
+                f"{relative} is gone — this page's selection is older than the "
+                "files; press Reload configs (or POST /api/reload) to re-read them",
             )
             return
+        truncated = len(raw) > _MAX_SOURCE_BYTES
+        # errors="replace" also covers a cut mid-codepoint: the slice is by
+        # bytes, and a mojibake tail beats a 500 on a legal file.
+        text = raw[:_MAX_SOURCE_BYTES].decode("utf-8", errors="replace")
         self._reply_json(
             {
                 "name": experiment.name,
                 "path": relative,
-                # errors="replace" also covers a cut mid-codepoint: the slice is
-                # by bytes, and a mojibake tail beats a 500 on a legal file.
-                "yaml_text": raw[:_MAX_SOURCE_BYTES].decode("utf-8", errors="replace"),
-                "truncated": len(raw) > _MAX_SOURCE_BYTES,
+                "yaml_text": text,
+                "truncated": truncated,
+                # The concurrency token UI-1's editor echoes back on save — of
+                # the WHOLE file, not the text above, and `null` when the two
+                # differ: a digest over a truncated read would let a save write
+                # the prefix back and drop the rest, which is exactly the
+                # silent data loss the digest exists to prevent. `editable`
+                # says so in one field so the client never has to infer it.
+                "digest": None if truncated else config_files.text_digest(text),
+                "editable": not truncated,
             }
         )
 
@@ -1091,6 +1287,214 @@ class _Handler(BaseHTTPRequestHandler):
         srv.jobs.set_url(job, url)
         self._reply_json({"job_id": job.id, "url": url})
 
+    # -- POST handlers: edit a YAML, then re-resolve (UI-1) --------------------
+
+    def _handle_save(self, srv: _DashboardServer, body: bytes) -> None:
+        """``POST /api/experiment/save`` — overwrite one experiment's YAML.
+
+        The text is the operator's, verbatim: ``config_files`` validates it
+        (level 1 + the §8 matrix), archives the previous bytes and writes
+        atomically. Two refusals precede the write and neither is the file
+        system's: a job running on this experiment (:meth:`_refuse_if_busy`),
+        and a ``digest`` that no longer matches disk.
+
+        The experiment is addressed by NAME through the boot index, exactly like
+        the read route — no client-supplied path ever reaches the filesystem.
+        """
+        payload = _load_json(body)
+        _reject_unknown_fields(payload, {"select", "text", "digest", "force"})
+        experiment_path, experiment = _resolve_target(srv, payload)
+        text = _text_field(payload, "text")
+        digest = _string_field(payload, "digest", required=False)
+        force = _flag_field(payload, "force")
+        self._refuse_if_busy(srv, experiment.name)
+        self._refuse_editing_a_truncated_file(experiment_path)
+        written = self._edit(
+            srv,
+            f"write {experiment.name}'s config",
+            lambda: config_files.update_experiment_file(
+                project_root=srv.project_root,
+                project=srv.project,
+                path=experiment_path,
+                text=text,
+                expected_digest=digest,
+                force=force,
+            ),
+        )
+        reply = _write_reply(srv, written)
+        if written.renamed_from is not None:
+            reply["warnings"] = [
+                *reply["warnings"],
+                f"the experiment was renamed {written.renamed_from} → "
+                f"{written.config.name}: its persisted rows are still keyed by the OLD "
+                "name, so the new one starts with no history (`abk clean "
+                "--orphaned-experiments` prunes the old rows)",
+            ]
+        self._reply_json(reply)
+
+    def _handle_create(self, srv: _DashboardServer, body: bytes) -> None:
+        """``POST /api/experiment/create`` — a new experiment YAML.
+
+        The file name comes from the config's own ``name:`` (one identity, the
+        convention ``abk init`` scaffolds); ``folder`` optionally puts it in a
+        subdirectory of ``paths.experiments``. Nothing is looked up in the boot
+        index — that is the point of a create — so this is the one editor route
+        whose target does not exist yet, and the uniqueness check that stands in
+        for it covers the WHOLE project, not the served selection.
+        """
+        payload = _load_json(body)
+        _reject_unknown_fields(payload, {"text", "folder", "force"})
+        text = _text_field(payload, "text")
+        folder = _string_field(payload, "folder", required=False) or ""
+        force = _flag_field(payload, "force")
+        written = self._edit(
+            srv,
+            "create a config",
+            lambda: config_files.create_experiment_file(
+                project_root=srv.project_root,
+                project=srv.project,
+                text=text,
+                folder=folder,
+                force=force,
+            ),
+        )
+        reply = _write_reply(srv, written)
+        if srv.experiment_entry(written.config.name) is None:
+            # Created, but outside this cockpit's --select: it will not appear
+            # in the list, and a silent absence reads as a failed create.
+            reply["warnings"] = [
+                *reply["warnings"],
+                f"{written.config.name} was created but is outside this dashboard's "
+                "selection, so it is not in the list — restart `abk dashboard` without "
+                "the --select/--exclude that filters it out",
+            ]
+            reply["in_selection"] = False
+        self._reply_json(reply)
+
+    def _handle_delete(self, srv: _DashboardServer, body: bytes) -> None:
+        """``POST /api/experiment/delete`` — archive the YAML, then remove it.
+
+        Only the file goes. The experiment's rows stay in ``_ab_results`` /
+        ``_ab_unit_state`` until ``abk clean --orphaned-experiments`` prunes
+        them, and the reply says so: a delete button that quietly stranded a
+        warehouse series would be the silent half of a destructive action. The
+        archived copy makes it reversible by hand.
+        """
+        payload = _load_json(body)
+        _reject_unknown_fields(payload, {"select", "digest"})
+        experiment_path, experiment = _resolve_target(srv, payload)
+        digest = _string_field(payload, "digest", required=False)
+        self._refuse_if_busy(srv, experiment.name)
+        archived = self._edit(
+            srv,
+            f"delete {experiment.name}'s config",
+            lambda: config_files.delete_experiment_file(
+                project_root=srv.project_root,
+                project=srv.project,
+                path=experiment_path,
+                expected_digest=digest,
+            ),
+        )
+        warnings = srv.reload_selection()
+        self._reply_json(
+            {
+                "name": experiment.name,
+                "path": _relative(experiment_path, srv.project_root),
+                "archived": _relative(archived, srv.project_root),
+                "warnings": [
+                    *warnings,
+                    f"the YAML is gone, but {experiment.name}'s persisted rows are not — "
+                    "run `abk clean --orphaned-experiments` to prune them",
+                ],
+                "experiments": _boot_entries(srv),
+            }
+        )
+
+    def _handle_reload(self, srv: _DashboardServer, body: bytes) -> None:
+        """``POST /api/reload`` — re-read the project's configs from disk.
+
+        The manual form of what every editor route does implicitly, and the
+        M11 "reload configs affordance" follow-up: an experiment added, edited
+        or removed OUTSIDE this cockpit (an editor, a `git pull`, an `abk
+        explore` Apply) reaches the page without a restart.
+        """
+        _reject_unknown_fields(_load_json(body) if body.strip() else {}, set())
+        warnings = srv.reload_selection()
+        reply = _selection_reply(srv)
+        reply["warnings"] = warnings
+        self._reply_json(reply)
+
+    def _edit(self, srv: _DashboardServer, what: str, action: Callable[[], Any]) -> Any:
+        """Run one editor mutation: serialized, and with honest failures.
+
+        Two things every write route needs and none of them should spell twice.
+
+        **The lock.** ``update_experiment_file`` checks the digest, then spends
+        the whole two-level validation (25–180 ms measured) before its
+        ``os.replace`` — a check-then-act wide enough that two tabs saving the
+        same file both answered 200 with one edit surviving. Serializing the
+        seam closes it; it is a process-local mutex, not the pipeline lock.
+
+        **The message.** ``do_POST``'s ``OSError`` branch says "could not start
+        a subprocess", which is true of DASH-4's routes and a lie here — a full
+        disk or a read-only ``experiments/`` would be reported as a spawn
+        failure on a route that never spawns.
+        """
+        with srv.editor_lock:
+            try:
+                return action()
+            except OSError as exc:
+                raise RuntimeError(
+                    f"could not {what} under {srv.project_root}: " f"{type(exc).__name__}: {exc}"
+                ) from exc
+
+    def _refuse_editing_a_truncated_file(self, path: Path) -> None:
+        """Refuse to write over a file the read route could only show in part.
+
+        ``GET /api/experiment-source`` reports ``editable: false`` past
+        :data:`_MAX_SOURCE_BYTES`, and the client hides Save — but the SERVER
+        has to enforce it too, or a request that skips the client (or simply
+        omits ``digest``, which is optional) replaces an 800 kB file with the
+        512 kB prefix it was shown. The cap is read here rather than passed to
+        ``config_files`` because it is a property of this transport, not of the
+        file format.
+        """
+        try:
+            size = path.stat().st_size
+        except OSError:
+            return  # the write itself will report it, with the right message
+        if size > _MAX_SOURCE_BYTES:
+            raise ValueError(
+                f"{path.name} is {size} bytes, larger than the {_MAX_SOURCE_BYTES}-byte "
+                "editing cap — this page could only show a prefix of it, and saving "
+                "that back would drop the rest; edit it in your editor"
+            )
+
+    def _refuse_if_busy(self, srv: _DashboardServer, experiment: str) -> None:
+        """Refuse to edit an experiment this cockpit is currently running.
+
+        Not a lock — a lock is exactly what this server may not take. It is the
+        narrow, honest check the launcher CAN make: it knows the jobs it spawned
+        itself. Both directions matter and neither is theoretical, because both
+        buttons are on the same row: a running ``abk run`` has already read the
+        config it is executing (so a save would land in a file whose results
+        were computed from the previous text, with nothing recording the
+        difference), and a live ``abk explore`` will write its OWN merged
+        document on Apply, discarding whatever was saved here.
+
+        A job started from a terminal is invisible to this check — said plainly
+        rather than papered over; the digest catches the explore half of that
+        case after the fact, and refuses the save instead of losing it.
+        """
+        for kind in sorted(JOB_KINDS):
+            job = srv.jobs.running_job_for(kind, experiment)
+            if job is not None:
+                raise ValueError(
+                    f"{experiment} has a running '{kind}' job ({job.label}) — stop it "
+                    "before editing the config it is using, or the two will disagree "
+                    "about what ran"
+                )
+
     def _handle_stop(self, srv: _DashboardServer, job_id: str) -> None:
         """``POST /api/job/<id>/stop`` — SIGTERM now, SIGKILL after the grace.
 
@@ -1107,6 +1511,73 @@ class _Handler(BaseHTTPRequestHandler):
             self._reply_error(400, f"job {job_id} is not running")
             return
         self._reply_json({"ok": True})
+
+
+def _relative(path: Path, project_root: Path) -> str:
+    """*path* as the root-relative posix string every reply speaks."""
+    try:
+        return path.relative_to(project_root).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def _boot_entries(srv: _DashboardServer) -> list[dict[str, Any]]:
+    """The served selection in the boot payload's own shape.
+
+    The SAME builder ``_boot_payload`` bakes into the page, so a list refreshed
+    after an edit and a list rendered at boot cannot describe an experiment
+    differently — the m11 discipline that one row shape has one source.
+    """
+    return build_overview_boot_entries(
+        srv.project_root, srv.served_experiments(), project=srv.project
+    )
+
+
+def _selection_reply(srv: _DashboardServer) -> dict[str, Any]:
+    """``{experiments, generated_at, warnings}`` — the refreshable half of boot."""
+    return {
+        "experiments": _boot_entries(srv),
+        "generated_at": _ms(now_utc_naive()),
+        "warnings": [],
+    }
+
+
+def _write_reply(srv: _DashboardServer, written: config_files.ConfigWrite) -> dict[str, Any]:
+    """The common save/create reply: what landed, plus the refreshed selection.
+
+    The reload runs HERE, between the write and the reply, so a client never
+    has to poll to find out whether the row it just edited still exists — and
+    its warnings ride in the same envelope as the validator's, because to an
+    operator "saved, but the page is stale" and "saved, with a warning" are the
+    same kind of news.
+    """
+    reload_warnings = srv.reload_selection()
+    return {
+        "name": written.config.name,
+        "path": _relative(written.path, srv.project_root),
+        "archived": (
+            None if written.archived is None else _relative(written.archived, srv.project_root)
+        ),
+        # The bytes THIS write produced — never a re-read (`ConfigWrite.digest`
+        # says why): a re-read would hand this editor a token certifying some
+        # other writer's text, and its next save would then pass the digest
+        # check while clobbering that writer.
+        "digest": written.digest,
+        "renamed_from": written.renamed_from,
+        "in_selection": srv.experiment_entry(written.config.name) is not None,
+        "warnings": [*written.warnings, *reload_warnings],
+        "experiments": _boot_entries(srv),
+    }
+
+
+def _load_metric_configs(project_root: Path, project: ProjectConfig) -> dict[str, MetricConfig]:
+    """The project's metric configs, re-read after an edit (UI-1's reload).
+
+    A thin indirection so the reload does not have to reach into
+    ``config_files`` from inside the server class, and so a test can point it
+    at a stub.
+    """
+    return config_files.load_metric_configs(project_root, project)
 
 
 def render_report_html(payload: dict[str, Any]) -> str:
@@ -1235,6 +1706,8 @@ def build_dashboard_server(
     jobs: JobManager | None = None,
     metrics: Mapping[str, MetricConfig] | None = None,
     manager: BaseDatabaseManager | None = None,
+    selectors: Sequence[str] = (),
+    excludes: Sequence[str] = (),
     echo: Callable[[str], None] = print,
 ) -> tuple[_DashboardServer, str]:
     """Construct (without running) the dashboard server; return ``(server, url)``.
@@ -1243,11 +1716,19 @@ def build_dashboard_server(
     ONCE post-bind, exactly like ``build_explore_server`` — but no URLs are
     baked into the payload (see :func:`_boot_payload`).
 
-    *metrics* and *manager* feed ``GET /experiment/<name>`` alone (DASH-5's Open
+    *metrics* and *manager* feed ``GET /experiment/<name>`` (DASH-5's Open
     button): the metric configs become the report's metric descriptions, and the
     manager — the SAME one *tables* wraps, used only under ``db_lock`` — lets the
     no-copy default snapshot the live cohort for the SRM chip's observed counts.
     Both are optional and both degrade in the open (:func:`_report_payload`).
+
+    *selectors* / *excludes* are the ``--select``/``--exclude`` this cockpit was
+    started with, and they exist for exactly one reason: UI-1's reload has to
+    re-resolve the SAME selection the caller resolved, or an edit would silently
+    widen the page to the whole project. Left empty (the tests' default, and
+    ``abk dashboard`` with no selector) they mean "everything", which is
+    ``select_experiments``' own default — so a reload of an unfiltered cockpit
+    is faithful without the CLI having to spell it.
 
     Raises :class:`~abkit.tuning.overview.UnknownWindowPreset` for an unknown
     *initial_window* — at boot, where the operator typed it, never as N broken
@@ -1266,21 +1747,15 @@ def build_dashboard_server(
         server.initial_window = initial_window
         server.profile = profile
         server.echo = echo
+        server.selectors = tuple(selectors)
+        server.excludes = tuple(excludes)
         if metrics is not None:
             server.metrics = metrics
         server.manager = manager
         if jobs is not None:
             server.jobs = jobs
         server.set_experiments(experiments)
-        server.html = render_dashboard_html(
-            _boot_payload(
-                project=project,
-                project_root=project_root,
-                experiments=server.experiments,
-                initial_window=initial_window,
-                profile=profile,
-            )
-        )
+        server.rebake()
     except BaseException:
         # The port is already bound by now, so every post-bind failure — a
         # duplicated name, a config whose window will not resolve, a bundle read
@@ -1301,6 +1776,8 @@ def serve_dashboard(
     jobs: JobManager | None = None,
     metrics: Mapping[str, MetricConfig] | None = None,
     manager: BaseDatabaseManager | None = None,
+    selectors: Sequence[str] = (),
+    excludes: Sequence[str] = (),
     open_browser: bool = True,
     echo: Callable[[str], None] = print,
     on_ready: Callable[[str], None] | None = None,
@@ -1331,6 +1808,8 @@ def serve_dashboard(
         jobs=jobs,
         metrics=metrics,
         manager=manager,
+        selectors=selectors,
+        excludes=excludes,
         echo=echo,
     )
     if on_ready is not None:

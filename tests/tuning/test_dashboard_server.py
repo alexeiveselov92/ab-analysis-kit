@@ -64,6 +64,7 @@ from abkit.config import select_experiments
 from abkit.config.experiment_config import ExperimentConfig
 from abkit.database.internal_tables import InternalTablesManager
 from abkit.tuning import dashboard_server, html
+from abkit.tuning import overview as overview_module
 from abkit.tuning.dashboard_server import (
     DEFAULT_WINDOW_PRESET,
     build_dashboard_server,
@@ -143,6 +144,61 @@ comparisons:
     is_main_metric: true
     method: {{name: t-test}}
 """
+
+#: UI-1's fixture project: the same experiment, but written so the §8 matrix
+#: PASSES — the assignment SQL selects the exposure contract and the metric SQL
+#: joins the packaged macro. `_EXPERIMENT_YAML` above deliberately does not
+#: (`query: SELECT 1`), which is what the editor's `force` path is tested
+#: against: DASH-4's routes never validate, so M11 never needed a lint-clean
+#: fixture and this is the first WP that does.
+_VALID_EXPERIMENT_YAML = """\
+# a comment the round-trip must preserve
+name: {name}
+start_ts: 2026-01-01
+horizon_ts: 2026-01-15
+unit_key: user_id
+tags: [growth, checkout]
+assignment:
+  query: SELECT user_id, variant, exposure_ts FROM assignments
+  variants: [control, treatment]
+  expected_split: {{control: 0.5, treatment: 0.5}}
+alpha: {alpha}
+correction: none
+comparisons:
+  - metric: revenue
+    is_main_metric: true
+    method: {{name: t-test}}
+"""
+
+_METRIC_YAML = """\
+name: revenue
+type: sample
+columns:
+  variant: variant
+  value: value
+query: |
+  {% import 'abkit_assignment.jinja' as ab %}
+  SELECT _abk_exposures._abk_variant AS variant, t.user_id AS user_id, t.amount AS value
+  FROM events t
+  {{ ab.exposed_units() }}
+"""
+
+
+def write_project(root: Path, name: str = "dash_exp", *, alpha: str = "0.05"):
+    """A minimal project that passes `abk run --steps validate`.
+
+    Returns ``(experiment_path, parsed config)`` like :func:`write_experiment`,
+    and additionally writes ``metrics/revenue.yml`` — without it every level-2
+    save would fail on reference integrity, which is a real refusal but not the
+    one a happy-path test means to exercise.
+    """
+    path = root / "experiments" / f"{name}.yml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_VALID_EXPERIMENT_YAML.format(name=name, alpha=alpha), encoding="utf-8")
+    metrics = root / "metrics"
+    metrics.mkdir(parents=True, exist_ok=True)
+    (metrics / "revenue.yml").write_text(_METRIC_YAML, encoding="utf-8")
+    return path, ExperimentConfig.from_yaml_file(path)
 
 
 def write_experiment(root: Path, name: str = "dash_exp", *, file_stem: str | None = None):
@@ -313,7 +369,25 @@ ROUTES = [
     # DASH-5's report page — same reasoning: it renders an experiment's whole
     # readout, and it is the one route that answers HTML.
     "/experiment/dash_exp",
+    # UI-1's refreshable selection: it enumerates every experiment in the
+    # project, exactly like `GET /`.
+    "/api/experiments",
     "/nope",
+]
+
+#: Every POST route, for the same gate. Kept beside :data:`ROUTES` and checked
+#: against the AST the same way (UI-1): M11 checked only the GET list, so this
+#: one could rot silently — and it is the list covering the routes that MUTATE.
+POST_ROUTES = [
+    "/api/run",
+    "/api/unlock",
+    "/api/clean",
+    "/api/explore",
+    "/api/job/abcd1234/stop",
+    "/api/experiment/save",
+    "/api/experiment/create",
+    "/api/experiment/delete",
+    "/api/reload",
 ]
 
 
@@ -327,11 +401,32 @@ def _routed_get_paths() -> set[str]:
     honest as this extraction, which is why it resolves the constants instead of
     matching their names.
     """
+    return _routed_paths("_route_get")
+
+
+def _routed_post_paths() -> set[str]:
+    """The same extraction over ``_route_post`` (UI-1).
+
+    M11 wrote it for the GET dispatcher only, so :data:`POST_ROUTES` — the list
+    covering the routes that MUTATE — was the hand-maintained one nothing
+    checked. Editor routes are POST, so the honesty check has to cover both.
+    """
+    return _routed_paths("_route_post")
+
+
+def _routed_paths(dispatcher: str) -> set[str]:
+    """Every literal path (or prefix) *dispatcher* dispatches on.
+
+    Handles both spellings the module uses: `path == "/x"` (a literal) and
+    `path == _X_PATH` / `path.startswith(_X_PREFIX)` (a module constant, which
+    is RESOLVED rather than matched by name — a name-matching gate would pass
+    while pointing at the wrong string).
+    """
     source = Path(dashboard_server.__file__).read_text(encoding="utf-8")
     body = next(
         node
         for node in ast.walk(ast.parse(source))
-        if isinstance(node, ast.FunctionDef) and node.name == "_route_get"
+        if isinstance(node, ast.FunctionDef) and node.name == dispatcher
     )
     paths: set[str] = set()
     for node in ast.walk(body):
@@ -339,6 +434,8 @@ def _routed_get_paths() -> set[str]:
             right = node.comparators[0]
             if isinstance(right, ast.Constant) and isinstance(right.value, str):
                 paths.add(right.value)
+            elif isinstance(right, ast.Name):
+                paths.add(getattr(dashboard_server, right.id))
         if (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
@@ -396,13 +493,25 @@ class TestTokenGate:
         assert (status, detail) == (403, "bad token")
         assert dash.thread.is_alive()
 
-    @pytest.mark.parametrize(
-        "path", ["/api/run", "/api/unlock", "/api/clean", "/api/explore", "/api/job/abcd1234/stop"]
-    )
+    @pytest.mark.parametrize("path", POST_ROUTES)
     def test_every_job_route_refuses_an_untokened_post(self, dash, path):
         """The gate precedes routing, so a new POST route inherits it."""
         status, detail = request(f"{dash.base}{path}", data=b"{}", method="POST")
         assert (status, detail) == (403, "bad token")
+
+    def test_the_parametrized_route_list_covers_every_routed_post(self):
+        """The POST half of the same honesty check (UI-1).
+
+        M11 AST-checked the GET list only, which left the routes that MUTATE
+        covered by a hand-maintained list nothing verified — the exact rot
+        DASH-4's review had already found once on the GET side.
+        """
+        uncovered = [
+            routed
+            for routed in _routed_post_paths()
+            if not any(path == routed or path.startswith(routed) for path in POST_ROUTES)
+        ]
+        assert uncovered == [], f"add these routes to POST_ROUTES: {uncovered}"
 
     def test_a_tokened_post_to_an_unrouted_path_is_a_404(self, dash):
         status, detail = dash.post("/api/nope", {"select": "dash_exp"})
@@ -1030,7 +1139,9 @@ class TestTheSelectorIsVerifiedBeforeSpawning:
         status, detail = jobs_dash.post(route, {"select": "dash_exp"})
         assert status == 400
         assert "no longer resolves to dash_exp" in detail
-        assert "restart it" in detail
+        # UI-1: the remedy is a reload, not a restart — the cockpit can re-read
+        # its own selection now.
+        assert "press Reload configs" in detail
         assert jobs_dash.get("/api/jobs")[1]["jobs"] == []
 
     def test_the_name_fallback_cannot_launch_the_wrong_experiment(self, tmp_path, stub_cli):
@@ -1343,11 +1454,11 @@ class TestExperimentSourceRoute:
         assert status == 404
         assert "unknown experiment: nope" in detail
 
-    def test_a_yaml_that_vanished_since_boot_is_a_404_that_says_restart(self, jobs_dash, tmp_path):
+    def test_a_yaml_that_vanished_since_boot_is_a_404_that_says_reload(self, jobs_dash, tmp_path):
         (tmp_path / "experiments" / "dash_exp.yml").unlink()
         status, detail = jobs_dash.get("/api/experiment-source/dash_exp")
         assert status == 404
-        assert "restart" in detail
+        assert "press Reload configs" in detail
 
     def test_an_oversized_file_is_truncated_and_says_so(self, jobs_dash, tmp_path, monkeypatch):
         monkeypatch.setattr(dashboard_server, "_MAX_SOURCE_BYTES", 32)
@@ -1362,15 +1473,493 @@ class TestExperimentSourceRoute:
         assert status == 200
         assert "�" in reply["yaml_text"]
 
-    def test_there_is_no_save_endpoint(self, jobs_dash):
-        """§0.5(g): "edit" is read-only in this milestone."""
-        status, detail = jobs_dash.post(
+    def test_the_source_route_is_not_itself_a_save_endpoint(self, jobs_dash):
+        """The read route stays a read route — the editor's verbs are elsewhere.
+
+        UI-1 added save/create/delete under ``/api/experiment/``, deliberately
+        NOT as a POST to this path: a POST here would be routed by the same
+        prefix that reads a NAME out of the URL, and ``/api/experiment-source/
+        save`` would then be ambiguous with an experiment called ``save``.
+        """
+        status, _detail = jobs_dash.post(
             "/api/experiment-source/dash_exp", {"yaml_text": "name: hacked"}
         )
         assert status == 404
         assert (jobs_dash.server.project_root / "experiments" / "dash_exp.yml").read_text() != (
             "name: hacked"
         )
+
+    def test_it_carries_the_digest_the_editor_saves_against(self, jobs_dash, tmp_path):
+        """UI-1: the read hands out the concurrency token with the text."""
+        from abkit.tuning.config_files import text_digest
+
+        status, reply = jobs_dash.get("/api/experiment-source/dash_exp")
+        assert status == 200
+        assert reply["editable"] is True
+        assert reply["digest"] == text_digest(
+            (tmp_path / "experiments" / "dash_exp.yml").read_text(encoding="utf-8")
+        )
+
+    def test_a_truncated_file_is_handed_out_with_no_digest_at_all(
+        self, jobs_dash, tmp_path, monkeypatch
+    ):
+        """A digest over a PREFIX would let a save silently drop the tail."""
+        monkeypatch.setattr(dashboard_server, "_MAX_SOURCE_BYTES", 40)
+        status, reply = jobs_dash.get("/api/experiment-source/dash_exp")
+        assert status == 200
+        assert (reply["truncated"], reply["digest"], reply["editable"]) == (True, None, False)
+
+
+@pytest.fixture
+def editor_dash(tmp_path, stub_cli):
+    """A dashboard over a project that PASSES `abk run --steps validate`.
+
+    UI-1's routes validate what they write, so unlike `jobs_dash` this fixture
+    needs a coherent project: a metric library, and an assignment SQL that
+    selects the exposure contract.
+    """
+    path, experiment = write_project(tmp_path)
+    served = Dashboard(project_root=tmp_path, experiments=[(path, experiment)])
+    yield served
+    served.stop()
+
+
+def source_of(dash: Dashboard, name: str = "dash_exp") -> dict:
+    status, reply = dash.get(f"/api/experiment-source/{name}")
+    assert status == 200, reply
+    return reply
+
+
+class TestEditorRoutes:
+    """UI-1: save / create / delete / reload — the dashboard's CRUD seam.
+
+    The invariant M11 wrote as "never writes a config" was restated by this WP
+    as *computes no statistic and takes no pipeline lock* — which is what its
+    two gates always checked, and which these routes keep (`TestLauncherOnly`
+    exercises them). What they add is a write, and everything below is about
+    the write being safe: validated on both levels, archived byte-verbatim,
+    atomic, refused when something else is using the file, and followed by a
+    re-resolution so the page never shows a config that is no longer on disk.
+    """
+
+    def test_a_save_round_trips_the_text_verbatim_and_archives_the_previous(self, editor_dash):
+        root = editor_dash.server.project_root
+        path = root / "experiments" / "dash_exp.yml"
+        before = path.read_text(encoding="utf-8")
+        edited = before.replace("alpha: 0.05", "alpha: 0.01")
+
+        status, reply = editor_dash.post(
+            "/api/experiment/save",
+            {"select": "dash_exp", "text": edited, "digest": source_of(editor_dash)["digest"]},
+        )
+
+        assert status == 200, reply
+        # byte-for-byte what was posted — comments and layout included, which
+        # `abk explore`'s re-emitting Apply cannot promise.
+        assert path.read_text(encoding="utf-8") == edited
+        assert "# a comment the round-trip must preserve" in path.read_text(encoding="utf-8")
+        archived = root / reply["archived"]
+        assert archived.read_text(encoding="utf-8") == before
+        assert ".history" in reply["archived"]
+        assert reply["name"] == "dash_exp"
+        assert reply["renamed_from"] is None
+        assert reply["digest"] == source_of(editor_dash)["digest"]
+
+    def test_the_save_is_visible_to_every_other_route_without_a_restart(self, editor_dash):
+        """The reload is the point: M11's boot snapshot would still say 0.05."""
+        path = editor_dash.server.project_root / "experiments" / "dash_exp.yml"
+        edited = path.read_text(encoding="utf-8").replace("alpha: 0.05", "alpha: 0.01")
+        status, reply = editor_dash.post(
+            "/api/experiment/save", {"select": "dash_exp", "text": edited}
+        )
+        assert status == 200, reply
+
+        _path, served = editor_dash.server.experiment_entry("dash_exp")
+        assert served.alpha == 0.01
+        # …and the re-baked page carries the new list, so a browser refresh
+        # cannot paint the pre-save one.
+        assert editor_dash.get("/")[0] == 200
+        names = [entry["name"] for entry in baked_payload(editor_dash.get("/")[1])["experiments"]]
+        assert names == ["dash_exp"]
+
+    def test_invalid_yaml_writes_nothing(self, editor_dash):
+        path = editor_dash.server.project_root / "experiments" / "dash_exp.yml"
+        before = path.read_bytes()
+        status, detail = editor_dash.post(
+            "/api/experiment/save", {"select": "dash_exp", "text": "name: [unclosed"}
+        )
+        assert status == 400
+        assert "invalid YAML" in detail
+        assert path.read_bytes() == before
+        assert not list((path.parent / ".history").rglob("*.yml"))  # not even archived
+
+    def test_a_config_that_would_not_run_is_refused_and_the_message_says_why(self, editor_dash):
+        """Level 2 — the §8 matrix — decides, not just pydantic."""
+        path = editor_dash.server.project_root / "experiments" / "dash_exp.yml"
+        before = path.read_bytes()
+        broken = path.read_text(encoding="utf-8").replace("metric: revenue", "metric: nope")
+        status, detail = editor_dash.post(
+            "/api/experiment/save", {"select": "dash_exp", "text": broken}
+        )
+        assert status == 400
+        assert "no metric named 'nope'" in detail
+        assert path.read_bytes() == before
+
+    def test_force_saves_it_anyway_and_says_the_run_will_refuse_it(self, editor_dash):
+        """The editor has to be usable ON a project that does not lint yet."""
+        path = editor_dash.server.project_root / "experiments" / "dash_exp.yml"
+        broken = path.read_text(encoding="utf-8").replace("metric: revenue", "metric: nope")
+        status, reply = editor_dash.post(
+            "/api/experiment/save", {"select": "dash_exp", "text": broken, "force": True}
+        )
+        assert status == 200, reply
+        assert path.read_text(encoding="utf-8") == broken
+        assert any("SAVED WITH AN ERROR" in w for w in reply["warnings"])
+        assert any("no metric named 'nope'" in w for w in reply["warnings"])
+
+    def test_level_1_is_never_forceable(self, editor_dash):
+        """A file that is not an ExperimentConfig cannot be served as a row."""
+        path = editor_dash.server.project_root / "experiments" / "dash_exp.yml"
+        before = path.read_bytes()
+        status, detail = editor_dash.post(
+            "/api/experiment/save",
+            {"select": "dash_exp", "text": "name: dash_exp\nunit_key: user_id\n", "force": True},
+        )
+        assert status == 400
+        assert "invalid experiment config" in detail
+        assert path.read_bytes() == before
+
+    @pytest.mark.parametrize("force", ["true", 1, "yes"])
+    def test_force_must_be_a_real_boolean(self, editor_dash, force):
+        """A truthy STRING must not arm an override the client did not ask for."""
+        path = editor_dash.server.project_root / "experiments" / "dash_exp.yml"
+        status, detail = editor_dash.post(
+            "/api/experiment/save",
+            {"select": "dash_exp", "text": path.read_text(encoding="utf-8"), "force": force},
+        )
+        assert status == 400
+        assert "'force' must be true or false" in detail
+
+    def test_a_stale_digest_refuses_rather_than_clobbering(self, editor_dash):
+        """The `abk explore` Apply case: someone else wrote between open and save."""
+        path = editor_dash.server.project_root / "experiments" / "dash_exp.yml"
+        opened = source_of(editor_dash)
+        path.write_text(
+            path.read_text(encoding="utf-8").replace("alpha: 0.05", "alpha: 0.02"),
+            encoding="utf-8",
+        )
+        theirs = path.read_bytes()
+
+        status, detail = editor_dash.post(
+            "/api/experiment/save",
+            {
+                "select": "dash_exp",
+                "text": opened["yaml_text"].replace("alpha: 0.05", "alpha: 0.03"),
+                "digest": opened["digest"],
+            },
+        )
+
+        assert status == 400
+        assert "changed on disk" in detail
+        assert path.read_bytes() == theirs  # their write survives
+
+    def test_a_save_without_a_digest_is_allowed(self, editor_dash):
+        """Optimistic concurrency is opt-in per request, like the donor's."""
+        path = editor_dash.server.project_root / "experiments" / "dash_exp.yml"
+        edited = path.read_text(encoding="utf-8").replace("alpha: 0.05", "alpha: 0.04")
+        status, reply = editor_dash.post(
+            "/api/experiment/save", {"select": "dash_exp", "text": edited}
+        )
+        assert status == 200, reply
+
+    @pytest.mark.parametrize("route", ["/api/experiment/save", "/api/experiment/delete"])
+    def test_editing_an_experiment_with_a_running_job_is_refused(
+        self, editor_dash, monkeypatch, route
+    ):
+        """A live `abk run` already read the config; a live cockpit will overwrite it."""
+        monkeypatch.setenv("ABK_STUB", "hang")
+        status, reply = editor_dash.post("/api/run", {"select": "dash_exp"})
+        assert status == 200, reply
+        path = editor_dash.server.project_root / "experiments" / "dash_exp.yml"
+        before = path.read_bytes()
+
+        body: dict = {"select": "dash_exp"}
+        if route.endswith("/save"):
+            body["text"] = path.read_text(encoding="utf-8")
+        status, detail = editor_dash.post(route, body)
+
+        assert status == 400
+        assert "running 'run' job" in detail
+        assert path.read_bytes() == before
+        editor_dash.post(f"/api/job/{reply['job_id']}/stop", {})
+
+    def test_a_rename_is_allowed_and_says_the_history_does_not_follow(self, editor_dash):
+        path = editor_dash.server.project_root / "experiments" / "dash_exp.yml"
+        renamed = path.read_text(encoding="utf-8").replace("name: dash_exp", "name: dash_exp_v2")
+        status, reply = editor_dash.post(
+            "/api/experiment/save", {"select": "dash_exp", "text": renamed}
+        )
+        assert status == 200, reply
+        assert reply["renamed_from"] == "dash_exp"
+        assert reply["name"] == "dash_exp_v2"
+        assert any("persisted rows are still keyed by the OLD name" in w for w in reply["warnings"])
+        # the archive is keyed by the OLD name — it is the old config preserved
+        assert "dash_exp/" in reply["archived"].replace("\\", "/")
+        assert editor_dash.server.experiment_entry("dash_exp") is None
+        assert editor_dash.server.experiment_entry("dash_exp_v2") is not None
+
+    def test_an_unknown_experiment_is_a_400_because_the_name_is_in_the_body(self, editor_dash):
+        status, detail = editor_dash.post(
+            "/api/experiment/save", {"select": "nope", "text": "name: nope\n"}
+        )
+        assert status == 400
+        assert "unknown experiment" in detail
+
+    # -- create ---------------------------------------------------------------
+
+    def test_a_create_writes_a_new_file_named_after_the_config(self, editor_dash):
+        root = editor_dash.server.project_root
+        text = _VALID_EXPERIMENT_YAML.format(name="dash_new", alpha="0.05")
+        status, reply = editor_dash.post("/api/experiment/create", {"text": text})
+
+        assert status == 200, reply
+        assert reply["path"] == "experiments/dash_new.yml"
+        assert (root / "experiments" / "dash_new.yml").read_text(encoding="utf-8") == text
+        assert reply["archived"] is None  # nothing existed to preserve
+        assert reply["in_selection"] is True
+        assert {entry["name"] for entry in reply["experiments"]} == {"dash_exp", "dash_new"}
+        # …and it is immediately addressable, without a restart
+        assert editor_dash.get("/api/stats/dash_new")[0] == 200
+
+    def test_a_create_into_a_subfolder_lands_where_discovery_looks(self, editor_dash):
+        text = _VALID_EXPERIMENT_YAML.format(name="dash_nested", alpha="0.05")
+        status, reply = editor_dash.post(
+            "/api/experiment/create", {"text": text, "folder": "growth"}
+        )
+        assert status == 200, reply
+        assert reply["path"] == "experiments/growth/dash_nested.yml"
+        assert editor_dash.server.experiment_entry("dash_nested") is not None
+
+    @pytest.mark.parametrize("folder", ["../../etc", "/etc", ".hidden", "a/../../b"])
+    def test_a_folder_cannot_escape_the_experiments_directory(self, editor_dash, folder):
+        text = _VALID_EXPERIMENT_YAML.format(name="dash_escape", alpha="0.05")
+        status, detail = editor_dash.post(
+            "/api/experiment/create", {"text": text, "folder": folder}
+        )
+        assert status == 400, detail
+        assert not list(editor_dash.server.project_root.rglob("dash_escape.yml"))
+
+    def test_a_duplicate_name_is_refused_against_the_WHOLE_project(self, editor_dash):
+        """Not against the served selection: a duplicate corrupts the shared tables."""
+        text = _VALID_EXPERIMENT_YAML.format(name="dash_exp", alpha="0.05")
+        status, detail = editor_dash.post(
+            "/api/experiment/create", {"text": text, "folder": "growth"}
+        )
+        assert status == 400
+        assert "already used by experiments/dash_exp.yml" in detail
+
+    def test_a_name_the_metric_namespace_owns_is_refused(self, editor_dash):
+        """Experiments and metrics share ONE namespace (cli-and-dx §1)."""
+        text = _VALID_EXPERIMENT_YAML.format(name="revenue", alpha="0.05").replace(
+            "name: revenue", "name: revenue", 1
+        )
+        status, detail = editor_dash.post("/api/experiment/create", {"text": text})
+        assert status == 400
+        assert "share ONE namespace" in detail
+
+    def test_creating_over_an_existing_file_is_refused(self, editor_dash):
+        """Even when the name is free — the file is what would be lost."""
+        root = editor_dash.server.project_root
+        (root / "experiments" / "dash_other.yml").write_text("# hand-written\n", encoding="utf-8")
+        text = _VALID_EXPERIMENT_YAML.format(name="dash_other", alpha="0.05")
+        status, detail = editor_dash.post("/api/experiment/create", {"text": text})
+        assert status == 400
+        assert "already exists" in detail
+        assert (root / "experiments" / "dash_other.yml").read_text() == "# hand-written\n"
+
+    def test_a_create_outside_the_selection_says_so_instead_of_vanishing(self, tmp_path, stub_cli):
+        path, experiment = write_project(tmp_path)
+        served = Dashboard(project_root=tmp_path, experiments=[(path, experiment)])
+        served.server.selectors = ("dash_exp",)
+        try:
+            text = _VALID_EXPERIMENT_YAML.format(name="dash_hidden", alpha="0.05")
+            status, reply = served.post("/api/experiment/create", {"text": text})
+            assert status == 200, reply
+            assert reply["in_selection"] is False
+            assert any("outside this dashboard's selection" in w for w in reply["warnings"])
+            assert (tmp_path / "experiments" / "dash_hidden.yml").exists()
+        finally:
+            served.stop()
+
+    # -- delete ---------------------------------------------------------------
+
+    def test_a_delete_archives_the_file_then_removes_it(self, editor_dash):
+        root = editor_dash.server.project_root
+        path = root / "experiments" / "dash_exp.yml"
+        before = path.read_bytes()
+
+        status, reply = editor_dash.post("/api/experiment/delete", {"select": "dash_exp"})
+
+        assert status == 200, reply
+        assert not path.exists()
+        assert (root / reply["archived"]).read_bytes() == before
+        assert reply["archived"].endswith("-deleted.yml")
+        assert reply["experiments"] == []
+        assert editor_dash.server.experiment_entry("dash_exp") is None
+
+    def test_a_delete_says_the_persisted_rows_stay(self, editor_dash):
+        """The silent half of a destructive button, said out loud."""
+        _status, reply = editor_dash.post("/api/experiment/delete", {"select": "dash_exp"})
+        assert any("--orphaned-experiments" in w for w in reply["warnings"])
+
+    def test_a_stale_digest_refuses_the_delete_too(self, editor_dash):
+        path = editor_dash.server.project_root / "experiments" / "dash_exp.yml"
+        status, detail = editor_dash.post(
+            "/api/experiment/delete", {"select": "dash_exp", "digest": "0" * 64}
+        )
+        assert status == 400
+        assert "changed on disk" in detail
+        assert path.exists()
+
+    # -- reload ---------------------------------------------------------------
+
+    def test_reload_picks_up_an_edit_made_outside_the_cockpit(self, editor_dash):
+        """M11's named follow-up: an editor, a `git pull`, an explore Apply."""
+        root = editor_dash.server.project_root
+        (root / "experiments" / "dash_side.yml").write_text(
+            _VALID_EXPERIMENT_YAML.format(name="dash_side", alpha="0.05"), encoding="utf-8"
+        )
+        assert editor_dash.server.experiment_entry("dash_side") is None
+
+        status, reply = editor_dash.post("/api/reload", {})
+
+        assert status == 200, reply
+        assert {entry["name"] for entry in reply["experiments"]} == {"dash_exp", "dash_side"}
+        assert editor_dash.server.experiment_entry("dash_side") is not None
+
+    def test_a_broken_sibling_keeps_the_previous_selection_and_warns(self, editor_dash):
+        """A reload that fails must not turn a landed write into a 500."""
+        root = editor_dash.server.project_root
+        path = root / "experiments" / "dash_exp.yml"
+        (root / "experiments" / "dash_broken.yml").write_text("name: [", encoding="utf-8")
+        edited = path.read_text(encoding="utf-8").replace("alpha: 0.05", "alpha: 0.01")
+
+        status, reply = editor_dash.post(
+            "/api/experiment/save", {"select": "dash_exp", "text": edited}
+        )
+
+        assert status == 200, reply
+        assert path.read_text(encoding="utf-8") == edited  # the write landed
+        assert any("still shows the previous selection" in w for w in reply["warnings"])
+        assert editor_dash.server.experiment_entry("dash_exp") is not None
+
+    def test_the_selection_route_answers_the_boot_payloads_own_shape(self, editor_dash):
+        status, reply = editor_dash.get("/api/experiments")
+        assert status == 200
+        baked = baked_payload(editor_dash.get("/")[1])["experiments"]
+        assert reply["experiments"] == baked
+
+    def test_an_unknown_field_is_refused_on_every_editor_route(self, editor_dash):
+        for route, body in (
+            ("/api/experiment/save", {"select": "dash_exp", "text": "x", "metric": "revenue"}),
+            ("/api/experiment/create", {"text": "x", "select": "dash_exp"}),
+            ("/api/experiment/delete", {"select": "dash_exp", "text": "x"}),
+            ("/api/reload", {"select": "dash_exp"}),
+        ):
+            status, detail = editor_dash.post(route, body)
+            assert status == 400, (route, detail)
+            assert "unknown field" in detail, (route, detail)
+
+    def test_two_concurrent_saves_cannot_both_win(self, editor_dash):
+        """The digest check and the write are one critical section (UI-1 review).
+
+        Without the editor lock the whole two-level validation runs BETWEEN the
+        check and the `os.replace` (25–180 ms measured), so two tabs holding the
+        same digest both answered 200 and one edit existed nowhere — not on
+        disk, and not in the archive. `abk explore`'s Apply is serialized for
+        exactly this reason; this is the same discipline on the second seam.
+        """
+        path = editor_dash.server.project_root / "experiments" / "dash_exp.yml"
+        digest = source_of(editor_dash)["digest"]
+        base = path.read_text(encoding="utf-8")
+        replies: list = []
+
+        def save(alpha: str) -> None:
+            replies.append(
+                editor_dash.post(
+                    "/api/experiment/save",
+                    {
+                        "select": "dash_exp",
+                        "text": base.replace("alpha: 0.05", f"alpha: {alpha}"),
+                        "digest": digest,
+                    },
+                )
+            )
+
+        threads = [threading.Thread(target=save, args=(a,)) for a in ("0.01", "0.02")]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(30)
+
+        statuses = sorted(status for status, _ in replies)
+        assert statuses == [200, 400], replies
+        loser = next(detail for status, detail in replies if status == 400)
+        assert "changed on disk" in loser
+        # …and the winner's text is what is on disk, with the ORIGINAL archived
+        assert path.read_text(encoding="utf-8") != base
+        archives = list((path.parent / ".history" / "dash_exp").glob("*.yml"))
+        assert [a.read_text(encoding="utf-8") for a in archives] == [base]
+
+    def test_a_file_too_large_to_show_cannot_be_saved_back(self, editor_dash, monkeypatch):
+        """The client hides Save; the SERVER has to refuse it too.
+
+        `digest` is optional, so a request that skips the client would replace
+        the whole file with the prefix the page was shown.
+        """
+        monkeypatch.setattr(dashboard_server, "_MAX_SOURCE_BYTES", 200)
+        path = editor_dash.server.project_root / "experiments" / "dash_exp.yml"
+        before = path.read_bytes()
+        assert editor_dash.get("/api/experiment-source/dash_exp")[1]["editable"] is False
+
+        status, detail = editor_dash.post(
+            "/api/experiment/save", {"select": "dash_exp", "text": "name: dash_exp\n"}
+        )
+
+        assert status == 400
+        assert "larger than the 200-byte editing cap" in detail
+        assert path.read_bytes() == before
+
+    def test_a_filesystem_failure_is_not_reported_as_a_failed_spawn(self, editor_dash, monkeypatch):
+        """`do_POST`'s OSError branch says "could not start a subprocess" — true
+        of the job routes, a lie on a route that never spawns."""
+
+        def boom(*_a, **_k):
+            raise PermissionError(13, "Permission denied")
+
+        monkeypatch.setattr(dashboard_server.config_files, "atomic_write_bytes", boom)
+        path = editor_dash.server.project_root / "experiments" / "dash_exp.yml"
+        status, detail = editor_dash.post(
+            "/api/experiment/save",
+            {"select": "dash_exp", "text": path.read_text(encoding="utf-8")},
+        )
+        assert status == 500
+        assert "subprocess" not in detail
+        assert "could not write dash_exp's config" in detail
+
+    def test_an_oversized_document_is_refused_before_anything_is_touched(
+        self, editor_dash, monkeypatch
+    ):
+        monkeypatch.setattr(dashboard_server, "_MAX_SOURCE_BYTES", 64)
+        path = editor_dash.server.project_root / "experiments" / "dash_exp.yml"
+        before = path.read_bytes()
+        status, detail = editor_dash.post(
+            "/api/experiment/save",
+            {"select": "dash_exp", "text": path.read_text(encoding="utf-8")},
+        )
+        assert status == 400
+        assert "larger than 64 bytes" in detail
+        assert path.read_bytes() == before
 
 
 def baked_report_payload(page: str) -> dict:
@@ -1813,6 +2402,51 @@ class TestLauncherOnly:
         assert taken == []  # never acquired…
         assert probed  # …but the read-only probe behind `locked` did run
         assert row["locked"] is False
+
+    def test_the_editor_routes_take_no_lock_and_compute_nothing(self, editor_dash, monkeypatch):
+        """UI-1's restatement, executable: a config write is not a pipeline action.
+
+        The invariant M11 wrote as "computes a statistic, turns a knob, writes a
+        config or takes the pipeline lock" folded in a clause no gate ever
+        checked — and it is the clause this WP contradicts. What the gates
+        actually enforce is the other two, so they run over the routes that
+        write: no lock is acquired, and no verdict is computed (``evaluate`` is
+        the readout entry every row and report goes through; an editor route
+        that reached for it would be doing the pipeline's job).
+        """
+        taken: list[tuple] = []
+        monkeypatch.setattr(
+            InternalTablesManager, "acquire_lock", lambda self, *a, **k: taken.append(a) or True
+        )
+        monkeypatch.setattr(
+            InternalTablesManager, "release_lock", lambda self, *a, **k: taken.append(a)
+        )
+        evaluated: list[tuple] = []
+        original = overview_module.evaluate
+        monkeypatch.setattr(
+            overview_module, "evaluate", lambda *a, **k: evaluated.append(a) or original(*a, **k)
+        )
+
+        path = editor_dash.server.project_root / "experiments" / "dash_exp.yml"
+        text = path.read_text(encoding="utf-8")
+        assert (
+            editor_dash.post("/api/experiment/save", {"select": "dash_exp", "text": text})[0] == 200
+        )
+        assert (
+            editor_dash.post(
+                "/api/experiment/create",
+                {"text": _VALID_EXPERIMENT_YAML.format(name="dash_lockspy", alpha="0.05")},
+            )[0]
+            == 200
+        )
+        assert editor_dash.post("/api/reload", {})[0] == 200
+        assert editor_dash.post("/api/experiment/delete", {"select": "dash_lockspy"})[0] == 200
+
+        assert taken == []
+        assert evaluated == []
+        # …and the row route still computes its verdict, so the spy is live.
+        assert editor_dash.get("/api/stats/dash_exp", window="all")[0] == 200
+        assert evaluated
 
     def test_no_job_route_acquires_the_lock_either(self, jobs_dash, monkeypatch):
         """§0.5(d) through the job routes: only the spawned child locks anything.

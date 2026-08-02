@@ -57,13 +57,16 @@ import { makeBrandLockup } from '../shared/logo';
 import type {
   BootEntry,
   DashboardPayload,
+  DeleteReply,
   ExperimentRow,
   ExploreReply,
   JobSnapshot,
   JobSummary,
   JobsReply,
+  SelectionReply,
   SourceReply,
   SpawnReply,
+  WriteReply,
 } from './payload';
 
 // ----------------------------------------------------------------------------
@@ -87,6 +90,28 @@ const JOBS_POLL_IDLE_MS = 8000;
 const DRAWER_POLL_MS = 600;
 /** Log lines kept in the drawer's DOM (the server's own buffer is 5000). */
 const DRAWER_MAX_LINES = 2000;
+
+/** What the "New experiment" box opens with (UI-1).
+ *
+ * Every key here is one the validator REQUIRES, and nothing else: a template
+ * carrying optional knobs would teach them as mandatory, and a blank box would
+ * make the first refusal be about a shape rather than about a value. The
+ * window keys are the post-0.5.0 ones (`start_ts`/`horizon_ts`, the horizon
+ * EXCLUSIVE), so a copy of this never reintroduces the renamed pair.
+ */
+const NEW_EXPERIMENT_TEMPLATE = `name: my_experiment
+start_ts: 2026-01-01
+horizon_ts: 2026-01-15
+unit_key: user_id
+assignment:
+  query: SELECT user_id, variant, exposure_ts FROM assignments
+  variants: [control, treatment]
+  expected_split: {control: 0.5, treatment: 0.5}
+comparisons:
+  - metric: my_metric
+    is_main_metric: true
+    method: {name: t-test}
+`;
 
 function el(tag: string, cls?: string, text?: string): HTMLElement {
   const e = document.createElement(tag);
@@ -229,11 +254,16 @@ function render(payload: DashboardPayload, mount: HTMLElement): void {
     titleRow.appendChild(el('span', 'abk-badge-page', `profile: ${payload.profile}`));
   }
 
-  const metaBits = [
-    `${payload.experiments.length} experiment${payload.experiments.length === 1 ? '' : 's'}`,
-    `booted ${fmtTs(payload.generated_at)} UTC`,
-  ];
-  header.appendChild(el('div', 'abk-meta', metaBits.join(' · ')));
+  const meta = el('div', 'abk-meta');
+  header.appendChild(meta);
+  /** The header's count — re-read from `entries`, which a create/delete moves. */
+  function setCountMeta(): void {
+    const n = entries.length;
+    meta.textContent = [
+      `${n} experiment${n === 1 ? '' : 's'}`,
+      `booted ${fmtTs(payload.generated_at)} UTC`,
+    ].join(' · ');
+  }
 
   if (token_ === '') {
     // Without it every route answers 403, so say so once instead of painting N
@@ -245,6 +275,21 @@ function render(payload: DashboardPayload, mount: HTMLElement): void {
         'Reopen the URL `abk dashboard` printed.',
     );
     header.appendChild(warn);
+  }
+
+  /** A project-level notice (a reload that could not re-read the project).
+   *
+   * One line under the header rather than a per-row message: what it reports is
+   * about the SELECTION, and painting it on every row would say N times what
+   * happened once. Appended AFTER the token warning on purpose — that one is
+   * the first thing anyone should read on a page whose every request will 403,
+   * and it is `.abk-warning`'s first match. */
+  const banner = el('div', 'abk-warning abk-banner');
+  banner.style.display = 'none';
+  header.appendChild(banner);
+  function setBanner(text: string): void {
+    banner.textContent = text;
+    banner.style.display = text === '' ? 'none' : '';
   }
 
   // ---- controls (window preset, refresh, job chip) --------------------------
@@ -275,6 +320,21 @@ function render(payload: DashboardPayload, mount: HTMLElement): void {
   refreshBtn.addEventListener('click', () => fillRows(allNames()));
   controls.appendChild(refreshBtn);
 
+  // UI-1's two project-level affordances. `Refresh` above re-reads the
+  // WAREHOUSE for rows that already exist; `Reload configs` re-reads the YAML
+  // on DISK, which is what picks up an experiment added by an editor, a `git
+  // pull`, or an `abk explore` Apply — the M11 follow-up that used to require
+  // a restart.
+  const reloadBtn = button(
+    'abk-btn abk-btn-ghost',
+    'Reload configs',
+    're-read the project’s experiment YAML from disk',
+  );
+  controls.appendChild(reloadBtn);
+
+  const newBtn = button('abk-btn', 'New experiment', 'write a new experiment YAML');
+  controls.appendChild(newBtn);
+
   const fillChip = el('span', 'abk-chip abk-chip-fill', 'idle');
   controls.appendChild(fillChip);
 
@@ -287,27 +347,44 @@ function render(payload: DashboardPayload, mount: HTMLElement): void {
   const list = el('div', 'abk-list');
   root.appendChild(list);
 
-  if (payload.experiments.length === 0) {
-    list.appendChild(
-      el(
-        'div',
-        'abk-empty',
-        'No experiments in this dashboard’s selection — restart with `abk dashboard --select …`.',
-      ),
-    );
-  } else {
+  /** The served selection, as the boot payload spells it.
+   *
+   * A `let`, not `payload.experiments`, since UI-1: create / delete / rename /
+   * reload all change the SET, and every derived thing (the list, the fill
+   * queue, the header count) reads this one array so they cannot disagree
+   * about which experiments exist. */
+  let entries: BootEntry[] = payload.experiments;
+
+  /** (Re)build the row list from `entries`.
+   *
+   * Called at boot and again whenever the SET changes — never for a plain save,
+   * which keeps its row (and any open detail pane) and just re-reads its
+   * statistics. */
+  function renderList(): void {
+    list.innerHTML = '';
+    rows.clear();
+    if (entries.length === 0) {
+      list.appendChild(
+        el(
+          'div',
+          'abk-empty',
+          'No experiments in this dashboard’s selection — restart with `abk dashboard --select …`.',
+        ),
+      );
+      return;
+    }
     const groups = new Map<string, BootEntry[]>();
-    for (const entry of payload.experiments) {
+    for (const entry of entries) {
       const bucket = groups.get(entry.dir);
       if (bucket === undefined) groups.set(entry.dir, [entry]);
       else bucket.push(entry);
     }
     const grouped = groups.size > 1;
-    for (const [dir, entries] of groups) {
+    for (const [dir, group] of groups) {
       if (grouped) list.appendChild(el('div', 'abk-group', dir === '' ? '(top level)' : dir));
       const table = el('div', 'abk-table');
       table.appendChild(buildHeadRow());
-      for (const entry of entries) {
+      for (const entry of group) {
         const view = buildRow(entry);
         rows.set(entry.name, view);
         table.appendChild(view.root);
@@ -316,13 +393,121 @@ function render(payload: DashboardPayload, mount: HTMLElement): void {
     }
   }
 
+  // Both read `entries`, so they run after its declaration, not up in the
+  // header block where the element was created (a `let` is in TDZ until then).
+  setCountMeta();
+  renderList();
+
+  // ---- the create panel (UI-1) ----------------------------------------------
+
+  const createPanel = buildPane('');
+  createPanel.root.classList.add('abk-create');
+  createPanel.root.style.display = 'none';
+  root.insertBefore(createPanel.root, list);
+
+  const folderInput = document.createElement('input');
+  folderInput.className = 'abk-text';
+  folderInput.type = 'text';
+  folderInput.placeholder = 'subfolder under experiments/ (optional)';
+  createPanel.root.insertBefore(folderInput, createPanel.root.firstChild);
+
+  const createBtn = button('abk-btn abk-btn-run', 'Create', 'validate, then write a new file');
+  const cancelCreate = button('abk-btn abk-btn-ghost', 'Cancel');
+  createPanel.buttons.appendChild(createBtn);
+  createPanel.buttons.appendChild(cancelCreate);
+
+  function submitCreate(force: boolean): void {
+    createPanel.clearForce();
+    createBtn.disabled = true;
+    createPanel.say(force ? 'creating (forced)…' : 'creating…');
+    void postJson<WriteReply>('/api/experiment/create', {
+      text: createPanel.area.value,
+      folder: folderInput.value.trim() === '' ? null : folderInput.value.trim(),
+      force,
+    })
+      .then((reply) => {
+        createBtn.disabled = false;
+        createPanel.say([`created ${reply.path}`, ...reply.warnings].join('\n'), 'ok');
+        applyEntries(reply.experiments);
+        if (reply.in_selection) createPanel.root.style.display = 'none';
+      })
+      .catch((err: unknown) => {
+        createBtn.disabled = false;
+        const detail = message(err);
+        createPanel.say(detail, 'err');
+        if (isForceable(detail)) createPanel.offerForce(() => submitCreate(true));
+      });
+  }
+
+  createBtn.addEventListener('click', () => submitCreate(false));
+  cancelCreate.addEventListener('click', () => {
+    createPanel.root.style.display = 'none';
+  });
+  newBtn.addEventListener('click', () => {
+    if (createPanel.root.style.display === '') {
+      createPanel.root.style.display = 'none';
+      return;
+    }
+    createPanel.root.style.display = '';
+    createPanel.clearForce();
+    // Seeded rather than blank: the fields below are the ones the validator
+    // requires, so an operator who has never written one by hand gets a
+    // refusal about VALUES, not about a shape they have to guess.
+    if (createPanel.area.value.trim() === '') createPanel.area.value = NEW_EXPERIMENT_TEMPLATE;
+    createPanel.say('a new experiments/<name>.yml — the file is named after `name:`');
+    createPanel.area.focus();
+  });
+
+  reloadBtn.addEventListener('click', () => {
+    reloadBtn.disabled = true;
+    void postJson<SelectionReply>('/api/reload', {})
+      .then((reply) => {
+        reloadBtn.disabled = false;
+        applyEntries(reply.experiments);
+        if (reply.warnings.length > 0) setBanner(reply.warnings.join('\n'));
+        else setBanner('');
+      })
+      .catch((err: unknown) => {
+        reloadBtn.disabled = false;
+        setBanner(`reload failed: ${message(err)}`);
+      });
+  });
+
   const drawer = buildDrawer();
   root.appendChild(drawer.root);
 
   // ---- the stats fill pool --------------------------------------------------
 
   function allNames(): string[] {
-    return payload.experiments.map((entry) => entry.name);
+    return entries.map((entry) => entry.name);
+  }
+
+  /** Adopt a selection the server just re-resolved (UI-1).
+   *
+   * The list is rebuilt and re-filled only when something actually changed, so
+   * a no-op save leaves the row — and whatever the operator had open on it —
+   * alone. When anything did change the rows are rebuilt from the new metadata,
+   * because a row's name, tags, file path and per-comparison Run buttons all
+   * come off the boot entry its closure captured. */
+  function applyEntries(next: BootEntry[]): void {
+    const before = entriesKey(entries);
+    entries = next;
+    setCountMeta();
+    if (entriesKey(next) === before) return;
+    renderList();
+    fillRows(allNames());
+  }
+
+  /** A stable key for the WHOLE served selection, not just its names.
+   *
+   * Comparing NAME LISTS was wrong in both directions a metadata edit takes:
+   * adding a comparison, editing tags or moving a file changes what a row must
+   * draw while leaving every name identical — so `Reload configs`, the button
+   * documented as what you press after editing a YAML elsewhere, repainted
+   * nothing at all. Serializing the entries is exact, and it costs a JSON pass
+   * over a metadata list the page already holds. */
+  function entriesKey(list: BootEntry[]): string {
+    return JSON.stringify(list);
   }
 
   function setFillChip(): void {
@@ -657,6 +842,235 @@ function render(payload: DashboardPayload, mount: HTMLElement): void {
     fallback(link);
   }
 
+  // ---- the YAML editor (UI-1) -----------------------------------------------
+
+  /** A textarea + its buttons, styled and wired the same way everywhere.
+   *
+   * Shared by the per-row editor and the "New experiment" panel so the two
+   * cannot drift on what a validation failure looks like — which matters more
+   * than it sounds: the failure pane IS the feature. A save is refused for
+   * five different reasons (bad YAML, a config pydantic rejects, a §8 finding,
+   * a stale digest, a running job) and the operator can only act on the one
+   * that happened.
+   */
+  interface Pane {
+    root: HTMLElement;
+    area: HTMLTextAreaElement;
+    buttons: HTMLElement;
+    /** show a message; `kind` picks the status token, never a new hex */
+    say(text: string, kind?: 'info' | 'ok' | 'err'): void;
+    /** the level-2 override, shown only after the server asks for it */
+    offerForce(retry: () => void): void;
+    clearForce(): void;
+  }
+
+  function buildPane(placeholder: string): Pane {
+    const root = el('div', 'abk-editor');
+    const area = document.createElement('textarea');
+    area.className = 'abk-yaml';
+    area.spellcheck = false;
+    area.rows = 18;
+    area.placeholder = placeholder;
+    root.appendChild(area);
+    const msg = el('div', 'abk-editor-msg');
+    msg.style.display = 'none';
+    root.appendChild(msg);
+    const forceRow = el('div', 'abk-btn-row');
+    forceRow.style.display = 'none';
+    root.appendChild(forceRow);
+    const buttons = el('div', 'abk-btn-row');
+    root.appendChild(buttons);
+
+    function say(text: string, kind: 'info' | 'ok' | 'err' = 'info'): void {
+      // textContent, never innerHTML: this pane echoes server messages that
+      // quote the operator's own YAML back at them.
+      msg.textContent = text;
+      msg.className = `abk-editor-msg abk-editor-msg-${kind}`;
+      msg.style.display = text === '' ? 'none' : '';
+    }
+
+    function clearForce(): void {
+      forceRow.innerHTML = '';
+      forceRow.style.display = 'none';
+    }
+
+    function offerForce(retry: () => void): void {
+      clearForce();
+      const btn = button(
+        'abk-btn abk-btn-danger',
+        'Save anyway',
+        'write the file even though `abk run` will refuse it',
+      );
+      btn.addEventListener('click', () => {
+        clearForce();
+        retry();
+      });
+      forceRow.appendChild(btn);
+      forceRow.style.display = '';
+    }
+
+    return { root, area, buttons, say, offerForce, clearForce };
+  }
+
+  /** True when a refusal is a level-2 finding, i.e. one `force` can override.
+   *
+   * Keyed on the server's own sentence rather than a status code, because
+   * every refusal on this route is a 400 — and offering "Save anyway" for a
+   * YAML syntax error would be offering something the server will refuse
+   * again (level 1 is never forceable). */
+  function isForceable(detail: string): boolean {
+    return detail.includes('not valid for this project');
+  }
+
+  /** The per-row editor pane, toggled by the row's `Edit YAML` button. */
+  function buildEditor(entry: BootEntry, toggle: HTMLButtonElement): HTMLElement {
+    const pane = buildPane('');
+    pane.root.style.display = 'none';
+    /** The text this editor was opened with — the concurrency token AND the
+     * Revert target. `null` until a load succeeds, which is what keeps a Save
+     * from posting an empty textarea over a file that never loaded. */
+    let opened: SourceReply | null = null;
+    /** The experiment this pane addresses. A rename changes it, and the row's
+     * own `entry.name` is boot metadata that does not follow. */
+    let target = entry.name;
+
+    const saveBtn = button('abk-btn abk-btn-run', 'Save', 'validate, archive, then write');
+    const revertBtn = button('abk-btn abk-btn-ghost', 'Revert', 'discard the edits in this box');
+    const deleteBtn = button('abk-btn abk-btn-danger', 'Delete…', 'archive the YAML, then remove it');
+    pane.buttons.appendChild(saveBtn);
+    pane.buttons.appendChild(revertBtn);
+    pane.buttons.appendChild(deleteBtn);
+
+    const confirm = el('div', 'abk-confirm');
+    confirm.style.display = 'none';
+    confirm.appendChild(
+      el(
+        'div',
+        'abk-confirm-text',
+        'Delete archives the YAML under .history/ and removes the file. The ' +
+          'experiment’s persisted rows are NOT deleted — `abk clean ' +
+          '--orphaned-experiments` prunes those.',
+      ),
+    );
+    const confirmBtns = el('div', 'abk-btn-row');
+    const confirmYes = button('abk-btn abk-btn-danger', 'Delete anyway');
+    const confirmNo = button('abk-btn abk-btn-ghost', 'Cancel');
+    confirmBtns.appendChild(confirmYes);
+    confirmBtns.appendChild(confirmNo);
+    confirm.appendChild(confirmBtns);
+    pane.root.appendChild(confirm);
+
+    function load(): void {
+      pane.clearForce();
+      pane.say('loading…');
+      saveBtn.disabled = true;
+      void getJson<SourceReply>(`/api/experiment-source/${encodeURIComponent(target)}`)
+        .then((reply) => {
+          opened = reply;
+          pane.area.value = reply.yaml_text;
+          if (reply.editable) {
+            saveBtn.disabled = false;
+            pane.say(reply.path);
+          } else {
+            // A truncated read has no digest, and saving the prefix back would
+            // drop the tail — the one case where the editor refuses itself.
+            pane.say(
+              `${reply.path} is too large to edit here — it was truncated for display; ` +
+                'open it in your editor',
+              'err',
+            );
+          }
+        })
+        .catch((err: unknown) => {
+          opened = null;
+          pane.area.value = '';
+          pane.say(`could not read the YAML: ${message(err)}`, 'err');
+        });
+    }
+
+    function save(force: boolean): void {
+      if (opened === null) return;
+      pane.clearForce();
+      saveBtn.disabled = true;
+      pane.say(force ? 'saving (forced)…' : 'saving…');
+      const text = pane.area.value;
+      void postJson<WriteReply>('/api/experiment/save', {
+        select: target,
+        text,
+        digest: opened.digest,
+        force,
+      })
+        .then((reply) => {
+          saveBtn.disabled = false;
+          target = reply.name;
+          opened = {
+            name: reply.name,
+            path: reply.path,
+            yaml_text: text,
+            truncated: false,
+            digest: reply.digest,
+            editable: true,
+          };
+          pane.say(
+            [`saved ${reply.path} · previous archived at ${reply.archived ?? '—'}`, ...reply.warnings].join(
+              '\n',
+            ),
+            reply.warnings.length > 0 ? 'err' : 'ok',
+          );
+          applyEntries(reply.experiments);
+          // A rename rebuilt the list, so this row is gone; otherwise the row
+          // is still ours and its numbers may have moved (alpha, correction).
+          if (reply.renamed_from === null) refreshRow(reply.name);
+        })
+        .catch((err: unknown) => {
+          saveBtn.disabled = false;
+          const detail = message(err);
+          pane.say(detail, 'err');
+          if (isForceable(detail)) pane.offerForce(() => save(true));
+        });
+    }
+
+    saveBtn.addEventListener('click', () => save(false));
+    revertBtn.addEventListener('click', () => load());
+    deleteBtn.addEventListener('click', () => {
+      confirm.style.display = '';
+    });
+    confirmNo.addEventListener('click', () => {
+      confirm.style.display = 'none';
+    });
+    confirmYes.addEventListener('click', () => {
+      confirm.style.display = 'none';
+      pane.say('deleting…');
+      void postJson<DeleteReply>('/api/experiment/delete', {
+        select: target,
+        digest: opened?.digest ?? null,
+      })
+        .then((reply) => {
+          // The page-level banner, NOT the row's own message line: the very
+          // next statement removes that row, so the archive path — the only
+          // pointer to the recoverable copy — would be destroyed before it
+          // ever painted. The server's warnings ride along for the same
+          // reason (they say the persisted rows are still there).
+          setBanner([`deleted ${reply.path} — archived at ${reply.archived}`, ...reply.warnings].join('\n'));
+          applyEntries(reply.experiments);
+        })
+        .catch((err: unknown) => {
+          pane.say(`delete refused: ${message(err)}`, 'err');
+        });
+    });
+
+    toggle.addEventListener('click', () => {
+      if (pane.root.style.display === '') {
+        pane.root.style.display = 'none';
+        return;
+      }
+      pane.root.style.display = '';
+      load();
+    });
+
+    return pane.root;
+  }
+
   // ---- one row --------------------------------------------------------------
 
   function buildHeadRow(): HTMLElement {
@@ -919,7 +1333,7 @@ function render(payload: DashboardPayload, mount: HTMLElement): void {
       );
       maintRow.appendChild(cleanBtn);
 
-      const sourceBtn = button('abk-btn abk-btn-ghost', 'Show YAML', entry.file);
+      const sourceBtn = button('abk-btn abk-btn-ghost', 'Edit YAML', entry.file);
       maintRow.appendChild(sourceBtn);
       maintenance.appendChild(maintRow);
 
@@ -952,28 +1366,11 @@ function render(payload: DashboardPayload, mount: HTMLElement): void {
       maintenance.appendChild(confirm);
       detail.appendChild(maintenance);
 
-      // The read-only "open in your editor" affordance: the YAML as it is on
-      // disk. There is no save endpoint in this milestone (§0.5(g)).
-      const source = el('pre', 'abk-source');
-      source.style.display = 'none';
-      detail.appendChild(source);
-      sourceBtn.addEventListener('click', () => {
-        if (source.style.display === '') {
-          source.style.display = 'none';
-          return;
-        }
-        source.style.display = '';
-        source.textContent = 'loading…';
-        void getJson<SourceReply>(`/api/experiment-source/${encodeURIComponent(entry.name)}`)
-          .then((reply) => {
-            source.textContent = reply.truncated
-              ? `${reply.yaml_text}\n… truncated — open ${reply.path} in your editor`
-              : `${reply.path}\n\n${reply.yaml_text}`;
-          })
-          .catch((err: unknown) => {
-            source.textContent = `could not read the YAML: ${message(err)}`;
-          });
-      });
+      // The YAML editor (UI-1). The text is round-tripped verbatim — this is
+      // not `abk explore`'s Apply, which re-emits a parsed document and loses
+      // comments — and every save is validated, archived and atomic
+      // server-side (abkit/tuning/config_files.py).
+      detail.appendChild(buildEditor(entry, sourceBtn));
     }
 
     disclose.addEventListener('click', () => {
@@ -1325,9 +1722,22 @@ function injectStyle(): void {
 .${ROOT_CLASS} .abk-pair-effect{color:var(--abk-ink);}
 .${ROOT_CLASS} .abk-facts{font:10.5px var(--abk-mono);color:var(--abk-muted);margin-top:6px;}
 .${ROOT_CLASS} .abk-btn-row{display:flex;flex-wrap:wrap;gap:6px;}
-.${ROOT_CLASS} .abk-source{font:10.5px var(--abk-mono);background:var(--abk-page);
-  border:1px solid var(--abk-border);border-radius:8px;padding:8px;margin-top:8px;
-  max-height:320px;overflow:auto;white-space:pre-wrap;}
+/* the YAML editor (UI-1) ---------------------------------------------------- */
+.${ROOT_CLASS} .abk-editor{margin-top:8px;display:flex;flex-direction:column;gap:8px;}
+.${ROOT_CLASS} .abk-create{margin:0 0 12px;padding:10px 12px;background:var(--abk-card);
+  border:1px solid var(--abk-border);border-radius:11px;}
+.${ROOT_CLASS} .abk-yaml{width:100%;box-sizing:border-box;font:11px var(--abk-mono);
+  line-height:1.55;padding:9px 10px;border:1px solid var(--abk-border);border-radius:9px;
+  background:var(--abk-page);color:var(--abk-ink);resize:vertical;min-height:180px;
+  white-space:pre;overflow-wrap:normal;overflow:auto;}
+.${ROOT_CLASS} .abk-yaml:focus{outline:2px solid var(--abk-explore-accent);outline-offset:1px;}
+.${ROOT_CLASS} .abk-text{width:100%;box-sizing:border-box;font:11px var(--abk-mono);
+  padding:5px 8px;border:1px solid var(--abk-border);border-radius:8px;
+  background:var(--abk-page);color:var(--abk-ink);}
+.${ROOT_CLASS} .abk-editor-msg{font:11px var(--abk-mono);line-height:1.5;white-space:pre-wrap;
+  overflow-wrap:anywhere;color:var(--abk-ink-2);}
+.${ROOT_CLASS} .abk-editor-msg-ok{color:var(--abk-good-text);}
+.${ROOT_CLASS} .abk-editor-msg-err{color:var(--abk-st-critical);}
 .${ROOT_CLASS} .abk-confirm{margin-top:8px;border:1px solid var(--abk-st-warn);border-radius:9px;
   padding:8px 10px;background:color-mix(in srgb, var(--abk-st-warn) 10%, transparent);}
 .${ROOT_CLASS} .abk-confirm-text{font-size:11.5px;line-height:1.5;margin-bottom:8px;}
