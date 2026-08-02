@@ -14,6 +14,33 @@ number change).
 ## [Unreleased]
 
 ### Added
+- **NTF-2 — the urgent half: a failed run and a broken split now reach the
+  on-call channel.** `--notify` shipped able to say only one thing ("here is a
+  verdict"), which is the half an operator is least likely to be woken for.
+  - **A pipeline error is a signal with no readout behind it.** A `failed`
+    experiment now sends a notice carrying the reason. Every statistical field
+    stays empty on purpose and every renderer omits its statistics block —
+    a crashed run rendered as "Effect: N/A · Flat" would be a claim about the
+    experiment, when the truth is that abkit never got to look at it. This path
+    is deliberately **not** gated on persisted rows the way the readout path is:
+    the absence of a result is exactly what it reports. A notified failure still
+    exits non-zero.
+  - **SRM is the same message, re-classified — never a second one.** When the
+    sample-ratio gate fails, the readout abkit already built answers to both the
+    `readout` and the `srm` kind, so `on: [srm, error]` is a genuine on-call
+    channel (broken splits and failures, no routine readouts) while a channel
+    accepting both kinds still receives exactly one message. Nothing is
+    re-evaluated to produce it.
+  - **`ReadoutData` learned `kind` + `notice`** rather than growing a second
+    payload type, so all five channels support notices through the transport
+    they already have; `BaseChannel.send_notice` is the seam a channel overrides
+    when its rich rendering assumes a verdict (only `email`'s HTML card does).
+    It refuses a verdict payload loudly rather than rendering one blank.
+  - **No sixth brand colour was invented.** The five tokens are *verdict*
+    tokens and a notice is not a verdict, so all notice kinds reuse the `--srm`
+    token — the one that already means "no trustworthy result here" — and the
+    word plus emoji carry the distinction.
+  - Zero statistical numbers moved (no `ALGORITHM_VERSION` bump).
 - **NTF-1 — `abk run --notify`: the readout finally leaves the terminal.**
   `abkit/notify/` has shipped five channels since `0.1.0`, and the only thing
   that ever called them was `abk test-report`, which sends a **synthetic**

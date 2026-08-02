@@ -34,6 +34,12 @@ from zoneinfo import ZoneInfo
 VerdictKind = str  # "WIN" | "LOSE" | "FLAT" | "INCONCLUSIVE"
 VERDICT_KINDS: tuple[str, ...] = ("WIN", "LOSE", "FLAT", "INCONCLUSIVE")
 
+#: Signal kinds that are NOT a verdict — there is no effect, no CI, no p-value,
+#: because nothing was measured (m12 NTF-2). A payload carrying one of these in
+#: ``ReadoutData.kind`` renders as a notice: the sentence in ``notice``, the
+#: brand's SRM token, and none of the statistics scaffolding.
+NOTICE_KINDS: tuple[str, ...] = ("error", "calibration_red", "stale")
+
 
 @dataclass
 class ReadoutData:
@@ -71,6 +77,16 @@ class ReadoutData:
     dashboard_url: str | None = None
     links: dict[str, str] = field(default_factory=dict)
     help_url: str | None = None
+    #: The signal this payload carries (m12). ``"readout"`` — the default and
+    #: the only shape that existed before NTF-2 — is a verdict with numbers
+    #: behind it. A :data:`NOTICE_KINDS` value means nothing was measured, and
+    #: every channel renders ``notice`` INSTEAD of the effect/CI/p-value block:
+    #: a failed run showing "Effect: N/A · Flat" would be a statement about the
+    #: experiment where the truth is that abkit never got to look at it.
+    kind: str = "readout"
+    #: The human sentence a notice carries (the pipeline error, the stale
+    #: warning). Ignored for ``kind="readout"``.
+    notice: str | None = None
 
 
 def _finite(value: Any) -> bool:
@@ -109,6 +125,19 @@ class BaseChannel(ABC):
         "SRM": "\U0001f7e3",  # purple circle
     }
 
+    # The presentation of a NON-verdict (m12 NTF-2). The brand's five tokens are
+    # VERDICT tokens (docs/design/brand-tokens.md) and a notice is not a verdict,
+    # so no sixth hex is invented here: every notice reuses `--srm` #B23A6B, the
+    # one token that already means "there is no trustworthy result — look at
+    # this". The word and emoji carry the distinction; a designer adding a real
+    # error token later changes this map and nothing else.
+    _NOTICE_PRESENTATION = {
+        "error": ("Pipeline error", "\U0001f6d1"),  # stop sign
+        "calibration_red": ("Calibration failed", "\U0001f9ea"),  # test tube
+        "stale": ("Data is stale", "\U000023f3"),  # hourglass
+    }
+    _NOTICE_COLOR = "#B23A6B"
+
     @abstractmethod
     def send(self, readout: ReadoutData, template: str | None = None) -> bool:
         """Deliver *readout* to this channel.
@@ -119,23 +148,39 @@ class BaseChannel(ABC):
 
     # ---- status presentation ------------------------------------------------
     @staticmethod
+    def is_notice(readout: ReadoutData) -> bool:
+        """Does this payload carry a non-verdict signal (m12 NTF-2)?"""
+        return readout.kind in NOTICE_KINDS
+
+    @staticmethod
     def verdict_kind(readout: ReadoutData) -> str:
         """The presentation kind: ``SRM`` when the gate failed, else the verdict.
 
         A failed SRM withholds the result, so it wins over any WIN/LOSE/FLAT.
+        A notice has no verdict at all and answers with its own kind — the
+        fallback below must never claim FLAT ("no detectable effect") for a run
+        that never produced an effect to detect.
         """
+        if BaseChannel.is_notice(readout):
+            return readout.kind
         if readout.srm_flag:
             return "SRM"
         v = (readout.verdict or "").upper()
         return v if v in BaseChannel._VERDICT_COLORS else "FLAT"
 
     def verdict_color(self, readout: ReadoutData) -> str:
+        if self.is_notice(readout):
+            return self._NOTICE_COLOR
         return self._VERDICT_COLORS[self.verdict_kind(readout)]
 
     def verdict_word(self, readout: ReadoutData) -> str:
+        if self.is_notice(readout):
+            return self._NOTICE_PRESENTATION[readout.kind][0]
         return self._VERDICT_WORDS[self.verdict_kind(readout)]
 
     def verdict_emoji(self, readout: ReadoutData) -> str:
+        if self.is_notice(readout):
+            return self._NOTICE_PRESENTATION[readout.kind][1]
         return self._VERDICT_EMOJI[self.verdict_kind(readout)]
 
     # ---- shared display context --------------------------------------------
@@ -184,6 +229,12 @@ class BaseChannel(ABC):
 
         help_line = f"{READOUT_GUIDE_LABEL}: {help_url}\n" if help_url else ""
 
+        notice_display = readout.notice or ""
+        notice_line = f"{notice_display}\n" if notice_display else ""
+        # the collapsing form the notice template uses — a bare "Observed:" with
+        # nothing after it is worse than no line
+        timestamp_line = f"Observed: {ts_str}\n" if ts_str else ""
+
         mentions_str = self.format_mentions(readout.mentions)
         mentions_line = f"\n{mentions_str}" if mentions_str else ""
 
@@ -223,6 +274,10 @@ class BaseChannel(ABC):
             "project_name_prefix": project_name_prefix,
             "mentions": mentions_str,
             "mentions_line": mentions_line,
+            "kind": readout.kind,
+            "notice": notice_display,
+            "notice_line": notice_line,
+            "timestamp_line": timestamp_line,
         }
 
     def get_default_template(self) -> str:
@@ -241,19 +296,44 @@ class BaseChannel(ABC):
             "{mentions_line}"
         )
 
-    def format_message(self, readout: ReadoutData, template: str | None = None) -> str:
-        """Render *template* (or the default) with the shared context.
+    def get_notice_template(self) -> str:
+        """The body for a non-verdict signal (m12 NTF-2).
 
-        On a bad placeholder / format spec, falls back to the default template
-        with an equality guard so it never recurses forever.
+        Deliberately NOT the readout template with blanks: every statistics
+        placeholder is gone, because there is no effect, CI, p-value or arm
+        pair to report — rendering them as ``N/A`` would suggest the numbers
+        were looked for and not found.
+        """
+        return (
+            "{verdict_emoji} {project_name_prefix}{experiment}: {verdict_word}\n"
+            "{notice_line}"
+            "{description_line}"
+            "{timestamp_line}"
+            "{dashboard_line}"
+            "{mentions_line}"
+        )
+
+    def default_template_for(self, readout: ReadoutData) -> str:
+        """The built-in template this payload renders with when none is given."""
+        return (
+            self.get_notice_template() if self.is_notice(readout) else self.get_default_template()
+        )
+
+    def format_message(self, readout: ReadoutData, template: str | None = None) -> str:
+        """Render *template* (or this payload's built-in one) with the shared context.
+
+        On a bad placeholder / format spec, falls back to the built-in template
+        with an equality guard so it never recurses forever. The fallback is
+        chosen by KIND, so a broken custom template on a pipeline error degrades
+        to the notice body, never to a readout body full of ``N/A``.
         """
         if template is None:
-            template = self.get_default_template()
+            template = self.default_template_for(readout)
         ctx = self.build_context(readout)
         try:
             return template.format(**ctx)
         except (KeyError, ValueError, TypeError):
-            fallback = self.get_default_template()
+            fallback = self.default_template_for(readout)
             if template == fallback:
                 raise
             return self.format_message(readout, fallback)
@@ -261,10 +341,39 @@ class BaseChannel(ABC):
     def format_title(self, readout: ReadoutData) -> str:
         """Short one-line title for channels with a separate title field."""
         ctx = self.build_context(readout)
+        if self.is_notice(readout):
+            # no metric: a pipeline error belongs to the experiment, not to one
+            # of its comparisons
+            return (
+                f"{ctx['verdict_emoji']} {ctx['project_name_prefix']}"
+                f"{readout.experiment}: {ctx['verdict_word']}"
+            )
         return (
             f"{ctx['verdict_emoji']} {ctx['project_name_prefix']}"
             f"{readout.experiment} · {readout.metric}: {ctx['verdict_word']}"
         )
+
+    def send_notice(self, notice: ReadoutData) -> bool:
+        """Deliver a non-verdict signal (m12 NTF-2).
+
+        The default routes through :meth:`send`, so every channel supports
+        notices the moment its transport works — the "only ``send`` is
+        abstract" contract is unchanged. A channel whose rich rendering assumes
+        a verdict (see ``email.py``'s HTML card) overrides its own renderer, not
+        this method.
+
+        The kind is read off ``notice.kind`` rather than taken as a parameter:
+        ``verdict_color()`` is called deep inside each channel's payload
+        builder, where no argument of this method could reach it, so a separate
+        kind argument would be a second source of truth free to disagree with
+        the payload.
+        """
+        if not self.is_notice(notice):
+            raise ValueError(
+                f"send_notice expects one of {NOTICE_KINDS}, got kind={notice.kind!r} "
+                "— a verdict payload goes through send()"
+            )
+        return self.send(notice)
 
     def format_mentions(self, mentions: list[str]) -> str:
         """Default: ``@name`` space-joined. Channels override for native syntax."""

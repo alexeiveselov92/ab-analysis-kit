@@ -230,11 +230,15 @@ fails the run (the one recorded exception to the exit-non-zero rule).
 
 **`--notify` is best-effort on the same terms**, and it is the only other flag
 that reads rows back after the pipeline (both share one connection). It fires
-for **completed** experiments only — a locked, skipped or failed run produced no
-new look — and it sends the verdicts `readout.evaluate()` returns, one message
-per verdict, to the channels an experiment's `notify:` block selects (or to all
-configured channels when it has none). Every completed run sends: verdict-change
-dedup is the next NTF work package. See the
+on a **completed** experiment (the verdicts `readout.evaluate()` returns, one
+message per verdict) and on a **failed** one (an error notice carrying the
+reason, with no statistics block — nothing was measured). `locked` and `skipped`
+stay silent. Messages go to the channels an experiment's `notify:` block selects,
+or to all configured channels when it has none. A **failed SRM gate** does not
+add a message: the readout already built answers to the `srm` kind as well, so an
+`on: [srm, error]` channel hears about a broken split without receiving routine
+readouts. Every completed run sends: verdict-change dedup is the next NTF work
+package. See the
 [notification-channels guide](../guides/notification-channels.md).
 
 The effective per-comparison alphas (the inspectable two-tier Bonferroni scheme —

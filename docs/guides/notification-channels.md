@@ -132,7 +132,9 @@ into a scheduler:
   is one yellow line — the run's exit code is decided by the pipeline alone.
 - **An experiment nobody computed sends nothing.** No results yet (or only rows
   for arm names you have since renamed) is silence, not an "INCONCLUSIVE"
-  message. So is a run that failed, was locked, or had nothing to do.
+  message. A run that was **locked** or had nothing to do is silent too.
+- **A run that FAILED sends an error notice** instead of a readout — see
+  [Urgent signals](#urgent-signals-srm-and-pipeline-errors).
 - **Every completed run sends.** Verdict-change dedup — send on a flip, stay
   quiet on an unchanged verdict — is the next piece of this milestone; until it
   lands, a run every hour is a message every hour. Point `--notify` at the runs
@@ -174,6 +176,27 @@ channel's to be delivered. The experiment narrows what it sends; the channel
 narrows what it accepts; neither re-opens what the other closed.
 
 The kinds are `readout`, `verdict_change`, `srm`, `calibration_red`, `stale` and
-`error`. **Only `readout` fires today** — the rest are accepted now so that a
-filter you write today keeps its meaning (rather than silently widening) as the
-remaining signals ship.
+`error`. **`readout`, `srm` and `error` fire today**; `verdict_change`,
+`calibration_red` and `stale` are accepted now so that a filter you write today
+keeps its meaning (rather than silently widening) as those signals ship.
+
+## Urgent signals: SRM and pipeline errors
+
+The example above — `on: [srm, error]` — is the on-call channel, and it is only
+useful if those two things actually reach it:
+
+- **`srm`** is not a separate message. When an experiment's sample-ratio gate
+  fails, the readout abkit already built *is* the urgent signal, so the same
+  message answers to both `readout` and `srm`. A channel that accepts either
+  gets it (exactly once); a routine channel keeps receiving its readouts; and a
+  channel scoped to `on: [srm]` stays quiet until a split actually breaks.
+- **`error`** is a run that failed. There is no verdict, effect, CI or p-value
+  behind it — the pipeline never got that far — so the message carries the
+  reason instead of a statistics block. Nothing renders as `N/A`, and a crashed
+  run is never shown as "Flat".
+
+A failing run still exits non-zero: notifying about a failure never converts it
+into a success.
+
+Both signals obey the same intersection rule as everything else — an experiment
+whose `notify.on` omits `error` will not report its own failures, on any channel.

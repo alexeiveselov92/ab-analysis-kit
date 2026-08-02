@@ -178,9 +178,12 @@ class TestFailSoft:
         assert result.exit_code == 0, result.output
         assert "Notify skipped: readout exploded" in result.output
 
-    def test_a_failed_pipeline_notifies_nothing(self, scaffolded, monkeypatch):
-        """NTF-1's kind is 'a new look landed'. A failed run produced none — and
-        the run must still exit non-zero."""
+    def test_a_failed_pipeline_sends_an_error_notice_and_still_exits_nonzero(
+        self, scaffolded, monkeypatch
+    ):
+        """NTF-2: the failure IS the signal. No readout exists, so the payload
+        carries `kind='error'` and the reason — and notifying about it must not
+        rescue the exit code."""
         configure_channels(team={"type": "spy", "label": "team"})
         orig = scaffolded.execute_query
 
@@ -194,7 +197,13 @@ class TestFailSoft:
         result = runner.invoke(cli, ["run", "--select", EXP, "--notify"])
 
         assert result.exit_code != 0
-        assert SpyChannel.sent == []
+        assert len(SpyChannel.sent) == 1
+        notice = SpyChannel.sent[0]
+        assert notice.kind == "error"
+        assert "warehouse down" in (notice.notice or "")
+        # a notice is not a verdict: nothing here may claim a measurement
+        assert notice.verdict == ""
+        assert (notice.effect, notice.pvalue, notice.alpha) == (None, None, None)
 
 
 class TestRouting:
@@ -221,13 +230,31 @@ class TestRouting:
         assert result.exit_code == 0, result.output
         assert SpyChannel.built == ["b"]
 
-    def test_a_channel_scoped_to_urgent_kinds_gets_nothing_yet(self, scaffolded):
+    def test_a_channel_scoped_to_urgent_kinds_skips_a_routine_readout(self, scaffolded):
         configure_channels(oncall={"type": "spy", "label": "oncall", "on": ["srm", "error"]})
 
         result = runner.invoke(cli, ["run", "--select", EXP, "--notify"])
 
         assert result.exit_code == 0, result.output
         assert SpyChannel.sent == []
+
+    def test_the_same_urgent_channel_does_receive_a_failure(self, scaffolded, monkeypatch):
+        """The other half of the promise: `on: [srm, error]` is an on-call
+        channel, not a muted one."""
+        configure_channels(oncall={"type": "spy", "label": "oncall", "on": ["srm", "error"]})
+        orig = scaffolded.execute_query
+
+        def explode(query, params=None):
+            if "example_ab_assignments" in query:
+                raise RuntimeError("warehouse down")
+            return orig(query, params)
+
+        monkeypatch.setattr(scaffolded, "execute_query", explode)
+
+        result = runner.invoke(cli, ["run", "--select", EXP, "--notify"])
+
+        assert result.exit_code != 0
+        assert [r.kind for r in SpyChannel.sent] == ["error"]
 
     def test_mentions_reach_the_payload(self, scaffolded):
         configure_channels(team={"type": "spy", "label": "team"})

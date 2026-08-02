@@ -30,17 +30,17 @@ wire the rest.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from datetime import datetime
 from itertools import combinations
 from typing import Any
 
 from abkit.config.experiment_config import ComparisonConfig, ExperimentConfig
 from abkit.config.project_config import ProjectConfig
-from abkit.config.signals import SignalKind
 from abkit.database.internal_tables import InternalTablesManager
 from abkit.notify.base import ReadoutData, describe_error
 from abkit.notify.branding import READOUT_GUIDE_URL
 from abkit.pipeline.readout import ExperimentReadout, PairVerdict, evaluate
-from abkit.utils.datetime_utils import to_naive_utc
+from abkit.utils.datetime_utils import now_utc_naive, to_naive_utc
 
 #: What a caller passes to receive the yellow one-liners this module produces.
 #: ``run.py`` hands it ``click.echo``-with-style; tests hand it a list append.
@@ -245,6 +245,75 @@ def readout_data_from_verdict(
     )
 
 
+def signal_kinds_for(payload: ReadoutData) -> tuple[str, ...]:
+    """Every kind this ONE payload legitimately answers to (m12 NTF-2).
+
+    A readout whose SRM gate failed is both the routine `readout` and the
+    urgent `srm` — the same message, re-CLASSIFIED, never re-evaluated. So an
+    on-call channel scoped to `on: [srm, error]` hears about a broken split
+    while a routine channel keeps getting its readouts, and a channel that
+    accepts both still gets exactly ONE message (delivery is decided by "does
+    ANY of these kinds pass", not per kind).
+    """
+    if payload.kind != "readout":
+        return (payload.kind,)
+    return ("readout", "srm") if payload.srm_flag else ("readout",)
+
+
+def _deliver(
+    *,
+    experiment: ExperimentConfig,
+    payloads: Sequence[ReadoutData],
+    channels: Sequence[tuple[str, Any]],
+    echo: Echo,
+) -> int:
+    """Push every payload through every channel that accepts its kind.
+
+    The one place a channel is constructed and a send is attempted, shared by
+    the verdict and notice paths so the fail-soft discipline cannot drift
+    between them.
+    """
+    from abkit.notify.factory import ChannelFactory
+
+    experiment_on = experiment.notify.on if experiment.notify is not None else None
+    sent = 0
+    for name, cfg in channels:
+        channel_on = getattr(cfg, "on", None)
+        accepted = [
+            payload
+            for payload in payloads
+            if any(
+                passes_filter(kind, channel_on, experiment_on) for kind in signal_kinds_for(payload)
+            )
+        ]
+        if not accepted:
+            continue
+        try:
+            channel = ChannelFactory.create_from_config(cfg.model_dump())
+        except Exception as exc:
+            echo(f"{experiment.name}: notify channel '{name}' skipped — {exc}")
+            continue
+        for payload in accepted:
+            try:
+                delivered = (
+                    channel.send_notice(payload)
+                    if channel.is_notice(payload)
+                    else channel.send(payload)
+                )
+                if delivered:
+                    sent += 1
+                else:
+                    echo(f"{experiment.name}: notify channel '{name}' reported a failed send")
+            except Exception as exc:  # a channel that raises despite the bool contract
+                # `describe_error`, never the raw exception: `requests` embeds
+                # the full URL in its exception strings, and a webhook/bot URL
+                # carries the credential in its PATH — this line goes to stdout
+                # and into CI logs (the discipline `webhook.py`/`telegram.py`
+                # already follow for their own handled failures).
+                echo(f"{experiment.name}: notify channel '{name}' failed — {describe_error(exc)}")
+    return sent
+
+
 def dispatch_experiment_signals(
     *,
     experiment: ExperimentConfig,
@@ -260,11 +329,6 @@ def dispatch_experiment_signals(
     raises: a channel that cannot even be CONSTRUCTED (a rotated secret, an
     unknown type) is one yellow line, and the remaining channels still go.
     """
-    from abkit.notify.factory import ChannelFactory
-
-    kind: SignalKind = "readout"
-    experiment_on = experiment.notify.on if experiment.notify is not None else None
-
     channels, warnings = resolve_channels(experiment, channels_cfg)
     for warning in warnings:
         echo(warning)
@@ -279,28 +343,57 @@ def dispatch_experiment_signals(
     ]
     if not payloads:
         return 0
+    return _deliver(experiment=experiment, payloads=payloads, channels=channels, echo=echo)
 
-    sent = 0
-    for name, cfg in channels:
-        channel_on = getattr(cfg, "on", None)
-        if not passes_filter(kind, channel_on, experiment_on):
-            continue
-        try:
-            channel = ChannelFactory.create_from_config(cfg.model_dump())
-        except Exception as exc:
-            echo(f"{experiment.name}: notify channel '{name}' skipped — {exc}")
-            continue
-        for payload in payloads:
-            try:
-                if channel.send(payload):
-                    sent += 1
-                else:
-                    echo(f"{experiment.name}: notify channel '{name}' reported a failed send")
-            except Exception as exc:  # a channel that raises despite the bool contract
-                # `describe_error`, never the raw exception: `requests` embeds
-                # the full URL in its exception strings, and a webhook/bot URL
-                # carries the credential in its PATH — this line goes to stdout
-                # and into CI logs (the discipline `webhook.py`/`telegram.py`
-                # already follow for their own handled failures).
-                echo(f"{experiment.name}: notify channel '{name}' failed — {describe_error(exc)}")
-    return sent
+
+def pipeline_error_notice(
+    experiment: ExperimentConfig,
+    error: str,
+    *,
+    project_name: str | None = None,
+    timestamp: datetime | None = None,
+) -> ReadoutData:
+    """The payload for a run that FAILED (m12 NTF-2).
+
+    Every statistical field stays ``None`` — there is no verdict, no effect, no
+    arm pair, because the pipeline never got far enough to produce one. The
+    channels render this shape as a notice, not as a readout with blanks.
+    ``timestamp`` is wall-clock here (unlike a readout's, which is the look's
+    own cutoff): the news IS that the run failed just now.
+    """
+    return ReadoutData(
+        experiment=experiment.name,
+        metric="",
+        verdict="",
+        name_1="",
+        name_2="",
+        kind="error",
+        notice=error,
+        timestamp=timestamp if timestamp is not None else now_utc_naive(),
+        timezone=experiment.timezone,
+        project_name=project_name,
+        description=experiment.description,
+        mentions=list(experiment.notify.mentions) if experiment.notify is not None else [],
+    )
+
+
+def dispatch_pipeline_error(
+    *,
+    experiment: ExperimentConfig,
+    error: str,
+    channels_cfg: dict[str, Any],
+    project_name: str | None = None,
+    echo: Echo,
+) -> int:
+    """Tell the channels a run failed — the one signal with no readout behind it.
+
+    Deliberately NOT gated on persisted rows the way the readout path is: the
+    absence of a result is exactly what this reports.
+    """
+    channels, warnings = resolve_channels(experiment, channels_cfg)
+    for warning in warnings:
+        echo(warning)
+    if not channels:
+        return 0
+    payload = pipeline_error_notice(experiment, error, project_name=project_name)
+    return _deliver(experiment=experiment, payloads=[payload], channels=channels, echo=echo)

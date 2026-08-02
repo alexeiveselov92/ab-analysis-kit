@@ -13,6 +13,7 @@ rows through the fake manager, over both flavours.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta
 
 import numpy as np
@@ -27,10 +28,13 @@ from abkit.database.internal_tables._results import RESULT_COLUMNS
 from abkit.notify.base import BaseChannel, ReadoutData
 from abkit.notify.dispatch import (
     dispatch_experiment_signals,
+    dispatch_pipeline_error,
     load_experiment_readout,
     passes_filter,
+    pipeline_error_notice,
     readout_data_from_verdict,
     resolve_channels,
+    signal_kinds_for,
 )
 from abkit.notify.factory import ROUTING_KEYS, ChannelFactory
 from tests._helpers.fake_db import FakeDatabaseManager
@@ -521,6 +525,167 @@ class TestDispatchExperimentSignals:
         seed(tables, experiment)
 
         assert dispatch(experiment, tables, {}) == 0
+
+
+class TestSrmIsTheSameMessageReclassified:
+    """NTF-2: a readout whose SRM gate failed answers to BOTH kinds."""
+
+    def test_an_srm_failed_readout_reaches_an_urgent_only_channel(self, tables):
+        experiment = make_experiment()
+        seed(tables, experiment, srm_flag=True, srm_pvalue=1e-9)
+
+        sent = dispatch(experiment, tables, {"oncall": channel("oncall", on=["srm", "error"])})
+
+        assert sent == 1
+        assert RecordingChannel.sent[0][1].srm_flag is True
+
+    def test_a_clean_readout_does_not(self, tables):
+        experiment = make_experiment()
+        seed(tables, experiment)
+
+        assert dispatch(experiment, tables, {"oncall": channel("oncall", on=["srm"])}) == 0
+
+    def test_a_channel_accepting_both_kinds_still_gets_exactly_one_message(self, tables):
+        """Delivery asks 'does ANY kind pass', so the same payload cannot be
+        sent twice to a channel that happens to accept both of its kinds."""
+        experiment = make_experiment()
+        seed(tables, experiment, srm_flag=True, srm_pvalue=1e-9)
+
+        sent = dispatch(experiment, tables, {"both": channel("both", on=["readout", "srm"])})
+
+        assert sent == 1
+        assert len(RecordingChannel.sent) == 1
+
+    def test_an_experiment_filter_still_wins(self, tables):
+        """Intersection, not union: scoping the experiment to `error` silences
+        its SRM-failed readout even on a channel that accepts `srm`."""
+        experiment = make_experiment(notify={"on": ["error"]})
+        seed(tables, experiment, srm_flag=True, srm_pvalue=1e-9)
+
+        assert dispatch(experiment, tables, {"oncall": channel("oncall", on=["srm"])}) == 0
+
+    def test_signal_kinds_are_read_off_the_payload(self, tables):
+        experiment = make_experiment()
+        seed(tables, experiment)
+        readout, rows = load_experiment_readout(experiment, tables, project=PROJECT)
+        clean = readout_data_from_verdict(experiment, readout.verdicts[0], readout, rows=rows)
+
+        assert signal_kinds_for(clean) == ("readout",)
+        assert signal_kinds_for(replace(clean, srm_flag=True)) == ("readout", "srm")
+        assert signal_kinds_for(replace(clean, kind="error")) == ("error",)
+
+
+class TestPipelineErrorNotice:
+    """NTF-2: the one signal with no readout behind it."""
+
+    def test_the_payload_claims_no_measurement(self):
+        experiment = make_experiment()
+
+        notice = pipeline_error_notice(experiment, "warehouse down", project_name="shop")
+
+        assert notice.kind == "error"
+        assert notice.notice == "warehouse down"
+        # every statistical field stays empty: the run never produced one, and a
+        # zero or a "FLAT" here would be a claim about the experiment
+        assert (notice.effect, notice.pvalue, notice.alpha) == (None, None, None)
+        assert (notice.left_bound, notice.right_bound) == (None, None)
+        assert (notice.verdict, notice.metric, notice.name_1, notice.name_2) == ("", "", "", "")
+        assert notice.experiment == "ntf_exp"
+        assert notice.project_name == "shop"
+        assert notice.timestamp is not None  # wall-clock: the news is that it failed NOW
+
+    def test_it_reaches_an_urgent_only_channel_and_not_a_readout_only_one(self, tables):
+        experiment = make_experiment()
+        lines: list[str] = []
+
+        sent = dispatch_pipeline_error(
+            experiment=experiment,
+            error="warehouse down",
+            channels_cfg={
+                "oncall": channel("oncall", on=["srm", "error"]),
+                "routine": channel("routine", on=["readout"]),
+            },
+            project_name="shop",
+            echo=lines.append,
+        )
+
+        assert sent == 1
+        assert [label for label, _ in RecordingChannel.sent] == ["oncall"]
+
+    def test_it_does_not_need_persisted_rows(self, tables):
+        """Unlike the readout path — the absence of a result is what it reports."""
+        experiment = make_experiment()  # nothing seeded at all
+
+        sent = dispatch_pipeline_error(
+            experiment=experiment,
+            error="boom",
+            channels_cfg={"a": channel("a")},
+            echo=lambda line: None,
+        )
+
+        assert sent == 1
+
+    def test_a_raising_channel_is_still_fail_soft(self):
+        experiment = make_experiment()
+        lines: list[str] = []
+
+        sent = dispatch_pipeline_error(
+            experiment=experiment,
+            error="boom",
+            channels_cfg={"bad": channel("bad", mode="raise"), "good": channel("good")},
+            echo=lines.append,
+        )
+
+        assert sent == 1
+        assert any("bad" in line for line in lines)
+
+    def test_mentions_ride_along(self):
+        experiment = make_experiment(notify={"mentions": ["oncall-eng"]})
+
+        notice = pipeline_error_notice(experiment, "boom")
+
+        assert notice.mentions == ["oncall-eng"]
+
+    def test_it_goes_through_send_notice_not_send(self, tables):
+        """The seam channels may override — `email` does, for its HTML card."""
+        experiment = make_experiment()
+        calls: list[str] = []
+
+        class PickyChannel(RecordingChannel):
+            def send(self, readout, template=None):
+                calls.append("send")
+                return super().send(readout, template)
+
+            def send_notice(self, notice):
+                calls.append("send_notice")
+                return super().send_notice(notice)
+
+        ChannelFactory.CHANNEL_TYPES["picky"] = PickyChannel
+        try:
+            dispatch_pipeline_error(
+                experiment=experiment,
+                error="boom",
+                channels_cfg={"p": NotificationChannelConfig(type="picky", label="p")},
+                echo=lambda line: None,
+            )
+        finally:
+            del ChannelFactory.CHANNEL_TYPES["picky"]
+
+        # send_notice FIRST, and it delegates to send by default
+        assert calls == ["send_notice", "send"]
+
+    def test_send_notice_refuses_a_verdict_payload(self, tables):
+        """The two entry points are not interchangeable: a readout routed
+        through the notice seam would render with no effect block at all."""
+        experiment = make_experiment()
+        seed(tables, experiment)
+        readout, rows = load_experiment_readout(experiment, tables, project=PROJECT)
+        verdict_payload = readout_data_from_verdict(
+            experiment, readout.verdicts[0], readout, rows=rows
+        )
+
+        with pytest.raises(ValueError, match="send_notice expects"):
+            RecordingChannel().send_notice(verdict_payload)
 
 
 class TestRoutingKeysNeverReachAChannel:

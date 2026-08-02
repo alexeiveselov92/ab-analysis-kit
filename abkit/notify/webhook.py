@@ -63,18 +63,24 @@ class WebhookChannel(BaseChannel):
     def _rich_body(self, readout: ReadoutData) -> str:
         """The default markdown body, most-important-first."""
         ctx = self.build_context(readout)
-        lines = [
-            f"{self._bold('Effect')}: {ctx['effect_display']}  ·  "
-            f"{ctx['ci_label']} {ctx['ci_display']}",
-            f"p = {ctx['pvalue_display']}  ·  α = {ctx['alpha_display']}  ·  "
-            f"{readout.name_1} vs {readout.name_2}",
-        ]
-        if ctx["samples_display"]:
-            lines.append(ctx["samples_display"])
-        if ctx["srm_display"]:
-            lines.append(self._bold(ctx["srm_display"]))
-        if ctx["weekly_cycle_display"]:
-            lines.append(ctx["weekly_cycle_display"])
+        if self.is_notice(readout):
+            # nothing was measured (m12 NTF-2) — the sentence, then the links.
+            # An "Effect: N/A · p = N/A" block here would read as a failed
+            # measurement rather than an absent one.
+            lines = [ctx["notice"]] if ctx["notice"] else []
+        else:
+            lines = [
+                f"{self._bold('Effect')}: {ctx['effect_display']}  ·  "
+                f"{ctx['ci_label']} {ctx['ci_display']}",
+                f"p = {ctx['pvalue_display']}  ·  α = {ctx['alpha_display']}  ·  "
+                f"{readout.name_1} vs {readout.name_2}",
+            ]
+            if ctx["samples_display"]:
+                lines.append(ctx["samples_display"])
+            if ctx["srm_display"]:
+                lines.append(self._bold(ctx["srm_display"]))
+            if ctx["weekly_cycle_display"]:
+                lines.append(ctx["weekly_cycle_display"])
         link_parts = []
         if readout.dashboard_url:
             link_parts.append(self._link(readout.dashboard_url, "Open report"))

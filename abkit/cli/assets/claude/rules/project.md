@@ -209,9 +209,14 @@ Two commands use them:
   receives it.
 
 `on:` accepts `readout`, `verdict_change`, `srm`, `calibration_red`, `stale`,
-`error` — **only `readout` fires today**, the rest are accepted now so a filter
-does not silently widen later. A channel's `on:` and an experiment's `notify.on`
-INTERSECT: the experiment narrows what it sends, the channel what it accepts.
+`error` — **`readout`, `srm` and `error` fire today**, the rest are accepted now
+so a filter does not silently widen later. A channel's `on:` and an experiment's
+`notify.on` INTERSECT: the experiment narrows what it sends, the channel what it
+accepts.
+
+`srm` is not a second message — an SRM-failed readout answers to BOTH kinds, so
+an `on: [srm, error]` channel is the on-call one: it hears about a broken split
+and a failed run, and stays quiet through routine readouts.
 
 ## The two-tier alpha (why the effective alpha isn't the alpha you set)
 
