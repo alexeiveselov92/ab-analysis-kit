@@ -602,7 +602,7 @@ no live users to hurry for, and sweeping the previous release's status lines
   surface, not an addendum to a closing interstitial. Revisit **after M12**,
   with its own design pass.
 
-### M12 — notifications → `0.7.0` 🚧 IN PROGRESS (NTF-1 shipped)
+### M12 — notifications → `0.7.0` 🚧 IN PROGRESS (NTF-1, NTF-2 shipped)
 Design contract: [m12-implementation-plan.md](docs/specs/m12-implementation-plan.md).
 `abkit/notify/` (shipped M6, reachable only via `abk test-report`) gets wired
 to six real signals behind opt-in `--notify`, with dedup/cooldown state in
@@ -642,6 +642,25 @@ for the exit gate — no NTF WP depends on them.
   - **`SignalKind` needed a leaf module** (`abkit/config/signals.py`): both
     config models declare an `on:` filter and neither may import the other's
     dependency tree to share the literal.
+- **NTF-2 ✅ SHIPPED — the urgent half.** A `failed` run sends an error notice
+  (the reason, no statistics block, not gated on rows — the absence of a result
+  is the news); an SRM-failed readout is **re-classified**, not re-sent, so
+  `on: [srm, error]` is a real on-call channel. ~1 session — **actual: 1
+  session**. Three as-built deltas:
+  - **A notice is `ReadoutData` + `kind`, not a second payload type** — that is
+    what lets all five channels carry it through the transport they already
+    have. Every rich renderer (`webhook._rich_body`, `telegram._build_html_message`,
+    `email._build_html_body`/`_subject`) gained ONE branch: omit the statistics
+    block. The plan's file list named only `dispatch.py`/`run.py`, but a notice
+    that renders "Effect: N/A · Flat" is the defect the WP exists to avoid.
+  - **`send_notice(notice)`, not `send_notice(notice, kind)`.** The plan asked
+    for a kind parameter to avoid a later signature rework; the kind has to ride
+    on the payload anyway, because `verdict_color()` is called deep inside each
+    channel's payload builder where no argument could reach it. Two sources of
+    truth free to disagree is the worse trade.
+  - **No sixth brand hex.** The five tokens are verdict tokens; notices reuse
+    `--srm` `#B23A6B` and the word/emoji carry the distinction. Adding a real
+    error token is a designer's call, and it is one map away.
 
 ### M13 — versioned statistical improvements (bucket B, core) → `0.8.0` 📐 contour
 Holm over Bonferroni (strictly more power, same FWER); unpooled SE in the
@@ -748,6 +767,45 @@ A/A revalidation).
 Tracked in the RU initiation spec ([docs/ru/project-initiation-spec.md](docs/ru/project-initiation-spec.md))
 — covariate-window choice, v2 trigger threshold, docs domain confirmation, SRM
 `expected_split` source, guardrail multiplicity handling.
+
+### 📋 CI + test-suite audit — its own `ultracode` pass (maintainer request, 2026-08-02)
+
+**The suite has grown to 3118 tests and the feedback loop is now the slowest
+thing about contributing — that is not acceptable and it gets its own session.**
+Measured on the NTF-1 PR (run 30768980129): `Test (Python 3.10)` **6m03s**,
+3.11 **5m14s**, 3.12 **5m38s**; the whole workflow ≈ 6 min wall-clock because
+the ten jobs run in parallel, and the local full suite is ≈ 6 min too. Every WP
+in this track pays that twice (locally, then in CI), and a release cut pays it
+again.
+
+**Run it as a dedicated `/code-review ultra` (multi-agent) pass**, because the
+question is *not* "which flag makes pytest faster" — it is a codebase-wide
+audit that a single reading will not cover honestly:
+
+- **Where does the time actually go?** `--durations` over the whole suite, per
+  directory. Suspects worth confirming rather than assuming: the e2e gates each
+  scaffold a project and drive real CLI invocations; `tests/validate/` runs
+  real resampling engines; coverage instrumentation is on by default
+  (`addopts` in `pyproject.toml` carries `--cov=abkit --cov-report=html`) and
+  CI already disables it on 3.10/3.11 but not 3.12.
+- **Which tests earn their runtime?** Duplicate coverage across the fake-manager
+  flavours, oversized parametrize matrices, `sleep`-based waits, fixtures
+  rebuilt per test that could be session-scoped. The track's own rule applies
+  in reverse here: a test that cannot fail is worse than no test — and a test
+  that costs 20 s to re-prove what a 20 ms one already pins is close behind.
+- **Parallelism.** `pytest-xdist` is not a dependency today; the blockers are
+  the ones this repo actually has (the fake DB is in-memory per test, but the
+  e2e legs `chdir`, and warning capture is thread-scoped for a reason —
+  `utils/warn_scope.py`). Decide it with evidence, not by adding `-n auto` and
+  hoping.
+- **CI shape.** Caching (`pip`/`npm` are re-resolved every run), whether the
+  3.10/3.11 legs need the FULL suite or only the parts version-sensitive to
+  them, and whether the ClickHouse testcontainers leg can start earlier.
+
+**Constraint that must not bend:** speed is bought from *duplication and
+waste*, never from coverage. No parity gate, exit gate or golden may be
+dropped or sampled to make a number look better — the milestones that moved no
+statistical number did so because those gates ran every time.
 
 ### Tooling debt (non-blocking; ~~discovered M3 WP2~~ root-caused + partly fixed M6 WP1)
 - **~~`mypy` fails on clean HEAD~~ — ROOT-CAUSED + FIXED (M6 WP1).** The real cause

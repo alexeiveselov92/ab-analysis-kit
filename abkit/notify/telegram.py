@@ -68,26 +68,37 @@ class TelegramChannel(BaseChannel):
         def esc(value: Any) -> str:
             return html.escape(str(value))
 
+        notice = self.is_notice(readout)
+        subject = (
+            esc(readout.experiment)
+            if notice  # a notice belongs to the experiment, not to one comparison
+            else f"{esc(readout.experiment)} · {esc(readout.metric)}"
+        )
         parts = [
             f"{ctx['verdict_emoji']} <b>{esc(ctx['project_name_prefix'])}"
-            f"{esc(readout.experiment)} · {esc(readout.metric)}: {esc(ctx['verdict_word'])}</b>"
+            f"{subject}: {esc(ctx['verdict_word'])}</b>"
         ]
         if readout.description:
             parts.append(f"<i>{esc(readout.description[:_DESC_CAP])}</i>")
-        parts.append(
-            f"Effect: {esc(ctx['effect_display'])} · {esc(ctx['ci_label'])} "
-            f"{esc(ctx['ci_display'])}"
-        )
-        parts.append(
-            f"p = {esc(ctx['pvalue_display'])} · α = {esc(ctx['alpha_display'])} · "
-            f"{esc(readout.name_1)} vs {esc(readout.name_2)}"
-        )
-        if ctx["samples_display"]:
-            parts.append(esc(ctx["samples_display"]))
-        if ctx["srm_display"]:
-            parts.append(f"<b>{esc(ctx['srm_display'])}</b>")
-        if ctx["weekly_cycle_display"]:
-            parts.append(esc(ctx["weekly_cycle_display"]))
+        if notice:
+            # no effect/CI/p block: nothing was measured (m12 NTF-2)
+            if ctx["notice"]:
+                parts.append(esc(ctx["notice"]))
+        else:
+            parts.append(
+                f"Effect: {esc(ctx['effect_display'])} · {esc(ctx['ci_label'])} "
+                f"{esc(ctx['ci_display'])}"
+            )
+            parts.append(
+                f"p = {esc(ctx['pvalue_display'])} · α = {esc(ctx['alpha_display'])} · "
+                f"{esc(readout.name_1)} vs {esc(readout.name_2)}"
+            )
+            if ctx["samples_display"]:
+                parts.append(esc(ctx["samples_display"]))
+            if ctx["srm_display"]:
+                parts.append(f"<b>{esc(ctx['srm_display'])}</b>")
+            if ctx["weekly_cycle_display"]:
+                parts.append(esc(ctx["weekly_cycle_display"]))
         links = []
         if readout.dashboard_url:
             links.append(

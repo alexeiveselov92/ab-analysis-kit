@@ -147,12 +147,15 @@ on with nothing declared additive, and how many looks fell back to recompute.
   `profiles.yml`. Same decision the report bakes (`readout.evaluate()` over the
   persisted rows — nothing is recomputed for a message), one message per verdict,
   and **best-effort exactly like `--report`**: a channel that is down or
-  misconfigured is a yellow line, never a non-zero exit. A locked/skipped/failed
-  experiment sends nothing, and neither does one with no persisted rows of its
-  own. Route it per experiment with a `notify:` block (`channels` / `mentions` /
-  `on`); with no block, a notified run goes to every configured channel. **Every
-  completed run sends** — verdict-change dedup is not built yet, so point the
-  flag at the runs you want announced.
+  misconfigured is a yellow line, never a non-zero exit. A **failed** run sends an
+  error notice instead (the reason, no statistics block — nothing was measured);
+  `locked`/`skipped` runs and an experiment with no persisted rows of its own send
+  nothing. A **failed SRM gate adds no second message**: the readout already built
+  answers to the `srm` kind too, so an `on: [srm, error]` channel hears about a
+  broken split without receiving routine readouts. Route it per experiment with a
+  `notify:` block (`channels` / `mentions` / `on`); with no block, a notified run
+  goes to every configured channel. **Every completed run sends** — verdict-change
+  dedup is not built yet, so point the flag at the runs you want announced.
 - `--force` — take over a held lock (prefer `abk unlock`; risky with concurrent runs).
 - `--profile` — override `profiles.yml`'s `default_profile` (e.g. run against staging).
 

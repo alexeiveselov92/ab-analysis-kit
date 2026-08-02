@@ -457,41 +457,55 @@ def run_run(
             # blocking the rest, this one keeps ANY notify failure — a
             # warehouse read, a config surprise — from failing the run.
             #
-            # `completed` only: this signal is "a new look landed", and a
-            # locked/skipped/failed experiment produced none. Re-sending the
-            # previous look's verdict on every no-op run is exactly the noise
-            # NTF-3's dedup exists to prevent.
-            if notify and notify_channels and outcome.status == "completed":
+            # Two signals, two conditions. `completed` sends the readout — "a
+            # new look landed", which a locked/skipped experiment never
+            # produced. `failed` sends the error notice instead (m12 NTF-2):
+            # the absence of a result is precisely what it reports, so unlike
+            # the readout path it is NOT gated on persisted rows.
+            if notify and notify_channels and outcome.status in ("completed", "failed"):
                 try:
                     from abkit.notify.dispatch import (
                         dispatch_experiment_signals,
+                        dispatch_pipeline_error,
                         load_experiment_readout,
                     )
 
                     experiment = experiments_by_name[outcome.experiment]
-                    loaded = load_experiment_readout(
-                        experiment, readback(), project=context.project
-                    )
-                    if loaded is None:
-                        click.echo(
-                            click.style("  │ Notify skipped: no persisted results yet", fg="yellow")
-                        )
-                    else:
-                        experiment_readout, result_rows = loaded
-                        sent = dispatch_experiment_signals(
+
+                    def notify_echo(line: str) -> None:
+                        click.echo(click.style(f"  │ Notify: {line}", fg="yellow"))
+
+                    sent = 0
+                    if outcome.status == "failed":
+                        sent = dispatch_pipeline_error(
                             experiment=experiment,
-                            readout=experiment_readout,
-                            rows=result_rows,
+                            error=outcome.error or "failed",
                             channels_cfg=notify_channels,
                             project_name=context.project.name,
-                            echo=lambda line: click.echo(
-                                click.style(f"  │ Notify: {line}", fg="yellow")
-                            ),
+                            echo=notify_echo,
                         )
-                        if sent:
+                    else:
+                        loaded = load_experiment_readout(
+                            experiment, readback(), project=context.project
+                        )
+                        if loaded is None:
                             click.echo(
-                                click.style(f"  │ Notify → {sent} message(s) sent", fg="cyan")
+                                click.style(
+                                    "  │ Notify skipped: no persisted results yet", fg="yellow"
+                                )
                             )
+                        else:
+                            experiment_readout, result_rows = loaded
+                            sent = dispatch_experiment_signals(
+                                experiment=experiment,
+                                readout=experiment_readout,
+                                rows=result_rows,
+                                channels_cfg=notify_channels,
+                                project_name=context.project.name,
+                                echo=notify_echo,
+                            )
+                    if sent:
+                        click.echo(click.style(f"  │ Notify → {sent} message(s) sent", fg="cyan"))
                 except Exception as notify_error:  # never fail the run on a notification
                     click.echo(click.style(f"  │ Notify skipped: {notify_error}", fg="yellow"))
 

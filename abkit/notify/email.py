@@ -28,6 +28,12 @@ _BORDER = "#E6E0D4"
 _MUTED = "#6E675B"
 _SANS = "'Schibsted Grotesk', -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif"
 
+#: The built-in subject line. Named so ``_subject`` can tell "the operator wrote
+#: this" from "nobody chose it" — a notice has no metric, and the default's
+#: ``· {metric}`` would render as a dangling separator (m12 NTF-2). A CUSTOM
+#: template is always honoured verbatim, blanks included: it is the operator's.
+_DEFAULT_SUBJECT = "{verdict_emoji} {project_name_prefix}{experiment} · {metric}: {verdict_word}"
+
 
 class EmailChannel(BaseChannel):
     def __init__(
@@ -39,7 +45,7 @@ class EmailChannel(BaseChannel):
         smtp_username: str | None = None,
         smtp_password: str | None = None,
         use_tls: bool = True,
-        subject_template: str = "{verdict_emoji} {project_name_prefix}{experiment} · {metric}: {verdict_word}",
+        subject_template: str = _DEFAULT_SUBJECT,
         from_name: str = BRAND_USERNAME,
         template: str | None = None,
     ) -> None:
@@ -75,6 +81,8 @@ class EmailChannel(BaseChannel):
 
     def _subject(self, readout: ReadoutData) -> str:
         ctx = self.build_context(readout)
+        if self.is_notice(readout) and self.subject_template == _DEFAULT_SUBJECT:
+            return self.format_title(readout).replace("\r", " ").replace("\n", " ")
         try:
             subject = self.subject_template.format(**ctx)
         except (KeyError, ValueError, TypeError):
@@ -89,21 +97,29 @@ class EmailChannel(BaseChannel):
         def esc(value: Any) -> str:
             return html.escape(str(value))
 
-        rows = [
-            (
-                "Effect",
-                f"{esc(ctx['effect_display'])} &nbsp; {esc(ctx['ci_label'])} {esc(ctx['ci_display'])}",
-            ),
-            (
-                "p-value",
-                f"{esc(ctx['pvalue_display'])} &nbsp;·&nbsp; α {esc(ctx['alpha_display'])}",
-            ),
-            ("Arms", f"{esc(readout.name_1)} vs {esc(readout.name_2)}"),
-        ]
-        if ctx["samples_display"]:
-            rows.append(("Samples", esc(ctx["samples_display"])))
-        if ctx["weekly_cycle_display"]:
-            rows.append(("Note", esc(ctx["weekly_cycle_display"])))
+        # A notice (m12 NTF-2) has no statistics behind it: the card carries the
+        # sentence alone. Rendering the stat table with "N/A" in every cell would
+        # say abkit looked and could not tell, when the truth is that it never
+        # got to look.
+        if self.is_notice(readout):
+            rows = [("What happened", esc(ctx["notice"]))] if ctx["notice"] else []
+        else:
+            rows = [
+                (
+                    "Effect",
+                    f"{esc(ctx['effect_display'])} &nbsp; "
+                    f"{esc(ctx['ci_label'])} {esc(ctx['ci_display'])}",
+                ),
+                (
+                    "p-value",
+                    f"{esc(ctx['pvalue_display'])} &nbsp;·&nbsp; α {esc(ctx['alpha_display'])}",
+                ),
+                ("Arms", f"{esc(readout.name_1)} vs {esc(readout.name_2)}"),
+            ]
+            if ctx["samples_display"]:
+                rows.append(("Samples", esc(ctx["samples_display"])))
+            if ctx["weekly_cycle_display"]:
+                rows.append(("Note", esc(ctx["weekly_cycle_display"])))
         row_html = "".join(
             f'<tr><td style="padding:4px 12px 4px 0;color:{_MUTED};font-size:13px;">{label}</td>'
             f'<td style="padding:4px 0;color:{_INK};font-size:14px;font-weight:600;">{value}</td></tr>'
@@ -138,6 +154,16 @@ class EmailChannel(BaseChannel):
             else ""
         )
 
+        # The eyebrow says what this message IS, and the headline drops the
+        # metric for a notice — a pipeline error belongs to the experiment, not
+        # to one of its comparisons.
+        eyebrow = readout.kind.replace("_", " ") if self.is_notice(readout) else "readout"
+        headline_subject = (
+            esc(readout.experiment)
+            if self.is_notice(readout)
+            else f"{esc(readout.experiment)} · {esc(readout.metric)}"
+        )
+
         return f"""\
 <!DOCTYPE html>
 <html><body style="margin:0;background:{_PAPER};font-family:{_SANS};">
@@ -148,9 +174,9 @@ class EmailChannel(BaseChannel):
 <tr><td style="height:4px;background:{accent};"></td></tr>
 <tr><td style="padding:24px;">
 <p style="margin:0 0 4px;color:{_MUTED};font-size:12px;text-transform:uppercase;letter-spacing:.06em;">
-  {esc(ctx['project_name']) or BRAND_USERNAME} · readout</p>
+  {esc(ctx['project_name']) or BRAND_USERNAME} · {eyebrow}</p>
 <h1 style="margin:0 0 16px;color:{_INK};font-size:20px;">
-  {ctx['verdict_emoji']} {esc(readout.experiment)} · {esc(readout.metric)}
+  {ctx['verdict_emoji']} {headline_subject}
   <span style="color:{accent};">{esc(ctx['verdict_word'])}</span></h1>
 {desc_html}
 <table role="presentation" cellpadding="0" cellspacing="0">{row_html}</table>

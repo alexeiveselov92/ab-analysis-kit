@@ -822,8 +822,29 @@ two-process lock race) is deferred to a Docker-equipped environment.
   `load_experiment_readout` returns `None` for a missing results table, zero
   rows, or rows only for undeclared arm pairs — the m11 DASH-7 finding in
   message form (`evaluate()` over zero rows answers INCONCLUSIVE, a verdict
-  about *data*). Only `completed` outcomes notify: a locked/skipped/failed run
-  produced no new look.
+  about *data*). A `completed` outcome notifies a readout; a `failed` one
+  notifies an **error notice** instead (NTF-2), and that path is deliberately
+  NOT gated on rows — the absence of a result is what it reports. `locked` and
+  `skipped` stay silent: neither produced a new look, and neither is a failure.
+- **NTF-2: a notice is a `ReadoutData` with `kind` set, not a second payload
+  type.** `NOTICE_KINDS` (`error`/`calibration_red`/`stale`) means *nothing was
+  measured*, so every renderer branches once and omits the effect/CI/p block
+  rather than printing `N/A` — a crashed run showing "Effect: N/A · Flat" is a
+  claim about the experiment where the truth is that abkit never looked. The
+  kind rides ON the payload because `verdict_color()` is called deep inside each
+  channel's payload builder, where a `send_notice(notice, kind)` argument could
+  not reach it — the plan's two-argument signature would have been a second
+  source of truth. `send_notice` refuses a verdict payload loudly.
+- **No sixth brand hex.** The five tokens in `docs/design/brand-tokens.md` are
+  VERDICT tokens; a notice is not a verdict, so all three notice kinds reuse
+  `--srm` `#B23A6B` — the one token that already means "no trustworthy result,
+  look at this" — and the word + emoji carry the distinction
+  (`BaseChannel._NOTICE_PRESENTATION`). A designer adding a real error token
+  later changes that one map.
+- **SRM is a RE-CLASSIFICATION, never a re-evaluation or a second message.**
+  `signal_kinds_for()` answers `("readout", "srm")` for an SRM-failed readout
+  and delivery asks "does ANY kind pass both filters", so a channel accepting
+  both still receives exactly one message.
 - **The notify block sits BEFORE the report block in `run.py`'s outcome loop**,
   because the report block's `if report_path is None: continue` would skip
   everything after it. Both share one lazily-built manager, now honestly named

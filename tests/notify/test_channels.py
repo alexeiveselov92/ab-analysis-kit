@@ -437,3 +437,103 @@ def test_no_alerting_vocabulary_in_default_message():
         "no data",
     ):
         assert banned not in msg
+
+
+# ── notices: a signal with no measurement behind it (m12 NTF-2) ────────────────
+def _notice(**overrides) -> ReadoutData:
+    """A pipeline-error payload: kind + sentence, every statistic absent."""
+    base = ReadoutData(
+        experiment="signup_test",
+        metric="",
+        verdict="",
+        name_1="",
+        name_2="",
+        kind="error",
+        notice="warehouse down",
+    )
+    for k, v in overrides.items():
+        setattr(base, k, v)
+    return base
+
+
+@pytest.mark.parametrize("kind,word", [("error", "Pipeline error"), ("stale", "Data is stale")])
+def test_notice_presentation_is_its_own_kind_not_a_verdict(kind, word):
+    """A crashed run must never render as "Flat" — the unknown-verdict fallback
+    would say "no detectable effect" about a run that detected nothing at all."""
+    ch = WebhookChannel("http://x")
+    r = _notice(kind=kind)
+    assert ch.verdict_kind(r) == kind
+    assert ch.verdict_word(r) == word
+    # no sixth brand hex is invented: notices reuse the SRM token
+    assert ch.verdict_color(r) == "#B23A6B"
+
+
+def test_notice_body_carries_the_sentence_and_no_statistics():
+    ch = WebhookChannel("http://x")
+    body = ch.build_payload(_notice())["attachments"][0]["text"]
+    assert "warehouse down" in body
+    for absent in ("Effect", "p =", "α", "N/A", " vs "):
+        assert absent not in body
+
+
+def test_notice_title_drops_the_metric():
+    """A pipeline error belongs to the experiment, not to one comparison —
+    and the readout title would render a dangling "· :"."""
+    title = WebhookChannel("http://x").format_title(_notice())
+    assert title == "\U0001f6d1 signup_test: Pipeline error"
+
+
+def test_notice_text_message_has_no_statistics_scaffolding():
+    msg = WebhookChannel("http://x").format_message(_notice())
+    assert "warehouse down" in msg
+    for absent in ("Effect", "CI", "p =", "N/A"):
+        assert absent not in msg
+
+
+def test_telegram_notice_html_has_no_statistics():
+    ch = TelegramChannel("123:abc", "-100")
+    html_msg = ch._build_html_message(_notice())
+    assert "warehouse down" in html_msg
+    for absent in ("Effect", "p =", "N/A", " vs "):
+        assert absent not in html_msg
+
+
+def test_email_notice_card_has_no_stat_table(monkeypatch):
+    ch = EmailChannel("smtp.example.com", 587, "bot@x", ["a@x"])
+    body = ch._build_html_body(_notice())
+    assert "warehouse down" in body
+    assert "What happened" in body
+    for absent in (">Effect<", ">p-value<", ">Arms<"):
+        assert absent not in body
+    # the eyebrow says what the message IS
+    assert "· error<" in body
+
+
+def test_email_notice_subject_drops_the_metric():
+    ch = EmailChannel("smtp.example.com", 587, "bot@x", ["a@x"])
+    assert ch._subject(_notice()) == "\U0001f6d1 signup_test: Pipeline error"
+
+
+def test_email_custom_subject_template_is_still_honoured_verbatim():
+    """A template the operator wrote is theirs, blanks included."""
+    ch = EmailChannel(
+        "smtp.example.com", 587, "bot@x", ["a@x"], subject_template="[{kind}] {experiment}"
+    )
+    assert ch._subject(_notice()) == "[error] signup_test"
+
+
+def test_send_notice_delivers_through_the_channels_transport():
+    ch = WebhookChannel("http://x")
+    with requests_mock.Mocker() as m:
+        m.post("http://x", status_code=200)
+        assert ch.send_notice(_notice()) is True
+        body = m.last_request.json()
+    assert "warehouse down" in body["attachments"][0]["text"]
+
+
+def test_a_broken_custom_template_falls_back_to_the_notice_body():
+    """The fallback is chosen by KIND: degrading a pipeline error to the readout
+    body would fill it with N/A statistics."""
+    msg = WebhookChannel("http://x").format_message(_notice(), "{nonexistent_placeholder}")
+    assert "warehouse down" in msg
+    assert "N/A" not in msg

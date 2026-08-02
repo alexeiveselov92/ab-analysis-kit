@@ -360,6 +360,41 @@ while a "readout" channel gets the routine one.
 
 **Session estimate:** 1 session.
 
+**As built (shipped 2026-08-03; the routing shape held, the payload shape did
+not):**
+
+- **A notice is a `ReadoutData` carrying `kind` + `notice`, not a new type.**
+  That is what lets all five channels deliver one through the transport they
+  already have, and it keeps "only `send` is abstract" true. The cost the file
+  list did not name: every rich renderer needs ONE branch — `webhook._rich_body`,
+  `telegram._build_html_message`, `email._build_html_body` and `email._subject`
+  all assume a verdict, so an unbranched notice renders "Effect: N/A · p = N/A"
+  and (via the unknown-verdict fallback) the word **Flat** for a crashed run.
+  `base.py` gained `NOTICE_KINDS`, `is_notice`, `get_notice_template`,
+  `default_template_for` (the format fallback is chosen by KIND, so a broken
+  custom template degrades to the notice body, not to a readout of blanks) and
+  a `timestamp_line` that collapses.
+- **`send_notice(notice)` — the `kind` parameter step 4 asked for is not
+  taken.** The kind has to live on the payload regardless, because
+  `verdict_color()` is called deep inside each channel's payload builder where
+  no argument of `send_notice` reaches; a second parameter would be a second
+  source of truth free to disagree with it. The signature stays stable for
+  NTF-5's kinds either way — they are values of the same field. `send_notice`
+  raises on a verdict payload rather than rendering one blank.
+- **No sixth brand token.** `docs/design/brand-tokens.md`'s five are VERDICT
+  tokens and a notice is not a verdict, so `error`/`calibration_red`/`stale`
+  all reuse `--srm` `#B23A6B` — already "no trustworthy result, look at this" —
+  with the word and emoji carrying the distinction
+  (`BaseChannel._NOTICE_PRESENTATION`). A designer's error token later changes
+  that one map and nothing else.
+- **SRM re-classification is `signal_kinds_for()`**, and delivery asks "does ANY
+  kind pass both filters", so a channel accepting `readout` and `srm` still gets
+  exactly one message. The experiment-level filter still wins (intersection).
+- The step-3 claim that this "re-classifies the already-built payload" held
+  exactly; `run.py`'s `failed` branch was the only new wiring, and the NTF-1
+  claim that a failed run sends nothing was corrected across all four doc
+  bodies in this WP.
+
 ---
 
 ### NTF-3 — `_ab_notify_states` table + verdict-change dedup/cooldown
