@@ -91,6 +91,15 @@ class ProjectStatisticsConfig(BaseModel):
     correction: Literal["none", "bonferroni", "benjamini_hochberg"] = Field(
         default="bonferroni", description="Default multiple-testing correction"
     )
+    guardrail_correction: Literal["inherit", "none"] = Field(
+        default="inherit",
+        description=(
+            "m13 D8: how a guardrail's alpha is resolved. 'inherit' (default, "
+            "pre-0.8.0 behaviour) shares the secondary tier's budget; 'none' "
+            "tests guardrails at the RAW alpha and drops them from the secondary "
+            "divisor. Opt-in because it moves persisted numbers"
+        ),
+    )
     power: float = Field(default=0.8, description="Default target power for MDE")
     aa_fpr_budget: float | None = Field(
         default=None,

@@ -32,6 +32,16 @@ DAY_SECONDS = 86400
 
 ExperimentStatus = Literal["design", "running", "concluded", "archived"]
 CorrectionKind = Literal["none", "bonferroni", "benjamini_hochberg"]
+
+#: How a guardrail comparison's alpha is resolved (m13 STAT-1c, decision D8).
+#: ``inherit`` is the pre-0.8.0 behaviour — a guardrail shares the secondary
+#: tier's budget like any non-main metric. ``none`` leaves that budget entirely:
+#: the guardrail is tested at the RAW experiment alpha, and it stops counting
+#: towards the secondary divisor (which loosens alpha for the screening metrics
+#: that remain). Correcting a guardrail costs sensitivity to the harm it exists
+#: to catch, so the error points the dangerous way — but the flip is opt-in
+#: because it moves persisted numbers (m13 D1).
+GuardrailCorrectionKind = Literal["inherit", "none"]
 SequentialScheme = Literal["always_valid", "alpha_spending"]
 
 #: ``interval_anchor``'s two symbolic forms (the third is an explicit instant).
@@ -472,6 +482,9 @@ class ExperimentConfig(BaseModel):
         default=None, description="Experiment-level significance (None -> project default)"
     )
     correction: CorrectionKind | None = Field(default=None, description="None -> project default")
+    guardrail_correction: GuardrailCorrectionKind | None = Field(
+        default=None, description="m13 D8: None -> project default"
+    )
     incremental_reads: bool | None = Field(
         default=None,
         description="m9 WP4: override project.compute.incremental_reads for "

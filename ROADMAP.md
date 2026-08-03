@@ -805,7 +805,8 @@ today's pooled z at δ=0), and the relative-effect fix moves **no verdict**
 (Fieller's rejection set at θ=0 equals today's). What moves is interval
 endpoints, guardrail α, and — for whoever opts in — `method_config_id`.
 
-5 WP (uniform ddof dropped), ordered by value rather than dependency. Baseline
+5 WP (uniform ddof dropped), ordered by value rather than dependency —
+**STAT-1c (guardrails uncorrected) is ✅ shipped**. Baseline
 goldens stay untouched; new numbers get **new** goldens.
 
 **The sequential question is answered (D14):** the confidence sequence *does*

@@ -274,7 +274,7 @@ a live property under BH — compute-time α stays raw (`analyze.py:76-78`) whil
 the decision uses the BH-adjusted p. Holm inherits the same shape. No document
 states this today.
 
-### STAT-1c — guardrails stop being corrected like growth metrics
+### STAT-1c — guardrails stop being corrected like growth metrics ✅ SHIPPED
 
 **The one defect in this milestone that costs SAFETY rather than power**, and the
 cheapest to fix. Correcting a guardrail metric makes the engine *less* likely to

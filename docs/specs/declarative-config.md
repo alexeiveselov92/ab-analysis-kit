@@ -236,6 +236,41 @@ inspectable**:
   across an experiment's metrics; its interaction with peeking is documented in
   [aa-false-positive-matrix.md](aa-false-positive-matrix.md).
 
+### 6.1 `guardrail_correction` — the guardrail tier (m13 STAT-1c, decision D8)
+
+A **guardrail** exists to catch harm. Correcting its alpha therefore makes the
+engine *less* able to do the one job the metric was declared for — the error
+points the dangerous way, unlike an over-tight screening metric, which merely
+costs power. Through `0.7.0` a guardrail shared the secondary Bonferroni budget
+like any other non-main comparison.
+
+`guardrail_correction` is declared at project (or experiment) level:
+
+| Value | Behaviour |
+|---|---|
+| `inherit` (**default**) | the pre-`0.8.0` scheme — a guardrail shares the secondary tier |
+| `none` | the guardrail is tested at the **raw** experiment alpha, and it leaves the secondary divisor |
+
+**It is two changes, not one.** Under `none` a guardrail is not merely re-routed:
+it stops counting towards `metrics_count`, so alpha *loosens for the screening
+metrics that remain* in the tier. An experiment with one main, one screening and
+one guardrail metric over two arms goes from `main 0.05 / secondary 0.025` to
+`main 0.05 / secondary 0.05 / guardrail 0.05`.
+
+Notes:
+
+- The flip is **inert unless `correction: bonferroni`** — every other scheme
+  already hands out the raw alpha at compute time.
+- It is **opt-in** because it moves persisted numbers (`alpha`, the CI bounds and
+  `reject` of guardrail and screening rows alike). Since alpha is deliberately
+  outside `method_config_id`, changing it writes new-alpha rows into an existing
+  series; `abk run --full-refresh` makes a series homogeneous again.
+- The A/A calibration chip keys on the **effective** alpha, so existing
+  `_ab_aa_runs` rows for guardrail metrics read `alpha_mismatch` until re-run.
+- An experiment whose only non-main comparisons are guardrails has
+  `metrics_count = 0` and therefore no secondary tier at all; the guardrail still
+  gets the raw alpha, never the (tighter) main one.
+
 ## 7. `method_config_id` (must-fix: ONE canonical spec)
 
 ```

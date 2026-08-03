@@ -67,6 +67,20 @@ class TestExperimentKnobBlock:
         block = _payload()["explore"]["experiment"]
         assert block["correction_choices"] == list(get_args(CorrectionKind))
 
+    def test_guardrail_mode_is_baked_for_the_client_mirror(self):
+        """m13 D8/STAT-1c: the client recomputes alpha live as the operator drags
+        the knobs, so it needs the RULE, not a resolved number — the mode rides in
+        the block beside the counts it changes."""
+        block = _payload()["explore"]["experiment"]
+        assert block["guardrail_correction"] == "inherit"  # the project default
+
+    def test_the_committed_bundle_actually_learned_the_guardrail_rule(self):
+        """Freshness, specifically for STAT-1c: a rebuilt-and-committed explore.js
+        must carry the new mode, or the server would be resolving one scheme while
+        the cockpit mirrors another — silently, and only under the new mode."""
+        bundle = (files("abkit.tuning") / "assets" / "explore.js").read_text(encoding="utf-8")
+        assert "guardrail_correction" in bundle
+
     def test_baked_numbers_reproduce_the_configured_effective_alpha(self):
         """The client-mirror contract: two-tier arithmetic over the baked
         block must land exactly on the surface's configured alpha — this is

@@ -59,8 +59,19 @@ class PairOutcome:
 def effective_alphas(experiment: ExperimentConfig, project: ProjectConfig) -> TwoTierAlphas:
     """The inspectable two-tier scheme (declarative-config §6).
 
-    Guardrails count as tests: every non-main comparison shares the secondary
-    budget. ``correction: none`` collapses both tiers to the raw alpha.
+    Under ``guardrail_correction: inherit`` (the default) guardrails count as
+    tests: every non-main comparison shares the secondary budget.
+    ``correction: none`` collapses both tiers to the raw alpha.
+
+    Under ``guardrail_correction: none`` (m13 D8) a guardrail leaves that budget
+    **entirely**, and that is two changes, not one: it is tested at the raw alpha,
+    AND it stops counting towards the secondary divisor — which loosens alpha for
+    the screening metrics that remain. Resolving only the first half would help
+    guardrails and tax nothing else, i.e. half the intended scheme, with the
+    persisted secondary alphas unchanged and no gate the wiser.
+
+    The flip is inert unless the correction is Bonferroni: every other scheme
+    already hands out the raw alpha, which is what a guardrail would get anyway.
     """
     alpha = experiment.alpha if experiment.alpha is not None else project.statistics.alpha
     correction = (
@@ -68,10 +79,25 @@ def effective_alphas(experiment: ExperimentConfig, project: ProjectConfig) -> Tw
         if experiment.correction is not None
         else project.statistics.correction
     )
+    guardrail_correction = (
+        experiment.guardrail_correction
+        if experiment.guardrail_correction is not None
+        else project.statistics.guardrail_correction
+    )
     groups = len(experiment.assignment.variants)
-    non_main = sum(1 for c in experiment.comparisons if not c.is_main_metric)
+    guardrails_untiered = guardrail_correction == "none"
+    non_main = sum(
+        1
+        for c in experiment.comparisons
+        if not c.is_main_metric and not (guardrails_untiered and c.is_guardrail)
+    )
     if correction == "bonferroni":
-        return two_tier_alphas(alpha, groups_count=groups, metrics_count=non_main)
+        return two_tier_alphas(
+            alpha,
+            groups_count=groups,
+            metrics_count=non_main,
+            guardrail_alpha=alpha if guardrails_untiered else None,
+        )
     # none / benjamini_hochberg (BH is read-time): raw alpha at compute time
     return TwoTierAlphas(
         alpha=alpha, groups_count=groups, metrics_count=non_main, main=alpha, secondary=alpha
@@ -79,7 +105,19 @@ def effective_alphas(experiment: ExperimentConfig, project: ProjectConfig) -> Tw
 
 
 def comparison_alpha(comparison: ComparisonConfig, alphas: TwoTierAlphas) -> float:
-    if comparison.is_main_metric or alphas.secondary is None:
+    """The per-comparison effective alpha for one comparison's role.
+
+    The guardrail tier is tested BEFORE the ``secondary is None`` fallback on
+    purpose: under m13 D8 an experiment whose only non-main comparisons ARE
+    guardrails has ``metrics_count == 0``, so ``secondary`` is ``None`` — and the
+    old fallback would then hand the guardrail the MAIN alpha, the tightest level
+    in the scheme, which is the exact opposite of what D8 asks for.
+    """
+    if comparison.is_main_metric:
+        return alphas.main
+    if comparison.is_guardrail and alphas.guardrail is not None:
+        return alphas.guardrail
+    if alphas.secondary is None:
         return alphas.main
     return alphas.secondary
 

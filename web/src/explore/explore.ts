@@ -129,11 +129,19 @@ function effectiveAlpha(
   groupsCount: number,
   nonMainCount: number,
   isMain: boolean,
+  guardrailUntiered: boolean,
+  isGuardrail: boolean,
 ): number {
   if (correction !== 'bonferroni') return rawAlpha;
   const pairs = (groupsCount * (groupsCount - 1)) / 2;
   if (pairs <= 0) return rawAlpha;
-  if (isMain || nonMainCount === 0) return rawAlpha / pairs;
+  if (isMain) return rawAlpha / pairs;
+  // m13 D8: a guardrail left the secondary budget entirely — raw alpha, and it
+  // is checked BEFORE the nonMainCount === 0 branch, which would otherwise hand
+  // it the MAIN (tightest) level in an experiment whose only non-main
+  // comparisons are guardrails. Mirrors analyze.comparison_alpha exactly.
+  if (guardrailUntiered && isGuardrail) return rawAlpha;
+  if (nonMainCount === 0) return rawAlpha / pairs;
   return rawAlpha / (pairs * nonMainCount);
 }
 
@@ -585,10 +593,12 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
 
   const roles = new Map<string, RoleState>();
   const initialMain = new Map<string, boolean>();
+  const initialGuardrail = new Map<string, boolean>();
   for (const name of metricNames) {
     const b = metricBlocks.get(name) as MetricBlock;
     roles.set(name, { main: b.main, guardrail: b.guardrail });
     initialMain.set(name, b.main);
+    initialGuardrail.set(name, b.guardrail);
   }
   const roleDirty = new Set<string>();
 
@@ -612,11 +622,19 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
   // the user's live role flips on the surfaced ones. Counting the surfaced
   // subset alone would send a wrong effective alpha whenever a metric
   // appears in more than one comparison.
+  // m13 D8: what "counts towards the secondary divisor" depends on the mode —
+  // under `none` a guardrail has left that budget, so a LIVE guardrail flip in
+  // Review mode moves the divisor exactly as a main flip does. Tracking only
+  // `main` here would desync the mirror from the server the moment the operator
+  // toggled a guardrail, and only under the new mode — the quietest kind of drift.
+  const guardrailUntiered = expKnobs.guardrail_correction === 'none';
+  const countsToward = (main: boolean, guardrail: boolean): number =>
+    main || (guardrailUntiered && guardrail) ? 0 : 1;
   const nonMainCount = (): number => {
     let n = expKnobs.non_main_count;
     for (const [name, r] of roles) {
-      const was = initialMain.get(name) ? 0 : 1;
-      n += (r.main ? 0 : 1) - was;
+      const was = countsToward(initialMain.get(name) ?? false, initialGuardrail.get(name) ?? false);
+      n += countsToward(r.main, r.guardrail) - was;
     }
     return Math.max(0, n);
   };
@@ -627,6 +645,8 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
       expKnobs.groups_count,
       nonMainCount(),
       roles.get(metric)?.main ?? false,
+      guardrailUntiered,
+      roles.get(metric)?.guardrail ?? false,
     );
 
   const configuredKnobs = (metric: string): KnobValues => {
