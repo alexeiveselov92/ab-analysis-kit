@@ -39,6 +39,13 @@ class TwoTierAlphas:
 
     ``secondary`` is ``None`` for a main-metric-only experiment (``metrics_count=0``)
     — there is no secondary tier to divide the budget over.
+
+    ``guardrail`` is ``None`` when guardrails share the secondary tier (the
+    pre-0.8.0 behaviour, and every non-Bonferroni scheme, where all tiers already
+    collapse to the raw alpha). It carries a level of its own only under
+    ``guardrail_correction: none`` (m13 D8), in which case ``metrics_count``
+    ALREADY excludes guardrails — the two go together, and the caller resolving
+    one without the other gets a scheme that helps guardrails and loosens nothing.
     """
 
     alpha: float
@@ -46,18 +53,32 @@ class TwoTierAlphas:
     metrics_count: int
     main: float
     secondary: float | None
+    guardrail: float | None = None
 
 
-def two_tier_alphas(alpha: float, groups_count: int, metrics_count: int) -> TwoTierAlphas:
+def two_tier_alphas(
+    alpha: float,
+    groups_count: int,
+    metrics_count: int,
+    guardrail_alpha: float | None = None,
+) -> TwoTierAlphas:
     """The exact legacy two-tier scheme keyed off ``is_main_metric``.
 
     Main metric: ``adjust_alpha(alpha, groups, 1)``; every other metric:
     ``adjust_alpha(alpha, groups, metrics_count)`` where ``metrics_count`` counts
     the non-main metrics sharing the secondary budget (``0`` is valid — an
     experiment may have only its main metric).
+
+    ``guardrail_alpha`` (m13 D8) is passed through verbatim onto the result: the
+    caller decides whether guardrails have a tier of their own, because it is the
+    same caller that must then EXCLUDE them from ``metrics_count``. This function
+    deliberately does not derive one from the other — it has no idea which
+    comparisons are guardrails.
     """
     if metrics_count < 0:
         raise MethodParamError(f"metrics_count must be >= 0, got {metrics_count}")
+    if guardrail_alpha is not None and not 0.0 < guardrail_alpha < 1.0:
+        raise MethodParamError(f"guardrail_alpha must be in (0, 1), got {guardrail_alpha}")
     return TwoTierAlphas(
         alpha=alpha,
         groups_count=groups_count,
@@ -66,6 +87,7 @@ def two_tier_alphas(alpha: float, groups_count: int, metrics_count: int) -> TwoT
         secondary=(
             None if metrics_count == 0 else adjust_alpha(alpha, groups_count, metrics_count)
         ),
+        guardrail=guardrail_alpha,
     )
 
 

@@ -94,6 +94,11 @@ def build_explore_payload(
     # two-tier counts, which the report payload does not carry.
     experiment = session.experiment
     project = session.project
+    _guardrail_correction = (
+        experiment.guardrail_correction
+        if experiment.guardrail_correction is not None
+        else project.statistics.guardrail_correction
+    )
     payload = dict(report_payload)
     payload["explore"] = {
         "metrics": metrics,
@@ -109,7 +114,18 @@ def build_explore_payload(
             ),
             "correction_choices": list(get_args(CorrectionKind)),
             "groups_count": len(experiment.assignment.variants),
-            "non_main_count": sum(1 for c in experiment.comparisons if not c.is_main_metric),
+            # m13 D8 (STAT-1c): the client's effectiveAlpha mirrors
+            # analyze.effective_alphas, so it needs the RULE, not a resolved
+            # number — the operator drags alpha/correction live. Both halves ride
+            # along: the mode, and a non_main_count that ALREADY drops guardrails
+            # under 'none' (the per-metric guardrail flag is already in each
+            # metric block, from reporting/builder.py).
+            "guardrail_correction": _guardrail_correction,
+            "non_main_count": sum(
+                1
+                for c in experiment.comparisons
+                if not c.is_main_metric and not (_guardrail_correction == "none" and c.is_guardrail)
+            ),
         },
         "cache": {
             "values": session.cached_value_count(),

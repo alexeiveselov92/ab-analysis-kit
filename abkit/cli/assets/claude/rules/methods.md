@@ -105,6 +105,16 @@ params**. It is the key of a result *series* in `_ab_results`.
   significance level (two-tier Bonferroni: main vs secondary metrics land at
   different alphas; read-time BH across a family). Changing `alpha` re-decides
   `reject` without orphaning the series.
+- **`guardrail_correction: none`** (project or experiment level; default
+  `inherit` = the old behaviour) takes guardrails OUT of the corrected family:
+  they are tested at the raw alpha, because correcting a metric whose job is to
+  catch harm makes you less likely to catch it. It also **loosens the secondary
+  alpha** for the screening metrics that remain, since guardrails stop counting
+  in the divisor. Inert unless `correction: bonferroni`. It moves persisted
+  numbers, so it writes new-alpha rows into an existing series — run
+  `abk run --full-refresh` if you want the whole series at one alpha, and expect
+  guardrail `_ab_aa_runs` rows to read `alpha_mismatch` until `abk validate`
+  re-runs them.
 - Execution-only params (`max_block_bytes`) never enter the hash.
 
 ## Sequential eligibility

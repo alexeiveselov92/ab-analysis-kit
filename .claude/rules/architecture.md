@@ -1002,8 +1002,19 @@ identity param orphans the prior results series.
 - `srm.py`: `srm_check(observed_counts, expected_split, alpha=0.001)` →
   `SrmResult` (chi-square gate).
 - `correction.py`: `adjust_alpha`, `two_tier_alphas` (the legacy two-tier
-  Bonferroni keyed off `is_main_metric`), read-time `benjamini_hochberg`,
-  `n_comparisons`.
+  Bonferroni keyed off `is_main_metric`, plus the m13 D8 `guardrail_alpha`
+  pass-through), read-time `benjamini_hochberg`, `n_comparisons`.
+  **The guardrail tier is two changes, not one** (`guardrail_correction: none`,
+  resolved in `analyze.effective_alphas`): a guardrail is tested at the RAW alpha
+  AND it stops counting towards `metrics_count`, which loosens alpha for the
+  screening metrics remaining in the tier. `two_tier_alphas` deliberately does
+  not derive one from the other — it cannot see which comparisons are guardrails,
+  so the caller that excludes them is the caller that passes `guardrail_alpha`.
+  `comparison_alpha` tests the guardrail tier BEFORE the `secondary is None`
+  fallback: an experiment whose only non-main comparisons are guardrails has
+  `metrics_count == 0`, and the old fallback would hand it the MAIN (tightest)
+  alpha. That ordering is invisible at two arms, where `main == raw` — the k=0
+  test uses THREE.
 - `power.py`: power/MDE (t-test, CUPED-deflated, proportions).
 - Default p-value stays the **baseline sign p-value**; `(#extreme+1)/(n+1)`
   is opt-in `pvalue_kind: plugin` (statistics-changes §2).

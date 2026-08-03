@@ -11,6 +11,37 @@ recorded here alongside an `ALGORITHM_VERSION` bump and a
 [`statistics-changes.md`](docs/specs/statistics-changes.md) entry (never a silent
 number change).
 
+## [Unreleased]
+
+### Added
+- **STAT-1c — `guardrail_correction`: guardrails can stop being corrected like
+  growth metrics** (M13, decision D8). A guardrail exists to catch harm, so
+  correcting its alpha makes the engine *less* able to do the one job the metric
+  was declared for — the error points the dangerous way. The new project- (and
+  experiment-) level knob takes `inherit` (**the default**, the pre-`0.8.0`
+  scheme: a guardrail shares the secondary Bonferroni budget) or `none` (the
+  guardrail is tested at the **raw** experiment alpha).
+
+  `none` is **two changes, not one**: the guardrail is re-routed *and* it stops
+  counting towards the secondary divisor, which loosens alpha for the screening
+  metrics that remain in the tier. One main + one screening + one guardrail over
+  two arms moves from `main 0.05 / secondary 0.025` to
+  `main 0.05 / secondary 0.05 / guardrail 0.05`.
+
+  The flip is **inert unless `correction: bonferroni`** (every other scheme
+  already hands out the raw alpha at compute time), and it is **opt-in** because
+  it moves persisted numbers. Two consequences worth stating: alpha is
+  deliberately outside `method_config_id`, so flipping the knob writes new-alpha
+  rows into an *existing* series (`abk run --full-refresh` makes a series
+  homogeneous again); and the A/A calibration chip keys on the **effective**
+  alpha, so existing `_ab_aa_runs` rows for guardrail metrics read
+  `alpha_mismatch` until re-run. Documented in
+  [declarative-config.md §6.1](docs/specs/declarative-config.md).
+
+  No default moved: a project that changes nothing reproduces `0.7.0` exactly,
+  and no `ALGORITHM_VERSION` was bumped (M13 D4 — under opt-in, an operator who
+  changes a level orphans only their own series, at the moment they ask for it).
+
 ## [0.7.0] - 2026-08-03
 
 ### Added

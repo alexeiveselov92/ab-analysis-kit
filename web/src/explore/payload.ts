@@ -109,7 +109,11 @@ export interface ExperimentKnobs {
   correction: string;
   correction_choices: string[];
   groups_count: number;
-  /** comparisons with is_main_metric=false (the secondary Bonferroni tier) */
+  /** m13 D8: 'inherit' (guardrails share the secondary tier) | 'none' (raw alpha,
+   * and they leave the divisor below) */
+  guardrail_correction: string;
+  /** comparisons sharing the secondary Bonferroni tier — is_main_metric=false,
+   * and under guardrail_correction 'none' NOT is_guardrail either */
   non_main_count: number;
 }
 
