@@ -22,7 +22,7 @@ The as-built condensation for contributors/assistants (detectkit-style):
 Design contracts for what is being *built next* stay in [docs/specs/](docs/specs/)
 (canonical for M2+ work — table below). Keep rules ↔ docs in sync per milestone.
 
-## Status: M1–M11 shipped; `0.6.1`–`0.6.4` released (latest on PyPI: `0.6.4`); BOTH `0.6.x` interstitials closed — PLAN-1/PLAN-2 in `0.6.1`/`0.6.2`, UI-1 + UI-2 + PERF-1 in `0.6.4`; polish track M12–M17 next (M12 = notifications → `0.7.0`)
+## Status: M1–M12 shipped; latest on PyPI: `0.7.0` (M12 = notifications); BOTH `0.6.x` interstitials closed (PLAN-1/PLAN-2 in `0.6.1`/`0.6.2`, UI-1 + UI-2 + PERF-1 in `0.6.4`); polish track continues with M13–M17
 
 **Done — M1, the pure statistical core** (`abkit.stats`, importable standalone;
 see [ROADMAP.md](ROADMAP.md) for the deferred-cleanup list): data model with the
@@ -250,7 +250,32 @@ changed** (no `ALGORITHM_VERSION` bump). CRUD config editing was explicitly
 phase 2 — it shipped in the `0.6.x` **UI-1** interstitial. **Released as
 `0.6.0`** — tagged and published to PyPI.
 
-**Next — the polish track continues: M12–M17 → `0.7.0`…`0.12.0`
+**Done — M12, notifications → `0.7.0`** (the implementation record is
+[m12-implementation-plan.md](docs/specs/m12-implementation-plan.md) — the §1
+per-WP as-built notes, the §4 exit-gate result and the §7 record; PRs #89–#94):
+`abkit/notify/` (shipped in M6, reachable only through `abk test-report`) is
+wired to real signals behind the opt-in `abk run --notify` and
+`abk validate --notify`. **Nothing in a message is recomputed** — a verdict is
+`readout.evaluate()`'s over the persisted rows, the same decision `--report`
+bakes, so a notification cannot disagree with the report or the dashboard about
+the same experiment (the m11 launcher discipline, applied to a second surface).
+Six routable signal kinds: `readout`, its narrow views `verdict_change` and
+`srm` (one payload re-CLASSIFIED, never a second message), `error` (a failed
+run — no statistics block, because nothing was measured), and the two RECURRING
+ones, `stale` and `calibration_red`, whose condition outlives the run that
+reports it and which therefore dedup on a SIGNATURE of what is wrong plus an
+optional `notify.cooldown_seconds`. Routing is two `on:` filters that INTERSECT
+(the experiment's and the channel's), and `_ab_notify_states` remembers what was
+last ANNOUNCED — written only after a channel accepted it — so a scheduled run
+is quiet until something moves. Nine channel types (NTF-4 added discord, teams,
+googlechat, ntfy). **Fail-soft is the binding property**, doubled on purpose and
+proven at the exit gate: no channel failure can change an exit code, and one bad
+channel cannot block the rest. NTF-5's routing work also fixed the detector it
+routed — the backlog warning measured against the ever-advancing watermark, so a
+FINISHED, fully computed experiment reported a backlog growing by a day every
+day. **Zero statistical numbers moved** (no `ALGORITHM_VERSION` bump).
+
+**Next — the polish track continues: M13–M17 → `0.8.0`…`0.12.0`
 (track approved 2026-07-18)**. The `0.6.x` **PLAN-1/PLAN-2** interstitial is
 closed (released as `0.6.1`/`0.6.2`); the second `0.6.x` interstitial —
 **UI-1/UI-2/PERF-1**, added 2026-08-02 — is closed too: **UI-1** (CRUD
@@ -264,23 +289,25 @@ COMPUTE beside the counterfactual, and `abk init` now scaffolds
 `incremental_reads: true`; the library default stays `false` because the flag
 guards the operator's ingestion SLA, and §4.1's criteria were finally executed
 — evidence in [cumulative-intervals.md §4.2](docs/specs/cumulative-intervals.md))
-shipped together as ONE **`0.6.4`** — tagged and published to PyPI. The
+shipped together as ONE **`0.6.4`** — tagged and published to PyPI, and M12
+followed as **`0.7.0`**. The
 interstitial renumbers nothing either. Metric-YAML editing
 (UI-3) is deliberately deferred past M12 — a metric edit needs its `sql/` file
 too, which is new surface rather than an addendum. The code-verified pain audit
 ([docs/research/2026-07-data-flow-audit/REPORT.md](docs/research/2026-07-data-flow-audit/REPORT.md))
 plus the entire hardening backlog, one minor release per milestone: M12
-notifications → M13–M17 (versioned stats, multi-arm decisions, new methods,
-owned randomization, app integration — contours, design-session-first). The
-track section in [ROADMAP.md](ROADMAP.md) is the map; the as-designed contract
-is the [m12](docs/specs/m12-implementation-plan.md) implementation plan
-([m7](docs/specs/m7-implementation-plan.md),
+notifications shipped as `0.7.0`; M13–M17 (versioned stats, multi-arm decisions,
+new methods, owned randomization, app integration) stay contours,
+design-session-first. The
+track section in [ROADMAP.md](ROADMAP.md) is the map;
+[m7](docs/specs/m7-implementation-plan.md),
 [m8](docs/specs/m8-implementation-plan.md),
 [m9](docs/specs/m9-implementation-plan.md),
-[m10](docs/specs/m10-implementation-plan.md) and
-[m11](docs/specs/m11-implementation-plan.md) are now implementation records).
+[m10](docs/specs/m10-implementation-plan.md),
+[m11](docs/specs/m11-implementation-plan.md) and
+[m12](docs/specs/m12-implementation-plan.md) are all implementation records now.
 Discipline: one WP = one session = one PR; **M7–M12
-move no statistical number** (parity gates); M13/M15 go through full change
+moved no statistical number** (parity gates); M13/M15 go through full change
 control.
 
 Design contracts stay in [docs/specs/](docs/specs/) (canonical). Read the relevant

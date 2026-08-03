@@ -11,8 +11,16 @@ stabilization chart), writes them to a clean warehouse table any BI can read, an
 gives you a local cockpit to tune the analysis and a harness to prove your method is
 actually calibrated.
 
-> **Status: `0.6.4` (Alpha) — the latest on PyPI**
-> (milestones **M1–M11** shipped — M11 added **`abk dashboard`**, the
+> **Status: `0.7.0` (Alpha) — the latest on PyPI**
+> (milestones **M1–M12** shipped — M12 wired **notifications**: `abk run
+> --notify` and `abk validate --notify` push what a run just decided to nine
+> channel types (Slack, Telegram, email, webhook, Mattermost, Discord, Teams,
+> Google Chat, ntfy), as six routable signals — the readout verdict, a verdict
+> flip, a failed sample-ratio gate, a pipeline error, a slipped schedule, and an
+> A/A cell that broke its false-positive budget. Nothing is recomputed for a
+> message, so it cannot disagree with the report; a repeat run over unchanged
+> data is silent; and no channel failure can change an exit code. M11 added
+> **`abk dashboard`**, the
 > project-level cockpit: one row per experiment with its headline verdict,
 > effect + CI, p/α and a sparkline of the cumulative series, plus buttons that
 > spawn real `abk` subprocesses (Run — for the whole experiment or one metric —
@@ -42,9 +50,10 @@ pip install ab-analysis-kit          # Python 3.10+; add a DB extra for real dat
 pip install "ab-analysis-kit[clickhouse]"   # or [postgres] / [mysql] / [all-db]
 ```
 
-(`pip install ab-analysis-kit` gets `0.6.4` — `abk dashboard` with its YAML editor,
-`abk ui`, CUPED-aware `abk plan` sizing, `abk plan --from-history` and the
-discoverable additive read path all included.)
+(`pip install ab-analysis-kit` gets `0.7.0` — opt-in notifications across nine
+channels, `abk dashboard` with its YAML editor, `abk ui`, CUPED-aware `abk plan`
+sizing, `abk plan --from-history` and the discoverable additive read path all
+included.)
 
 `abk --version` and `abk --help` work with no database driver; you can even lint a
 config (`abk run --steps validate`) with no database at all. See the

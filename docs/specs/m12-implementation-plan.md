@@ -1,12 +1,13 @@
 # M12 Implementation Plan — notifications
 
-> **As-designed contract for M12** (polish track, approved 2026-07-18), in the shape
-> of [m4-implementation-plan.md](m4-implementation-plan.md) /
-> [m6-implementation-plan.md](m6-implementation-plan.md). Targets release **`0.7.0`**.
-> **Not yet implemented** — this document is the contract the implementation
-> sessions (NTF-1..NTF-6) execute against; it becomes the implementation record
-> (worked examples, adversarial-review log) at the M12 exit gate, the m4–m6 pattern.
-> It must never be read as claiming any of NTF-1..NTF-6 already exists in code.
+> **IMPLEMENTATION RECORD for M12** (polish track, approved 2026-07-18), in the
+> shape of [m4-implementation-plan.md](m4-implementation-plan.md) /
+> [m6-implementation-plan.md](m6-implementation-plan.md). **Released as
+> `0.7.0`.** NTF-1..NTF-6 are all merged (PRs #89–#94); the as-designed contract
+> below is kept verbatim, with an **"As built"** block under each work package
+> recording where the build diverged from it, the §4 exit-gate result, and the
+> §7 record (signal table, state-row semantics, both review rounds). Where a
+> step and its "As built" block disagree, the block is what shipped.
 >
 > Governing specs: [cli-and-dx.md](cli-and-dx.md) (the `abk test-report` /
 > `abkit/notify/` layer as shipped in M6),
