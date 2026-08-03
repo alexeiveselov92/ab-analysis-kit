@@ -863,6 +863,72 @@ Tracked in the RU initiation spec ([docs/ru/project-initiation-spec.md](docs/ru/
 — covariate-window choice, v2 trigger threshold, docs domain confirmation, SRM
 `expected_split` source, guardrail multiplicity handling.
 
+### 📋 Website parity with detectkit's landing refresh (maintainer request, 2026-08-03)
+
+The donor's site moved ahead and abkit's has not followed. The reference is
+detectkit's **#151** (`67d9c24`, "feat(landing): dark/light theme toggle, honest
+quickstart, MCP + comparison + hybrid sections") — landing-only, no library
+change, no version bump. Scope here is the parts that apply to abkit; study the
+donor diff first rather than re-deriving it.
+
+**1. Theme toggle everywhere, the landing included.** The docs already have
+both themes — `website/src/styles/brand.css` defines `:root` (dark, the
+Starlight default) and `:root[data-theme='light']`, and Starlight ships the
+switch. The **landing does not**: `website/src/pages/index.astro` (693 lines) +
+`website/src/styles/landing.css` (1654) carry no `data-theme` at all, so the
+marketing page is single-theme while the docs one link away is not. The donor
+paid ~1200 lines for this (299 in `index.astro`, 893 in `landing.css`) and
+recorded two traps worth stealing: **no-flash init** (read `localStorage`, fall
+back to the OS preference, before first paint) and **elements that must NOT
+invert** — the donor pinned its CTA band and one status chip to
+theme-independent values. abkit's analogue is the report/explore screenshot
+surface and the five verdict tokens (`docs/design/brand-tokens.md`): a WIN green
+that flips with the page theme stops being the brand colour.
+
+**2. Live social proof in the hero — stars, and something honest beside them.**
+The donor fetches at **build time** (`api.github.com/repos/...` →
+`stargazers_count`, `pypistats.org/api/packages/<pkg>/recent` → `last_month`),
+formats compactly, and **omits a stat entirely when its source is unreachable**
+— no fake fallback, so the hero can never show a made-up number. That discipline
+carries over verbatim.
+
+**The download figure does not.** The donor's own page shows **~12k downloads/mo
+against 3 stars**, and that ratio is the tell: a PyPI download count is not a
+count of humans. It includes mirrors, scrapers, dependency resolvers and CI —
+and a project whose own CI installs it across three Python versions on every PR
+is a meaningful share of its own "audience". Publishing it as social proof is
+the kind of number this project refuses to print anywhere else.
+
+So this item is **not** "port the badge". It is:
+
+- **Measure the composition before choosing a metric.** `pypistats`' public API
+  exposes no installer breakdown; the real source is PyPI's BigQuery dataset
+  (`bigquery-public-data.pypi.file_downloads`, with `details.installer.name`),
+  which can separate `pip` from `bandersnatch`/`requests`/unknown. That is a
+  one-off investigation, not a build-time dependency — a static site must not
+  need GCP credentials to render.
+- **Then decide what the page may claim.** Options, in the order they should be
+  argued: show **stars only** (unforgeable by CI); show a **verifiable
+  project fact** instead (releases, tests, the date the first version shipped);
+  or keep a download figure **only if** it can be labelled precisely enough to
+  be true — and the label has to survive an operator asking "so how many people
+  actually use this?".
+- **Whatever ships, the page states what the number is.** The donor already
+  links its figure to `pypistats.org` for verification; that part is right and
+  stays.
+
+**3. Everything else in the donor diff is judged, not copied.** Its new sections
+(a 60-second DuckDB quickstart backed by a real example project, an `dtk mcp`
+section, a competitor-comparison matrix, hybrid-mode pricing) map onto abkit
+unevenly — abkit has no MCP surface and no hybrid mode, but it does have a
+`abk init` scaffold that could back an equally honest quickstart, and the
+comparison matrix is a marketing decision the maintainer should make, not an
+inherited one.
+
+**Not a milestone**: website-only, no library change, no version bump (the site
+auto-deploys on a `website/**` merge to `main`). Sized as one session, or two if
+the download investigation turns into a real BigQuery pass.
+
 ### 📋 CI + test-suite audit — its own `ultracode` pass (maintainer request, 2026-08-02)
 
 **The suite has grown to 3118 tests and the feedback loop is now the slowest
