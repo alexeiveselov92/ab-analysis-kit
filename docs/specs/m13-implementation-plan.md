@@ -8,7 +8,9 @@
 > a line or derived in place
 > ([code-audit.md](../research/2026-08-m13-blind-rederive/code-audit.md)).
 > All three derivations are in the same directory with their contamination
-> disclosures. **What remains open is decisions, not information** — §5.
+> disclosures. **Nothing blocking remains open** — the last technical unknown
+> (the sequential layer vs asymmetric intervals) was investigated on the same day
+> and answered in §6(a)/D14. What is left is a UX design task (§5.2).
 >
 > **This is the first milestone of the track that MOVES statistical numbers.**
 > M7–M12 all shipped under a no-numbers-move posture with parity gates. That
@@ -307,6 +309,49 @@ loosens α for the screening metrics that remain — a second, free gain).
   be said in the CHANGELOG rather than discovered.
 - Under D1 the current behaviour stays the default; the new treatment is opt-in.
 
+#### Build spec (mapped against the code, 2026-08-03)
+
+1. **The knob.** `ProjectStatisticsConfig.guardrail_correction: Literal["inherit",
+   "none"] = "inherit"` (`config/project_config.py`, beside `correction`), plus
+   the experiment-level `| None` override — the exact shape `correction` already
+   uses. `"inherit"` is today's behaviour: a guardrail shares the secondary
+   budget. `"none"` is D8. Nothing here enters `method_config_id`.
+2. **`TwoTierAlphas` gains `guardrail: float | None`** (`stats/correction.py`).
+   `None` means "no separate tier — guardrails use `secondary`", so every
+   existing consumer that ignores the field keeps working.
+3. **`effective_alphas` (`pipeline/analyze.py:59`) changes in TWO places, and the
+   second is the free gain.** Under `"none"`: `guardrail = alpha` (raw), **and
+   `metrics_count` must stop counting guardrails** —
+   `non_main = Σ(not is_main_metric)` today includes them, so removing them from
+   the tier also *loosens* α for the screening metrics that remain. Forgetting
+   the second half yields a change that helps guardrails and silently taxes
+   nothing else — half the intended effect, and no test would notice.
+4. **`comparison_alpha` (`analyze.py:81`)** routes `is_guardrail` to
+   `alphas.guardrail` when it is not `None`. Keep the existing
+   `secondary is None` fallback ahead of it.
+5. **The browser mirror is the m10 hazard, and it needs THREE new inputs.**
+   `explore.ts#effectiveAlpha` (`web/src/explore/explore.ts:126`) recomputes α
+   live as the operator drags the alpha/correction knobs, so it cannot be handed
+   a resolved number — it must learn the rule. It needs: the mode, a per-metric
+   `guardrail` flag (the roles map at `explore.ts:629` carries `main` only), and
+   a `non_main_count` that already **excludes** guardrails under `"none"`
+   (`tuning/payload.py:112` bakes it). Pinned in lockstep by
+   `tests/tuning/test_explore_bundle.py`; the bundle must be rebuilt and
+   committed in the same PR (the `abk-web-bundle` discipline).
+6. **Other consumers to visit** (the signature change makes them visible, which
+   is the point): `cli/commands/plan.py:796` prints the tier line and would need
+   a third tier; `validate/runner.py` sizes per-cell iterations off the effective
+   α; `compute/reconcile.py`, `tuning/server.py`, `cli/commands/test_report.py`
+   pass it through.
+7. **Tests.** Unit coverage on `effective_alphas` for both modes × (main,
+   secondary, guardrail) × `k = 0`; the `k = 0` edge matters because removing the
+   only non-main metric from the tier makes `secondary` `None`. Plus the explore
+   lockstep test, and an assertion that a guardrail's persisted `alpha` equals the
+   raw α under `"none"`.
+8. **CHANGELOG must state the A/A consequence** (M4 D3/D16): the calibration chip
+   keys on the **effective** α, so existing `_ab_aa_runs` rows for guardrail
+   metrics read `alpha_mismatch` until re-run.
+
 ### STAT-2 — the A/A matrix records the SIGN of each false positive
 
 **Depends on:** nothing. **Blocks:** STAT-4. Runs in parallel with STAT-1.
@@ -492,6 +537,7 @@ field, and only M15's Student-t would need them.
 | D10 | **STAT-4 = Fieller, not the cheap delta parity.** Decisive fact: Fieller's rejection set at θ=0 is *identical* to today's shortcut, so adopting it changes **no verdict** — only interval endpoints. The "cheap" delta fix *does* change the rejection set (that is what its sign asymmetry is). The correct change is the non-disruptive one. It also shares STAT-3's score-inversion shape, so the sequential-asymmetry problem is solved once for both. | decided 2026-08-03, delegated |
 | D11 | **MN ships WITHOUT the `N/(N−1)` factor** (Farrington–Manning form), making `Z(0)` bit-identical to today's pooled z so no reported p-value moves. Byte-stability of the p-value outranks matching R/SAS; the difference is `1/(2N)`. Golden tests compare against FM, and the docstring says why. | decided 2026-08-03, delegated |
 | D12 | **`_ab_results.reject` keeps its name and is REDOCUMENTED as pre-family** — "rejection of this one comparison at its stored α, before any read-time family rule". No family-decision column is added: under a read-time scheme that value is re-derived on every read and a persisted copy would go stale the moment `correction` changes. The BI recipes state that the family decision lives in the readout. | decided 2026-08-03, delegated |
+| D14 | **The sequential layer DOES extend to score intervals** — the always-valid rule is a standardised test with `c(V)` in place of `z`, so the confidence sequence is `{δ : \|Z(δ)\| ≤ c(V)}`, a critical-value substitution inside the root-find MN/Fieller already run. The blocker is architectural, not mathematical: `to_always_valid` *infers* the SE from the CI width assuming symmetry, unvalidated, at six call sites (the A/A sequential column among them). **`asymmetric_ci: ClassVar[bool] = False` is a hard prerequisite of STAT-3** — it turns a silent miscomputation into a loud refusal. | decided 2026-08-03, delegated |
 | D13 | **STAT-5 (uniform ddof) is DROPPED from M13** — second-order, below the instrument's noise floor, dominated at small n by the normal-vs-Student-t error deferred to M15 (audit §7). Dropping it edits the ROADMAP contour. | decided 2026-08-03, delegated |
 
 ## 4. Exit gate (sketch)
@@ -516,13 +562,15 @@ field, and only M15's Student-t would need them.
 **Everything the design session had to settle is settled** (D1–D13). What remains
 is one technical question the *first WP* must answer, and one UX question:
 
-1. **§6(a) — M5's sequential layer cannot consume an asymmetric score interval.**
-   This is now the milestone's one genuine unknown, and it grew in importance:
-   D10 and D11 both adopt score-inversion constructions, so *both* STAT-3 and
-   STAT-4 depend on it. Settle it before either is built. If the confidence
-   sequence cannot be re-derived on the score scale, the fallback is that the
-   new intervals are unavailable under `sequential.enabled` — acceptable under
-   D1 (opt-in), but it must be a stated limitation, not a discovered one.
+1. ~~§6(a) — the sequential collision~~ — **investigated and answered (D14).**
+   The confidence sequence *does* re-derive on the score scale: the always-valid
+   rule is a standardised test with a variance-dependent critical value `c(V)`
+   substituted for `z`, inside the root-find MN and Fieller already perform. What
+   the investigation *did* find is worse than the original worry and is now a
+   hard prerequisite: the transform silently mis-recovers the SE from an
+   asymmetric interval (it infers `SE = ci_length/2z`, unvalidated) at six call
+   sites including the A/A instrument's own sequential column. **STAT-3 cannot
+   ship without the `asymmetric_ci` capability flag** (§6a item 1).
 2. **How the three renderers show a CI that legitimately disagrees with the
    verdict beside it** (D7's consequence). Report, explore and dashboard all
    display both. The first divergence an operator meets will read as a bug
@@ -540,14 +588,84 @@ is one technical question the *first WP* must answer, and one UX question:
 
 ## 6. Inter-milestone collisions
 
-**(a) M5's sequential layer cannot consume a score interval — and this is the
-one collision that could force a redesign.** `stats/sequential/` is built as a
-pure MODE transform over a fixed `(effect, SE)` pair. A score interval is
-**asymmetric and has no single SE**, so the transform has nothing to consume.
-Either the confidence sequence is re-derived on the score scale, or the
-fixed-horizon and always-valid intervals use different machinery and can
-disagree about the same data. **Settle this before STAT-3 is built**, not after:
-it decides whether MN can be the default for a sequential experiment at all.
+**(a) M5's sequential layer vs score intervals — INVESTIGATED 2026-08-03, and the
+answer inverts the problem.**
+
+*First, the collision is worse than "cannot consume".* The transform does not
+take `(effect, SE)` at all: `to_always_valid` calls
+`se_from_ci_length(result.ci_length, alpha)`, which **infers** the SE from the
+interval's width by assuming it is symmetric-normal — the docstring states the
+assumption outright ("every parametric method builds its fixed CI as
+`effect ± z·SE`"). That is true today of all 12 methods, because they all route
+through `effects.normal_test`. **Nothing validates it.** For an asymmetric
+interval `se_from_ci_length` returns a finite number that is not the SE (it is
+the mean half-width over `z`), and `sequentialize` then centres a symmetric
+always-valid interval on the point estimate with a radius built from it. No NaN,
+no exception — **silently wrong**.
+
+Severity is highest exactly where the new intervals are worth having: the
+recovery is nearly right when the interval is nearly symmetric (large n, small
+`CV₁`, `p` away from 0) and degrades as asymmetry grows. Fieller's *unbounded*
+branch is safe by accident — `ci_length = ∞` fails the `math.isfinite(se)` guard
+and lands in the NaN bucket.
+
+*And the defect would reach the instrument.* Six call sites, none checking:
+`pipeline/analyze.py:214`, `tuning/recompute.py:1055`, `planning/sizing.py:391`,
+and — the bad one — `validate/scoring.py:249` + `validate/family.py:291`, i.e.
+**the A/A matrix's own sequential column**. The instrument would not merely fail
+to see the problem; it would compute on the same mis-recovered SE.
+
+*Second, the mathematical answer is YES.* Standardising the shipped boundary
+(`confidence_sequence.sequentialize`, with `V = SE²`):
+
+```
+radius = √( (2V(V+τ²)/τ²) · (ln(1/α) + ½·ln((V+τ²)/V)) )
+⇒ radius/√V = c(V) = √( 2(1 + V/τ²) · (ln(1/α) + ½·ln(1 + τ²/V)) )
+```
+
+So the always-valid rule is an ordinary test on a **standardised** statistic with
+a variance-dependent critical value `c(V)` in place of `z`. That applies to any
+statistic asymptotically N(0,1) under its null — **including the score statistic
+`Z(δ)`**. The confidence sequence is then
+
+```
+{ δ : |Z(δ)| ≤ c(V) }        instead of        { δ : |Z(δ)| ≤ z }
+```
+
+— a substitution of the critical value **inside the root-find MN and Fieller
+already perform**. Nothing new is needed mathematically; `mixture_tau2` is
+untouched.
+
+*So the obstacle is our post-hoc architecture, not the score interval.* The
+current design must **recover** an SE it was never given; the score design merely
+swaps `z` for `c`. An asymmetric interval is harder to *widen after the fact*, and
+no harder to *construct sequentially*.
+
+*What STAT-3/STAT-4 must therefore build:*
+
+1. **A capability flag, following the project's own pattern.**
+   `supports_vectorized` and `supports_resample_memo` are both `ClassVar[bool]`
+   on `BaseMethod` with a "False default keeps every method working" discipline
+   and an explicit raise when a method lies. Add **`asymmetric_ci: ClassVar[bool]
+   = False`** — default False is today's truth for all 12 methods, and a score
+   method opts *in*. Every `se_from_ci_length` caller refuses an asymmetric
+   method **loudly** instead of mis-recovering. This alone converts the silent
+   failure into a stated limitation, and is the minimum STAT-3 cannot ship
+   without.
+2. **The critical value must enter the construction**, so a score method needs an
+   entry point that builds its interval at a given critical value rather than at
+   `z`. `to_always_valid(TestResult) → TestResult` cannot express that and stays
+   the path for symmetric methods.
+3. **One documented choice:** `c` depends on `V`, and for a score interval the
+   variance `σ̃(δ)²` varies with `δ`. Evaluating `c` at the null variance, at
+   `δ̂`, or δ-dependently are all defensible; the δ-dependent form keeps the
+   "the sequence is the set of δ not rejected by the always-valid test at δ"
+   reading exact, at the cost of making the root-find's bracketing question
+   (already flagged in STAT-3) strictly harder.
+
+**Fallback if (2) proves expensive:** ship (1) alone. The new intervals are then
+unavailable under `sequential.enabled` — acceptable under D1, and now a *stated*
+limitation with a loud error rather than a silent miscomputation.
 
 **(b) `abk plan`'s power/MDE machinery is Wald-based.** If the analysis rule
 becomes score-based, a stated MDE no longer inverts the rule that will actually
