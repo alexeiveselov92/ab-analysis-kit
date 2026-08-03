@@ -1,9 +1,32 @@
 # Notification channels
 
 abkit is **not** a monitoring system — it has no alerting subsystem, no
-severities, no recovery/no-data events. What it *does* have is a way to push a
-finished **readout** (the WIN / LOSE / FLAT / INCONCLUSIVE decision from
-`abk run`) to a chat or inbox, and a command to verify that plumbing works:
+severities, no recovery/no-data events. What it *does* have is a way to push
+what a run just decided to a chat or inbox:
+
+```bash
+abk run --notify           # readouts, SRM breaches, pipeline errors, schedule slips
+abk validate --notify      # methods whose false-positive rate broke its budget
+```
+
+Both flags are opt-in, both are best-effort (a channel that is down never fails
+your run), and both send **six** kinds of signal you can route independently:
+
+| Kind | Sent by | Means |
+|---|---|---|
+| `readout` | `abk run --notify` | a comparison's verdict — WIN / LOSE / FLAT / INCONCLUSIVE |
+| `verdict_change` | `abk run --notify` | that verdict *flipped* since the last message |
+| `srm` | `abk run --notify` | the sample-ratio gate failed — the same readout, re-classified |
+| `error` | `abk run --notify` | the pipeline failed; there is no result to report |
+| `stale` | `abk run --notify` | the computed series was behind the looks already due |
+| `calibration_red` | `abk validate --notify` | an A/A cell exceeded its false-positive budget |
+
+Nothing in a message is recomputed for it: a verdict is `readout.evaluate()`'s
+over the persisted rows — the same decision `abk run --report` bakes into its
+HTML — so a notification can never disagree with the report or the dashboard
+about the same experiment.
+
+## Check the plumbing first
 
 ```bash
 abk test-report example_signup_test
@@ -14,9 +37,6 @@ configured and prints a per-channel ✓/✗. It is a connectivity and formatting
 check — it does not read your warehouse, take a lock, or run any statistics; the
 payload is synthetic. Use it after wiring up a channel (or rotating a secret) to
 confirm messages arrive and look right.
-
-Once the plumbing works, `abk run --notify` sends the **real** readout — see
-[Sending real readouts](#sending-real-readouts) below.
 
 ## Configuring channels
 
@@ -199,7 +219,7 @@ After each experiment finishes, abkit reads the rows it just persisted, runs the
 per verdict. Nothing is recomputed for the message — a notification cannot
 disagree with the report or the dashboard about the same experiment.
 
-Three things follow from that, and they are worth knowing before you wire it
+Five things follow from that, and they are worth knowing before you wire it
 into a scheduler:
 
 - **It is opt-in and it never fails your run.** Without `--notify` no channel is
@@ -252,11 +272,17 @@ The two filters **intersect**: a kind must pass the experiment's `on:` *and* the
 channel's to be delivered. The experiment narrows what it sends; the channel
 narrows what it accepts; neither re-opens what the other closed.
 
-The kinds are `readout`, `verdict_change`, `srm`, `calibration_red`, `stale` and
-`error`. **All of them fire except `verdict_change`**, which is accepted now so
-that a filter you write today keeps its meaning (rather than silently widening)
-when it ships. Note that `calibration_red` comes from `abk validate --notify`,
-not from `abk run` — see [Calibration and schedule signals](#calibration-and-schedule-signals).
+The kinds are the six in the table at the top of this page. Two of them are
+narrower views of a message that also answers to `readout`, so scoping a channel
+to one of those gets you a subset, never a duplicate:
+
+- `on: [srm]` — only readouts whose sample-ratio gate failed.
+- `on: [verdict_change]` — only readouts whose verdict *flipped*. Not the first
+  message about a comparison (news, but nothing changed), and not one re-sent
+  because its SRM gate moved while the word stayed put.
+
+And `calibration_red` comes from `abk validate --notify`, not from `abk run` —
+see [Calibration and schedule signals](#calibration-and-schedule-signals).
 
 ## Urgent signals: SRM and pipeline errors
 
@@ -352,6 +378,10 @@ happens. abkit remembers, per comparison, what it last told you (in
 | Same verdict, SRM still broken | no |
 | A run that failed | **yes, every time** — an error is not a verdict, and a run that fails twice failed twice |
 
+Only the rows marked as a *flip* also count as `verdict_change`: the first
+message about a comparison and an SRM-triggered re-send are delivered as
+`readout` without the verdict having moved.
+
 The SRM row is the subtle one and it is deliberate: before its horizon an
 experiment sits at INCONCLUSIVE for days, so a broken split would keep the
 verdict word identical. Remembering the gate alongside the verdict is what keeps
@@ -368,3 +398,29 @@ Two consequences worth knowing:
 To make abkit repeat itself — after a channel migration, say — purge the
 experiment's rows with `abk clean --orphaned-experiments` (it resets the dedup
 along with everything else) or delete from `_ab_notify_states` directly.
+
+## Wiring it into a scheduler
+
+```bash
+abk run --notify                       # every experiment, every signal it has
+abk validate --select my_exp --notify  # out-of-band, on its own cadence
+```
+
+Three properties make this safe to run unattended, and all three are pinned by
+an end-to-end test:
+
+- **A channel cannot change an exit code.** One that is down, misconfigured,
+  raising, or lying about success is one yellow line in the log; the exit code
+  belongs to the pipeline alone. A run that genuinely failed still exits
+  non-zero — notifying about a failure never converts it into a success.
+- **A run that says nothing new sends nothing.** Two identical runs deliver one
+  message, because the memory lives in your warehouse rather than in the
+  process.
+- **One broken channel does not block the others.** Each is attempted
+  separately.
+
+Two experiments cannot notify about each other's state, and two runs of the same
+experiment cannot race: `abk run` already holds one pipeline lock per
+experiment, so a second invocation is a no-op that notifies nothing.
+`abk validate` takes a different lock and writes a different row, so the two
+commands can safely run at once.

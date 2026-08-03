@@ -178,6 +178,27 @@ class TestFailSoft:
         assert result.exit_code == 0, result.output
         assert "Notify skipped: readout exploded" in result.output
 
+    def test_a_stale_dispatch_failure_cannot_undo_a_delivered_readout(
+        self, scaffolded, monkeypatch
+    ):
+        """NTF-6 round 1: run.py has ONE try block over FOUR dispatch calls, so
+        each one needs its own proof rather than a structural argument. The
+        stale dispatch runs LAST, after the readout has already gone out — a
+        raise there must lose neither the message nor the exit code."""
+        import abkit.notify.dispatch as dispatch_mod
+
+        def boom(**kwargs):
+            raise RuntimeError("stale exploded")
+
+        monkeypatch.setattr(dispatch_mod, "dispatch_stale", boom)
+        configure_channels(team={"type": "spy", "label": "team"})
+
+        result = runner.invoke(cli, ["run", "--select", EXP, "--notify"])
+
+        assert result.exit_code == 0, result.output
+        assert "Notify skipped: stale exploded" in result.output
+        assert [r.kind for r in SpyChannel.sent] == ["readout"]
+
     def test_a_failed_pipeline_sends_an_error_notice_and_still_exits_nonzero(
         self, scaffolded, monkeypatch
     ):

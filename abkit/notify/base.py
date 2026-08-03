@@ -87,6 +87,14 @@ class ReadoutData:
     #: The human sentence a notice carries (the pipeline error, the stale
     #: warning). Ignored for ``kind="readout"``.
     notice: str | None = None
+    #: Does this readout's verdict WORD differ from the one last announced for
+    #: the same comparison (m12 NTF-6)? Routing only — no channel renders it —
+    #: and it rides on the payload for the reason ``kind`` does: the decision
+    #: is made where the dedup state is read, and consumed deep inside
+    #: ``signal_kinds_for``. False for a first-ever announcement and for a
+    #: readout re-sent because its SRM gate moved, both of which are delivered
+    #: without the verdict changing.
+    verdict_changed: bool = False
 
 
 def _finite(value: Any) -> bool:

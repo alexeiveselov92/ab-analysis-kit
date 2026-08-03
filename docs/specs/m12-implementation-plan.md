@@ -944,6 +944,18 @@ a M12 follow-up WP, not silently dropped.
 
 ## 4. Exit gate
 
+**EXECUTED 2026-08-03 (NTF-6).** `tests/e2e/test_notify_pipeline.py` is green
+(9 tests, CI e2e job): one `abk run --notify` over three experiments — healthy,
+SRM-broken (a 90/10 `expected_split` against 50/50 data, so the gate fails on
+real counts), and doomed (its own `added_filters` marker makes the warehouse
+raise for that experiment only) — proves the routing, the cross-invocation
+dedup through the real table, the fail-soft claim with a channel that raises on
+every send, and one channel per signal kind. Two mutations confirm the gate
+bites: removing `_deliver`'s per-channel catch, and adding a seventh
+`SignalKind`. Requirement (d) is served by the untouched
+`tests/cli/test_test_report_command.py`, which constructs and sends through all
+nine types. Both review rounds are recorded in §7.
+
 **NTF track exit gate** (from the shared design pass's `exit_gate`, NTF half,
 plus the track's common discipline):
 
@@ -1045,3 +1057,114 @@ track plan's "Перед стартом" line for M12, translated and carried fo
   conventional commit); the three-way docs sync + wheel-namelist + pip-smoke
   gates apply at the tag; `tag → publish.yml` per the established M1–M6
   release flow.
+
+---
+
+## 7. Implementation record (M12, written at the exit gate)
+
+The as-built summary NTF-6 owes the next reader; the per-WP "As built" notes
+under §1 stay the detailed source. Written for the audience the m4–m6 review
+records serve.
+
+### 7.1 The six signals, and where each is decided
+
+| Kind | Emitted by | Decided from | Deduped |
+|---|---|---|---|
+| `readout` | `abk run --notify` | `readout.evaluate()` over persisted rows | signature `(verdict, srm_flag)` per comparison |
+| `verdict_change` | the same payload | the verdict WORD vs the one last announced | rides the readout's dedup |
+| `srm` | the same payload | `ExperimentReadout.srm_flag` | rides the readout's dedup |
+| `error` | `abk run --notify` | `RunOutcome.status == "failed"` | never — a run that failed twice failed twice |
+| `stale` | `abk run --notify` | `RunOutcome.backlog` (PLAN stage) | signature = which metrics, + cooldown |
+| `calibration_red` | `abk validate --notify` | `CellResult.fpr > CellResult.budget` | signature = which cells, + cooldown |
+
+Three of them ride ONE payload. `signal_kinds_for()` answers with every kind a
+readout legitimately belongs to, and delivery asks "does ANY of them pass both
+`on:` filters" — so a channel accepting two of them still receives exactly one
+message. This is a re-CLASSIFICATION, never a re-evaluation: there is one
+verdict per comparison per run and every surface reads it from the same place.
+
+Nothing in `abkit/notify/` computes a statistic. The verdict is
+`readout.evaluate()`'s — the function `build_report_payload` and the dashboard
+already call — so a message cannot disagree with the report about the same
+experiment. This is the m11 launcher discipline applied to a second surface.
+
+### 7.2 `_ab_notify_states`, and what a row means
+
+PK `(experiment, metric, name_1, name_2, method_config_id)`; `last_verdict`,
+`last_srm_flag`, `last_notified_at`, `notify_count`, `updated_at`.
+
+- **Comparison rows** hold the last ANNOUNCED verdict + SRM flag. The pair is
+  the signature, not the word alone: a pre-horizon pair says INCONCLUSIVE
+  whether or not its split is broken, so a word-only key would swallow the SRM
+  alarm on the experiments most likely to need it (NTF-3).
+- **Notice rows** — one per experiment per recurring kind — use the sentinel
+  key `notice_state_key(kind)`: `metric='__stale__'`/`'__calibration_red__'`
+  with an EMPTY arm pair. The empty pair is the guarantee (a variant name
+  cannot be empty); the sentinel NAME is only an idiom, since `MetricConfig`
+  accepts underscores. `last_verdict` there holds the condition's signature,
+  and `""` means "the condition cleared" (NTF-5).
+- **A row is written only after a channel ACCEPTED the message.** Recording an
+  announcement that reached nobody loses the flip permanently, because nothing
+  re-derives what was never sent. The one deliberate exception is a cleared
+  recurring signature, which records an OBSERVATION nobody had to receive.
+- The table is in `EXPERIMENT_KEYED_TABLES`, so `abk clean
+  --orphaned-experiments` purges it — a deleted-and-reused experiment name
+  would otherwise inherit the old history and have its first verdict deduped
+  away.
+
+### 7.3 Cooldown vs dedup, as resolved
+
+D2 (signed off before implementation) governs verdicts: a change always sends,
+an unchanged verdict never re-sends, and `cooldown_seconds` is not consulted.
+NTF-5 gave the field its only consumer — the two RECURRING kinds, whose
+condition is still true on the next run. There the rule is the same shape with
+one addition: a changed signature always announces, an unchanged one waits for
+the cooldown. `None` (the default) means "never repeat" and is deliberately
+distinct from `0`; `is_in_cooldown` mutes neither, so deferring to it alone
+would have made the default re-announce every run.
+
+### 7.4 Review rounds (NTF-6)
+
+**Round 1 — every notify call site's exception handling**, by grep and read
+rather than by trusting the WP descriptions. Four dispatch calls live in
+`run.py` under ONE `try/except Exception`, and one in `validate.py` under its
+own; `_deliver` additionally catches per channel (construction and send
+separately). The structural argument was not accepted on its own: the two
+dispatches that had no behavioural proof — `dispatch_stale` (last in run.py's
+block, after a readout has already gone out) and `dispatch_calibration_red` —
+now have one each, and the deliberate double-wrapping stands (§0.4 point 1: the
+inner catch keeps one bad channel from blocking the rest, the outer keeps a
+pre-channel failure from failing the run; a simplify pass must not collapse
+them).
+
+**Round 2 — the double-notify race.** The donor's cooldown code warns about two
+near-simultaneous runs both announcing before either writes state. In abkit it
+is structurally impossible for the `run` path: `_ab_tasks` holds one lock per
+experiment at `(experiment, "pipeline", "run")`, so a second concurrent
+invocation gets `status="locked"` — and `locked` notifies nothing at all, by
+the NTF-1 rule that only `completed`/`failed` reach the notify block. Within one
+invocation the notify block runs in the MAIN thread over `outcomes` after the
+worker pool has joined, so `--workers N` does not reintroduce it. The one pair
+that CAN run concurrently is `abk run --notify` and `abk validate --notify` on
+the same experiment (different locks, by m4's D5) — they write disjoint rows
+(comparison + `__stale__` vs `__calibration_red__`), so the race is real but
+harmless. No code change.
+
+**Also found and fixed in this WP** (writing the gate, not reading the code —
+the recurring lesson): one of the gate's own assertions was a tautology
+(`... or True`), and its roster test pinned a hand-written set of covered kinds
+instead of deriving coverage from the file's own channel configs. Both were
+rewritten before the gate was believed.
+
+### 7.5 What M12 deliberately did not do
+
+- **No `abk explore --notify`** and no notify plumbing in `_ExploreServer`
+  (§0.4 point 5). The Apply-uncalibrated hook stays out; `abk validate
+  --notify` is the calibration path. §5 questions 3–4 are the maintainer's to
+  close.
+- **No monitoring semantics**: no severities, no recovery events, no
+  anomaly/no-data kinds. A "backlog cleared" message was considered for NTF-5
+  and rejected — the clearing is recorded, not announced.
+- **No statistical change**: zero `abkit/stats/` diffs and no
+  `ALGORITHM_VERSION` bump across NTF-1..6; every number in a message is copied
+  off a `PairVerdict` or a `CellResult`.
