@@ -757,13 +757,60 @@ for the exit gate — no NTF WP depends on them.
   *permanently*, and should `abk explore` ever carry `--notify`? Nothing in the
   milestone depends on the answer.
 
-### M13 — versioned statistical improvements (bucket B, core) → `0.8.0` 📐 contour
-Holm over Bonferroni (strictly more power, same FWER); unpooled SE in the
-z-test CI; restore the relative-z covariance term; uniform ddof=1;
-Agresti-Caffo/Wilson proportion CIs; the main-tier `metrics_count=1` FWER fix.
-~5 WP: a design session first, then 2–3 implementation WPs (methods grouped by
-adjacency) → whole-batch A/A revalidation → exit gate. Baseline goldens stay
-untouched (legacy-parity mode); new numbers get **new** goldens. ~5–6 sessions.
+### M13 — versioned statistical improvements (bucket B, core) → `0.8.0` 📐 design session done, plan drafted
+**The design session ran on 2026-08-03** and its output is
+[m13-implementation-plan.md](docs/specs/m13-implementation-plan.md) (+ three
+blind re-derivations and a code audit in
+[docs/research/2026-08-m13-blind-rederive/](docs/research/2026-08-m13-blind-rederive/)).
+It **regrouped the contour below**, which is kept for the record:
+
+> *Original contour:* Holm over Bonferroni (strictly more power, same FWER);
+> unpooled SE in the z-test CI; restore the relative-z covariance term; uniform
+> ddof=1; Agresti-Caffo/Wilson proportion CIs; the main-tier `metrics_count=1`
+> FWER fix.
+
+What the session changed, each item load-bearing:
+
+- **The FWER "fix" may move no number at all.** The current levels are exactly
+  those of a valid per-arm-pair gatekeeping procedure whose gate the readout does
+  not enforce; the worst case is `2α` flat in `g` and `k`, and the *main* tier —
+  the one the ship decision reads — is already at Bonferroni-α.
+- **Two new WPs the contour missed.** *Guardrails* are currently corrected like
+  growth metrics, which makes the engine less able to detect harm — the only
+  safety-directed item, and its declaration/storage/UI already exist. *Declaring
+  the contrast set* (`vs_control` vs `all_pairs`) buys a factor `g/2` in level —
+  more power than Holm, for a config field.
+- **"Unpooled SE" and "Agresti-Caffo/Wilson" were one question**, answered by
+  Miettinen–Nurminen: one score statistic used three ways, whose value at δ=0 is
+  *identically* today's pooled z, so the p-value does not move and CI↔verdict
+  coherence is preserved by construction.
+- **"The relative-z covariance term" is misnamed** — what is missing is the `R²`
+  coefficient, not a between-arm correlation, which is zero.
+- **Uniform ddof=1 is recommended DROPPED**: second-order in `1/(n−1)`, below the
+  A/A instrument's noise floor, and dominated at small n by the normal-vs-Student-t
+  error deferred to M15.
+- **No `ALGORITHM_VERSION` bump is needed**: under opt-in, an identity-flagged
+  param already orphans the opting-in operator's series.
+
+**All thirteen design decisions are settled** (plan §3). The two that shape the
+milestone most: a decision and its stored interval **may diverge** (so Holm is
+reachable, and `_ab_results.reject` is redocumented as a pre-family flag), and
+**guardrails are uncorrected** — raw α, out of the secondary budget, which
+loosens α for the screening metrics remaining in it.
+
+Net effect on numbers: **the FWER item moves none** (the claim is fixed and Holm
+is added read-time; neither the gate nor a halved budget ships), the proportion
+interval moves **no p-value** (Farrington–Manning form is bit-identical to
+today's pooled z at δ=0), and the relative-effect fix moves **no verdict**
+(Fieller's rejection set at θ=0 equals today's). What moves is interval
+endpoints, guardrail α, and — for whoever opts in — `method_config_id`.
+
+5 WP (uniform ddof dropped), ordered by value rather than dependency. Baseline
+goldens stay untouched; new numbers get **new** goldens. **The one open
+technical question:** M5's sequential layer is a MODE transform over a fixed
+`(effect, SE)` and cannot consume an asymmetric score interval — both new
+intervals are score inversions, so this is settled first or they ship unavailable
+under `sequential.enabled`. ~5–6 sessions.
 
 ### M14 — multi-arm decision layer (bucket B, decisions) → `0.9.0` 📐 contour
 An explicit `control:` field (or a validated positional convention);
