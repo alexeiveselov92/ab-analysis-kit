@@ -602,7 +602,7 @@ no live users to hurry for, and sweeping the previous release's status lines
   surface, not an addendum to a closing interstitial. Revisit **after M12**,
   with its own design pass.
 
-### M12 — notifications → `0.7.0` ✅ IMPLEMENTED (NTF-1…NTF-6; release pending)
+### M12 — notifications → `0.7.0` ✅ SHIPPED (NTF-1…NTF-6; released, on PyPI)
 Design contract: [m12-implementation-plan.md](docs/specs/m12-implementation-plan.md).
 `abkit/notify/` (shipped M6, reachable only via `abk test-report`) gets wired
 to six real signals behind opt-in `--notify`, with dedup/cooldown state in

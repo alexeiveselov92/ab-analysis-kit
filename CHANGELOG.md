@@ -11,7 +11,7 @@ recorded here alongside an `ALGORITHM_VERSION` bump and a
 [`statistics-changes.md`](docs/specs/statistics-changes.md) entry (never a silent
 number change).
 
-## [Unreleased]
+## [0.7.0] - 2026-08-03
 
 ### Added
 - **NTF-6 — `verdict_change` fires, and the whole feature has an exit gate.**

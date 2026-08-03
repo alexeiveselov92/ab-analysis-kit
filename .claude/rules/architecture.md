@@ -1,21 +1,21 @@
 # abkit architecture — as built
 
 > The contributor/assistant condensation of the system **as it exists in code**.
-> Reflects: **M1–M11 shipped** and **BOTH `0.6.x` interstitials released** —
+> Reflects: **M1–M12 shipped** and **BOTH `0.6.x` interstitials released** —
 > the `abk plan` one (PLAN-1 as `0.6.1`, PLAN-2 as `0.6.2`), `0.6.3` (the
 > `paths.experiments` selection fix), and the cockpit/perf one as `0.6.4`:
 > **UI-1** (the dashboard's YAML editor), **UI-2** (`abk ui`) and **PERF-1**
 > (the additive read path made discoverable; the scaffold flipped to
 > `incremental_reads: true`). All tagged and on PyPI; `[Unreleased]` is empty.
 > M3's WP9 testcontainers hardening deferred to a Docker-equipped environment.
-> **M12 is IMPLEMENTED, release pending** (`0.7.0`, notifications): NTF-1…NTF-6
-> are merged and sit in `[Unreleased]` — the send seam (`abk run --notify`), the
+> **M12 shipped as `0.7.0`** (notifications): NTF-1…NTF-6 are merged and
+> released — the send seam (`abk run --notify`), the
 > urgent half (srm/error), the dedup state machine, four more channels (nine in
 > total), the two recurring signals (`stale`, `calibration_red` — the latter
 > behind `abk validate --notify`), and the exit gate + `verdict_change`. The
 > milestone's implementation record is
 > [m12-implementation-plan.md](../../docs/specs/m12-implementation-plan.md) §7.
-> Design contracts for what is being *built next* (the M12–M17 polish track)
+> Design contracts for what is being *built next* (the M13–M17 polish track)
 > live in [docs/specs/](../../docs/specs/) + [ROADMAP.md](../../ROADMAP.md);
 > this file must never claim unbuilt code exists.
 > Keep in sync with `docs/` and the packaged `init-claude` payload
@@ -1113,17 +1113,21 @@ the live-HTTP exit gate `tests/e2e/test_dashboard_session.py` (DASH-7). See
 the page shows is `readout.evaluate()`'s). CRUD config editing was explicitly
 phase 2 — it shipped as the `0.6.x` UI-1 interstitial (facts below).
 
-**Next — the polish track continues: M12–M17 → `0.7.0`…`0.12.0`** (track
+**M12 shipped as `0.7.0`** — notifications wired to six routable signals behind
+`abk run --notify` / `abk validate --notify`, nine channels, dedup in
+`_ab_notify_states`, and fail-soft as the binding property (facts above; record:
+[m12](../../docs/specs/m12-implementation-plan.md) §7).
+
+**Next — the polish track continues: M13–M17 → `0.8.0`…`0.12.0`** (track
 approved 2026-07-18; it absorbs the whole "Post-baseline hardening" backlog —
-see the track section in [ROADMAP.md](../../ROADMAP.md) and the as-designed
-contract
-[m12](../../docs/specs/m12-implementation-plan.md)
-([m7](../../docs/specs/m7-implementation-plan.md),
+see the track section in [ROADMAP.md](../../ROADMAP.md);
+[m7](../../docs/specs/m7-implementation-plan.md),
 [m8](../../docs/specs/m8-implementation-plan.md),
 [m9](../../docs/specs/m9-implementation-plan.md),
-[m10](../../docs/specs/m10-implementation-plan.md) and
-[m11](../../docs/specs/m11-implementation-plan.md) are now implementation
-records); M13–M17 are contours, each opens with a design session). The `0.6.x`
+[m10](../../docs/specs/m10-implementation-plan.md),
+[m11](../../docs/specs/m11-implementation-plan.md) and
+[m12](../../docs/specs/m12-implementation-plan.md) are all implementation
+records now; M13–M17 are contours, each opens with a design session). The `0.6.x`
 **PLAN-1/PLAN-2** interstitial is closed (released as `0.6.1`/`0.6.2`; design
 contract: [cli-and-dx.md](../../docs/specs/cli-and-dx.md) "`abk plan` sizing
 gaps"); the second `0.6.x` interstitial is closed too, released as `0.6.4` —
@@ -1132,7 +1136,7 @@ invariant it does not actually violate — facts above), **UI-2** (`abk ui`
 alias) and **PERF-1** (the additive read path made discoverable; the scaffold
 flipped to `incremental_reads: true`), tagged and published to PyPI.
 One WP = one session =
-one PR; **M7–M12 move no statistical number** (parity gates + empty
+one PR; **M7–M12 moved no statistical number** (parity gates + empty
 `ALGORITHM_VERSION` grep); M13/M15 use full change control. Two binding
 inter-milestone contracts: the M8→M9 one (honored — STATE/tail-scan SQL builds
 ONLY through `build_cohort_backend`) and M10's (the planner is reached ONLY
