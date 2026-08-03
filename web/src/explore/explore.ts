@@ -1508,9 +1508,19 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
         'guardrail',
         state.guardrail,
         (v) => {
+          // m13 D8: under `guardrail_correction: none` a guardrail flip re-tiers
+          // the budget exactly as a main flip does — it moves the flipped
+          // metric's own alpha AND the divisor every other secondary shares. The
+          // handler used to be a pure role edit because the flag reached no
+          // alpha; it does now, and without this the chart, the p/CI chips and
+          // the calibration chip would keep showing the pre-flip alpha while
+          // Apply and `abk run` resolved the new one.
+          const effBefore = activeMetric === null ? null : effAlphaFor(activeMetric);
           state.guardrail = v;
           roleDirty.add(name);
           applyMsgReset();
+          refreshEffAlphaEcho();
+          if (activeMetric !== null && effAlphaFor(activeMetric) !== effBefore) recompute();
         },
         'is_guardrail — regressions surface in the verdict rationale',
       );

@@ -791,12 +791,31 @@ def _fmt_n(value) -> str:
     return f"{int(round(value)):,}"
 
 
-def _emit_plan(experiment, project, alphas, power, looks, grid, rows_per_refresh, plans) -> None:
-    correction_note = (
+def _correction_note(experiment, alphas) -> str:
+    """The header's alpha statement — the ONLY one `abk plan` prints.
+
+    The per-comparison rows below it report sizing, never their own level, so a
+    tier missing from this string is a tier the operator cannot see. m13 D8 added
+    a third: an untiered guardrail is sized at the RAW alpha, and without naming
+    it here the header actively contradicts the guardrail row beneath it.
+
+    It is APPENDED rather than folded into the main/secondary branch because it
+    can equal ``main`` numerically (3 arms with one screening metric) while still
+    being a different tier — a value-equality test would drop it exactly when the
+    coincidence makes it most confusing.
+    """
+    note = (
         f"main {alphas.main:.4g} / secondary {alphas.secondary:.4g}"
         if alphas.secondary is not None and alphas.secondary != alphas.main
         else f"per-comparison {alphas.main:.4g}"
     )
+    if alphas.guardrail is not None and any(c.is_guardrail for c in experiment.comparisons):
+        note += f" / guardrail {alphas.guardrail:.4g} (uncorrected)"
+    return note
+
+
+def _emit_plan(experiment, project, alphas, power, looks, grid, rows_per_refresh, plans) -> None:
+    correction_note = _correction_note(experiment, alphas)
     header = f"{experiment.name}: plan · α raw={alphas.alpha:.4g} → {correction_note} · power {power:.2f}"
 
     children: list[str] = []

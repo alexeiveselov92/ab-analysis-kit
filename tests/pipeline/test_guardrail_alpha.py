@@ -185,3 +185,58 @@ class TestGuardrailTiering:
         assert exp.guardrail_correction is None
         alphas = effective_alphas(exp, _project(guardrail_correction="none"))
         assert alphas.guardrail == pytest.approx(0.05)
+
+
+class TestPlanHeaderNamesTheGuardrailTier:
+    """``abk plan``'s header is the ONLY alpha statement in its output.
+
+    The per-comparison rows report sizing, never their own level, so a tier
+    missing from the header is a tier the operator cannot see — and under D8 the
+    guardrail row beneath it was sized at a DIFFERENT alpha than the header
+    claims. Found by the STAT-1c adversarial review; ``plan.py`` was not touched
+    by the WP, so the defect arrived purely from the changed semantics.
+    """
+
+    def test_inherit_prints_the_pre_0_8_0_header(self) -> None:
+        from abkit.cli.commands.plan import _correction_note
+
+        exp = _experiment(MIXED)
+        note = _correction_note(exp, effective_alphas(exp, _project()))
+        assert note == "main 0.05 / secondary 0.025"
+
+    def test_untiered_guardrail_is_named(self) -> None:
+        from abkit.cli.commands.plan import _correction_note
+
+        exp = _experiment(MIXED)
+        note = _correction_note(exp, effective_alphas(exp, _project(guardrail_correction="none")))
+        assert "guardrail 0.05 (uncorrected)" in note
+
+    def test_named_even_when_it_COINCIDES_with_the_main_alpha(self) -> None:
+        """3 arms + one screening metric makes main == secondary == guardrail's
+        neighbour numerically. A value-equality test would drop the guardrail note
+        exactly where the coincidence makes the output most confusing."""
+        from abkit.cli.commands.plan import _correction_note
+
+        exp = _experiment(
+            MIXED,
+            assignment={
+                "query": "SELECT user_id, variant, exposure_ts FROM assignments",
+                "variants": ["control", "t1", "t2"],
+                "expected_split": {"control": 1 / 3, "t1": 1 / 3, "t2": 1 / 3},
+            },
+        )
+        alphas = effective_alphas(exp, _project(guardrail_correction="none"))
+        assert alphas.main == pytest.approx(alphas.secondary)  # the coincidence
+        assert "guardrail 0.05 (uncorrected)" in _correction_note(exp, alphas)
+
+    def test_no_guardrail_comparison_means_no_note(self) -> None:
+        from abkit.cli.commands.plan import _correction_note
+
+        exp = _experiment(
+            [
+                {"metric": "arpu", "is_main_metric": True, "method": METHOD},
+                {"metric": "clicks", "method": METHOD},
+            ]
+        )
+        note = _correction_note(exp, effective_alphas(exp, _project(guardrail_correction="none")))
+        assert "guardrail" not in note
