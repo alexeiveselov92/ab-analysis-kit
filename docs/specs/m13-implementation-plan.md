@@ -309,6 +309,49 @@ loosens α for the screening metrics that remain — a second, free gain).
   be said in the CHANGELOG rather than discovered.
 - Under D1 the current behaviour stays the default; the new treatment is opt-in.
 
+#### Build spec (mapped against the code, 2026-08-03)
+
+1. **The knob.** `ProjectStatisticsConfig.guardrail_correction: Literal["inherit",
+   "none"] = "inherit"` (`config/project_config.py`, beside `correction`), plus
+   the experiment-level `| None` override — the exact shape `correction` already
+   uses. `"inherit"` is today's behaviour: a guardrail shares the secondary
+   budget. `"none"` is D8. Nothing here enters `method_config_id`.
+2. **`TwoTierAlphas` gains `guardrail: float | None`** (`stats/correction.py`).
+   `None` means "no separate tier — guardrails use `secondary`", so every
+   existing consumer that ignores the field keeps working.
+3. **`effective_alphas` (`pipeline/analyze.py:59`) changes in TWO places, and the
+   second is the free gain.** Under `"none"`: `guardrail = alpha` (raw), **and
+   `metrics_count` must stop counting guardrails** —
+   `non_main = Σ(not is_main_metric)` today includes them, so removing them from
+   the tier also *loosens* α for the screening metrics that remain. Forgetting
+   the second half yields a change that helps guardrails and silently taxes
+   nothing else — half the intended effect, and no test would notice.
+4. **`comparison_alpha` (`analyze.py:81`)** routes `is_guardrail` to
+   `alphas.guardrail` when it is not `None`. Keep the existing
+   `secondary is None` fallback ahead of it.
+5. **The browser mirror is the m10 hazard, and it needs THREE new inputs.**
+   `explore.ts#effectiveAlpha` (`web/src/explore/explore.ts:126`) recomputes α
+   live as the operator drags the alpha/correction knobs, so it cannot be handed
+   a resolved number — it must learn the rule. It needs: the mode, a per-metric
+   `guardrail` flag (the roles map at `explore.ts:629` carries `main` only), and
+   a `non_main_count` that already **excludes** guardrails under `"none"`
+   (`tuning/payload.py:112` bakes it). Pinned in lockstep by
+   `tests/tuning/test_explore_bundle.py`; the bundle must be rebuilt and
+   committed in the same PR (the `abk-web-bundle` discipline).
+6. **Other consumers to visit** (the signature change makes them visible, which
+   is the point): `cli/commands/plan.py:796` prints the tier line and would need
+   a third tier; `validate/runner.py` sizes per-cell iterations off the effective
+   α; `compute/reconcile.py`, `tuning/server.py`, `cli/commands/test_report.py`
+   pass it through.
+7. **Tests.** Unit coverage on `effective_alphas` for both modes × (main,
+   secondary, guardrail) × `k = 0`; the `k = 0` edge matters because removing the
+   only non-main metric from the tier makes `secondary` `None`. Plus the explore
+   lockstep test, and an assertion that a guardrail's persisted `alpha` equals the
+   raw α under `"none"`.
+8. **CHANGELOG must state the A/A consequence** (M4 D3/D16): the calibration chip
+   keys on the **effective** α, so existing `_ab_aa_runs` rows for guardrail
+   metrics read `alpha_mismatch` until re-run.
+
 ### STAT-2 — the A/A matrix records the SIGN of each false positive
 
 **Depends on:** nothing. **Blocks:** STAT-4. Runs in parallel with STAT-1.
