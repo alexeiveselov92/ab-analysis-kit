@@ -14,6 +14,25 @@ number change).
 ## [Unreleased]
 
 ### Added
+- **NTF-6 — `verdict_change` fires, and the whole feature has an exit gate.**
+  The kind was declared in NTF-1 and emitted by nothing for four work packages,
+  so `on: [verdict_change]` matched nothing and was silent for a reason no
+  operator could guess. It is now the narrow view of a readout it always read
+  like: a verdict whose WORD differs from the one last announced — not the
+  first message about a comparison (news, but nothing flipped) and not one
+  re-sent because its SRM gate moved while the word stayed put.
+  - `tests/e2e/test_notify_pipeline.py` runs the whole feature through the CLI:
+    three experiments (healthy / broken sample split / failing pipeline) in one
+    `abk run --notify`, with the four claims the milestone is worth nothing
+    without — a scheduled run is quiet across separate invocations, the urgent
+    signals reach an on-call channel while routine ones do not, **a channel
+    that raises cannot change an exit code**, and every one of the six declared
+    kinds is observed on a channel scoped to it alone.
+  - `docs/guides/notification-channels.md` rewritten around what the commands
+    now do rather than what was planned.
+  - Zero statistical numbers moved across the whole of M12 (no
+    `ALGORITHM_VERSION` bump; every number in a message is copied off a
+    `PairVerdict` or a `CellResult`).
 - **NTF-5 — the two signals about the machinery: `calibration_red` and
   `stale`.** Both are conditions abkit already detected and only ever printed;
   neither adds a detector. Both RECUR — the condition is still true on the next

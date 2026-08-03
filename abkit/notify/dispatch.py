@@ -28,11 +28,11 @@ run (NTF-2), and the two RECURRING ones — ``stale`` and ``calibration_red``
 (NTF-5) — whose condition survives the run that reports it and is therefore
 deduped by signature plus an optional cooldown.
 
-``verdict_change`` is the one declared kind nothing emits: NTF-3 made every
-delivered readout a change by construction, so an ``on: [verdict_change]``
-filter today matches NOTHING and is silent for a reason no operator could
-guess. NTF-6 owns the choice — emit it alongside ``readout`` for a payload
-that survived the dedup gate, or drop it from the vocabulary.
+``verdict_change`` (NTF-6) is the sixth, and it is narrower than "was
+delivered": a readout whose verdict WORD differs from the one last announced.
+A first-ever readout and one re-sent because its SRM gate moved are both
+delivered without a flip, so the filter means what an operator writing it
+would expect.
 """
 
 from __future__ import annotations
@@ -237,6 +237,7 @@ def readout_data_from_verdict(
     project_name: str | None = None,
     rows: Sequence[dict] = (),
     dashboard_url: str | None = None,
+    verdict_changed: bool = False,
 ) -> ReadoutData:
     """One channel-facing payload, copied field-for-field off the verdict.
 
@@ -274,6 +275,7 @@ def readout_data_from_verdict(
         mentions=mentions,
         dashboard_url=dashboard_url,
         help_url=READOUT_GUIDE_URL,
+        verdict_changed=verdict_changed,
     )
 
 
@@ -286,10 +288,23 @@ def signal_kinds_for(payload: ReadoutData) -> tuple[str, ...]:
     while a routine channel keeps getting its readouts, and a channel that
     accepts both still gets exactly ONE message (delivery is decided by "does
     ANY of these kinds pass", not per kind).
+
+    `verdict_change` is the same re-classification one step narrower (m12
+    NTF-6): a readout whose verdict WORD differs from the one last announced
+    for this comparison. It is deliberately not a synonym for "was delivered" —
+    NTF-3 also delivers a first-ever readout (news, but nothing changed) and a
+    readout delivered because its SRM gate moved (the word can be identical) —
+    so `on: [verdict_change]` is the filter for a channel that wants decision
+    FLIPS and nothing else.
     """
     if payload.kind != "readout":
         return (payload.kind,)
-    return ("readout", "srm") if payload.srm_flag else ("readout",)
+    kinds = ["readout"]
+    if payload.verdict_changed:
+        kinds.append("verdict_change")
+    if payload.srm_flag:
+        kinds.append("srm")
+    return tuple(kinds)
 
 
 def _deliver(
@@ -381,8 +396,13 @@ def dispatch_experiment_signals(
         return 0
 
     verdicts = list(readout.verdicts)
+    # NTF-6: which of them are a verdict FLIP, decided here because this is
+    # where the previously announced verdict is read. Without the dedup store
+    # there is no "previously announced" to compare against, so nothing claims
+    # the kind rather than guessing it from the current word.
+    changed: set[int] = set()
     if states is not None:
-        keep = []
+        keep: list[PairVerdict] = []
         for verdict in verdicts:
             state = states.get_notify_state(
                 experiment.name,
@@ -392,6 +412,9 @@ def dispatch_experiment_signals(
                 _method_config_id(experiment, verdict.metric),
             )
             if should_announce(state, verdict.verdict, readout.srm_flag):
+                previous = state.get("last_verdict") if state.get("notify_count") else None
+                if previous is not None and previous != verdict.verdict:
+                    changed.add(len(keep))
                 keep.append(verdict)
             else:
                 echo(
@@ -402,9 +425,14 @@ def dispatch_experiment_signals(
 
     payloads = [
         readout_data_from_verdict(
-            experiment, verdict, readout, project_name=project_name, rows=rows
+            experiment,
+            verdict,
+            readout,
+            project_name=project_name,
+            rows=rows,
+            verdict_changed=index in changed,
         )
-        for verdict in verdicts
+        for index, verdict in enumerate(verdicts)
     ]
     if not payloads:
         return 0

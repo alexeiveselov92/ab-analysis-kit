@@ -212,9 +212,14 @@ Two commands use them:
   receives it.
 
 `on:` accepts `readout`, `verdict_change`, `srm`, `calibration_red`, `stale`,
-`error` — **all fire except `verdict_change`**, which is accepted now so a filter
-does not silently widen later. A channel's `on:` and an experiment's `notify.on`
+`error` — **all six fire**. A channel's `on:` and an experiment's `notify.on`
 INTERSECT: the experiment narrows what it sends, the channel what it accepts.
+
+`srm` and `verdict_change` are NARROW views of the same readout payload, never
+extra messages: `on: [srm]` gets only readouts whose split broke, and
+`on: [verdict_change]` only those whose verdict WORD moved — not the first
+message about a comparison, and not one re-sent because the SRM gate moved while
+the word held.
 
 Two of them describe the MACHINERY rather than a result, and both are recurring —
 their condition survives the run that reports it, so they are deduped on WHICH

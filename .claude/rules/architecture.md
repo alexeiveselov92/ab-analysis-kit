@@ -8,11 +8,13 @@
 > (the additive read path made discoverable; the scaffold flipped to
 > `incremental_reads: true`). All tagged and on PyPI; `[Unreleased]` is empty.
 > M3's WP9 testcontainers hardening deferred to a Docker-equipped environment.
-> **M12 is open** (`0.7.0`, notifications): NTF-1…NTF-5 are merged and sit in
-> `[Unreleased]` — the send seam (`abk run --notify`), the urgent half
-> (srm/error), the dedup state machine, four more channels (nine in total), and
-> the two recurring signals (`stale`, `calibration_red` — the latter behind the
-> new `abk validate --notify`). NTF-6 (exit gate + docs) closes the milestone.
+> **M12 is IMPLEMENTED, release pending** (`0.7.0`, notifications): NTF-1…NTF-6
+> are merged and sit in `[Unreleased]` — the send seam (`abk run --notify`), the
+> urgent half (srm/error), the dedup state machine, four more channels (nine in
+> total), the two recurring signals (`stale`, `calibration_red` — the latter
+> behind `abk validate --notify`), and the exit gate + `verdict_change`. The
+> milestone's implementation record is
+> [m12-implementation-plan.md](../../docs/specs/m12-implementation-plan.md) §7.
 > Design contracts for what is being *built next* (the M12–M17 polish track)
 > live in [docs/specs/](../../docs/specs/) + [ROADMAP.md](../../ROADMAP.md);
 > this file must never claim unbuilt code exists.
@@ -926,10 +928,26 @@ two-process lock race) is deferred to a Docker-equipped environment.
   inside the lock's try; it dispatches even when nothing is red, because that is
   how a previously announced failure gets cleared. Explore-Apply calibration-red
   stays out of scope (`tuning/server.py` has no diff).
-- **`verdict_change` is declared and emitted by nothing**, so `on:
-  [verdict_change]` matches NOTHING. NTF-3 made every delivered readout a change
-  by construction; NTF-6 either emits it beside `readout` or drops it from
-  `SignalKind`.
+- **NTF-6: `verdict_change` is the NARROW view of a readout, not a synonym for
+  "was delivered".** It rides the same payload (`ReadoutData.verdict_changed`,
+  routing-only — no channel renders it) and is decided where the dedup state is
+  READ, because that is the only place the previously announced verdict exists.
+  False for a first-ever announcement and for a readout re-sent because its SRM
+  gate moved — both are delivered without the word moving, and collapsing them
+  into `verdict_change` would make the filter mean "readout" with extra steps.
+- **The M12 exit gate is `tests/e2e/test_notify_pipeline.py`**: three
+  experiments in ONE `abk run --notify` (healthy / 90-10 `expected_split`
+  against 50-50 data / a warehouse raising only for the experiment whose
+  `added_filters` carry a marker), proving cross-invocation dedup through the
+  real table, urgent-vs-routine routing, exit codes untouched by a raising
+  channel, and one channel per kind. Its roster test DERIVES coverage from the
+  file's own `on: [...]` configs — a hand-written set of covered kinds passes by
+  being edited, which is exactly how `verdict_change` stayed unemitted.
+- **Two `abk run`s of one experiment cannot double-notify** — `_ab_tasks` makes
+  the second `locked`, and `locked` notifies nothing — and the notify block runs
+  in the MAIN thread after the worker pool joins, so `--workers N` does not
+  reintroduce the race. `run` and `validate` CAN overlap (different locks, m4
+  D5) but write disjoint state rows.
 
 ## The stats core (`abkit.stats`) — the implemented system
 

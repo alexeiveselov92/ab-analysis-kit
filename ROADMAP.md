@@ -602,7 +602,7 @@ no live users to hurry for, and sweeping the previous release's status lines
   surface, not an addendum to a closing interstitial. Revisit **after M12**,
   with its own design pass.
 
-### M12 — notifications → `0.7.0` 🚧 IN PROGRESS (NTF-1…NTF-5 shipped)
+### M12 — notifications → `0.7.0` ✅ IMPLEMENTED (NTF-1…NTF-6; release pending)
 Design contract: [m12-implementation-plan.md](docs/specs/m12-implementation-plan.md).
 `abkit/notify/` (shipped M6, reachable only via `abk test-report`) gets wired
 to six real signals behind opt-in `--notify`, with dedup/cooldown state in
@@ -731,6 +731,31 @@ for the exit gate — no NTF WP depends on them.
   **Not done, and named:** `verdict_change` is still the one declared kind
   nothing emits, so an `on: [verdict_change]` filter matches nothing. NTF-6
   decides — emit it for a payload that survived the dedup gate, or drop it.
+
+- **NTF-6 ✅ SHIPPED — the exit gate, the docs, and the sixth kind.**
+  `verdict_change` had been declared since NTF-1 and emitted by nothing, so
+  `on: [verdict_change]` matched NOTHING; it now fires as the narrow view of a
+  readout it always read like (the verdict WORD moved — not a first
+  announcement, not an SRM-triggered re-send). ~1 session — **actual: 1
+  session**. The gate `tests/e2e/test_notify_pipeline.py` runs three
+  experiments (healthy / 90-10 split against 50-50 data / a warehouse that
+  raises for one experiment's queries only) through ONE `abk run --notify` and
+  proves: the cross-invocation dedup over the real table, urgent-vs-routine
+  routing, **a channel that raises on every send changes no exit code**, and
+  one channel per signal kind. Two mutations confirm it bites. Two findings,
+  both in the gate I was writing rather than in the code it tests: an assertion
+  that was a tautology (`... or True`), and a roster test pinning a
+  hand-written set of covered kinds instead of deriving coverage from the
+  file's own channel configs. Round 2's race analysis found nothing to fix and
+  is recorded as an argument: two `abk run`s of one experiment cannot both
+  notify (the `_ab_tasks` lock makes the second `locked`, and `locked` notifies
+  nothing), and the one genuinely concurrent pair — `run` and `validate` —
+  writes disjoint rows. The milestone's implementation record is
+  [m12-implementation-plan.md](docs/specs/m12-implementation-plan.md) §7.
+  **Still the maintainer's to close** (§5 questions 3–4, deliberately parked
+  for the exit gate): is the explore-Apply calibration-red hook deferred
+  *permanently*, and should `abk explore` ever carry `--notify`? Nothing in the
+  milestone depends on the answer.
 
 ### M13 — versioned statistical improvements (bucket B, core) → `0.8.0` 📐 contour
 Holm over Bonferroni (strictly more power, same FWER); unpooled SE in the

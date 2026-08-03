@@ -1186,3 +1186,91 @@ class TestRecurringStateIsolation:
             tables.get_notify_state(experiment.name, *notice_state_key("stale"))["last_verdict"]
             == "revenue"
         )
+
+
+class TestVerdictChangeKind:
+    """NTF-6: the sixth kind, narrower than "was delivered"."""
+
+    def test_a_first_readout_is_not_a_change(self, tables):
+        """News, but nothing flipped — a channel asking for flips must not get
+        the announcement that merely opened the history."""
+        experiment = make_experiment()
+        seed(tables, experiment)
+
+        sent = dispatch(
+            experiment, tables, {"flips": channel("flips", on=["verdict_change"])}, states=tables
+        )
+
+        assert (sent, RecordingChannel.sent) == (0, [])
+
+    def test_a_flip_reaches_a_flips_only_channel(self, tables):
+        experiment = make_experiment()
+        seed(tables, experiment)
+        channels = {
+            "flips": channel("flips", on=["verdict_change"]),
+            "team": channel("team"),
+        }
+        first = dispatch(experiment, tables, channels, states=tables)
+        assert [label for label, _ in RecordingChannel.sent] == ["team"]
+
+        save_rows(
+            tables,
+            [
+                make_row(
+                    experiment, day=15, effect=-0.2, left_bound=-0.3, right_bound=-0.1, pvalue=1e-4
+                )
+            ],
+        )
+        second = dispatch(experiment, tables, channels, states=tables)
+
+        assert (first, second) == (1, 2)
+        assert sorted(label for label, _ in RecordingChannel.sent[1:]) == ["flips", "team"]
+        assert RecordingChannel.sent[-1][1].verdict_changed is True
+
+    def test_a_new_srm_breach_with_the_same_word_is_not_a_flip(self, tables):
+        """NTF-3 re-sends it (the gate moved), but the DECISION did not — the
+        two kinds must not collapse into each other. The pre-horizon fixture is
+        the one where this is observable: a pair sits at INCONCLUSIVE either
+        way, which is exactly why NTF-3 deduped on the pair and not the word."""
+        experiment = make_experiment()
+        seed(tables, experiment, days=3)  # pre-horizon ⇒ INCONCLUSIVE
+        channels = {
+            "flips": channel("flips", on=["verdict_change"]),
+            "oncall": channel("oncall", on=["srm"]),
+        }
+        dispatch(experiment, tables, {"team": channel("team")}, states=tables)
+        announced = RecordingChannel.sent[0][1].verdict
+        assert announced == "INCONCLUSIVE"
+
+        save_rows(tables, [make_row(experiment, day=4, srm_flag=True, srm_pvalue=1e-9)])
+        dispatch(experiment, tables, channels, states=tables)
+
+        delivered = [label for label, _ in RecordingChannel.sent[1:]]
+        assert delivered == ["oncall"]
+        assert RecordingChannel.sent[-1][1].verdict == announced  # the word never moved
+        assert RecordingChannel.sent[-1][1].verdict_changed is False
+
+    def test_without_a_state_store_it_is_never_claimed(self, tables):
+        """There is no "last announced" to compare against, so guessing from
+        the current word would invent a flip out of the first message."""
+        experiment = make_experiment()
+        seed(tables, experiment)
+
+        sent = dispatch(
+            experiment, tables, {"flips": channel("flips", on=["verdict_change"])}, states=None
+        )
+
+        assert sent == 0
+
+    def test_the_kinds_a_readout_answers_to(self):
+        payload = ReadoutData(experiment="e", metric="m", verdict="WIN", name_1="a", name_2="b")
+        assert signal_kinds_for(payload) == ("readout",)
+        assert signal_kinds_for(replace(payload, verdict_changed=True)) == (
+            "readout",
+            "verdict_change",
+        )
+        assert signal_kinds_for(replace(payload, verdict_changed=True, srm_flag=True)) == (
+            "readout",
+            "verdict_change",
+            "srm",
+        )
