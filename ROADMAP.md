@@ -806,11 +806,17 @@ today's pooled z at δ=0), and the relative-effect fix moves **no verdict**
 endpoints, guardrail α, and — for whoever opts in — `method_config_id`.
 
 5 WP (uniform ddof dropped), ordered by value rather than dependency. Baseline
-goldens stay untouched; new numbers get **new** goldens. **The one open
-technical question:** M5's sequential layer is a MODE transform over a fixed
-`(effect, SE)` and cannot consume an asymmetric score interval — both new
-intervals are score inversions, so this is settled first or they ship unavailable
-under `sequential.enabled`. ~5–6 sessions.
+goldens stay untouched; new numbers get **new** goldens.
+
+**The sequential question is answered (D14):** the confidence sequence *does*
+extend to score intervals — the always-valid rule is a standardised test with a
+variance-dependent `c(V)` in place of `z`, i.e. a critical-value substitution
+inside the root-find the new intervals already perform. The investigation instead
+surfaced a live hazard: `to_always_valid` **infers** the SE from the CI width
+assuming symmetry, unvalidated, at six call sites — the A/A matrix's own
+sequential column among them — so an asymmetric interval would be silently
+mis-widened rather than refused. A `asymmetric_ci` capability flag is therefore a
+hard prerequisite of the proportion WP. ~5–6 sessions.
 
 ### M14 — multi-arm decision layer (bucket B, decisions) → `0.9.0` 📐 contour
 An explicit `control:` field (or a validated positional convention);
