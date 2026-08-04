@@ -266,6 +266,23 @@ test('live page fires the initial recompute and adopts the reply into the chips'
   assert.match(mount.querySelector('.abk-stat').textContent, /14\/14 cutoffs .*14 exact/);
 });
 
+test('the declared contrast set fixes the divisor the client mirrors (m13 STAT-1b)', async () => {
+  // three arms: all_pairs divides by C(3,2)=3, vs_control by g-1=2. The server
+  // resolves the same rule, so a client that ignored `contrasts` would send an
+  // alpha the run's own rows contradict.
+  const wide = fakeFetch((url, body) => ({ status: 200, json: makeReply(body.request_id) }));
+  renderInJsdom({ ...makeThreeArmExplorePayload(liveUrls()) }, { fetchImpl: wide.impl });
+  await sleep(30);
+  assert.ok(Math.abs(wide.calls[0].body.alpha - 0.05 / 3) < 1e-12, 'all_pairs: alpha/C(3,2)');
+
+  const narrow = fakeFetch((url, body) => ({ status: 200, json: makeReply(body.request_id) }));
+  const payload = makeThreeArmExplorePayload(liveUrls());
+  payload.explore.experiment.contrasts = 'vs_control';
+  renderInJsdom(payload, { fetchImpl: narrow.impl });
+  await sleep(30);
+  assert.ok(Math.abs(narrow.calls[0].body.alpha - 0.05 / 2) < 1e-12, 'vs_control: alpha/(g-1)');
+});
+
 test('knob changes send monotonically increasing request ids (Date.now-seeded)', async () => {
   const { impl, calls } = fakeFetch((url, body) => ({
     status: 200,

@@ -120,7 +120,7 @@ const fmtAlpha = (a: number): string => Number(a.toPrecision(4)).toString();
 // (declarative-config §6): /recompute takes the EFFECTIVE post-correction
 // per-comparison alpha, so the raw alpha/correction knobs resolve here.
 // Guardrails count as tests; `correction: none` (and read-time BH) collapse
-// both tiers to the raw alpha.
+// both tiers to the raw alpha; `contrasts` selects the pair count (m13 STAT-1b).
 // ----------------------------------------------------------------------------
 
 function effectiveAlpha(
@@ -131,9 +131,14 @@ function effectiveAlpha(
   isMain: boolean,
   guardrailUntiered: boolean,
   isGuardrail: boolean,
+  contrasts: string,
 ): number {
   if (correction !== 'bonferroni') return rawAlpha;
-  const pairs = (groupsCount * (groupsCount - 1)) / 2;
+  // m13 STAT-1b: the declared family fixes the divisor — `vs_control` claims the
+  // g-1 many-to-one contrasts, so C(g,2) would over-correct the page against the
+  // very server that answers its /recompute (mirrors stats.n_comparisons).
+  const pairs =
+    contrasts === 'vs_control' ? groupsCount - 1 : (groupsCount * (groupsCount - 1)) / 2;
   if (pairs <= 0) return rawAlpha;
   if (isMain) return rawAlpha / pairs;
   // m13 D8: a guardrail left the secondary budget entirely — raw alpha, and it
@@ -647,6 +652,7 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
       roles.get(metric)?.main ?? false,
       guardrailUntiered,
       roles.get(metric)?.guardrail ?? false,
+      expKnobs.contrasts,
     );
 
   const configuredKnobs = (metric: string): KnobValues => {

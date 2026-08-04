@@ -1463,7 +1463,14 @@ class TestRoundTwoRegressions:
         assert row["locked"] is True
 
     def test_renamed_away_arms_leave_a_warning_not_just_an_empty_row(self, tables):
-        """Otherwise a renamed arm looks exactly like a never-run experiment."""
+        """Otherwise a renamed arm looks exactly like a never-run experiment.
+
+        The remedy named is ``abk run --full-refresh``, not ``abk clean``:
+        ``clean`` prunes series by ``method_config_id`` and has never had a
+        pair-level sweep, while a full refresh deletes the window's rows before
+        rewriting the declared pairs (m13 STAT-1b, which gave the same warning a
+        second cause — a family narrowed to ``vs_control``).
+        """
         experiment = make_experiment()
         seed_series(tables, experiment, name_2="treat_c")
 
@@ -1471,7 +1478,7 @@ class TestRoundTwoRegressions:
 
         assert row["spark"] == []
         assert any("renamed arms" in warning for warning in row["warnings"])
-        assert any("abk clean" in warning for warning in row["warnings"])
+        assert any("--full-refresh" in warning for warning in row["warnings"])
 
     def test_an_orphaned_series_leaves_the_readouts_own_warning(self, tables):
         experiment = make_experiment()

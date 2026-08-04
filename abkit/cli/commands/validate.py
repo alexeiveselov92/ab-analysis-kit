@@ -28,12 +28,12 @@ from abkit.cli._output import (
     echo_error,
     echo_noop,
     echo_tree,
+    pairs_phrase,
 )
 from abkit.cli.commands._context import load_project_context
 from abkit.config import select_experiments, validate_level2
 from abkit.config.method_config import MethodConfig
 from abkit.pipeline import effective_alphas
-from abkit.stats import n_comparisons
 
 _VALIDATE_STAGE_TITLES = {
     "load": "LOAD",
@@ -159,11 +159,11 @@ def _validate_one(
 
     # the inspectable effective alphas (R28), echoed like `abk run`
     alphas = effective_alphas(experiment, context.project)
-    pairs = n_comparisons(alphas.groups_count, 1)
     echo_tree(
         f"{experiment.name}: effective alphas",
         [
-            f"alpha={alphas.alpha} over {alphas.groups_count} variants (C({alphas.groups_count},2)={pairs} pairs)",
+            f"alpha={alphas.alpha} over {alphas.groups_count} variants "
+            f"({pairs_phrase(alphas)})",
             f"main-metric alpha: {alphas.main:.6g}",
         ],
     )

@@ -51,7 +51,7 @@ from abkit.planning.sizing import (
     runtime_for,
     size_comparison,
 )
-from abkit.stats import get_method_class, n_comparisons
+from abkit.stats import get_method_class
 
 
 def run_plan(
@@ -163,7 +163,10 @@ def _plan_one(
             f"{project.limits.max_looks} — coarsen the cadence or raise the limit ({exc})"
         ) from exc
     looks = len(grid)
-    pairs = int(n_comparisons(len(experiment.assignment.variants), 1))
+    # the DECLARED contrast set, not C(g,2): under `contrasts: vs_control` the
+    # pipeline writes g−1 pair rows per look, and this estimate is the number an
+    # operator sizes storage on (m13 STAT-1b)
+    pairs = len(experiment.contrast_pairs())
     rows_per_refresh = looks * pairs * len(experiment.comparisons)
 
     # WP-A: the shared look schedule (cumulative days since the pinned left edge) and
@@ -797,7 +800,10 @@ def _correction_note(experiment, alphas) -> str:
     The per-comparison rows below it report sizing, never their own level, so a
     tier missing from this string is a tier the operator cannot see. m13 D8 added
     a third: an untiered guardrail is sized at the RAW alpha, and without naming
-    it here the header actively contradicts the guardrail row beneath it.
+    it here the header actively contradicts the guardrail row beneath it. m13
+    STAT-1b added the family the levels were divided by, for the same reason: at
+    three arms `vs_control` and `all_pairs` print DIFFERENT main alphas off the
+    same arm count, and only this string says why.
 
     It is APPENDED rather than folded into the main/secondary branch because it
     can equal ``main`` numerically (3 arms with one screening metric) while still
@@ -809,6 +815,11 @@ def _correction_note(experiment, alphas) -> str:
         if alphas.secondary is not None and alphas.secondary != alphas.main
         else f"per-comparison {alphas.main:.4g}"
     )
+    if alphas.contrasts == "vs_control" and alphas.groups_count > 2:
+        # the divisor is g−1, not C(g,2) — say which family bought the level,
+        # or the number cannot be reconciled with the arm count beside it
+        note += " (vs_control family)"
+
     if alphas.guardrail is not None and any(c.is_guardrail for c in experiment.comparisons):
         note += f" / guardrail {alphas.guardrail:.4g} (uncorrected)"
     return note
@@ -834,9 +845,14 @@ def _emit_plan(experiment, project, alphas, power, looks, grid, rows_per_refresh
     warnings: list[str] = []
     variants = experiment.assignment.variants
     if len(variants) > 2:
+        family = (
+            f"the other {len(variants) - 2} vs-control contrasts share the same α"
+            if experiment.contrasts == "vs_control"
+            else "the other pairs share the same α"
+        )
         warnings.append(
             f"{len(variants)}-arm experiment — sizing is shown for the "
-            f"{variants[0]} vs {variants[1]} contrast only (the other pairs share the same α)"
+            f"{variants[0]} vs {variants[1]} contrast only ({family})"
         )
     warn_looks = project.limits.warn_looks
     if looks > warn_looks and not experiment.sequential.enabled:

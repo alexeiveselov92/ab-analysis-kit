@@ -14,6 +14,7 @@ need the project config + the planner grid, and SQL render checks live in
 
 from __future__ import annotations
 
+import itertools
 import zoneinfo
 from datetime import date, datetime
 from pathlib import Path
@@ -42,6 +43,19 @@ CorrectionKind = Literal["none", "bonferroni", "benjamini_hochberg"]
 #: to catch, so the error points the dangerous way — but the flip is opt-in
 #: because it moves persisted numbers (m13 D1).
 GuardrailCorrectionKind = Literal["inherit", "none"]
+
+#: Which contrasts the experiment CLAIMS (m13 STAT-1b, decision D15).
+#: ``all_pairs`` is the pre-0.8.0 family — every ``C(g,2)`` variant pair is
+#: computed, and the Bonferroni divisor pays for all of them. ``vs_control``
+#: declares the ``g−1`` many-to-one contrasts against the first declared
+#: variant: treatment-vs-treatment pairs are neither computed nor corrected
+#: for, which multiplies every tier's level by ``g/2`` (≈ +10 points of power
+#: at four arms). It is a declaration of the DESIGN, not a project-wide
+#: statistical policy, which is why it has no project-level default: the
+#: family a surface reads must never depend on whether that surface happened
+#: to resolve one.
+ContrastSet = Literal["all_pairs", "vs_control"]
+
 SequentialScheme = Literal["always_valid", "alpha_spending"]
 
 #: ``interval_anchor``'s two symbolic forms (the third is an explicit instant).
@@ -485,6 +499,14 @@ class ExperimentConfig(BaseModel):
     guardrail_correction: GuardrailCorrectionKind | None = Field(
         default=None, description="m13 D8: None -> project default"
     )
+    contrasts: ContrastSet = Field(
+        default="all_pairs",
+        description="m13 STAT-1b: which variant pairs this experiment claims. "
+        "'all_pairs' (default, pre-0.8.0) computes and corrects for every "
+        "C(g,2) pair; 'vs_control' computes only the g-1 contrasts against the "
+        "first declared variant and divides alpha by g-1. Experiment-level "
+        "only — it declares the design, not a project policy",
+    )
     incremental_reads: bool | None = Field(
         default=None,
         description="m9 WP4: override project.compute.incremental_reads for "
@@ -772,6 +794,34 @@ class ExperimentConfig(BaseModel):
             limit=limit,
             interval_anchor=self.interval_anchor,
         )
+
+    def contrast_pairs(self) -> tuple[tuple[str, str], ...]:
+        """THE experiment → variant-pair factory (m13 STAT-1b): the declared family.
+
+        ``all_pairs`` reproduces ``combinations(variants, 2)`` exactly — same
+        pairs, same order, so nothing about a pre-0.8.0 experiment moves.
+        ``vs_control`` keeps only the pairs whose first element is the control
+        (the first declared variant, baseline §5), which is a prefix-ordered
+        SUBSET of the same sequence: the shared rows keep their identity and
+        their order.
+
+        Five call sites read this set — the analyze stage that PRODUCES the
+        rows, and the four surfaces that filter persisted rows down to what is
+        currently declared (report, dashboard, notify, and the alpha divisor).
+        They must never disagree about family membership: a surface computing
+        a wider family than the one the alphas paid for silently breaks the
+        FWER claim, and one computing a narrower one drops rows nobody warned
+        about. ``notify/dispatch.py`` predicted the extraction ("a fourth copy
+        should force it"); STAT-1b is that fourth reason, and it arrives with a
+        knob the copies could have resolved differently.
+
+        Pinned by ``tests/config/test_contrast_pairs_is_the_only_entry.py``.
+        """
+        variants = self.assignment.variants
+        if self.contrasts == "vs_control":
+            control = variants[0]
+            return tuple((control, treatment) for treatment in variants[1:])
+        return tuple(itertools.combinations(variants, 2))
 
     def cadence_fits_horizon(self) -> bool:
         """Can the densest cadence step produce a cutoff inside the window?

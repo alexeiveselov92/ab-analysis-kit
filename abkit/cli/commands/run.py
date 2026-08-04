@@ -40,12 +40,12 @@ from abkit.cli._output import (
     echo_noop,
     echo_srm,
     echo_tree,
+    pairs_phrase,
 )
 from abkit.cli.commands._context import load_project_context
 from abkit.config import select_experiments, validate_level2
 from abkit.config.experiment_config import ExperimentConfig
 from abkit.pipeline import PipelineStep, RunOutcome, effective_alphas, run_experiments
-from abkit.stats import n_comparisons
 
 
 def _parse_date(value: str | None, option: str) -> datetime | None:
@@ -324,16 +324,16 @@ def run_run(
 
     for _, experiment in selected:
         alphas = effective_alphas(experiment, context.project)
-        pairs = n_comparisons(alphas.groups_count, 1)
+        pairs = alphas.pairs_count
         children = [
             f"alpha={alphas.alpha} over {alphas.groups_count} variants "
-            f"(C({alphas.groups_count},2)={pairs} pairs)",
+            f"({pairs_phrase(alphas)})",
             f"main-metric alpha: {alphas.main:.6g}",
         ]
         if alphas.secondary is not None and alphas.metrics_count:
             children.append(
                 f"secondary alpha: {alphas.secondary:.6g} "
-                f"(÷{pairs}×{alphas.metrics_count} non-main metrics)"
+                f"(÷{pairs:g}×{alphas.metrics_count} non-main metrics)"
             )
         echo_tree(f"{experiment.name}: effective alphas", children)
 

@@ -39,7 +39,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from datetime import datetime
-from itertools import combinations
 from typing import Any
 
 from abkit.config.experiment_config import ComparisonConfig, ExperimentConfig
@@ -63,19 +62,21 @@ Echo = Callable[[str], None]
 
 
 def declared_pairs_only(experiment: ExperimentConfig, rows: Sequence[dict]) -> list[dict]:
-    """Drop rows whose arm pair is not among the CURRENTLY declared variants.
+    """Drop rows whose arm pair is not in the experiment's DECLARED contrast set.
 
     The third copy of a filter ``reporting/builder.py`` and ``tuning/overview.py``
     each carry, and it is load-bearing on all three: ``readout._filter_rows``
     drops rows by metric and ``method_config_id`` only, while the read-time
     Benjamini-Hochberg family is built from EVERY informative row at a cutoff —
-    so rows left behind by a mid-flight arm rename would tighten every member's
+    so rows left behind by a mid-flight arm rename, or by a family narrowed to
+    ``contrasts: vs_control`` (m13 STAT-1b), would tighten every member's
     threshold and this surface would contradict ``abk run --report`` on
-    identical rows (the m11 DASH-2 finding). A fourth copy should force the
-    extraction; three still read better mirrored than routed through a new
-    shared module.
+    identical rows (the m11 DASH-2 finding). The membership RULE was the part
+    worth extracting and now lives in ``ExperimentConfig.contrast_pairs()``
+    (STAT-1b is the fourth reason this comment predicted); the two-line filter
+    still reads better mirrored than routed through a shared module.
     """
-    declared = set(combinations(experiment.assignment.variants, 2))
+    declared = set(experiment.contrast_pairs())
     return [row for row in rows if (str(row["name_1"]), str(row["name_2"])) in declared]
 
 

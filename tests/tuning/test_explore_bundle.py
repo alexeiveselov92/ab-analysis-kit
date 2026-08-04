@@ -81,6 +81,20 @@ class TestExperimentKnobBlock:
         bundle = (files("abkit.tuning") / "assets" / "explore.js").read_text(encoding="utf-8")
         assert "guardrail_correction" in bundle
 
+    def test_the_declared_family_is_baked_for_the_client_mirror(self):
+        """m13 STAT-1b: with `contrasts` absent from the block the client would
+        divide by C(g,2) while the server that answers its /recompute divided by
+        g−1 — the page and the row would disagree about the same experiment, and
+        only on multi-arm experiments that opted in."""
+        block = _payload()["explore"]["experiment"]
+        assert block["contrasts"] == "all_pairs"  # the model default
+
+    def test_the_committed_bundle_actually_learned_the_contrast_rule(self):
+        """Freshness, specifically for STAT-1b (the STAT-1c pattern): a bundle
+        built before the knob existed silently mirrors the wrong divisor."""
+        bundle = (files("abkit.tuning") / "assets" / "explore.js").read_text(encoding="utf-8")
+        assert "vs_control" in bundle
+
     def test_baked_numbers_reproduce_the_configured_effective_alpha(self):
         """The client-mirror contract: two-tier arithmetic over the baked
         block must land exactly on the surface's configured alpha — this is

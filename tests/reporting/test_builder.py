@@ -555,6 +555,48 @@ class TestSeriesSelection:
         assert payload["look"]["n"] == 12
         assert payload["period"]["end"] == _ms(START + timedelta(days=14))
 
+    def test_vs_control_lists_only_the_declared_contrasts(self, tables):
+        """m13 STAT-1b: the payload's ``pairs`` array IS the declared family.
+
+        A treatment-vs-treatment row written before the family narrowed must be
+        dropped like a renamed arm — charting it would show a comparison at a
+        level bought for the g−1 contrasts, and it would join the read-time BH
+        family the alphas no longer pay for.
+        """
+        three_arms = {
+            "query": "SELECT 1",
+            "variants": ["control", "t1", "t2"],
+            "expected_split": {"control": 1 / 3, "t1": 1 / 3, "t2": 1 / 3},
+        }
+        experiment = make_experiment(assignment=three_arms, contrasts="vs_control")
+        seed_series(tables, experiment, days=3, name_2="t1")
+        seed_series(tables, experiment, days=3, name_2="t2")
+        save_rows(
+            tables,
+            [make_row(experiment, day=d, name_1="t1", name_2="t2") for d in range(1, 4)],
+        )
+
+        payload = build_report_payload(experiment, tables)
+
+        pairs = [(p["c"], p["t"]) for p in payload["metrics"][0]["pairs"]]
+        assert pairs == [("control", "t1"), ("control", "t2")]
+        assert any("outside the declared contrast set" in w for w in payload["warnings"])
+
+    def test_all_pairs_still_lists_every_pair(self, tables):
+        """The default family must be untouched (m13 D1)."""
+        three_arms = {
+            "query": "SELECT 1",
+            "variants": ["control", "t1", "t2"],
+            "expected_split": {"control": 1 / 3, "t1": 1 / 3, "t2": 1 / 3},
+        }
+        experiment = make_experiment(assignment=three_arms)
+        seed_series(tables, experiment, days=3, name_2="t1")
+
+        payload = build_report_payload(experiment, tables)
+
+        pairs = [(p["c"], p["t"]) for p in payload["metrics"][0]["pairs"]]
+        assert pairs == [("control", "t1"), ("control", "t2"), ("t1", "t2")]
+
     def test_stale_pair_rows_dropped_loudly(self, tables):
         """Rows for pairs outside the declared variants: warned, not charted."""
         experiment = make_experiment()
@@ -571,7 +613,7 @@ class TestSeriesSelection:
         # the stale rows feed NO payload surface: not the chart, not look/period
         assert payload["look"]["n"] == 3
         assert payload["period"]["end"] == _ms(START + timedelta(days=3))
-        assert any("outside the declared variants" in w for w in payload["warnings"])
+        assert any("outside the declared contrast set" in w for w in payload["warnings"])
 
     def test_nan_scrubbed_via_stub(self):
         experiment = make_experiment()

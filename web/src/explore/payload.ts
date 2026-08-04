@@ -109,6 +109,9 @@ export interface ExperimentKnobs {
   correction: string;
   correction_choices: string[];
   groups_count: number;
+  /** m13 STAT-1b: 'all_pairs' (C(g,2) pairs) | 'vs_control' (g-1 contrasts).
+   * The divisor is no longer derivable from groups_count alone. */
+  contrasts: string;
   /** m13 D8: 'inherit' (guardrails share the secondary tier) | 'none' (raw alpha,
    * and they leave the divisor below) */
   guardrail_correction: string;
