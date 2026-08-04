@@ -24,7 +24,7 @@ import numpy as np
 import pytest
 
 from abkit.stats.base import BaseMethod, ParamSpec
-from abkit.stats.exceptions import AsymmetricCIError
+from abkit.stats.exceptions import AsymmetricCIError, StatsError
 from abkit.stats.factory import create_method
 from abkit.stats.registry import available_methods, get_method_class
 from abkit.stats.samples import Fraction
@@ -139,20 +139,44 @@ def test_a_non_method_is_refused() -> None:
 # --- behaviour neutrality: nothing that ships today is asymmetric --------------------
 
 
-def test_every_registered_method_declares_a_symmetric_ci() -> None:
-    """The roster gate — STAT-3a moves no number BECAUSE this set is empty.
+#: Every configuration that legitimately builds an asymmetric interval, as
+#: ``(method, param, value)``. STAT-3 put the first entry here; anything else the
+#: roster below discovers is an unrecorded deviation.
+DECLARED_ASYMMETRIC = {("z-test", "interval", "score")}
 
-    A future method flipping the flag is exactly the change that must be conscious:
-    it makes the always-valid mode unavailable for that method (or demands the
+
+def test_no_method_declares_a_symmetric_ci_and_then_builds_an_asymmetric_one() -> None:
+    """The roster gate, ENUMERATING PARAMS — the form STAT-3 made reachable.
+
+    STAT-3a's version read ``get_method_class(name).asymmetric_ci``, i.e. the class
+    DEFAULT, and asserted the set was empty. That is still true and now means almost
+    nothing: STAT-3 ships the first method whose asymmetry is selected by a *param*
+    (``z-test`` + ``interval: score``), so the gate written to anticipate exactly
+    that shape could not see it — the guard's own blind spot, in the guard's own
+    test. The sweep below constructs every choice of every identity-flagged param and
+    checks the BOUND instance, which is the granularity the flag is defined at.
+
+    A new asymmetric configuration is exactly the change that must be conscious: it
+    makes the always-valid mode unavailable for that configuration (or demands the
     critical value enter the construction — plan §6a item 2).
     """
-    asymmetric = sorted(
-        name
-        for name in available_methods()
-        if get_method_class(name).asymmetric_ci  # class default; instances may narrow
-    )
-    assert asymmetric == [], (
-        f"{asymmetric} declare asymmetric_ci=True — the sequential mode cannot widen "
+    found: set[tuple[str, str, object]] = set()
+    for name in available_methods():
+        method_cls = get_method_class(name)
+        assert not method_cls.asymmetric_ci, f"{name} declares asymmetric_ci at CLASS level"
+        for spec in method_cls.param_specs:
+            for choice in spec.choices or ():
+                if choice == spec.default:
+                    continue
+                try:
+                    bound = create_method(name, alpha=0.05, params={spec.name: choice})
+                except StatsError:
+                    continue  # quarantined / invalid combination — not a configuration
+                if bound.asymmetric_ci:
+                    found.add((name, spec.name, choice))
+    assert found == DECLARED_ASYMMETRIC, (
+        f"undeclared asymmetric configurations {sorted(found - DECLARED_ASYMMETRIC)} / "
+        f"missing {sorted(DECLARED_ASYMMETRIC - found)} — the sequential mode cannot widen "
         "their intervals; record the deviation in docs/specs/statistics-changes.md"
     )
 

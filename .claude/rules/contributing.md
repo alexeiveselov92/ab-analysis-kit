@@ -90,11 +90,16 @@ CI runs the full matrix on every push; keep it green.
    `self.params` in `__init__` when a param selects the interval shape; it is a
    plain attribute, not a `ClassVar`, precisely so that is expressible). Every
    SE-by-CI-inversion entry then refuses loudly instead of widening a number that
-   is not a standard error. Such a method must also declare
-   `supports_sequential = False` unless it constructs its own confidence sequence
-   — otherwise the always-valid mode raises for it. The roster gate in
-   `tests/stats/sequential/test_asymmetric_ci_guard.py` asserts the registry
-   currently declares none, so flipping it is a conscious act.
+   is not a standard error. Do **not** reach for `supports_sequential = False` to
+   express the consequence: that flag is a `ClassVar` read at CLASS level by five
+   eligibility gates, so a param-switched narrowing is invisible to all of them
+   (m13 STAT-3). The contradiction is caught where it is STATIC —
+   `validate_experiment_level2` errors on `sequential.enabled` beside an asymmetric
+   interval, naming both knobs — and the `AsymmetricCIError` at the inversion is
+   the backstop under it. The roster gate in
+   `tests/stats/sequential/test_asymmetric_ci_guard.py` asserts no method declares
+   the flag at class level, so flipping the CLASS default is a conscious act;
+   `z-test`'s `interval: score` is the shipped example of the instance form.
 5. Tests: known-answer test; dual-entry equivalence; params/identity hash
    addition to `tests/stats/test_identity.py`; golden test if reproducing a
    legacy method.

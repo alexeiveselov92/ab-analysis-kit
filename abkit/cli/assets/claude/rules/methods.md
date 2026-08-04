@@ -67,6 +67,25 @@ variants):
 | `calculate_mde` | `false` | also solve the per-arm MDE at `power` |
 | `power` | `0.8` | target power for the MDE solve |
 | `covariate_lookback` | — | **CUPED only**: pre-period window, e.g. `14d`. IDENTITY-BEARING |
+| `interval` | `pooled` | **`z-test` only**: `pooled` (legacy) \| `score`. IDENTITY-BEARING |
+
+`interval: score` swaps the z-test's interval for the inversion of the test it
+already runs (Miettinen–Nurminen). **P-values do not change** — the statistic at
+the null is the same pooled z — with ONE exception, which is a fix: a table with no
+conversions in either arm has no pooled statistic at all, and now reports `p = 1`
+beside a real interval instead of a blank row (visible under `test_type: absolute`;
+under `relative` a lift over a zero baseline stays undefined). Otherwise the interval
+becomes valid at every effect size instead of only at zero, asymmetric (render it
+`[low, high]`, never `±`), and inside a possible range. It matters most where the arms are IMBALANCED: at a
+900/100 holdout the pooled SE is 24% too small, i.e. the legacy interval is
+anti-conservative, and worse as the correction shrinks alpha. Two constraints: it
+is identity-bearing (switching starts a new series), and it CANNOT be combined
+with `sequential: {enabled: true}` — config validation refuses the pair (as do the
+explore knob and its Apply seam), because the always-valid transform needs a
+symmetric interval. `abk validate` still scores such a metric: it simply has no
+always-valid column, exactly like a bootstrap method. On a relative metric with
+few CONVERSIONS (not few users — the precision law reads counts) the row carries a
+"weakly identified" warning; the interval is still reported.
 
 CUPED needs **no extra SQL**: with `covariate_lookback` set, abkit re-renders the
 same metric query over the pre-period window (exposure filter dropped) and uses
@@ -93,7 +112,7 @@ variants):
 params**. It is the key of a result *series* in `_ab_results`.
 
 - **Editing an identity param ORPHANS the prior series.** Changing `test_type`,
-  `n_samples`, `covariate_lookback`, `stratify`, etc. starts a *new*
+  `n_samples`, `covariate_lookback`, `interval`, `stratify`, etc. starts a *new*
   `method_config_id`; the old rows stay stranded. After retuning, recompute
   (`abk run --select <exp>`) and prune the orphans with
   `abk clean --select <exp> --execute`.
@@ -142,8 +161,12 @@ the experiment) applies only to **parametric methods** (`t-test`, `z-test`,
 are NOT sequential-eligible** — enabling sequential leaves their CIs
 fixed-horizon, and the readout still withholds WIN/LOSE AND FLAT before the
 horizon. If
-you need peeking-valid early reads, choose a parametric method. See
-`experiments.md` for the toggle and `overview.md` for why peeking matters.
+you need peeking-valid early reads, choose a parametric method.
+
+`z-test` with `interval: score` is the one parametric exception, and it fails
+LOUDLY rather than silently: its interval is asymmetric too, so the pair is a
+config ERROR naming both settings. See `experiments.md` for the toggle and
+`overview.md` for why peeking matters.
 
 ## Quarantined branches (raise, never silently substitute)
 

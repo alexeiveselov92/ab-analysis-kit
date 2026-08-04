@@ -138,7 +138,10 @@ not a name check. The widening works by inverting the symmetric fixed CI to reco
 
 | Sequential-eligible (parametric) | Not eligible (bootstrap) |
 |---|---|
-| `t-test`, `paired-t-test`, `z-test`, `cuped-t-test`, `paired-cuped-t-test`, `ratio-delta` | `bootstrap`, `paired-bootstrap`, `poisson-bootstrap`, `paired-poisson-bootstrap`, `post-normed-bootstrap`, `paired-post-normed-bootstrap` |
+| `t-test`, `paired-t-test`, `z-test`\*, `cuped-t-test`, `paired-cuped-t-test`, `ratio-delta` | `bootstrap`, `paired-bootstrap`, `poisson-bootstrap`, `paired-poisson-bootstrap`, `post-normed-bootstrap`, `paired-post-normed-bootstrap` |
+
+\* `z-test` **except** with `interval: score`, whose interval is asymmetric — see
+below.
 
 Bootstrap methods report an **asymmetric percentile CI**, so the SE is not
 recoverable by inversion and the transform cannot apply. If you set
@@ -150,10 +153,20 @@ the reason. **If you need peeking-valid early reads, choose a parametric method*
 The symmetry this relies on is **checked, not assumed**. A method may declare
 `BaseMethod.asymmetric_ci` — "my interval is not `effect ± z·SE`" — and every place
 abkit would recover an SE by inverting a CI then refuses with a clear error instead
-of widening a number that is not a standard error. No method shipped today declares
-it (bootstrap opts out one step earlier, through `supports_sequential`), so this
-changes nothing you can observe; it is the guard the score-type intervals planned
-for `0.8.0` need before they can exist.
+of widening a number that is not a standard error.
+
+One shipped configuration declares it: **`z-test` with `interval: score`** (the
+Miettinen–Nurminen proportion interval — see
+[compute methods](compute-methods.md)). Setting it alongside `sequential.enabled` is
+a **config error naming both settings**, not a silent downgrade: the always-valid
+transform recovers the standard error by inverting the CI width, which for a score
+interval would produce a confident-looking number that is not a standard error.
+Pick one — the legacy interval, or the fixed-horizon mode.
+
+(The confidence sequence *can* be built on a score interval, by substituting its
+critical value inside the root-find the interval already performs rather than by
+widening a finished interval. That is a future extension, not a limitation of the
+interval.)
 
 ## Toggling re-plans the whole series (self-invalidation)
 

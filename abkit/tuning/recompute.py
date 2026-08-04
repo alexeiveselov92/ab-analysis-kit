@@ -72,6 +72,7 @@ import scipy.stats as sps
 from abkit.config.method_config import MethodConfig
 from abkit.config.metric_config import MetricConfig
 from abkit.config.project_config import ProjectConfig
+from abkit.config.validator import asymmetric_interval_conflict
 from abkit.core.interval import Interval
 from abkit.loaders.metric_loader import MetricLoadResult
 from abkit.pipeline.analyze import build_container
@@ -747,6 +748,19 @@ class RecomputeEngine:
                 f"metric, got '{series.metric.type}' — pick a method from the knob "
                 "surface's method list"
             )
+        # m13 STAT-3: the same static contradiction config-lint refuses, refused at the
+        # KNOB. Deciding it off the experiment's own `sequential.enabled` rather than
+        # off the baked rows is what makes it total: a toggle flipped but not yet
+        # re-run leaves every row `ci_kind='fixed'`, so `av_pairs` below is empty, the
+        # preview would succeed, and Apply would write the pair into the YAML that
+        # `abk run` then refuses. The typed error carries the two-knob sentence — the
+        # engine's other illegal knob states get one, and an AsymmetricCIError raised
+        # out of the sequential tier would name an internal helper instead.
+        conflict = asymmetric_interval_conflict(
+            probe, sequential_enabled=self._session.experiment.sequential.enabled
+        )
+        if conflict is not None:
+            raise MethodParamError(conflict)
 
         live_id = probe.method_config_id
         identity_changed = live_id != series.comparison.method.method_config_id
@@ -781,6 +795,7 @@ class RecomputeEngine:
         # and reported other requests' evictions against this reply)
         stored_keys: list[BootMemoKey | str] = []
         seq_reload_needed = False
+        gapped = 0
         pairs: list[PairRecompute] = []
         for (name_1, name_2), rows in pair_rows.items():
             points: list[ExplorePoint] = []
@@ -803,10 +818,14 @@ class RecomputeEngine:
                 )
                 if point is not None:
                     points.append(point)
+                else:
+                    gapped += 1
             if (name_1, name_2) in av_pairs:
                 points, dropped = self._sequentialize_points(points, knobs.alpha, probe)
                 seq_reload_needed = seq_reload_needed or dropped
-            chips = self._chips(series, points, method_cls, probe.params, knobs, name_1)
+            chips = self._chips(
+                series, points, method_cls, probe.params, knobs, name_1, probe.asymmetric_ci
+            )
             pairs.append(PairRecompute(name_1=name_1, name_2=name_2, points=points, chips=chips))
 
         if seq_reload_needed:
@@ -814,6 +833,16 @@ class RecomputeEngine:
                 "alpha recompute is unavailable for some cutoffs under the sequential "
                 "mode (their always-valid CI cannot be re-derived by α-inversion) — "
                 "use Reload to recompute them"
+            )
+        if gapped and reusable is not None and reusable.asymmetric_ci:
+            # m13 STAT-3: the α tier is skipped for an asymmetric interval, so a row
+            # that could not be reconstructed exactly has no point at this alpha. The
+            # chart just loses it, and a chart that quietly loses points is the one
+            # degradation this engine must never do silently.
+            engine_warnings.append(
+                f"{gapped} cutoff(s) have no point at this alpha: this method's interval "
+                "is asymmetric, so it cannot be re-derived by α-inversion and those rows "
+                "could not be reconstructed exactly — use Reload to recompute them"
             )
 
         calibration = find_calibration(
@@ -943,7 +972,14 @@ class RecomputeEngine:
         # `reusable is not None` IS `not _needs_seed(method_cls)` (the caller's own
         # definition) — spelled this way because the α-inversion guard needs the bound
         # INSTANCE, not the class (m13 STAT-3a).
-        if reusable is not None and not _needs_seed(method_cls):
+        if reusable is not None and not _needs_seed(method_cls) and not reusable.asymmetric_ci:
+            # m13 STAT-3: the α tier re-derives a SYMMETRIC normal CI from persisted
+            # numbers, which for a score/Fieller interval approximates nothing — and
+            # the tier is already labelled "approx", so the drift would not read as a
+            # fault. The honest answer for such a method is Tier E, tried above; a row
+            # that got here has no point at the dragged α, and falls through to the
+            # gap below. The test sits ON the bound instance, since a param selects
+            # the interval shape.
             inverted = _alpha_inverted_bounds(row, knobs.alpha, method=reusable)
             if inverted is not None:
                 left, right, pvalue, reject = inverted
@@ -1190,15 +1226,26 @@ class RecomputeEngine:
         resolved_params: dict[str, Any],
         knobs: KnobState,
         name_1: str,
+        asymmetric_ci: bool = False,
     ) -> dict[str, Any]:
         """The windshield chips off the latest point WITH inference (§5.1) —
         a demoted/NULLed latest cutoff must not blank the chips when an older
-        cutoff still carries numbers (it is flagged, not hidden)."""
+        cutoff still carries numbers (it is flagged, not hidden).
+
+        ``ci_half`` is HALF THE WIDTH, which is only a ``±`` radius when the interval
+        is centred on the estimate. m13 STAT-3 ships one that is not, so the shape
+        rides along and the client renders ``[low, high]`` instead — the same rule the
+        report, the dashboard and the notifications already follow, and the one this
+        milestone's own operator docs state ("never ±"). Sending the bounds rather
+        than a formatted string keeps presentation in the renderer."""
         latest = next((point for point in reversed(points) if point.effect is not None), None)
         if latest is None:
             return {
                 "lift": None,
                 "ci_half": None,
+                "ci_low": None,
+                "ci_high": None,
+                "ci_symmetric": True,
                 "pvalue": None,
                 "power": None,
                 "power_note": "no recomputable cutoffs for this knob state",
@@ -1214,6 +1261,9 @@ class RecomputeEngine:
         return {
             "lift": latest.effect,
             "ci_half": ci_half,
+            "ci_low": latest.left_bound,
+            "ci_high": latest.right_bound,
+            "ci_symmetric": not asymmetric_ci,
             "pvalue": latest.pvalue,
             "power": power,
             "power_note": power_note,

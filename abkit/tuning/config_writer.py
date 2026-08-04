@@ -44,6 +44,7 @@ import yaml
 from abkit.config.experiment_config import ExperimentConfig
 from abkit.config.method_config import MethodConfig
 from abkit.config.metric_config import MetricConfig
+from abkit.config.validator import asymmetric_interval_conflict
 from abkit.database.internal_tables import InternalTablesManager
 from abkit.stats import create_method, get_method_class
 from abkit.tuning.config_files import archive_config_text, atomic_write_bytes, stamp
@@ -319,6 +320,21 @@ def apply_tuned_config(
     # Validate the WHOLE merged document before touching the filesystem.
     validated = ExperimentConfig.model_validate(body)
     experiment_name = validated.name
+
+    # m13 STAT-3: Apply is a level-1 seam by design (D4 — it merges a structured
+    # edit, it does not audit the project), but this one contradiction is about the
+    # very knobs Apply writes, and `abk run` would refuse the file it just produced.
+    # The rule and its sentence come from the ONE place all three surfaces read.
+    for comparison in validated.comparisons:
+        try:
+            bound = comparison.method.bind(alpha=validated.alpha or 0.05)
+        except Exception:  # a params error is config-lint's to explain, not Apply's
+            continue
+        conflict = asymmetric_interval_conflict(
+            bound, sequential_enabled=validated.sequential.enabled
+        )
+        if conflict is not None:
+            raise ValueError(f"comparison '{comparison.metric}': {conflict}")
 
     # Orphan detection (D4): identity changed AND persisted rows under the old id.
     orphaned: list[OrphanedSeries] = []

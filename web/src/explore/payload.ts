@@ -179,6 +179,12 @@ export interface ReplyPoint {
 export interface ReplyChips {
   lift: number | null;
   ci_half: number | null;
+  /** Interval bounds + shape (m13 STAT-3): `ci_half` is half the WIDTH, which is a
+   *  `±` radius only for a symmetric interval. A score/Fieller interval is not
+   *  centred on the estimate, so the chip renders `[low, high]` instead. */
+  ci_low: number | null;
+  ci_high: number | null;
+  ci_symmetric: boolean;
   pvalue: number | null;
   power: number | null;
   /** honest reason string when power is null */

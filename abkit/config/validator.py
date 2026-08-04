@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import timezone
 from pathlib import Path
-from typing import Protocol, TypeVar
+from typing import Any, Protocol, TypeVar
 
 from abkit.config.experiment_config import DAY_SECONDS, ExperimentConfig
 from abkit.config.metric_config import MetricConfig
@@ -187,6 +187,31 @@ class ValidationReport:
         self.warnings.extend(other.warnings)
 
 
+def asymmetric_interval_conflict(method: Any, *, sequential_enabled: bool) -> str | None:
+    """The one STATIC contradiction m13 STAT-3 can refuse before any data is read.
+
+    An asymmetric interval and the always-valid mode cannot both hold: the transform
+    never receives a standard error, it INFERS one by inverting the CI width, which
+    is only an SE for ``effect ± z·SE``. STAT-3a made that refuse at the inversion —
+    correct, but reached mid-run with the cohort already loaded, or mid-drag in the
+    cockpit as a 500 naming an internal helper.
+
+    Three surfaces refuse it (config-lint, the explore knob state, the explore Apply
+    seam) and the sentence lives HERE for all three: a rule about a pair of knobs
+    that is spelled differently on each surface is a rule an operator cannot learn
+    once. ``method`` is a BOUND instance — the interval shape is a param, so a class
+    could not answer.
+    """
+    if not (sequential_enabled and getattr(method, "asymmetric_ci", False)):
+        return None
+    return (
+        f"method '{method.name}' is configured with an asymmetric confidence interval, "
+        "and this experiment sets sequential.enabled — the always-valid transform needs "
+        "a symmetric 'effect ± z·SE' interval, because it recovers the SE by inverting "
+        "the CI width. Choose one: the legacy interval, or the fixed-horizon mode."
+    )
+
+
 def validate_experiment_level2(
     experiment: ExperimentConfig,
     metrics_by_name: dict[str, MetricConfig],
@@ -219,10 +244,16 @@ def validate_experiment_level2(
         # method params validated BY INSTANTIATION (one path; quarantine and
         # bad params fail here, at validate time, not at run time)
         try:
-            comparison.method.bind(alpha=project.statistics.alpha)
+            bound = comparison.method.bind(alpha=project.statistics.alpha)
         except Exception as exc:
             report.errors.append(f"{label}: method '{comparison.method.name}': {exc}")
             continue
+
+        conflict = asymmetric_interval_conflict(
+            bound, sequential_enabled=experiment.sequential.enabled
+        )
+        if conflict is not None:
+            report.errors.append(f"{label}: {conflict}")
 
         # capability lint (plan R8): the same declarative attributes analyze.py
         # dispatches on must gate at VALIDATE time, not at run time

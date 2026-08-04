@@ -807,9 +807,9 @@ endpoints, guardrail α, and — for whoever opts in — `method_config_id`.
 
 5 WP (uniform ddof dropped), ordered by value rather than dependency —
 **STAT-1c (guardrails uncorrected), STAT-2 (the false-positive sign instrument),
-STAT-1b (the declared contrast set), STAT-1 (Holm + the claim) and STAT-3a (the
-`asymmetric_ci` guard) are ✅ shipped**; STAT-3 (Miettinen–Nurminen) and STAT-4
-(Fieller) remain. Baseline
+STAT-1b (the declared contrast set), STAT-1 (Holm + the claim), STAT-3a (the
+`asymmetric_ci` guard) and STAT-3 (the score proportion interval) are ✅
+shipped**; STAT-4 (Fieller) remains. Baseline
 goldens stay untouched; new numbers get **new** goldens.
 
 **STAT-1 as built:** `correction: holm` sits beside `benjamini_hochberg` in the
@@ -851,6 +851,45 @@ cannot fire for the case it exists for; and there are **twelve** entry points, n
 eleven, because explore's Tier α open-codes the inversion instead of calling the
 helper. An AST gate fails on any new open-coded inversion.
 
+**STAT-3 as built:** `interval: score` on `z-test` — opt-in, identity-bearing,
+and it moves **no p-value at all**, because the Farrington–Manning form of
+Miettinen–Nurminen makes the statistic at the null the pooled z the p-value
+already used. What moves is the pair of bounds: they stop being `effect ± z·σ̂₀`
+(a variance frozen at the null, valid nowhere else) and become the set of
+contrasts that same statistic does not reject — valid everywhere, asymmetric,
+inside `[−1, 1]`, and coherent with the p-value BY CONSTRUCTION on both the
+difference and the ratio scale at once. The case for it is imbalance, not
+elegance: at a 900/100 holdout the pooled SE is 24% too small, i.e. the legacy
+interval is anti-conservative by 2.7× at α = 0.05 and 30× at α = 1e-4 — and it
+degrades exactly as this same milestone's corrections shrink α. Three deltas the
+design did not have. The numerics: the published closed-form constrained MLE
+loses ~1e-12 to cancellation precisely on the sparse tables the construction is
+FOR, so it is a seed polished by Newton on the log-likelihood, and the endpoints
+come from a fixed-iteration bisection (fixed work, not a tolerance loop, so the
+scalar and batch entries are the same code and bit-identical by construction).
+The refusal for `sequential.enabled` moved from a mid-run `AsymmetricCIError` to
+a **level-2 config error** naming both knobs — the failure was reachable only
+after the cohort had been loaded — and the same sentence now refuses the pair at
+the explore knob and at its Apply seam. And `abk plan` had to learn the interval
+shape too: it sizes on the normal power formula while the analysis inverts the
+score statistic, a gap now MEASURED at `C·z²/n_arm` (C = 4.01 at a 5% baseline)
+rather than assumed ignorable.
+
+**STAT-3 also amends STAT-3a.** That WP made `abk validate` REFUSE an asymmetric
+method's cell, which was the right answer while no method could declare the flag
+and the wrong one the moment a method could: the τ² anchor runs unconditionally
+at the top of both scoring engines, so the refusal failed *every* cell — the
+change-control instrument unable to measure the estimator it exists to certify,
+and explore's calibration chip stuck at `uncalibrated` with no command able to
+clear it. Such a cell now degrades exactly as a bootstrap one does: fixed columns
+scored, no always-valid column, and a note saying which of the two reasons
+applied. The generalisable lesson is the one the milestone keeps re-teaching at
+each level: **a capability flag's granularity has to match its switch, and the
+enumeration of who reads that flag has to be checked rather than recalled** — the
+design's "five class-level readers" was right about the five and silently wrong
+about the three instance-level readers inside `abk validate`, which were the ones
+that mattered.
+
 **The sequential question is answered (D14):** the confidence sequence *does*
 extend to score intervals — the always-valid rule is a standardised test with a
 variance-dependent `c(V)` in place of `z`, i.e. a critical-value substitution
@@ -861,7 +900,8 @@ places, seven of them inside the A/A matrix's own scoring and family sweep. (The
 design session measured "six", counting only `to_always_valid`; the guard
 therefore belongs to the inference helper, and shipped as its own WP **STAT-3a**
 before STAT-3 — D17.) ~5–6 sessions, of which the correction layer (STAT-1c,
-STAT-1b, STAT-2, STAT-1) and the guard (STAT-3a) are done.
+STAT-1b, STAT-2, STAT-1), the guard (STAT-3a) and the proportion interval
+(STAT-3) are done.
 
 ### M14 — multi-arm decision layer (bucket B, decisions) → `0.9.0` 📐 contour
 An explicit `control:` field (or a validated positional convention);

@@ -367,3 +367,58 @@ class TestRenderSmoke:
     def test_direct_mode_never_requires_the_hook(self):
         report = run_l2(make_experiment(), [make_metric()])  # default: no copy
         assert not any("ab_added_filters" in e for e in report.errors)
+
+
+class TestAsymmetricIntervalVersusTheSequentialMode:
+    """m13 STAT-3: the one configuration pair that is a static contradiction.
+
+    The always-valid transform never receives a standard error — it recovers one
+    by inverting the CI width, which is only an SE for ``effect ± z·SE``.
+    STAT-3a made that refuse loudly at the inversion; refusing HERE moves the
+    failure off the warehouse read, where it would have killed one experiment
+    mid-run with the cohort already loaded.
+    """
+
+    def fraction_metric(self):
+        return make_metric(
+            name="cr",
+            type="fraction",
+            columns={"variant": "variant", "count": "c", "nobs": "n"},
+        )
+
+    def experiment_with(self, interval, sequential):
+        return make_experiment(
+            sequential={"enabled": sequential},
+            comparisons=[
+                {
+                    "metric": "cr",
+                    "is_main_metric": True,
+                    "method": {"name": "z-test", "params": {"interval": interval}},
+                }
+            ],
+        )
+
+    def test_a_score_interval_under_the_sequential_mode_is_an_error(self):
+        report = run_l2(self.experiment_with("score", True), [self.fraction_metric()])
+        assert not report.ok
+        message = "\n".join(report.errors)
+        assert "asymmetric" in message and "sequential.enabled" in message
+
+    def test_each_half_alone_is_fine(self):
+        """Neither declaration is a defect on its own — only the pair is. A gate
+        that refused the score interval outright would make the whole WP
+        unreachable for anyone who had ever turned the sequential mode on."""
+        for interval, sequential in (("score", False), ("pooled", True), ("pooled", False)):
+            report = run_l2(self.experiment_with(interval, sequential), [self.fraction_metric()])
+            assert report.ok, (interval, sequential, report.errors)
+
+    def test_the_gate_reads_the_BOUND_method_not_the_class(self):
+        """The mutation this gate exists to survive: ``asymmetric_ci`` is a plain
+        attribute resolved per instance precisely because a PARAM selects the
+        interval. A class-level read answers for the default params and would pass
+        the configuration above — a guard that cannot fire for its own case."""
+        from abkit.stats import get_method_class
+
+        assert get_method_class("z-test").asymmetric_ci is False
+        report = run_l2(self.experiment_with("score", True), [self.fraction_metric()])
+        assert not report.ok

@@ -55,7 +55,7 @@ explicit message. See [metrics](metrics.md) for how a metric's `type` is set.
 | Family | Registry `name` | Aliases | Params beyond `test_type` |
 |---|---|---|---|
 | parametric | `t-test` | `ttest` | `calculate_mde`, `power` |
-| parametric | `z-test` | `ztest` | `calculate_mde`, `power` |
+| parametric | `z-test` | `ztest` | `calculate_mde`, `power`, `interval` |
 | parametric | `cuped-t-test` | `cuped-ttest` | `calculate_mde`, `power`, `covariate_lookback` |
 | parametric | `ratio-delta` | — | (none) |
 | parametric, paired | `paired-t-test` | `paired-ttest` | (none) |
@@ -100,8 +100,55 @@ Closed-form estimators (normal / t approximation), golden-tested at relative
 | `calculate_mde` | `t-test`, `z-test`, `cuped-t-test` | `false` | also solve the per-arm MDE at `power` |
 | `power` | `t-test`, `z-test`, `cuped-t-test` | `0.8` | target power for the MDE solve (must be in `(0, 1)`) |
 | `covariate_lookback` | `cuped-t-test`, `paired-cuped-t-test` | — | pre-period covariate window, e.g. `14d` — **identity-bearing** |
+| `interval` | `z-test` | `pooled` | confidence-interval construction: `pooled` (legacy) or `score` — **identity-bearing** |
 
 `ratio-delta` and the paired variants take only `test_type`.
+
+### `interval: score` — a proportion interval that is valid away from zero
+
+By default the `z-test`'s interval is `effect ± z·SE`, with the SE computed under
+the null (the *pooled* proportion). That is the same number the p-value uses, so
+"the CI excludes zero" and "p < α" always agree — but the interval is only a valid
+confidence set **at** zero. Under strong arm imbalance the pooled SE can be the
+*smaller* one: at a 900/100 holdout it is 24% too small, which inflates the real
+error rate by 2.7× at `alpha: 0.05` and 30× at `1e-4`. Pooling is not the
+conservative choice it is often assumed to be, and the damage grows as the
+multiple-testing correction shrinks your alpha.
+
+`interval: score` replaces the interval — and only the interval — with the
+inversion of the test abkit already runs (Miettinen–Nurminen):
+
+```yaml
+method: {name: z-test, params: {test_type: relative, interval: score}}
+```
+
+- **your p-values do not change** — the statistic at the null is the same pooled z,
+  so `interval: score` re-reads the same evidence with a better ruler. (One
+  exception, and it is a fix: a metric with no conversions in *either* arm has no
+  pooled statistic at all, and now reports `p = 1` where the legacy path reported
+  nothing.)
+- the interval is valid at every effect size, **asymmetric** about the point
+  estimate (report it as `[low, high]`, never as `±`), and confined to a possible
+  range — a lift can no longer read below −100%;
+- the relative interval is the same construction on the ratio scale, so the lift
+  interval, the difference interval and the p-value are one decision;
+- empty cells stop being a hole: with `test_type: absolute`, a metric with no
+  conversions in either arm at an early cutoff now reports `p = 1` and a real
+  interval instead of a blank row. Under `relative` (the default) that row stays
+  blank either way — a lift over a zero baseline is undefined whatever the interval
+  method.
+
+Two things to know before turning it on. It is **identity-bearing**, so switching
+starts a new result series (see identity below) — plan it like any method change.
+And it cannot be combined with `sequential: {enabled: true}`: the always-valid
+transform needs a symmetric interval, and config validation refuses the pair
+rather than quietly widening the wrong shape.
+
+On a relative metric with few conversions the row carries a *weakly identified*
+warning: the precision of a lift is governed by **conversions**, not traffic
+(`z·√(1/x₁ + 1/x₂)`), so ten times the users at a tenth of the rate buys nothing.
+The interval is still reported — the warning tells you not to read it as a
+measurement.
 
 ### CUPED — variance reduction with no extra SQL
 
@@ -179,8 +226,8 @@ method_config_id = sha256( name + json_dumps_sorted(non-default identity params)
 ```
 
 - **Editing any non-default identity param orphans the prior series.** Changing
-  `test_type`, `calculate_mde`, `power`, `n_samples`, `stratify`, `weight_method`,
-  `stat`, `pvalue_kind`, or `covariate_lookback` away from its default produces a
+  `test_type`, `calculate_mde`, `power`, `interval`, `n_samples`, `stratify`,
+  `weight_method`, `stat`, `pvalue_kind`, or `covariate_lookback` away from its default produces a
   *new* `method_config_id`; the old cumulative rows stay stranded. After retuning a method, recompute the experiment
   (`abk run`) and prune orphans with `abk clean` (see [the CLI guide](../reference/cli.md)).
 - **`seed` and `max_block_bytes` are identity-excluded** — they never change the
@@ -203,6 +250,12 @@ not sequential-eligible**: their percentile CIs are asymmetric, so enabling
 sequential leaves them fixed-horizon and the readout still withholds
 WIN / LOSE / FLAT before the horizon. If you need valid early stopping, choose a
 parametric method.
+
+The same requirement rules out `z-test` with `interval: score` — its interval is
+asymmetric too. That combination is a **config error** naming both settings, not a
+silent downgrade: the transform recovers the standard error by inverting the CI
+width, which for a score interval would produce a confident-looking number that is
+not a standard error.
 
 ## Quarantined branches
 

@@ -111,6 +111,20 @@ function humanCadence(seconds: number): string {
   return seconds + 's';
 }
 
+/**
+ * The CI chip. `ci_half` is half the interval's WIDTH — a `±` radius only when the
+ * interval is centred on the estimate. m13 STAT-3's score interval is not, so it
+ * renders as `[low, high]`: the report, the dashboard and the notifications already
+ * do, and rendering `±` here would contradict the chart drawn beside it.
+ */
+const formatCi = (chips: { ci_half: number | null; ci_low: number | null;
+  ci_high: number | null; ci_symmetric: boolean } | null): string => {
+  if (chips === null) return '—';
+  if (chips.ci_symmetric) return chips.ci_half === null ? '—' : `±${fmtVal(chips.ci_half)}`;
+  if (chips.ci_low === null || chips.ci_high === null) return '—';
+  return `[${fmtVal(chips.ci_low)}, ${fmtVal(chips.ci_high)}]`;
+};
+
 /** Alpha needs more precision than fmtVal (two-tier splits like 0.016667). */
 const fmtAlpha = (a: number): string => Number(a.toPrecision(4)).toString();
 
@@ -1010,7 +1024,7 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
     // chips off the reply (full names — server._result_json)
     const chips = rp ? rp.chips : null;
     chipLift.set(chips === null || chips.lift === null ? '—' : fmtSigned(chips.lift));
-    chipCi.set(chips === null || chips.ci_half === null ? '—' : `±${fmtVal(chips.ci_half)}`);
+    chipCi.set(formatCi(chips));
     chipP.set(chips === null || chips.pvalue === null ? '—' : fmtP(chips.pvalue));
     if (chips !== null && chips.power !== null) {
       chipPower.set(`${(chips.power * 100).toFixed(0)}%`);

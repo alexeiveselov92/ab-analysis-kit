@@ -533,7 +533,7 @@ a stale object the registry no longer resolves to. A test that flips a capabilit
 flag must patch `get_method_class("t-test")`, never an imported class — the
 difference is invisible when the file runs alone.
 
-### STAT-3 — the proportion interval: **Miettinen–Nurminen**, one statistic used three ways
+### STAT-3 — the proportion interval: **Miettinen–Nurminen**, one statistic used three ways ✅ SHIPPED
 
 **The derivation landed** ([proportion-interval.derivation.json](../research/2026-08-m13-blind-rederive/proportion-interval.derivation.json))
 and it dissolves the pooled-vs-unpooled fork rather than choosing a side.
@@ -603,6 +603,77 @@ constrained MLE sits on a boundary and the shape changes — a bracketing scan p
 a **tested** fallback); and a suppression rule for the relative interval stated in
 **conversions**, not units (below a few hundred per arm a relative effect is
 unidentified, and a technically-correct `[−72%, +260%]` is misleading UX).
+
+#### As built
+
+`interval: pooled | score` on `z-test` — identity-flagged, defaulted to the legacy
+branch. **No p-value moved and no default moved**; `ALGORITHM_VERSION` untouched.
+Deviation record: [statistics-changes.md §4.4](statistics-changes.md).
+The math lives in one pure module (`abkit/stats/proportion_score.py`), the method
+only chooses between two branches, and the gates are
+`tests/stats/test_proportion_score.py` (the derivation's KATs) +
+`tests/stats/test_ztest_score_interval.py` (the deviation and what must NOT move).
+
+**Every sub-decision the WP was told to make, and how it went:**
+
+- **The `N/(N−1)` factor is dropped** (D11 confirmed): the p-value branch is then
+  not merely equivalent but *the same code*, so "no p-value moves" is an equality
+  assertion rather than a tolerance one.
+- **Both scales ship together.** The relative interval is the ratio-scale score
+  construction (Route C, a quadratic rather than the difference scale's cubic), so
+  three-way coherence holds. Shipping only the absolute scale would have left the
+  default `test_type` — `relative` — on the shortcut it was opting out of.
+- **`supports_sequential` was the WRONG vehicle for the refusal**, and finding out
+  why is the WP's transferable lesson. It is a `ClassVar` read at CLASS level in
+  five places (`plan`, `recompute`, `analyze`, `driver` ×2), so an instance-level
+  narrowing would have been invisible to every eligibility gate — the exact shape
+  STAT-3a warned about, one level up. The refusal therefore ships where the
+  contradiction is STATIC: **a level-2 config error** naming both knobs. The
+  STAT-3a `AsymmetricCIError` stays the backstop, and its test moved from "explore
+  raises" to a direct call, since the caller now skips the tier.
+- **Explore's α tier answers with a GAP**, not an approximation. Tier E is tried
+  first and is exact for a fraction row, so a row that reaches the α tier has no
+  point at the dragged alpha — and a tier already labelled "approx" is where a
+  wrong-shaped interval would go unnoticed.
+- **`abk plan` had to learn the interval shape** (the third surface — STAT-1's
+  rule, with "scheme" read as "estimator"): it suppresses the ASN, since `abk run`
+  refuses that mode, and notes that its sizing is Wald-based. §6(b) is now
+  **measured**: the half-widths differ by `C·z²/n_arm` with C stable in n to three
+  digits (4.01 at a 5% baseline, 0.060 at 30%). The bind that reads the shape also
+  makes `abk plan` the first surface to validate method params at all — an invalid
+  comparison is refused by name instead of sized against defaults it never had.
+- **The identification rule is a WARNING stated in conversions**, not a
+  suppression: hiding a correct interval is the worse failure, and the threshold
+  carries `z` so it tightens by itself as the correction shrinks α.
+
+**Numerics, which the design underestimated.** The published closed-form
+constrained MLE (the trigonometric cubic root) is accurate to ~1e-12 — and its
+error concentrates on exactly the sparse tables this construction exists for,
+because the root is then small relative to coefficients of order `N`. It is
+therefore a **seed**, polished by Newton on `dℓ/dp̃₁` (well-conditioned: ratios,
+not differences of large numbers), measured at ~1e-16. A first attempt to use a
+bisection on the score equation as the *reference* was wrong in a more
+instructive way: it silently converged to the wrong endpoint whenever the
+likelihood's maximum sits ON a feasible boundary (any empty cell), and a
+golden-section search over the likelihood — derivative-free — cannot beat
+`√ε ≈ 1e-8` and *looked* like evidence against the closed form. **The reference
+that works is the objective itself**: the returned root must beat its neighbours
+and both feasible endpoints on the constrained log-likelihood. Four mutation
+probes (no polish; a transposed cubic coefficient; a swapped ratio-quadratic
+term; a dropped `θ²` in the ratio variance) all go red, and the transposed
+coefficient is caught ONLY by the objective test — the coherence and null tests
+pass it, because its error vanishes at `δ = 0`.
+
+**The two open questions the derivation left are now tested premises**, not
+assumptions: `Z` is monotone in the contrast (checked at 60 contrasts × 2000
+tables per scale, including empty and full cells), and a root-find that finds no
+crossing lands on the FEASIBLE BOUNDARY — which is the only answer a bounded
+confidence set can give, not an error branch.
+
+**Endpoints come from a fixed-iteration bisection**, never a tolerance loop: fixed
+work is what makes the scalar entry (a length-1 batch through the same kernel)
+bit-identical to the vectorized one, so the M7 parity gate keeps its equality
+assertion. `test_ztest_parity` is now parametrized on `interval` as well.
 
 ### STAT-4 — the relative effect: what the z-test should compute
 
@@ -677,7 +748,7 @@ STAT-1c (guardrails) ✅ ──────────────────�
 STAT-1b (contrast set) ✅ ─────────────────────────────────┤   biggest power win
 STAT-1  (Holm / the Fork) ✅ ─────────────────────────────┤
 STAT-2  (sign instrument) ✅ ─▶ STAT-4 (relative effect) ──┼──▶ STAT-6 (exit gate)
-STAT-3a (asymmetric_ci guard) ✅ ─▶ STAT-3 (proportions) ─┤
+STAT-3a (asymmetric_ci guard) ✅ ─▶ STAT-3 (proportions) ✅ ┤
 STAT-5  (ddof — recommended dropped) ─────────────────────┘
 ```
 

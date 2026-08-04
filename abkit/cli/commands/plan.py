@@ -359,7 +359,30 @@ def _plan_comparison(
     alpha = comparison_alpha(comparison, alphas)
     target_mde = mde if mde is not None else comparison.min_effect
 
+    # The interval shape is a PARAM (m13 STAT-3), so only the bound instance can
+    # answer whether this comparison's CI is symmetric — the class default would
+    # answer for a configuration nobody wrote. Bad params are config-lint's to
+    # explain; the planner refuses rather than sizing a design that will not run.
+    try:
+        asymmetric_ci = bool(comparison.method.bind(alpha=alpha).asymmetric_ci)
+    except Exception as exc:
+        return ComparisonPlan(
+            comparison.metric,
+            method_name,
+            role,
+            refused=f"method params rejected ({exc}) — run `abk run --steps validate`",
+            kind=kind,
+            test_type=test_type,
+            alpha=alpha,
+        )
+
     notes: list[str] = []
+    if asymmetric_ci:
+        notes.append(
+            "sizing uses the normal (Wald) power formula while the analysis will "
+            "invert the score statistic — the two rules differ by O(z²/N), so read "
+            "the MDE as the planning figure, not as the boundary the readout applies"
+        )
     moments = _resolve_moments(experiment, comparison, kind, override, tables, notes, history)
     if moments is None:
         refusal = _no_baseline_refusal(comparison, history)
@@ -399,6 +422,7 @@ def _plan_comparison(
         rate_source=rate_source,
         look_days=look_days,
         horizon_days=horizon_days,
+        asymmetric_ci=asymmetric_ci,
     )
     return ComparisonPlan(
         metric=comparison.metric,
@@ -431,6 +455,7 @@ def _build_runtime(
     rate_source: str,
     look_days: list[float] | None,
     horizon_days: float,
+    asymmetric_ci: bool = False,
 ) -> RuntimePlan:
     """Days-to-required-N + the always-valid ASN for one sized comparison (WP-A).
 
@@ -445,7 +470,13 @@ def _build_runtime(
     days_to_required_n = runtime_for(result.required_n, rate_control)
     asn: AsnResult | None = None
     asn_note: str | None = None
-    if not method_cls.supports_sequential:
+    if asymmetric_ci:
+        # m13 STAT-3: `abk run` refuses the always-valid mode for an asymmetric
+        # interval (config-lint errors on the pair), so printing an ASN here would
+        # size a design the pipeline will not run — the "a surface that prints a
+        # level must know the scheme" rule, applied to a sequential number.
+        asn_note = "fixed-horizon (asymmetric interval — the always-valid mode is refused)"
+    elif not method_cls.supports_sequential:
         asn_note = "fixed-horizon (resampling method — not sequential-eligible)"
     elif not experiment.sequential.enabled:
         asn_note = "fixed-horizon design (set sequential.enabled for anytime ASN)"

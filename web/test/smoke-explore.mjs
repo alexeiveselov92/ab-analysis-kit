@@ -266,6 +266,37 @@ test('live page fires the initial recompute and adopts the reply into the chips'
   assert.match(mount.querySelector('.abk-stat').textContent, /14\/14 cutoffs .*14 exact/);
 });
 
+test('an asymmetric interval renders as [low, high], never as ± (m13 STAT-3)', async () => {
+  // The chart draws the bounds; a `±half-width` chip beside it asserts a centring
+  // the score interval does not have, and contradicts the rule this milestone's own
+  // operator docs state. The server sends the SHAPE, not a formatted string.
+  const symmetric = fakeFetch((url, body) => ({ status: 200, json: makeReply(body.request_id) }));
+  const { mount: mountA } = renderInJsdom(makeExplorePayload(liveUrls()), {
+    fetchImpl: symmetric.impl,
+  });
+  await sleep(30);
+  const ciA = [...mountA.querySelectorAll('.abk-live-chip')].map((c) => c.textContent);
+  assert.ok(ciA.some((t) => t.includes('±0.060')), 'the symmetric chip is unchanged');
+
+  const asym = fakeFetch((url, body) => {
+    const reply = makeReply(body.request_id);
+    reply.pairs[0].chips = {
+      ...reply.pairs[0].chips,
+      ci_low: 0.01,
+      ci_high: 0.19,
+      ci_symmetric: false,
+    };
+    return { status: 200, json: reply };
+  });
+  const { mount: mountB } = renderInJsdom(makeExplorePayload(liveUrls()), {
+    fetchImpl: asym.impl,
+  });
+  await sleep(30);
+  const ciB = [...mountB.querySelectorAll('.abk-live-chip')].map((c) => c.textContent);
+  assert.ok(ciB.some((t) => t.includes('[0.010, 0.190]')), 'the asymmetric chip shows bounds');
+  assert.ok(!ciB.some((t) => t.includes('±0.060')), 'and never the half-width');
+});
+
 test('the declared contrast set fixes the divisor the client mirrors (m13 STAT-1b)', async () => {
   // three arms: all_pairs divides by C(3,2)=3, vs_control by g-1=2. The server
   // resolves the same rule, so a client that ignored `contrasts` would send an
