@@ -518,6 +518,13 @@ it matches the published method and the R/SAS implementations a golden test woul
 compare against. It must be applied to the interval and the p-value together, or
 to neither.
 
+*Blocked by **STAT-3a** (D17), which ships first:* the `asymmetric_ci` capability
+flag and its refusals. The guard belongs to `se_from_ci_length` — the function that
+assumes symmetry — not to `to_always_valid`, and it is entered from eleven places,
+seven of them inside `abk validate`'s own scoring and family sweep. Shipping it
+standalone keeps its gate at byte-parity (no shipped method is asymmetric today) and
+keeps the review of the new interval from having to certify two things at once.
+
 *Required sub-tasks the derivation names:* root-find robustness (is
 `Z(δ)² − z²` guaranteed to have exactly two sign changes? at `x_j ∈ {0, n_j}` the
 constrained MLE sits on a boundary and the shape changes — a bracketing scan plus
@@ -598,7 +605,7 @@ STAT-1c (guardrails) ✅ ──────────────────�
 STAT-1b (contrast set) ✅ ─────────────────────────────────┤   biggest power win
 STAT-1  (Holm / the Fork) ✅ ─────────────────────────────┤
 STAT-2  (sign instrument) ✅ ─▶ STAT-4 (relative effect) ──┼──▶ STAT-6 (exit gate)
-STAT-3  (proportions) ⏳ ─────────────────────────────────┤
+STAT-3a (asymmetric_ci guard) ⏳ ─▶ STAT-3 (proportions) ─┤
 STAT-5  (ddof — recommended dropped) ─────────────────────┘
 ```
 
@@ -636,7 +643,8 @@ field, and only M15's Student-t would need them.
 | D11 | **MN ships WITHOUT the `N/(N−1)` factor** (Farrington–Manning form), making `Z(0)` bit-identical to today's pooled z so no reported p-value moves. Byte-stability of the p-value outranks matching R/SAS; the difference is `1/(2N)`. Golden tests compare against FM, and the docstring says why. | decided 2026-08-03, delegated |
 | D12 | **`_ab_results.reject` keeps its name and is REDOCUMENTED as pre-family** — "rejection of this one comparison at its stored α, before any read-time family rule". No family-decision column is added: under a read-time scheme that value is re-derived on every read and a persisted copy would go stale the moment `correction` changes. The BI recipes state that the family decision lives in the readout. | decided 2026-08-03, delegated |
 | D15 | **STAT-1b stays in M13 and does NOT wait for M14's `control:` field.** They are different declarations: STAT-1b declares the FAMILY (`contrasts: vs_control \| all_pairs`), M14 declares WHICH ARM is control — and the latter is already resolved positionally today (first declared variant = control = `name_1`, baseline §5 `combinations`). So the knob is expressible over the existing convention, and M14 later replaces the positional resolution in one place instead of the family being blocked on it. | decided 2026-08-04, delegated |
-| D14 | **The sequential layer DOES extend to score intervals** — the always-valid rule is a standardised test with `c(V)` in place of `z`, so the confidence sequence is `{δ : \|Z(δ)\| ≤ c(V)}`, a critical-value substitution inside the root-find MN/Fieller already run. The blocker is architectural, not mathematical: `to_always_valid` *infers* the SE from the CI width assuming symmetry, unvalidated, at six call sites (the A/A sequential column among them). **`asymmetric_ci: ClassVar[bool] = False` is a hard prerequisite of STAT-3** — it turns a silent miscomputation into a loud refusal. | decided 2026-08-03, delegated |
+| D14 | **The sequential layer DOES extend to score intervals** — the always-valid rule is a standardised test with `c(V)` in place of `z`, so the confidence sequence is `{δ : \|Z(δ)\| ≤ c(V)}`, a critical-value substitution inside the root-find MN/Fieller already run. The blocker is architectural, not mathematical: the SE is *inferred* from the CI width assuming symmetry, unvalidated. **`asymmetric_ci: ClassVar[bool] = False` is a hard prerequisite of STAT-3** — it turns a silent miscomputation into a loud refusal. *Amended 2026-08-04 (see D17): the count "six call sites" was measured on `to_always_valid`; the assumption actually lives in `se_from_ci_length`, entered from **eleven** places, seven of them inside the A/A instrument.* | decided 2026-08-03, delegated |
+| D17 | **The `asymmetric_ci` guard ships as its own WP (STAT-3a) BEFORE STAT-3**, not inside it. Three grounds, all measured rather than argued: (a) the assumption is not `to_always_valid`'s, it is `se_from_ci_length`'s, and that function is called directly from **nine** sites outside the sequential package (`validate/scoring.py` ×5, `validate/family.py` ×2, `tuning/recompute.py`, `pipeline/driver.py`) plus `to_always_valid`'s own two callers — a flag checked only inside `to_always_valid` would leave the A/A instrument, which is the majority of them, unguarded; (b) no shipped method has an asymmetric CI, so the change is **provably behaviour-neutral** and its gate is byte-parity over the existing suite — a property that stops being cheap the moment a new interval lands in the same PR; (c) its exit criterion needs no new math (a hostile fake method declaring `asymmetric_ci = True` must make every entry point refuse LOUDLY), and a review that cannot separate "the guard works" from "the interval is right" is exactly what this milestone keeps punishing. | decided 2026-08-04, delegated |
 | D16 | **`contrasts` is experiment-level with NO project default** — unlike `correction`/`guardrail_correction`. The family five call sites read must never depend on whether the surface reading it resolved a project default, and the factory that serves them therefore takes no `ProjectConfig`. It is also a statement about an experiment's design (which arms it compares), not a project-wide statistical policy. | decided 2026-08-04, delegated |
 | D13 | **STAT-5 (uniform ddof) is DROPPED from M13** — second-order, below the instrument's noise floor, dominated at small n by the normal-vs-Student-t error deferred to M15 (audit §7). Dropping it edits the ROADMAP contour. | decided 2026-08-03, delegated |
 
