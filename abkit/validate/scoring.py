@@ -129,6 +129,16 @@ class CellScore:
     valid_iterations: int
     #: Single-look FPR at the horizon cutoff (null pass), or None if never usable.
     fpr: float | None
+    #: Share of those single-look false positives whose CI sat BELOW zero (m13
+    #: STAT-2). A correct interval is sign-symmetric under the null, so this is
+    #: 0.5 up to Monte-Carlo noise; a systematic departure identifies the
+    #: ESTIMATOR, and it is the only signal that does — several relative-effect
+    #: formulas share an identical rejection set at the null, so their FPRs agree
+    #: to the last false positive while their false positives lean opposite ways.
+    #: Predicted lean for a first-order delta-method relative interval:
+    #: ``0.5 + φ(z)·z²·CV₁·√w₁/α``, which GROWS as α shrinks — worst in exactly
+    #: the corrected tier. ``None`` when nothing was significant (no sign to take).
+    fpr_negative_share: float | None
     #: Cumulative-peeking FPR: share of null iterations whose CI excludes zero at ANY
     #: look across the grid (optional stopping — the peeking hazard, aa-fpr §3 / D3).
     peeking_fpr: float | None
@@ -393,6 +403,7 @@ def _score_cell_scalar(
             horizon_pooled = _point_estimate(pooled_arm)
 
     single_look_hits = 0
+    single_look_hits_negative = 0
     peek_hits = 0
     valid_iterations = 0
     degenerate_horizon = 0
@@ -467,6 +478,8 @@ def _score_cell_scalar(
             valid_iterations += 1
             if horizon_sig[0]:
                 single_look_hits += 1
+                if horizon_sig[1] < 0:  # m13 STAT-2: which side the CI sat on
+                    single_look_hits_negative += 1
             mde = _analytic_mde(horizon_control, method, ratio=ratio, target_power=target_power)
             if mde is not None:
                 mde_values.append(mde)
@@ -543,6 +556,9 @@ def _score_cell_scalar(
                             coverage_hits_seq += 1
 
     fpr = single_look_hits / valid_iterations if valid_iterations else None
+    # m13 STAT-2: denominator is the HITS, not the iterations — this is "which way
+    # did the false positives lean", and it is undefined when none occurred.
+    fpr_negative_share = single_look_hits_negative / single_look_hits if single_look_hits else None
     peeking_fpr = peek_hits / valid_iterations if valid_iterations else None
     # cumulative first-crossings per look ÷ valid_iterations — monotone, ending at
     # peeking_fpr (the horizon look). Empty when nothing was scorable.
@@ -596,6 +612,7 @@ def _score_cell_scalar(
         iterations=iterations,
         valid_iterations=valid_iterations,
         fpr=fpr,
+        fpr_negative_share=fpr_negative_share,
         peeking_fpr=peeking_fpr,
         power=power,
         coverage=coverage,
@@ -719,6 +736,7 @@ def _score_cell_vectorized(  # noqa: PLR0912, PLR0915 — mirrors the scalar eng
 
     # ── Cross-block accumulators (python scalars + per-look histograms) ──────
     single_look_hits = 0
+    single_look_hits_negative = 0
     peek_hits = 0
     valid_iterations = 0
     degenerate_horizon = 0
@@ -824,6 +842,11 @@ def _score_cell_vectorized(  # noqa: PLR0912, PLR0915 — mirrors the scalar eng
         valid_iterations += n_valid
         degenerate_horizon += block_size - n_valid
         single_look_hits += int(sig_h.sum())
+        # m13 STAT-2: sign of each false positive. `sig_h` already carries
+        # look_valid AND (left>0 | right<0), so intersecting with right<0 is
+        # exactly the scalar `_significance` sign of −1 (a CI cannot satisfy both
+        # bounds), and the count is EXACT across blockings like every other mask.
+        single_look_hits_negative += int((sig_h & (horizon_res.right_bound < 0.0)).sum())
 
         # Achieved MDE — reporting-only, `iterations`-shaped (valid horizon rows
         # only; ratio-delta has no analytic MDE, same as the scalar None branch).
@@ -955,6 +978,9 @@ def _score_cell_vectorized(  # noqa: PLR0912, PLR0915 — mirrors the scalar eng
 
     # ── Final assembly — the scalar engine's tail, verbatim ──────────────────
     fpr = single_look_hits / valid_iterations if valid_iterations else None
+    # m13 STAT-2: denominator is the HITS, not the iterations — this is "which way
+    # did the false positives lean", and it is undefined when none occurred.
+    fpr_negative_share = single_look_hits_negative / single_look_hits if single_look_hits else None
     peeking_fpr = peek_hits / valid_iterations if valid_iterations else None
     peeking_curve: tuple[tuple[float, float], ...] = ()
     if valid_iterations:
@@ -1005,6 +1031,7 @@ def _score_cell_vectorized(  # noqa: PLR0912, PLR0915 — mirrors the scalar eng
         iterations=iterations,
         valid_iterations=valid_iterations,
         fpr=fpr,
+        fpr_negative_share=fpr_negative_share,
         peeking_fpr=peeking_fpr,
         power=power,
         coverage=coverage,

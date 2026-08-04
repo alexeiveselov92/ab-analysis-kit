@@ -86,6 +86,11 @@ _COUNT_FIELDS = (
 #: GEMM columns instead flipped None↔0.0 at the 2-unit-CUPED corr≡±1 edge).
 _EXACT_FIELDS = (
     "fpr",
+    # m13 STAT-2: a ratio of two EXACTLY-matching integer counts (significant
+    # horizons, and the subset whose CI sat below zero) — both are masks, and
+    # masks are block-invariant by construction (the M7 rule), so this is exact
+    # like `fpr` and not a continuous column.
+    "fpr_negative_share",
     "peeking_fpr",
     "power",
     "coverage",
