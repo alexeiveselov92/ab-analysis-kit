@@ -943,6 +943,13 @@ class RecomputeEngine:
         # `reusable is not None` IS `not _needs_seed(method_cls)` (the caller's own
         # definition) — spelled this way because the α-inversion guard needs the bound
         # INSTANCE, not the class (m13 STAT-3a).
+        if reusable is not None and reusable.asymmetric_ci:
+            # m13 STAT-3: the α tier re-derives a SYMMETRIC normal CI from persisted
+            # numbers, which for a score/Fieller interval is not an approximation of
+            # anything. The honest answer for such a method is Tier E — and Tier E was
+            # already tried above, so this row simply has no point at the dragged α.
+            # A gap says that; a "approx" point drawn from the wrong shape would not.
+            return None
         if reusable is not None and not _needs_seed(method_cls):
             inverted = _alpha_inverted_bounds(row, knobs.alpha, method=reusable)
             if inverted is not None:

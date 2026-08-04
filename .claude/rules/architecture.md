@@ -511,6 +511,73 @@ two-process lock race) is deferred to a Docker-equipped environment.
   ttest module, after which the imported symbol is an object the registry no longer
   resolves to — invisible when the test file runs alone, a failure two suites later.
 
+### M13 STAT-3 facts an assistant must know (the score proportion interval)
+
+- **`interval: pooled | score` on `z-test` changes the INTERVAL and nothing else.**
+  The p-value branch is untouched code, because dropping MN's `N/(N−1)` factor
+  (Farrington–Manning, D11) makes `Z(0)` the pooled z the p-value already computed.
+  So "no p-value moves" is an equality assertion in the tests, not a tolerance one —
+  and it must stay that way: applying a variance correction factor to the interval
+  alone breaks the coherence at a relative `1/(2N)` from the boundary, which is the
+  one failure the whole construction exists to prevent.
+- **The math is ONE pure module** (`abkit/stats/proportion_score.py`), array-in /
+  array-out; the scalar entry wraps its four counts in a **length-1 batch**. That is
+  why scalar↔batch parity is an equality and not an rtol — there is no second
+  transcription to drift. `test_ztest_parity` is parametrized on `interval` for
+  exactly that reason; do not "optimise" the scalar path into its own arithmetic.
+- **The closed-form constrained MLE is a SEED, not the answer.** The published
+  trigonometric cubic root loses ~1e-12 to cancellation, and it does so on the
+  sparse tables the score interval is FOR (the root is small relative to
+  coefficients of order `N`). Newton on `dℓ/dp̃₁` — ratios, not differences of large
+  numbers — brings it to ~1e-16. `MLE_NEWTON_STEPS = 0` is a live mutation probe:
+  five tests go red.
+- **The reference for the MLE is the LIKELIHOOD, never a second root-finder.** Two
+  wrong references were tried first and both are instructive: a bisection on the
+  score equation converges to the wrong endpoint whenever the maximum sits ON a
+  feasible boundary (any empty cell), and a golden-section search over the
+  likelihood is derivative-free, so it cannot beat `√ε ≈ 1e-8` — it *looked* like
+  evidence against the closed form. The objective test (the root beats its
+  neighbours and both endpoints) is also the ONLY one that catches a transposed
+  cubic coefficient, because that error vanishes at `δ = 0` and the coherence and
+  null tests sail past it.
+- **Endpoints come from a fixed-iteration bisection over the FEASIBLE range**, never
+  a tolerance loop and never an expansion scan. Fixed work is what gives byte
+  reproducibility (the M7 D13 discipline). The ratio scale searches
+  `v = θ/(1+θ) ∈ (0,1)`, which maps the whole positive line into a bounded bracket,
+  so `θ → ∞` needs no cap. **A root-find that finds no crossing lands on the
+  feasible boundary** — that IS the derivation's required fallback, not an error
+  branch, and it is what makes `θ_L = 0` (an empty treatment arm cannot exclude a
+  −100% lift) and `[−1, 1]` real answers instead of NaN.
+- **`supports_sequential` is the WRONG vehicle for a param-switched refusal.** It is
+  a `ClassVar` read at CLASS level in five places (`plan`, `recompute`, `analyze`,
+  `driver` ×2), so narrowing it per instance would be invisible to every eligibility
+  gate — STAT-3a's lesson one level up. The refusal ships where the contradiction is
+  STATIC: `sequential.enabled` + an asymmetric interval is a **level-2 config
+  error** naming both knobs, moving the failure off the warehouse read. The
+  `AsymmetricCIError` remains the backstop under it, and its explore test is now a
+  DIRECT call on `_alpha_inverted_bounds` — the caller skips the tier, so a guard
+  nobody can reach is a guard nobody notices deleting.
+- **Explore's α tier answers with a GAP for an asymmetric method**, not an "approx"
+  point. Tier E is tried first and is exact for a fraction row, so a row that
+  reaches the α tier genuinely has no point at the dragged alpha — and "approx" is
+  precisely the label under which a wrong-shaped interval would go unnoticed.
+- **`abk plan` is the third surface that must know the estimator** (STAT-1's rule
+  about levels, applied to intervals): it suppresses the ASN, because `abk run`
+  refuses that mode, and says its sizing is Wald-based. §6(b) is measured, not
+  assumed: the score and Wald half-widths differ by `C·z²/n_arm` with C stable in n
+  to three digits — 4.01 at a 5% baseline, 0.060 at 30%. The bind that resolves the
+  interval shape also makes `abk plan` the first surface to validate method params
+  at all.
+- **The relative branch keeps H5.** A lift over a zero baseline is undefined
+  whatever the interval method, so the double-empty table's headline improvement
+  (`p = 1` beside the Wilson zero bound `±z²/(n+z²)` instead of a NaN row) is
+  visible under `test_type: absolute` only.
+- **The identification rule WARNS and never suppresses**, and it is stated in
+  CONVERSIONS: the half-width law `z·√(1/x₁ + 1/x₂)` reads counts, so ten times the
+  traffic at a tenth of the rate buys nothing. It fires only under `interval: score`
+  — a warning is a persisted cell, and `0.8.0`'s byte-compatibility claim covers the
+  whole row, not just the numbers in it.
+
 ### M7 vectorization facts an assistant must know
 
 - **`score_cell` and `sweep_family` are dispatchers** on

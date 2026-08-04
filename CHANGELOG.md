@@ -14,6 +14,49 @@ number change).
 ## [Unreleased]
 
 ### Added
+- **STAT-3 — `interval: score`: the z-test's confidence interval becomes the
+  inversion of the test it already runs** (M13, Miettinen–Nurminen in its
+  Farrington–Manning form). **Opt-in, and no p-value moves** — `interval` is a
+  new identity-flagged param on `z-test` whose default `pooled` is the legacy
+  branch byte-for-byte, and no `ALGORITHM_VERSION` was bumped. Opting in changes
+  `method_config_id`, so it starts a new results series for the operator who asks
+  for it and for nobody else. Full deviation record:
+  [statistics-changes.md §4.4](docs/specs/statistics-changes.md).
+
+  **The defect it closes.** The z-test computes its p-value from the *pooled*
+  (null) variance — and built its interval from the same frozen number. That kept
+  "the CI excludes zero" and "p < α" in exact agreement, which the readout relies
+  on, at the price of an interval that is a valid confidence set at **zero only**.
+  An SE mis-scaled by `r` inflates the achieved error rate by `exp(z²(1−r²)/2)`:
+  at a 900/100 holdout the pooled SE is **24% too small** — pooling is not the
+  conservative choice it is widely believed to be — which is 2.7× at α = 0.05 and
+  **30× at α = 1e-4**. The damage grows as the multiple-testing correction shrinks
+  α, so the two defects compound.
+
+  **What ships.** One statistic used three ways: the p-value is `2(1 − Φ(|Z(0)|))`
+  (*identically* the pooled z, hence unchanged), the absolute interval is
+  `{δ : Z(δ)² ≤ z²}`, and the relative interval is the same construction on the
+  ratio scale, whose statistic at ratio 1 is again that same `Z`. Coherence is
+  therefore preserved **by construction**, on both scales at once, while the
+  interval becomes valid everywhere, asymmetric in the direction the sampling
+  distribution actually is, and confined to `[−1, 1]`. Boundary tables stop being
+  special cases: `x₁ = x₂ = 0` — the first cutoff of any sparse metric — now
+  reports `p = 1` beside the Wilson zero bound `±z²/(n+z²)`, where the pooled path
+  returned a NaN p and a zero-width interval asserting infinite precision.
+
+  **Consequences, each recorded rather than assumed.** The relative interval is
+  the ratio-scale score construction, not the difference interval divided by `p̂₁`
+  (which drops the denominator's sampling error and can return a lift below
+  −100%); it carries a **warning** — never a suppression — when the lift is not
+  pinned to better than ±50%, stated in *conversions*, because the width law
+  `z·√(1/x₁ + 1/x₂)` reads counts and not exposed units. `abk plan` prints a
+  caveat: it sizes on the normal power formula while the analysis inverts the
+  score statistic, and the two half-widths differ by `C·z²/n_arm` (measured:
+  C = 4.01 at a 5% baseline, 0.060 at 30% — 0.15% at 10k units per arm). In
+  `abk explore`, dragging alpha over a score series yields a **gap** rather than an
+  "approx" point: Tier α re-derives a symmetric normal CI, which for this
+  interval approximates nothing.
+
 - **STAT-3a — the `asymmetric_ci` guard: SE-by-CI-inversion refuses instead of
   mis-recovering** (M13, decision D17). **No number moves** — no shipped method
   builds an asymmetric interval, so every refusal below is unreachable today and
@@ -228,6 +271,19 @@ number change).
   No default moved: a project that changes nothing reproduces `0.7.0` exactly,
   and no `ALGORITHM_VERSION` was bumped (M13 D4 — under opt-in, an operator who
   changes a level orphans only their own series, at the moment they ask for it).
+
+### Changed
+- **`sequential.enabled` together with an asymmetric interval is now a level-2
+  config error** naming both knobs, instead of an `AsymmetricCIError` raised
+  mid-run once the cohort had already been loaded (the STAT-3a guard remains the
+  backstop under it). The always-valid mode *can* be built on a score interval —
+  by substituting the sequence's critical value inside the root-find — but
+  `to_always_valid` cannot express it: it widens a finished interval, recovering
+  an SE the method does not have. That is a named future extension, not a
+  limitation of the score interval.
+- `abk plan` now binds each comparison's method to resolve its interval shape, so
+  a comparison whose method params are invalid is **refused by name** rather than
+  silently sized against defaults it never had.
 
 ## [0.7.0] - 2026-08-03
 

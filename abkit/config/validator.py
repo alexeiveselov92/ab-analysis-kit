@@ -219,10 +219,25 @@ def validate_experiment_level2(
         # method params validated BY INSTANTIATION (one path; quarantine and
         # bad params fail here, at validate time, not at run time)
         try:
-            comparison.method.bind(alpha=project.statistics.alpha)
+            bound = comparison.method.bind(alpha=project.statistics.alpha)
         except Exception as exc:
             report.errors.append(f"{label}: method '{comparison.method.name}': {exc}")
             continue
+
+        # m13 STAT-3: an asymmetric interval and the always-valid mode are a static
+        # contradiction — the transform recovers an SE by inverting the CI width, which
+        # is only an SE for `effect ± z·SE`. STAT-3a made that refuse LOUDLY; refusing
+        # here instead moves it off the warehouse read, where it would fail one
+        # experiment mid-run after the cohort had already been loaded. The
+        # capability is read off the BOUND instance because a param selects it.
+        if bound.asymmetric_ci and experiment.sequential.enabled:
+            report.errors.append(
+                f"{label}: method '{comparison.method.name}' is configured with an "
+                "asymmetric confidence interval, and this experiment sets "
+                "sequential.enabled — the always-valid transform requires a symmetric "
+                "'effect ± z·SE' interval (it recovers the SE from the CI width). "
+                "Choose one: the legacy interval, or the fixed-horizon mode."
+            )
 
         # capability lint (plan R8): the same declarative attributes analyze.py
         # dispatches on must gate at VALIDATE time, not at run time

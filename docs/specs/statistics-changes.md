@@ -344,6 +344,88 @@ the two schemes share one body and differ only in the adjuster.
   Holm a family measuring ≈Σα means the *methods* are miscalibrated, which is
   what the sweep exists to catch.
 
+### 4.4 The proportion interval: `interval: score` — as built (M13 STAT-3)
+
+**No p-value moves and no default moves.** `interval` is a new identity-flagged
+param on `z-test` whose default (`pooled`) is the legacy branch, byte-for-byte;
+`ALGORITHM_VERSION` is untouched (D4 — an opt-in param orphans the series of the
+operator who opts in, at the moment they opt in, which is the whole signal).
+
+**What was wrong.** The z-test's p-value comes from the *pooled* (null) variance
+and so did its CI (`ztest.py`). That is what made "the CI excludes zero" and
+"p < α" agree exactly — and `pipeline/readout.py` decides significance by CI
+exclusion — but it makes the interval a valid confidence set at **zero only**.
+The damage is not uniform: an SE mis-scaled by `r` inflates the achieved error
+rate by `exp(z²(1−r²)/2)`, so at a 900/100 holdout (`r = 0.764`, i.e. the pooled
+SE is 24% too *small* — pooling is not the conservative choice it is widely
+believed to be) that is **2.7× at α = 0.05, 7.0× at α = 0.004, 30× at α = 1e-4**.
+It worsens exactly as the multiple-testing correction shrinks α, so the two
+defects compound.
+
+**What ships.** The blind re-derivation
+([proportion-interval.derivation.json](../research/2026-08-m13-blind-rederive/proportion-interval.derivation.json))
+dissolves the pooled-vs-unpooled fork instead of choosing a side: define the
+score statistic with constrained-ML variance once and use it three ways.
+
+| Use | Form | Consequence |
+|---|---|---|
+| p-value | `2(1 − Φ(\|Z(0)\|))` | **identically** the pooled z — the reported p does not move |
+| absolute CI | `{δ : Z(δ)² ≤ z²}` | valid at *every* δ, asymmetric, inside `[−1, 1]` |
+| relative CI | the same construction on the ratio scale | `Z(1)` is again the same pooled `Z` |
+
+So coherence is preserved **by construction**, on both scales at once: "the
+difference interval excludes 0", "the lift interval excludes 0" and "p < α" are
+one event at every α and every sample size, with no asymptotics. Replacing the
+CI's SE with the unpooled one — the ROADMAP's original contour item — would have
+bought validity by breaking that, and the readout has no way to express the
+disagreement.
+
+**Sub-decisions, all of them recorded rather than assumed:**
+
+- **The MN `N/(N−1)` factor is DROPPED** (D11 — the Farrington–Manning form).
+  Applied to the interval alone it breaks the coherence above at a relative
+  distance `1/(2N)` from the boundary; applied to both it moves every printed
+  p-value by that much. Dropping it makes `Z(0)` *the same computation*, so the
+  p-value branch is literally untouched code. It must never be added to one side
+  only.
+- **Boundary tables stop being special cases.** `x₁ = x₂ = 0` — the first cutoff
+  of any sparse metric — returns the Wilson zero bound `±z²/(n+z²)` beside
+  `p = 1`, instead of the pooled path's `NaN` p and zero-width interval (an
+  assertion of infinite precision from a table with no information). Under
+  `test_type: relative` the H5 refusal **stands**: a lift over a zero baseline is
+  undefined whatever the interval method.
+- **The relative scale is the score construction on the ratio scale (Route C)**,
+  not the difference interval divided by `p̂₁` (which omits the denominator's
+  sampling error, can return a lift below −100%, and inverts no test) and not a
+  delta-method log-RR interval (coherent with neither the difference interval nor
+  the p-value). Route C is also exactly equivariant under swapping the arms.
+- **A weak-identification WARNING, not a suppression.** The relative half-width
+  is `z·√(1/x₁ + 1/x₂)` — a law in **conversions**, not units: ten times the
+  traffic at a tenth of the rate buys nothing. Above ±50% the row carries a
+  warning naming the conversions it would take. Suppressing a correct interval
+  would be the worse failure; and the threshold carries `z`, so it tightens by
+  itself as the correction shrinks α.
+- **The always-valid mode is unavailable under `interval: score`** (§6a's stated
+  fallback). The confidence sequence *does* extend to score intervals — by
+  substituting `c(V)` for `z` inside the root-find — but `to_always_valid` cannot
+  express that: it widens a finished interval, recovering an SE the method does
+  not have. Declaring both is now a **level-2 config error** naming both knobs
+  (STAT-3a's `AsymmetricCIError` remains the backstop under it).
+- **`abk plan` sizes on the normal power formula** while the analysis inverts the
+  score statistic, so a stated MDE does not exactly invert the applied rule
+  (§6b). Measured rather than assumed: the half-widths differ by
+  `C·z²/n_arm` with `C` stable in `n` to three significant digits — **4.01 at a
+  5% baseline, 0.060 at 30%**, i.e. 0.15% of the half-width at 10k units per arm
+  and 0.015% at 100k. Ignorable, and `abk plan` says so on the comparison.
+- **A/A arbitration is DELIBERATELY NOT the referee here** (§0.4, and the
+  derivation's own warning): the FPR difference between the two rules is
+  second-order — the tails shift in opposite directions and largely cancel — so
+  the matrix would report "still calibrated" while persisted verdicts on live
+  imbalanced experiments had already moved. *A calibration that cannot see the
+  change it is being asked to certify is worse than no calibration.* What
+  arbitrates instead is the coherence identity above, checked exhaustively, plus
+  the closed-form boundary answers.
+
 ## 5. CUPED covariate window — DECIDED: fixed lookback (2026-07)
 
 The legacy CUPED covariate uses a **growing** symmetric pre-window. The choice was
@@ -371,8 +453,9 @@ reduction CUPED exists for). Consequences:
 Delta-method relative variance with the negative covariance term; pooled-θ CUPED
 dividing by the original control mean; percentile bootstrap CI; sign-based bootstrap
 p-value; effect computed on real data; config-time two-tier Bonferroni; the mixed
-per-term ddof. These are golden-tested against the legacy engine and only change via
-the §0 process.
+per-term ddof; **the z-test's pooled-SE interval** (§4.4's `interval: pooled`, the
+default — the score form is opt-in and never silently substituted). These are
+golden-tested against the legacy engine and only change via the §0 process.
 
 ## 7. M1 implementation record (`abkit.stats` v0.1, ALGORITHM_VERSION=1)
 

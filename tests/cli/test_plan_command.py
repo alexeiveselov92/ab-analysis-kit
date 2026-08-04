@@ -684,9 +684,7 @@ def test_from_history_sizes_an_experiment_that_never_ran(project):
     without = runner.invoke(cli, ["plan", "--select", EXP, "--mde", "0.05"])
     assert "no baseline" in without.output
 
-    result = runner.invoke(
-        cli, ["plan", "--select", EXP, "--mde", "0.05", "--from-history", "14d"]
-    )
+    result = runner.invoke(cli, ["plan", "--select", EXP, "--mde", "0.05", "--from-history", "14d"])
     assert result.exit_code == 0, result.output
     assert "no baseline" not in result.output
     assert "history 14d" in result.output
@@ -700,9 +698,15 @@ def test_from_history_loses_to_an_explicit_baseline(project):
     result = runner.invoke(
         cli,
         [
-            "plan", "--select", EXP, "--mde", "0.05",
-            "--from-history", "14d",
-            "--baseline", "example_arpu:mean=999,std=1,n=42",
+            "plan",
+            "--select",
+            EXP,
+            "--mde",
+            "0.05",
+            "--from-history",
+            "14d",
+            "--baseline",
+            "example_arpu:mean=999,std=1,n=42",
         ],
     )
     assert result.exit_code == 0, result.output
@@ -717,9 +721,7 @@ def test_from_history_beats_the_persisted_rows(ran):
     persisted = runner.invoke(cli, ["plan", "--select", EXP, "--mde", "0.05"])
     assert "persisted @" in persisted.output
 
-    result = runner.invoke(
-        cli, ["plan", "--select", EXP, "--mde", "0.05", "--from-history", "14d"]
-    )
+    result = runner.invoke(cli, ["plan", "--select", EXP, "--mde", "0.05", "--from-history", "14d"])
     assert result.exit_code == 0, result.output
     assert "history 14d" in result.output
     assert "persisted @" not in result.output
@@ -728,9 +730,7 @@ def test_from_history_beats_the_persisted_rows(ran):
 def test_from_history_reads_the_population_not_the_cohort(project):
     """The whole point of the cohort-free render: an experiment with no enrolled
     units still gets moments, because the read never joins the cohort."""
-    result = runner.invoke(
-        cli, ["plan", "--select", EXP, "--mde", "0.05", "--from-history", "14d"]
-    )
+    result = runner.invoke(cli, ["plan", "--select", EXP, "--mde", "0.05", "--from-history", "14d"])
     assert result.exit_code == 0, result.output
     assert "baseline mean=" in result.output
 
@@ -739,9 +739,7 @@ def test_from_history_reads_the_population_not_the_cohort(project):
 def test_from_history_rejects_a_non_whole_day_interval(project, bad):
     """Whole days only — the grain `covariate_lookback` uses and the pre-period
     window is aligned to."""
-    result = runner.invoke(
-        cli, ["plan", "--select", EXP, "--mde", "0.05", "--from-history", bad]
-    )
+    result = runner.invoke(cli, ["plan", "--select", EXP, "--mde", "0.05", "--from-history", bad])
     assert result.exit_code != 0
     assert "from-history" in result.output
 
@@ -755,9 +753,7 @@ def test_a_history_render_failure_skips_only_that_comparison(project, monkeypatc
         raise RuntimeError("boom: no such column")
 
     monkeypatch.setattr(RecomputeBackend, "load_population_window", explode)
-    result = runner.invoke(
-        cli, ["plan", "--select", EXP, "--mde", "0.05", "--from-history", "14d"]
-    )
+    result = runner.invoke(cli, ["plan", "--select", EXP, "--mde", "0.05", "--from-history", "14d"])
     assert result.exit_code == 0, result.output
     assert "boom: no such column" in result.output
 
@@ -771,13 +767,94 @@ def test_added_filters_get_their_own_disclosure(project, monkeypatch):
     body = exp_path.read_text(encoding="utf-8")
     assert "added_filters" not in body
     exp_path.write_text(
-        body.replace(
-            "  variants:", "  added_filters: \"AND country = 'US'\"\n  variants:", 1
-        ),
+        body.replace("  variants:", "  added_filters: \"AND country = 'US'\"\n  variants:", 1),
         encoding="utf-8",
     )
-    result = runner.invoke(
-        cli, ["plan", "--select", EXP, "--mde", "0.05", "--from-history", "14d"]
-    )
+    result = runner.invoke(cli, ["plan", "--select", EXP, "--mde", "0.05", "--from-history", "14d"])
     assert result.exit_code == 0, result.output
     assert "added_filters narrows the real cohort" in result.output
+
+
+def test_an_asymmetric_interval_gets_a_fixed_horizon_asn_note_and_a_sizing_caveat():
+    """m13 STAT-3: `abk plan` is the third surface that must know the interval shape.
+
+    Under `interval: score` two things stop being true, and both would be silent:
+    `abk run` refuses the always-valid mode for that comparison (config-lint errors
+    on the pair), so an ASN here would size a design the pipeline will not run; and
+    the power formula is the normal one while the analysis inverts the score
+    statistic, so the printed MDE is a planning figure rather than the boundary the
+    readout applies. STAT-1's rule — a surface that prints a level must know the
+    scheme — with "scheme" read as "estimator".
+    """
+    from abkit.cli.commands.plan import _build_runtime
+    from abkit.planning.sizing import BaselineMoments, SizingResult
+    from abkit.stats import get_method_class
+
+    experiment = _seq_experiment()
+    moments = BaselineMoments("fraction", 0.2, 10000, 10000, None, "x")
+    kwargs = {
+        "test_type": "relative",
+        "alpha": 0.05,
+        "target_mde": 0.05,
+        "plan_ratio": 1.0,
+        "rate_control": 1000.0,
+        "rate_source": "test",
+        "look_days": [float(d) for d in range(1, 15)],
+        "horizon_days": 14.0,
+    }
+    result = SizingResult(required_n=5000, achievable_mde=0.03, achieved_power=0.5)
+
+    symmetric = _build_runtime(experiment, get_method_class("z-test"), result, moments, **kwargs)
+    assert symmetric.asn is not None, "the sequential baseline must still produce an ASN"
+
+    asymmetric = _build_runtime(
+        experiment, get_method_class("z-test"), result, moments, asymmetric_ci=True, **kwargs
+    )
+    assert asymmetric.asn is None
+    assert "asymmetric interval" in (asymmetric.asn_note or "")
+
+
+def test_plan_refuses_a_comparison_whose_method_params_are_rejected():
+    """The bind that resolves the interval shape is also the first place `abk plan`
+    validates method params at all. A comparison it cannot construct is refused by
+    name rather than silently sized against the defaults it never had."""
+    from abkit.cli.commands.plan import _plan_comparison
+
+    experiment = ExperimentConfig.model_validate(
+        {
+            "name": "e",
+            "start_ts": "2024-07-01",
+            "horizon_ts": "2024-07-15",
+            "unit_key": "u",
+            "assignment": {
+                "query": "SELECT 1",
+                "variants": ["control", "t"],
+                "expected_split": {"control": 0.5, "t": 0.5},
+            },
+            "comparisons": [
+                {
+                    "metric": "cr",
+                    "is_main_metric": True,
+                    "method": {"name": "z-test", "params": {"interval": "wilson"}},
+                }
+            ],
+        }
+    )
+    from abkit.config import ProjectConfig
+    from abkit.pipeline.analyze import effective_alphas
+
+    plan = _plan_comparison(
+        experiment,
+        experiment.comparisons[0],
+        effective_alphas(experiment, ProjectConfig(name="p", default_profile="dev")),
+        power=0.8,
+        mde=None,
+        override=None,
+        tables=None,
+        rate_control=None,
+        rate_source="none",
+        look_days=[],
+        horizon_days=14.0,
+        history=None,
+    )
+    assert plan.refused is not None and "method params rejected" in plan.refused

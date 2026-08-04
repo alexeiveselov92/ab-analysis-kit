@@ -58,7 +58,7 @@ from abkit.tuning import (
     load_session,
     resolve_fpr_budget,
 )
-from abkit.tuning.recompute import alpha_knob_tier, classify_knob
+from abkit.tuning.recompute import _alpha_inverted_bounds, alpha_knob_tier, classify_knob
 from abkit.tuning.session import BOOT_MEMO_ENTRY_OVERHEAD
 
 
@@ -271,13 +271,37 @@ class TestAlphaChange:
                 assert_close(getattr(point, key), row[key], f"{key}@{point.end_ts}")
             assert point.reject == row["reject"]
 
-    def test_alpha_inversion_refuses_an_asymmetric_ci(self, warehouse, tables, monkeypatch):
-        """m13 STAT-3a: Tier α open-codes the same symmetry premise as the sequential
-        transform (``se = (right − left)/2z``), so it takes the same refusal.
+    def test_alpha_inversion_refuses_an_asymmetric_ci(self):
+        """m13 STAT-3a: the α-inversion helper open-codes the same symmetry premise as
+        the sequential transform (``se = (right − left)/2z``), so it takes the same
+        refusal — pinned directly, because STAT-3 moved explore's CALLER to skip the
+        tier before it gets here, and a guard nobody can reach is a guard nobody
+        notices deleting."""
+        row = {
+            "effect": 0.1,
+            "left_bound": 0.0,
+            "right_bound": 0.2,
+            "pvalue": 0.04,
+            "alpha": 0.05,
+        }
+        symmetric = create_method("t-test", alpha=0.05)
+        assert _alpha_inverted_bounds(row, 0.01, method=symmetric) is not None
 
-        The tier is labelled "approx", which is exactly why a silently wrong interval
-        here would not read as a fault. Which UX an asymmetric method gets instead is a
-        named sub-task of STAT-3/STAT-4 — never a quiet re-derivation."""
+        asymmetric = create_method("z-test", alpha=0.05, params={"interval": "score"})
+        with pytest.raises(AsymmetricCIError):
+            _alpha_inverted_bounds(row, 0.01, method=asymmetric)
+
+    def test_an_asymmetric_method_gets_a_GAP_at_a_dragged_alpha_not_an_approximation(
+        self, warehouse, tables, monkeypatch
+    ):
+        """m13 STAT-3: the sub-task STAT-3a left open — what explore's α tier shows.
+
+        Tier α re-derives a SYMMETRIC normal CI from persisted numbers, which for a
+        score interval approximates nothing; and the tier is labelled "approx", so the
+        drift would not read as a fault. Tier E is the honest answer and it is tried
+        first, so a row that reaches the α tier simply has no point at the dragged
+        alpha. A gap says that. Neither an exception (the drag is legal) nor an
+        "approx" point (drawn from the wrong shape) does."""
         method = {
             "name": "cuped-t-test",
             "params": {"test_type": "relative", "covariate_lookback": "7d"},
@@ -289,11 +313,15 @@ class TestAlphaChange:
         for row in warehouse._rows["_ab_results"]:
             for column in ("cov_std_1", "cov_std_2", "corr_coef_1", "corr_coef_2"):
                 row[column] = None
-        engine = build_engine(warehouse, tables, exp, budget=1)
+        knobs = KnobState("cuped-t-test", method["params"], alpha=0.01)
+
+        symmetric = build_engine(warehouse, tables, exp, budget=1).recompute("arpu", knobs)
+        assert symmetric.pairs[0].points, "the symmetric baseline must α-invert"
+        assert all(point.tier == "approx" for point in symmetric.pairs[0].points)
 
         monkeypatch.setattr(get_method_class("cuped-t-test"), "asymmetric_ci", True)
-        with pytest.raises(AsymmetricCIError):
-            engine.recompute("arpu", KnobState("cuped-t-test", method["params"], alpha=0.01))
+        asymmetric = build_engine(warehouse, tables, exp, budget=1).recompute("arpu", knobs)
+        assert asymmetric.pairs[0].points == []
 
     def test_cuped_alpha_inversion_matches_a_real_run_on_pre_migration_rows(
         self, warehouse, tables

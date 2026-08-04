@@ -125,7 +125,16 @@ def test_ttest_parity(test_type: str) -> None:
 
 
 @pytest.mark.parametrize("test_type", ["absolute", "relative"])
-def test_ztest_parity(test_type: str) -> None:
+@pytest.mark.parametrize("interval", ["pooled", "score"])
+def test_ztest_parity(test_type: str, interval: str) -> None:
+    """Both interval constructions, because both have a batch kernel (m13 STAT-3).
+
+    The score path is bit-exact for a structural reason, not a numerical one: the
+    scalar entry wraps its four counts in length-1 arrays and calls the SAME
+    kernel, so there is no second transcription to drift. Keeping it under this
+    gate is what would catch someone giving the scalar path a "faster" scalar
+    implementation later.
+    """
     rng = np.random.default_rng(SEED + 1)
     nobs_1 = rng.integers(1, 10_000, N_RANDOM).astype(np.float64)
     nobs_2 = rng.integers(1, 10_000, N_RANDOM).astype(np.float64)
@@ -141,7 +150,9 @@ def test_ztest_parity(test_type: str) -> None:
     count_2[6] = count_1[6] * (nobs_2[6] / nobs_1[6])  # ≈zero effect
 
     method = create_method(
-        "z-test", alpha=0.05, params={"test_type": test_type, "calculate_mde": False}
+        "z-test",
+        alpha=0.05,
+        params={"test_type": test_type, "calculate_mde": False, "interval": interval},
     )
     batch = method.from_suffstats_array(
         {"count": count_1, "nobs": nobs_1}, {"count": count_2, "nobs": nobs_2}
