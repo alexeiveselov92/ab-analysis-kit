@@ -50,6 +50,7 @@ from abkit.stats import (
     get_method_class,
 )
 from abkit.stats.bootstrap import BaseBootstrapMethod, BootstrapTest
+from abkit.stats.exceptions import AsymmetricCIError
 from abkit.tuning import (
     KnobState,
     RecomputeEngine,
@@ -269,6 +270,30 @@ class TestAlphaChange:
             for key in ("effect", "left_bound", "right_bound", "pvalue"):
                 assert_close(getattr(point, key), row[key], f"{key}@{point.end_ts}")
             assert point.reject == row["reject"]
+
+    def test_alpha_inversion_refuses_an_asymmetric_ci(self, warehouse, tables, monkeypatch):
+        """m13 STAT-3a: Tier α open-codes the same symmetry premise as the sequential
+        transform (``se = (right − left)/2z``), so it takes the same refusal.
+
+        The tier is labelled "approx", which is exactly why a silently wrong interval
+        here would not read as a fault. Which UX an asymmetric method gets instead is a
+        named sub-task of STAT-3/STAT-4 — never a quiet re-derivation."""
+        method = {
+            "name": "cuped-t-test",
+            "params": {"test_type": "relative", "covariate_lookback": "7d"},
+        }
+        exp = make_experiment("exp_asym_alpha", "arpu", method, alpha=0.05)
+        run_pipeline(warehouse, tables, exp)
+        # the pre-migration shape of the sibling test below: NULL moments defeat the
+        # Tier-E reconstruction, and a tiny budget defeats Tier S ⇒ the α tier is taken
+        for row in warehouse._rows["_ab_results"]:
+            for column in ("cov_std_1", "cov_std_2", "corr_coef_1", "corr_coef_2"):
+                row[column] = None
+        engine = build_engine(warehouse, tables, exp, budget=1)
+
+        monkeypatch.setattr(get_method_class("cuped-t-test"), "asymmetric_ci", True)
+        with pytest.raises(AsymmetricCIError):
+            engine.recompute("arpu", KnobState("cuped-t-test", method["params"], alpha=0.01))
 
     def test_cuped_alpha_inversion_matches_a_real_run_on_pre_migration_rows(
         self, warehouse, tables

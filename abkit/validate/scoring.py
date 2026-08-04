@@ -240,22 +240,27 @@ def _cell_tau2(
         )
         if arm_a is None or arm_b is None:
             continue
-        se = se_from_ci_length(method.from_suffstats(arm_a, arm_b).ci_length, method.alpha)
+        se = se_from_ci_length(
+            method.from_suffstats(arm_a, arm_b).ci_length, method.alpha, method=method
+        )
         if math.isfinite(se) and se > 0.0:
             return mixture_tau2(se * se, method.alpha)
     return None
 
 
 def _always_valid_sig(
-    result: object, tau2: float, alpha: float
+    result: object, tau2: float, alpha: float, method: BaseMethod
 ) -> tuple[tuple[bool, int] | None, float]:
     """Always-valid significance + CI width for a fixed ``TestResult`` at a look.
 
     Recovers ``SE`` from the fixed CI (CI-inversion), widens it into the always-valid
     interval (:func:`sequentialize`), and applies the same CI-excludes-zero primitive.
     Returns ``(significance_or_None, ci_width)`` — width is NaN on a degenerate look.
+    ``method`` is the bound method that built ``result`` — the CI-inversion guard
+    (m13 STAT-3a) refuses an asymmetric interval here rather than mis-recovering it
+    inside the very instrument that would have to certify the error.
     """
-    se = se_from_ci_length(result.ci_length, alpha)  # type: ignore[attr-defined]
+    se = se_from_ci_length(result.ci_length, alpha, method=method)  # type: ignore[attr-defined]
     lo, hi, _ = sequentialize(result.effect, se, tau2, alpha)  # type: ignore[attr-defined]
     return _significance(lo, hi), hi - lo
 
@@ -462,7 +467,7 @@ def _score_cell_scalar(
                 continue
             sig_stream.append((k, sig, result.effect))
             if tau2 is not None:
-                sig_seq, width_seq = _always_valid_sig(result, tau2, method.alpha)
+                sig_seq, width_seq = _always_valid_sig(result, tau2, method.alpha, method)
                 if sig_seq is not None:
                     sig_stream_seq.append((k, sig_seq, result.effect))
                 if k == horizon_pos:
@@ -547,7 +552,7 @@ def _score_cell_scalar(
                     # coverage_n denominator; the always-valid CI must still detect a
                     # real effect — the guard against a τ² that never rejects).
                     if tau2 is not None:
-                        se_inj = se_from_ci_length(result.ci_length, method.alpha)
+                        se_inj = se_from_ci_length(result.ci_length, method.alpha, method=method)
                         lo_seq, hi_seq, _ = sequentialize(result.effect, se_inj, tau2, method.alpha)
                         sig_seq = _significance(lo_seq, hi_seq)
                         if sig_seq is not None and sig_seq[0]:
@@ -811,7 +816,7 @@ def _score_cell_vectorized(  # noqa: PLR0912, PLR0915 — mirrors the scalar eng
                 # The always-valid twin over the SAME per-look (effect, SE) —
                 # rows whose widened bounds are non-finite mirror the scalar
                 # `_always_valid_sig` → `_significance` None (a gap).
-                se_col = se_from_ci_length_array(res.ci_length, alpha)
+                se_col = se_from_ci_length_array(res.ci_length, alpha, method=method)
                 lo_col, hi_col, _ = sequentialize_array(res.effect, se_col, tau2, alpha)
                 seq_sig_col = (
                     look_valid
@@ -964,7 +969,7 @@ def _score_cell_vectorized(  # noqa: PLR0912, PLR0915 — mirrors the scalar eng
                 # Same injected result, widened — power_seq gated on finite bounds
                 # (the scalar sig_seq-is-not-None check); coverage_seq is NOT
                 # (the scalar compares lo ≤ truth ≤ hi directly, NaN → False).
-                se_inj = se_from_ci_length_array(res_inj.ci_length, alpha)
+                se_inj = se_from_ci_length_array(res_inj.ci_length, alpha, method=method)
                 lo_s, hi_s, _ = sequentialize_array(res_inj.effect, se_inj, tau2, alpha)
                 power_hits_seq += int(
                     (

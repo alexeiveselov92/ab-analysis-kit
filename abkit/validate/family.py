@@ -287,7 +287,7 @@ def _member_peeked_marginals(
         if math.isfinite(lo_f) and math.isfinite(hi_f):
             fixed.observe(lo_f, hi_f, eff, result.pvalue)
         if av is not None:
-            se = se_from_ci_length(result.ci_length, alpha)
+            se = se_from_ci_length(result.ci_length, alpha, method=member.method)
             lo_a, hi_a, av_p = sequentialize(result.effect, se, tau2, alpha)
             if math.isfinite(lo_a) and math.isfinite(hi_a):
                 av.observe(lo_a, hi_a, eff, av_p)
@@ -801,7 +801,7 @@ def _sweep_family_vectorized(  # noqa: PLR0912, PLR0915 — mirrors the scalar e
                         continue
                     fixed_state.observe(r.left_bound, r.right_bound, r.effect, r.pvalue)
                     if av_state is not None and tau2 is not None:  # av_state ⇒ tau2 anchored
-                        se = se_from_ci_length_array(r.ci_length, alpha_ci)
+                        se = se_from_ci_length_array(r.ci_length, alpha_ci, method=member.method)
                         lo_a, hi_a, p_a = sequentialize_array(r.effect, se, tau2, alpha_ci)
                         av_state.observe(lo_a, hi_a, r.effect, p_a)
                 mem_fixed.append(fixed_state)

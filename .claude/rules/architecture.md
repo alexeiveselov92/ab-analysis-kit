@@ -470,6 +470,47 @@ two-process lock race) is deferred to a Docker-equipped environment.
   sigma form is deliberate: a fixed percentage would fire constantly on small
   cells and never on large ones.
 
+### M13 STAT-3a facts an assistant must know (the asymmetric_ci guard)
+
+- **Nothing may recover an SE from a CI without saying whose CI it is.**
+  `sequential.se_from_ci_length`, its array sibling and `to_always_valid` all take a
+  **required, keyword-only `method`**, and call the one gate
+  `sequential.require_symmetric_ci`. That is a structural forcing function, not a
+  convention: a new call site does not run until it names its method. The premise
+  being enforced is that the interval is `effect ± z·SE` — for anything else the
+  "SE" is the mean half-width over `z`, which `sequentialize` then centres a
+  symmetric sequence on, with no NaN and no exception.
+- **`BaseMethod.asymmetric_ci` is deliberately NOT a `ClassVar`**, unlike its four
+  capability siblings. STAT-3 ships Miettinen–Nurminen as an identity-flagged
+  **param** on `z-test`, so the class default stays symmetric and a class-level flag
+  would sail straight through the configuration it exists to catch — a guard that
+  cannot fire. A subclass narrows `self.asymmetric_ci` from `self.params` after
+  `super().__init__()`; every entry takes an INSTANCE and handing a class in raises
+  `TypeError` rather than being answered `False`. `driver._sequential_tau2` held only
+  a class and now binds the method the way `analyze_cutoff` does.
+- **There are TWELVE entry points, not the design's eleven.**
+  `tuning/recompute._alpha_inverted_bounds` (explore's Tier α) never calls the
+  helper — it open-codes `se = (right − left) / 2z` and re-derives a *symmetric*
+  normal CI at the new α from persisted numbers, in a tier already labelled
+  "approx" so the drift would not read as a fault. It takes the same refusal.
+  `tests/stats/sequential/test_ci_inversion_is_the_only_entry.py` fails on any new
+  open-coded inversion (a CI width divided by a **quantile** — a `/2` half-width is
+  not one, and `readout`'s FLAT check and explore's `ci_half` chip legitimately do
+  that) and on any guarded call missing its method; both rules are derived from the
+  source and both are proven to bite on hostile fixtures.
+- **An asymmetric method is not blocked — it declares `supports_sequential = False`**
+  and its series stays fixed with no error, because that flag has always *meant* a
+  symmetric CI and every eligibility gate already tests it. The refusal fires only
+  for a method claiming both.
+- **The refusal reaches the operator on each surface**: `AsymmetricCIError` is a
+  `StatsError`, so validate's per-cell isolation reports a FAILED CELL carrying its
+  reason (not a quietly missing sequential column), `abk run` fails the experiment
+  with the message on the outcome, and explore raises out of the recompute.
+- **A test that flips a method capability must patch `get_method_class("t-test")`,
+  never an imported `TTest`.** `tests/stats/test_registry_factory.py` reloads the
+  ttest module, after which the imported symbol is an object the registry no longer
+  resolves to — invisible when the test file runs alone, a failure two suites later.
+
 ### M7 vectorization facts an assistant must know
 
 - **`score_cell` and `sweep_family` are dispatchers** on

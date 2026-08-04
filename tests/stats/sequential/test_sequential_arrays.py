@@ -23,6 +23,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from abkit.stats.factory import create_method
 from abkit.stats.sequential.confidence_sequence import (
     se_from_ci_length,
     se_from_ci_length_array,
@@ -33,6 +34,8 @@ from abkit.stats.sequential.confidence_sequence import (
 SEED = 20260719
 N_RANDOM = 500
 RELATIVE_TOLERANCE = 1e-9
+
+SYMMETRIC = create_method("z-test")  # the STAT-3a inversion guard's required arg
 
 NAN = float("nan")
 INF = float("inf")
@@ -60,8 +63,10 @@ def test_se_from_ci_length_array_parity(alpha: float) -> None:
     ci_length[1] = -0.5
     ci_length[2] = NAN
     ci_length[3] = INF
-    got = se_from_ci_length_array(ci_length, alpha)
-    want = np.array([se_from_ci_length(float(value), alpha) for value in ci_length])
+    got = se_from_ci_length_array(ci_length, alpha, method=SYMMETRIC)
+    want = np.array(
+        [se_from_ci_length(float(value), alpha, method=SYMMETRIC) for value in ci_length]
+    )
     np.testing.assert_array_equal(got, want)  # division only → exact everywhere
 
 

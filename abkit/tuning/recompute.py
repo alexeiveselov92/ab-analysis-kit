@@ -91,7 +91,12 @@ from abkit.stats.base import BaseMethod, ParamSpec
 from abkit.stats.bootstrap import BaseBootstrapMethod, ResampleOutcome
 from abkit.stats.power import get_cuped_ttest_power, get_fraction_power, get_ttest_power
 from abkit.stats.samples import RatioSample, Sample
-from abkit.stats.sequential import mixture_tau2, se_from_ci_length, to_always_valid
+from abkit.stats.sequential import (
+    mixture_tau2,
+    require_symmetric_ci,
+    se_from_ci_length,
+    to_always_valid,
+)
 from abkit.tuning.session import BootMemoEntry, BootMemoKey, ComparisonSeries, ExploreSession
 from abkit.utils.json_utils import json_loads
 from abkit.utils.warn_scope import capture_warnings
@@ -535,9 +540,22 @@ def _exact_suffstats(
     return None
 
 
-def _alpha_inverted_bounds(row: dict, new_alpha: float) -> tuple[float, float, float, bool] | None:
+def _alpha_inverted_bounds(
+    row: dict, new_alpha: float, *, method: BaseMethod
+) -> tuple[float, float, float, bool] | None:
     """Tier α: ``(left, right, pvalue, reject)`` at ``new_alpha`` from a
-    closed-form row's symmetric normal CI; ``None`` when not invertible."""
+    closed-form row's symmetric normal CI; ``None`` when not invertible.
+
+    This is the SECOND home of the symmetry premise (m13 STAT-3a): it open-codes
+    ``se = (right − left) / 2z`` instead of calling ``se_from_ci_length``, so the
+    eleven guarded entries would not have covered it — a re-derived symmetric normal
+    interval at the new α is exactly the silent mis-recovery the guard exists to stop,
+    and the tier is already labelled "approx", so the drift would not read as a fault.
+    It therefore takes the same refusal. Which UX an asymmetric method eventually gets
+    here (recompute the α-dependent factor, i.e. Tier E, or leave the α tier) is a
+    named required sub-task of STAT-3/STAT-4, not a silent default.
+    """
+    require_symmetric_ci(method, entry="alpha-inversion")
     effect = _row_float(row, "effect")
     left = _row_float(row, "left_bound")
     right = _row_float(row, "right_bound")
@@ -786,7 +804,7 @@ class RecomputeEngine:
                 if point is not None:
                     points.append(point)
             if (name_1, name_2) in av_pairs:
-                points, dropped = self._sequentialize_points(points, knobs.alpha)
+                points, dropped = self._sequentialize_points(points, knobs.alpha, probe)
                 seq_reload_needed = seq_reload_needed or dropped
             chips = self._chips(series, points, method_cls, probe.params, knobs, name_1)
             pairs.append(PairRecompute(name_1=name_1, name_2=name_2, points=points, chips=chips))
@@ -922,8 +940,11 @@ class RecomputeEngine:
         # Same identity: pass persisted numbers through, or α-invert them.
         if math.isclose(knobs.alpha, _row_float(row, "alpha") or -1.0, rel_tol=1e-12):
             return self._baseline_point(row)
-        if not _needs_seed(method_cls):
-            inverted = _alpha_inverted_bounds(row, knobs.alpha)
+        # `reusable is not None` IS `not _needs_seed(method_cls)` (the caller's own
+        # definition) — spelled this way because the α-inversion guard needs the bound
+        # INSTANCE, not the class (m13 STAT-3a).
+        if reusable is not None and not _needs_seed(method_cls):
+            inverted = _alpha_inverted_bounds(row, knobs.alpha, method=reusable)
             if inverted is not None:
                 left, right, pvalue, reject = inverted
                 return ExplorePoint(
@@ -1008,7 +1029,7 @@ class RecomputeEngine:
         return result, [*memo.caught, *finalize_caught]
 
     def _sequentialize_points(
-        self, points: list[ExplorePoint], alpha: float
+        self, points: list[ExplorePoint], alpha: float, method: BaseMethod
     ) -> tuple[list[ExplorePoint], bool]:
         """Widen ONE always-valid pair's reconstructed points into the CS (M5 WP3c).
 
@@ -1032,6 +1053,10 @@ class RecomputeEngine:
           (returns ``dropped=True`` so the caller surfaces a Reload hint), never shown
           as a silent fixed CI on a sequential chart.
 
+        ``method`` is the live knob state's BOUND probe — the CI-inversion guard
+        (m13 STAT-3a) resolves asymmetry per instance, and the probe is the instance
+        whose interval shape the reconstructed points carry.
+
         Returns ``(points, dropped_any_approx)``. When no look has a usable fixed CI
         (τ² undefined — e.g. an all-baseline CUPED pair) the points are passed through:
         baseline points already carry the persisted always-valid bounds.
@@ -1040,7 +1065,7 @@ class RecomputeEngine:
         for point in points:
             if point.result is None:
                 continue
-            se = se_from_ci_length(point.result.ci_length, alpha)
+            se = se_from_ci_length(point.result.ci_length, alpha, method=method)
             if math.isfinite(se) and se > 0.0:
                 tau2 = mixture_tau2(se * se, alpha)
                 break
@@ -1052,7 +1077,7 @@ class RecomputeEngine:
                 if tau2 is None:
                     out.append(point)  # degenerate everywhere; nothing to widen
                     continue
-                av = to_always_valid(point.result, tau2, alpha)
+                av = to_always_valid(point.result, tau2, alpha, method=method)
                 out.append(
                     replace(
                         point,

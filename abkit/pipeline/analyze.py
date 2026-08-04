@@ -265,7 +265,7 @@ def analyze_cutoff(
         if sequential_tau2 is not None and method_cls.supports_sequential:
             tau2 = sequential_tau2.get((name_1, name_2))
             if tau2 is not None:
-                result = to_always_valid(result, tau2, alpha)
+                result = to_always_valid(result, tau2, alpha, method=method)
 
         outcomes.append(
             PairOutcome(

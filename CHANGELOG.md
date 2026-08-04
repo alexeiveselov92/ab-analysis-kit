@@ -14,6 +14,41 @@ number change).
 ## [Unreleased]
 
 ### Added
+- **STAT-3a — the `asymmetric_ci` guard: SE-by-CI-inversion refuses instead of
+  mis-recovering** (M13, decision D17). **No number moves** — no shipped method
+  builds an asymmetric interval, so every refusal below is unreachable today and
+  the whole suite is byte-identical. It is the prerequisite STAT-3
+  (Miettinen–Nurminen) and STAT-4 (Fieller) cannot ship without.
+
+  **The defect it closes.** The always-valid transform never receives a standard
+  error: `sequential.se_from_ci_length` *infers* `SE = ci_length / 2z`, which is
+  the SE only for an `effect ± z·SE` interval. Handed a score/Fieller-type
+  interval it returns the mean half-width over `z` — a finite number that is not
+  the SE — and `sequentialize` then centres a symmetric confidence sequence on it.
+  No NaN, no exception, silently wrong, and **worst exactly where the new
+  intervals are worth having** (the recovery degrades as asymmetry grows).
+
+  **What ships.** `BaseMethod.asymmetric_ci` (default `False` — today's truth for
+  all twelve methods, pinned by a roster gate) and `sequential.require_symmetric_ci`,
+  which every inversion entry calls. The `method` argument is **required and
+  keyword-only** on `se_from_ci_length`, `se_from_ci_length_array` and
+  `to_always_valid`: a caller may not invert a CI without saying whose it is. The
+  flag is resolved per **bound instance**, not per class, because STAT-3 ships its
+  interval as an identity-flagged *param* on `z-test` — a class-level flag would
+  answer for the default params and miss the configuration it exists to catch;
+  passing a class raises `TypeError` rather than being answered.
+
+  **An asymmetric method is not blocked** — it declares `supports_sequential: false`
+  and its series simply stays fixed, which is what every eligibility gate already
+  tests. The refusal fires only for a method claiming both.
+
+  **A twelfth entry point, which the design's count of eleven had missed:**
+  `tuning/recompute._alpha_inverted_bounds` — explore's Tier α — open-codes the
+  same premise (`se = (right − left) / 2z`) instead of calling the helper, and
+  re-derives a *symmetric* normal CI at the new α from persisted numbers. It takes
+  the same refusal; which UX an asymmetric method eventually gets there stays a
+  named sub-task of STAT-3/STAT-4. An AST gate now fails on any new open-coded
+  inversion and on any guarded call that omits its method.
 - **STAT-1 — `correction: holm`, and the FWER claim stated precisely**
   (M13, decisions D7/D9). Two things ship, and only one is code.
 

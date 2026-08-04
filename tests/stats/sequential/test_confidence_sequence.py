@@ -14,7 +14,12 @@ import pytest
 import scipy.stats as sps
 
 from abkit.stats.effects import EffectEstimate, normal_test
+from abkit.stats.factory import create_method
 from abkit.stats.sequential import mixture_tau2, se_from_ci_length, sequentialize
+
+#: Any registered symmetric-CI method satisfies the STAT-3a inversion guard; the
+#: recovery itself reads nothing off it but ``asymmetric_ci``.
+SYMMETRIC = create_method("z-test")
 
 
 @pytest.mark.parametrize("alpha", [0.1, 0.05, 0.01, 0.001])
@@ -22,7 +27,7 @@ from abkit.stats.sequential import mixture_tau2, se_from_ci_length, sequentializ
 def test_se_from_ci_length_round_trips_fixed_ci(alpha: float, var: float) -> None:
     """SE = ci_length / (2 * norm.ppf(1 - alpha/2)) recovers sqrt(var) exactly."""
     fixed = normal_test(EffectEstimate(effect=0.37, var=var), alpha)
-    recovered = se_from_ci_length(fixed.ci_length, alpha)
+    recovered = se_from_ci_length(fixed.ci_length, alpha, method=SYMMETRIC)
     assert recovered == pytest.approx(math.sqrt(var), rel=1e-9)
 
 
@@ -81,7 +86,7 @@ def test_nan_effect_returns_nan_triple() -> None:
 
 
 def test_nan_ci_length_recovers_nan_se() -> None:
-    assert math.isnan(se_from_ci_length(float("nan"), 0.05))
+    assert math.isnan(se_from_ci_length(float("nan"), 0.05, method=SYMMETRIC))
 
 
 @pytest.mark.parametrize("bad_alpha", [0.0, 1.0, -0.1, 1.5])

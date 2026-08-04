@@ -27,6 +27,7 @@ from abkit.database.internal_tables import InternalTablesManager
 from abkit.pipeline import PipelineStep, run_experiment, run_experiments
 from abkit.pipeline.analyze import AnalyzeError, analyze_cutoff  # noqa: F401  (import check)
 from abkit.pipeline.driver import _sequential_mode_changed
+from abkit.stats.registry import get_method_class
 
 START = datetime(2024, 7, 1)
 
@@ -240,6 +241,41 @@ class TestSequentialActivation:
             return [{k: v for k, v in r.items() if k != "created_at"} for r in rows]
 
         assert strip_version(first) == strip_version(tables.load_results("signup_test"))
+
+
+class TestAsymmetricCiIsRefused:
+    """m13 STAT-3a: the pipeline refuses to widen an asymmetric interval, loudly.
+
+    The driver holds only the method CLASS at the τ² anchor, so it binds the method
+    the way ``analyze_cutoff`` does and hands the guard that INSTANCE. Without the
+    plumbing this run would succeed and persist always-valid rows built from a
+    "standard error" that is the mean half-width over z — the silent failure §6a
+    describes. Flipping the flag on the shipped class is the only way to reach it:
+    no registered method is asymmetric (pinned by the roster gate in
+    tests/stats/sequential/test_asymmetric_ci_guard.py).
+    """
+
+    def test_sequential_run_fails_with_a_message_naming_the_method(
+        self, warehouse, tables, monkeypatch
+    ):
+        # patch the class the REGISTRY resolves, never an imported symbol:
+        # tests/stats/test_registry_factory.py reloads the ttest module, after which
+        # `abkit.stats.parametric.ttest.TTest` is a stale object nothing looks up.
+        monkeypatch.setattr(get_method_class("t-test"), "asymmetric_ci", True)
+        outcome = run(warehouse, tables, experiment=make_experiment(sequential={"enabled": True}))
+
+        assert outcome.status == "failed"
+        assert "asymmetric" in str(outcome.error).lower()
+        assert "t-test" in str(outcome.error)
+        assert tables.load_results("signup_test") == []
+
+    def test_the_fixed_mode_is_untouched_by_the_flag(self, warehouse, tables, monkeypatch):
+        """The guard sits on the inversion, not on the method: no sequence, no refusal."""
+        monkeypatch.setattr(get_method_class("t-test"), "asymmetric_ci", True)
+        outcome = run(warehouse, tables)
+
+        assert outcome.status == "completed"
+        assert all(r["ci_kind"] == "fixed" for r in tables.load_results("signup_test"))
 
 
 class TestSequentialModeChanged:
