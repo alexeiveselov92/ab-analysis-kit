@@ -147,6 +147,14 @@ fixed` and the pre-horizon refusal still holds — the readout adds a caveat nam
 the reason. **If you need peeking-valid early reads, choose a parametric method**
 (see [compute methods](compute-methods.md)).
 
+The symmetry this relies on is **checked, not assumed**. A method may declare
+`BaseMethod.asymmetric_ci` — "my interval is not `effect ± z·SE`" — and every place
+abkit would recover an SE by inverting a CI then refuses with a clear error instead
+of widening a number that is not a standard error. No method shipped today declares
+it (bootstrap opts out one step earlier, through `supports_sequential`), so this
+changes nothing you can observe; it is the guard the score-type intervals planned
+for `0.8.0` need before they can exist.
+
 ## Toggling re-plans the whole series (self-invalidation)
 
 `sequential.enabled` is *not* part of a method's identity (`method_config_id`), so

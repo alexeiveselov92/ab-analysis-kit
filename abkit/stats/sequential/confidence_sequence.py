@@ -41,7 +41,9 @@ from functools import lru_cache
 import numpy as np
 import scipy.special as special
 
+from abkit.stats.base import BaseMethod
 from abkit.stats.effects import FloatArray
+from abkit.stats.exceptions import AsymmetricCIError
 
 
 @lru_cache(maxsize=64)
@@ -56,7 +58,34 @@ def _half_width_z(alpha: float) -> float:
     return float(special.ndtri(1.0 - alpha / 2.0))
 
 
-def se_from_ci_length(ci_length: float, alpha: float) -> float:
+def require_symmetric_ci(method: BaseMethod, *, entry: str) -> None:
+    """Refuse SE-by-CI-inversion for a method whose fixed CI is asymmetric (STAT-3a).
+
+    The single gate behind every inversion entry. ``method`` must be a BOUND
+    INSTANCE: :attr:`BaseMethod.asymmetric_ci` is instance-resolved on purpose (a
+    param can switch the interval shape — m13 STAT-3's Miettinen–Nurminen), so a
+    caller holding only the class would read the class default and sail through the
+    very case the guard exists for. Handing a class in is a programming error, not
+    a symmetric CI: it raises ``TypeError`` rather than answering.
+    """
+    if not isinstance(method, BaseMethod):
+        if isinstance(method, type) and issubclass(method, BaseMethod):
+            raise TypeError(
+                f"{entry}: pass the BOUND method instance, not the class "
+                f"{method.__name__!r} — asymmetric_ci is resolved per instance "
+                "(a param may switch the interval shape)"
+            )
+        raise TypeError(f"{entry}: expected a BaseMethod instance, got {method!r}")
+    if method.asymmetric_ci:
+        raise AsymmetricCIError(
+            f"{method.name}: builds an asymmetric confidence interval, so {entry} cannot "
+            "recover its standard error by inverting the CI width (that inversion assumes "
+            "effect ± z·SE). The always-valid sequential mode is unavailable for this "
+            "method — declare supports_sequential=False to leave its series fixed"
+        )
+
+
+def se_from_ci_length(ci_length: float, alpha: float, *, method: BaseMethod) -> float:
     """Recover the effect standard error by inverting a symmetric normal CI (D3).
 
     Every parametric method builds its fixed CI as
@@ -70,7 +99,13 @@ def se_from_ci_length(ci_length: float, alpha: float) -> float:
     ratio-delta), is method-agnostic, and never re-derives the per-arm variances
     (which would drop the covariance term). Returns NaN for a NaN/degenerate CI
     (the fixed path's NaN-bound bucket — never an exception).
+
+    ``method`` is the bound method that BUILT this interval, and it is required
+    (STAT-3a): the symmetry premise above is the whole of the recovery, so no caller
+    may invert a width without saying whose width it is. An asymmetric method raises
+    :class:`~abkit.stats.exceptions.AsymmetricCIError` — see :func:`require_symmetric_ci`.
     """
+    require_symmetric_ci(method, entry="se_from_ci_length")
     if not math.isfinite(ci_length) or ci_length < 0.0:
         return float("nan")
     return ci_length / (2.0 * _half_width_z(alpha))
@@ -88,6 +123,13 @@ def sequentialize(
     is tallied in the NaN-bound bucket, never a silent non-rejection and never an
     exception. Programming-contract violations (``alpha`` out of range, non-positive
     ``tau2``) raise ``ValueError``.
+
+    Deliberately NOT guarded by :func:`require_symmetric_ci` (STAT-3a): this function
+    is GIVEN a standard error, it never infers one, and the symmetry premise belongs
+    to the inference. ``abk plan`` calls it with a variance it computed itself. Every
+    other caller obtains ``se`` from :func:`se_from_ci_length`, which has already
+    refused. (Constructing a score interval's sequence needs the critical value INSIDE
+    the root-find — plan §6a item 2 — not this widening.)
     """
     if not 0.0 < alpha < 1.0:
         raise ValueError(f"alpha must be in (0, 1), got {alpha!r}")
@@ -120,12 +162,17 @@ def sequentialize(
 # ``tests/stats/sequential/test_sequential_arrays.py``.
 
 
-def se_from_ci_length_array(ci_length: FloatArray, alpha: float) -> FloatArray:
+def se_from_ci_length_array(
+    ci_length: FloatArray, alpha: float, *, method: BaseMethod
+) -> FloatArray:
     """Array-wise :func:`se_from_ci_length`: per-row SE by CI-inversion (D3).
 
     NaN/negative ``ci_length`` rows → NaN (the scalar NaN-bound bucket), as a
-    mask instead of the scalar early return.
+    mask instead of the scalar early return. ``method`` is required and refused
+    identically — the batch engine is the A/A instrument's hot path, i.e. exactly
+    where a silent mis-recovery would be certified as calibrated (STAT-3a).
     """
+    require_symmetric_ci(method, entry="se_from_ci_length_array")
     ci_length = np.asarray(ci_length, dtype=np.float64)
     with np.errstate(invalid="ignore"):
         se = ci_length / (2.0 * _half_width_z(alpha))

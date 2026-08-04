@@ -147,6 +147,17 @@ recorded in [m5-implementation-plan.md](m5-implementation-plan.md) D2.
   This preserves the delta-method covariance already baked into `ci_length`
   (relative / CUPED / ratio-delta) and never re-derives arm variances — the naive
   per-arm rebuild would drop the covariance term and silently miscalibrate.
+  **The symmetry premise is enforced, not assumed** (m13 STAT-3a): an interval that
+  is not `effect ± z·SE` inverts to the mean half-width over `z` — a finite number
+  that is not the SE, which `sequentialize` would then centre a symmetric sequence
+  on, with no NaN and no exception. `BaseMethod.asymmetric_ci` (default `False`,
+  resolved per bound instance so an interval selected by a *param* can declare it)
+  makes every inversion entry raise `AsymmetricCIError` instead. Nothing shipped
+  today declares it, so no number moved; a method that wants to stay usable outside
+  the sequential mode declares `supports_sequential = False` and is simply left
+  fixed. Two functions carry the premise — the helper above and explore's Tier-α
+  `_alpha_inverted_bounds`, which open-codes it — and an AST gate
+  (`tests/stats/sequential/test_ci_inversion_is_the_only_entry.py`) fails on a third.
 - **The interval.** With `V = SE²` and a fixed mixing variance `τ²`, the two-sided
   CS half-width is
   `r = sqrt( (2·V·(V+τ²)/τ²) · ( ln(1/α) + 0.5·ln((V+τ²)/V) ) )`, from inverting the

@@ -465,6 +465,74 @@ The sign is already computed — `validate/scoring.py:184` `_significance()`
 returns `(significant, sign)` — so this is plumbing it through the result and the
 matrix report, not new measurement.
 
+### STAT-3a — the `asymmetric_ci` guard ✅ SHIPPED
+
+**Depends on:** nothing. **Blocks:** STAT-3 and STAT-4 (D17).
+
+Turns §6a's silent mis-recovery into a loud refusal, and moves **no number**: no
+shipped method builds an asymmetric interval, so every refusal it adds is
+unreachable today and the whole suite is byte-identical. That is the point of
+shipping it alone — the gate is byte-parity, which stops being cheap the moment a
+new interval lands in the same PR.
+
+**As built.**
+
+1. **`BaseMethod.asymmetric_ci`, default `False`** — "this method's fixed CI is not
+   `effect ± z·SE`". Pinned empty across the registry by a roster gate, so a future
+   method flipping it is a conscious act.
+2. **`sequential.require_symmetric_ci(method, entry=…)`** is the one gate, and the
+   `method` argument is **required and keyword-only** on `se_from_ci_length`,
+   `se_from_ci_length_array` and `to_always_valid`. A caller may not invert a CI
+   without saying whose it is — a structural forcing function, not an AST rule: a
+   new call site does not run until it names its method.
+3. **Resolved per bound INSTANCE, not per class** — the design said `ClassVar`
+   (§6a item 1), following `supports_vectorized`, and that would have been a guard
+   that cannot fire for the configuration STAT-3 actually ships: an
+   identity-flagged **param** on `z-test` (§ STAT-3's shipping shape) leaves the
+   class default symmetric. `asymmetric_ci` is therefore a plain class attribute a
+   subclass narrows from `self.params`, every entry takes an instance, and handing
+   a class in raises `TypeError` rather than being answered `False`. The one caller
+   holding only a class — `driver._sequential_tau2` — now binds the method the way
+   `analyze_cutoff` does.
+4. **An asymmetric method is not blocked, only un-widened.** Declaring
+   `supports_sequential: false` is what every eligibility gate (driver, analyze,
+   explore's `av_pairs`, the A/A `_cell_tau2`) already tests, so such a method's
+   series stays fixed with no error. The refusal fires only for a method claiming
+   both — which is a contradiction, since `supports_sequential` has always *meant*
+   a symmetric CI.
+5. **The refusal reaches the operator on every surface.** `AsymmetricCIError` is a
+   `StatsError`, so `abk validate`'s per-cell isolation (the m4 F1 bootstrap
+   precedent) reports it as a **failed cell carrying its reason** rather than a
+   quietly missing sequential column; `abk run` fails the experiment with the
+   message on the outcome; explore raises out of the recompute.
+
+**The load-bearing delta: a TWELFTH entry point the design's count missed.**
+D17 counted eleven entries into `se_from_ci_length`. `tuning/recompute.
+_alpha_inverted_bounds` — explore's Tier α — is a twelfth: it does not call the
+helper at all, it **open-codes** `se = (right − left) / 2z` and re-derives a
+symmetric normal CI at the new α from persisted numbers. STAT-4 already knew this
+function was a problem for Fieller (it is a named required sub-task there); what
+the count missed is that it carries the *same* premise and would have been left
+unguarded by a fix aimed only at the helper. It now takes the same refusal, and
+an AST gate (`tests/stats/sequential/test_ci_inversion_is_the_only_entry.py`)
+fails on any new open-coded inversion — a CI width divided by a quantile — outside
+a function that calls the guard, and on any guarded call that omits its method.
+Both rules are derived from the source and both are proven to bite on hostile
+fixtures; a `/2` half-width is deliberately not an inversion (it recovers nothing),
+which keeps the rule narrow enough that guarding everything is not the only escape.
+
+**Named follow-up for STAT-3/STAT-4** (found by that gate, deliberately not fixed
+here): two surfaces summarise an interval by its **mean half-width** —
+`readout.py`'s always-valid FLAT power check (`av_half ≤ min_effect`) and explore's
+`ci_half` chip. Neither recovers an SE, so neither is wrong today; both would
+under-describe an asymmetric interval, whose reach differs by side.
+
+**Test-isolation lesson worth carrying:** `tests/stats/test_registry_factory.py`
+reloads `abkit.stats.parametric.ttest`, after which the imported `TTest` symbol is
+a stale object the registry no longer resolves to. A test that flips a capability
+flag must patch `get_method_class("t-test")`, never an imported class — the
+difference is invisible when the file runs alone.
+
 ### STAT-3 — the proportion interval: **Miettinen–Nurminen**, one statistic used three ways
 
 **The derivation landed** ([proportion-interval.derivation.json](../research/2026-08-m13-blind-rederive/proportion-interval.derivation.json))
@@ -518,12 +586,16 @@ it matches the published method and the R/SAS implementations a golden test woul
 compare against. It must be applied to the interval and the p-value together, or
 to neither.
 
-*Blocked by **STAT-3a** (D17), which ships first:* the `asymmetric_ci` capability
-flag and its refusals. The guard belongs to `se_from_ci_length` — the function that
-assumes symmetry — not to `to_always_valid`, and it is entered from eleven places,
-seven of them inside `abk validate`'s own scoring and family sweep. Shipping it
-standalone keeps its gate at byte-parity (no shipped method is asymmetric today) and
-keeps the review of the new interval from having to certify two things at once.
+*Unblocked: **STAT-3a** (D17) shipped* — the `asymmetric_ci` capability flag and
+its refusals (the WP above). The guard belongs to the functions that ASSUME
+symmetry — `se_from_ci_length` and, as built, explore's open-coded α inversion —
+never to `to_always_valid`; **twelve** entry points, seven of them inside `abk
+validate`'s own scoring and family sweep. **STAT-3 must set `asymmetric_ci` on the
+bound instance** whenever its interval param selects the score form (the flag is
+instance-resolved precisely so this is expressible), and decide the two things the
+guard deliberately leaves open: whether an MN comparison declares
+`supports_sequential: false` or gains the §6a item 2 construction, and what
+explore's α tier shows instead of a re-derived symmetric CI.
 
 *Required sub-tasks the derivation names:* root-find robustness (is
 `Z(δ)² − z²` guaranteed to have exactly two sign changes? at `x_j ∈ {0, n_j}` the
@@ -605,7 +677,7 @@ STAT-1c (guardrails) ✅ ──────────────────�
 STAT-1b (contrast set) ✅ ─────────────────────────────────┤   biggest power win
 STAT-1  (Holm / the Fork) ✅ ─────────────────────────────┤
 STAT-2  (sign instrument) ✅ ─▶ STAT-4 (relative effect) ──┼──▶ STAT-6 (exit gate)
-STAT-3a (asymmetric_ci guard) ⏳ ─▶ STAT-3 (proportions) ─┤
+STAT-3a (asymmetric_ci guard) ✅ ─▶ STAT-3 (proportions) ─┤
 STAT-5  (ddof — recommended dropped) ─────────────────────┘
 ```
 
@@ -643,8 +715,8 @@ field, and only M15's Student-t would need them.
 | D11 | **MN ships WITHOUT the `N/(N−1)` factor** (Farrington–Manning form), making `Z(0)` bit-identical to today's pooled z so no reported p-value moves. Byte-stability of the p-value outranks matching R/SAS; the difference is `1/(2N)`. Golden tests compare against FM, and the docstring says why. | decided 2026-08-03, delegated |
 | D12 | **`_ab_results.reject` keeps its name and is REDOCUMENTED as pre-family** — "rejection of this one comparison at its stored α, before any read-time family rule". No family-decision column is added: under a read-time scheme that value is re-derived on every read and a persisted copy would go stale the moment `correction` changes. The BI recipes state that the family decision lives in the readout. | decided 2026-08-03, delegated |
 | D15 | **STAT-1b stays in M13 and does NOT wait for M14's `control:` field.** They are different declarations: STAT-1b declares the FAMILY (`contrasts: vs_control \| all_pairs`), M14 declares WHICH ARM is control — and the latter is already resolved positionally today (first declared variant = control = `name_1`, baseline §5 `combinations`). So the knob is expressible over the existing convention, and M14 later replaces the positional resolution in one place instead of the family being blocked on it. | decided 2026-08-04, delegated |
-| D14 | **The sequential layer DOES extend to score intervals** — the always-valid rule is a standardised test with `c(V)` in place of `z`, so the confidence sequence is `{δ : \|Z(δ)\| ≤ c(V)}`, a critical-value substitution inside the root-find MN/Fieller already run. The blocker is architectural, not mathematical: the SE is *inferred* from the CI width assuming symmetry, unvalidated. **`asymmetric_ci: ClassVar[bool] = False` is a hard prerequisite of STAT-3** — it turns a silent miscomputation into a loud refusal. *Amended 2026-08-04 (see D17): the count "six call sites" was measured on `to_always_valid`; the assumption actually lives in `se_from_ci_length`, entered from **eleven** places, seven of them inside the A/A instrument.* | decided 2026-08-03, delegated |
-| D17 | **The `asymmetric_ci` guard ships as its own WP (STAT-3a) BEFORE STAT-3**, not inside it. Three grounds, all measured rather than argued: (a) the assumption is not `to_always_valid`'s, it is `se_from_ci_length`'s, and that function is called directly from **nine** sites outside the sequential package (`validate/scoring.py` ×5, `validate/family.py` ×2, `tuning/recompute.py`, `pipeline/driver.py`) plus `to_always_valid`'s own two callers — a flag checked only inside `to_always_valid` would leave the A/A instrument, which is the majority of them, unguarded; (b) no shipped method has an asymmetric CI, so the change is **provably behaviour-neutral** and its gate is byte-parity over the existing suite — a property that stops being cheap the moment a new interval lands in the same PR; (c) its exit criterion needs no new math (a hostile fake method declaring `asymmetric_ci = True` must make every entry point refuse LOUDLY), and a review that cannot separate "the guard works" from "the interval is right" is exactly what this milestone keeps punishing. | decided 2026-08-04, delegated |
+| D14 | **The sequential layer DOES extend to score intervals** — the always-valid rule is a standardised test with `c(V)` in place of `z`, so the confidence sequence is `{δ : \|Z(δ)\| ≤ c(V)}`, a critical-value substitution inside the root-find MN/Fieller already run. The blocker is architectural, not mathematical: the SE is *inferred* from the CI width assuming symmetry, unvalidated. **`asymmetric_ci: ClassVar[bool] = False` is a hard prerequisite of STAT-3** — it turns a silent miscomputation into a loud refusal. *Amended 2026-08-04 (see D17): the count "six call sites" was measured on `to_always_valid`; the assumption actually lives in `se_from_ci_length`, entered from **eleven** places, seven of them inside the A/A instrument.* *Amended again 2026-08-04 by the STAT-3a build: **twelve**, not eleven (explore's α tier open-codes the inversion), and the flag is NOT a `ClassVar` — a class-level flag cannot fire for the param-switched interval STAT-3 itself ships.* | decided 2026-08-03, SHIPPED as STAT-3a |
+| D17 | **The `asymmetric_ci` guard ships as its own WP (STAT-3a) BEFORE STAT-3**, not inside it. Three grounds, all measured rather than argued: (a) the assumption is not `to_always_valid`'s, it is `se_from_ci_length`'s, and that function is called directly from **nine** sites outside the sequential package (`validate/scoring.py` ×5, `validate/family.py` ×2, `tuning/recompute.py`, `pipeline/driver.py`) plus `to_always_valid`'s own two callers — a flag checked only inside `to_always_valid` would leave the A/A instrument, which is the majority of them, unguarded; (b) no shipped method has an asymmetric CI, so the change is **provably behaviour-neutral** and its gate is byte-parity over the existing suite — a property that stops being cheap the moment a new interval lands in the same PR; (c) its exit criterion needs no new math (a hostile fake method declaring `asymmetric_ci = True` must make every entry point refuse LOUDLY), and a review that cannot separate "the guard works" from "the interval is right" is exactly what this milestone keeps punishing. *SHIPPED 2026-08-04 — and ground (a) understated itself: the twelfth site does not call the helper at all.* | decided 2026-08-04, SHIPPED |
 | D16 | **`contrasts` is experiment-level with NO project default** — unlike `correction`/`guardrail_correction`. The family five call sites read must never depend on whether the surface reading it resolved a project default, and the factory that serves them therefore takes no `ProjectConfig`. It is also a statement about an experiment's design (which arms it compares), not a project-wide statistical policy. | decided 2026-08-04, delegated |
 | D13 | **STAT-5 (uniform ddof) is DROPPED from M13** — second-order, below the instrument's noise floor, dominated at small n by the normal-vs-Student-t error deferred to M15 (audit §7). Dropping it edits the ROADMAP contour. | decided 2026-08-03, delegated |
 

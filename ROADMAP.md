@@ -807,8 +807,9 @@ endpoints, guardrail α, and — for whoever opts in — `method_config_id`.
 
 5 WP (uniform ddof dropped), ordered by value rather than dependency —
 **STAT-1c (guardrails uncorrected), STAT-2 (the false-positive sign instrument),
-STAT-1b (the declared contrast set) and STAT-1 (Holm + the claim) are ✅
-shipped**; STAT-3 (Miettinen–Nurminen) and STAT-4 (Fieller) remain. Baseline
+STAT-1b (the declared contrast set), STAT-1 (Holm + the claim) and STAT-3a (the
+`asymmetric_ci` guard) are ✅ shipped**; STAT-3 (Miettinen–Nurminen) and STAT-4
+(Fieller) remain. Baseline
 goldens stay untouched; new numbers get **new** goldens.
 
 **STAT-1 as built:** `correction: holm` sits beside `benjamini_hochberg` in the
@@ -839,6 +840,17 @@ dashboard and notification filters), which is m10's eight-hand-copied-call-sites
 shape one milestone later — `notify/dispatch.py` had even predicted the
 extraction in a comment.
 
+**STAT-3a as built:** the symmetry premise behind the always-valid transform is
+now enforced rather than assumed — `BaseMethod.asymmetric_ci` (default `False`,
+nothing declares it, so **no number moved**) makes every SE-by-CI-inversion entry
+raise instead of returning the mean half-width over `z` and calling it a standard
+error. Two deltas the design did not have: the flag is resolved per **bound
+instance**, because STAT-3 ships its interval as an identity-flagged *param* on
+`z-test` and a `ClassVar` would answer for the default params — a guard that
+cannot fire for the case it exists for; and there are **twelve** entry points, not
+eleven, because explore's Tier α open-codes the inversion instead of calling the
+helper. An AST gate fails on any new open-coded inversion.
+
 **The sequential question is answered (D14):** the confidence sequence *does*
 extend to score intervals — the always-valid rule is a standardised test with a
 variance-dependent `c(V)` in place of `z`, i.e. a critical-value substitution
@@ -847,11 +859,9 @@ surfaced a live hazard: `to_always_valid` **infers** the SE from the CI width
 assuming symmetry, unvalidated — in `se_from_ci_length`, entered from eleven
 places, seven of them inside the A/A matrix's own scoring and family sweep. (The
 design session measured "six", counting only `to_always_valid`; the guard
-therefore belongs to the inference helper, and ships as its own WP **STAT-3a**
-before STAT-3 — D17.) Until it lands, an asymmetric interval would be silently
-mis-widened rather than refused, and the instrument that would catch it is one of
-the callers doing the mis-widening. ~5–6 sessions, of which the correction layer
-(STAT-1c, STAT-1b, STAT-2, STAT-1) is done.
+therefore belongs to the inference helper, and shipped as its own WP **STAT-3a**
+before STAT-3 — D17.) ~5–6 sessions, of which the correction layer (STAT-1c,
+STAT-1b, STAT-2, STAT-1) and the guard (STAT-3a) are done.
 
 ### M14 — multi-arm decision layer (bucket B, decisions) → `0.9.0` 📐 contour
 An explicit `control:` field (or a validated positional convention);

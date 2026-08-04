@@ -37,10 +37,10 @@ def test_a_a_always_valid_bounds_equal_the_shared_engine():
     method = create_method("t-test", alpha=ALPHA)
     arm_a, arm_b = _horizon_arms(panel, seed=123)
     result = method.from_suffstats(arm_a, arm_b)
-    se = se_from_ci_length(result.ci_length, ALPHA)
+    se = se_from_ci_length(result.ci_length, ALPHA, method=method)
     tau2 = mixture_tau2(se * se, ALPHA)
 
-    sig_seq, width = _always_valid_sig(result, tau2, ALPHA)
+    sig_seq, width = _always_valid_sig(result, tau2, ALPHA, method)
     lo, hi, _ = sequentialize(result.effect, se, tau2, ALPHA)
 
     assert width == (hi - lo)  # byte-identical, no private A/A math
@@ -56,7 +56,7 @@ def test_cell_tau2_delegates_to_the_shared_mixture_helper():
 
     tau2 = _cell_tau2(panel, method, share_a=0.5, anchor_seed=anchor_seed)
     arm_a, arm_b = _horizon_arms(panel, seed=anchor_seed)
-    se_h = se_from_ci_length(method.from_suffstats(arm_a, arm_b).ci_length, ALPHA)
+    se_h = se_from_ci_length(method.from_suffstats(arm_a, arm_b).ci_length, ALPHA, method=method)
 
     assert tau2 is not None
     assert tau2 == mixture_tau2(se_h * se_h, ALPHA)  # exact, one shared helper

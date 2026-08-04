@@ -12,18 +12,25 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from abkit.stats.base import BaseMethod
 from abkit.stats.result import TestResult
 from abkit.stats.sequential.confidence_sequence import se_from_ci_length, sequentialize
 
 
-def to_always_valid(result: TestResult, tau2: float, alpha: float) -> TestResult:
+def to_always_valid(
+    result: TestResult, tau2: float, alpha: float, *, method: BaseMethod
+) -> TestResult:
     """Return a copy of ``result`` with always-valid bounds, p-value, and ci_kind.
 
     A degenerate fixed result (NaN ci_length) yields NaN always-valid bounds — the
     downstream NULLs it exactly like the fixed NaN-bound path, never an exception.
     ``alpha`` is the result's own effective alpha (``result.alpha``).
+
+    ``method`` is the bound method that produced ``result``; the transform consumes
+    its SE by CI-inversion, so an asymmetric interval is refused rather than widened
+    into a symmetric sequence centred on the point estimate (STAT-3a).
     """
-    se = se_from_ci_length(result.ci_length, alpha)
+    se = se_from_ci_length(result.ci_length, alpha, method=method)
     lo, hi, av_pvalue = sequentialize(result.effect, se, tau2, alpha)
     reject = (lo > 0.0) or (hi < 0.0)  # CI-excludes-zero ≡ av_pvalue <= alpha
     return replace(

@@ -295,7 +295,9 @@ def capture() -> dict[str, Any]:
         out["normal_test"][case_id] = record
 
     for case_id, ci_length, alpha in SE_FROM_CI_CASES:
-        out["se_from_ci_length"][case_id] = {"se": se_from_ci_length(ci_length, alpha)}
+        out["se_from_ci_length"][case_id] = {
+            "se": se_from_ci_length(ci_length, alpha, method=create_method("z-test"))
+        }
 
     for case_id, alpha, params, (count_1, nobs_1), (count_2, nobs_2) in ZTEST_CASES:
         method = create_method("z-test", alpha=alpha, params=params)

@@ -320,6 +320,8 @@ class BaseMethod(ABC):
     #: (``sequential.se_from_ci_length``); the pipeline dispatches on this flag
     #: instead of name-checking. Bootstrap percentile CIs are asymmetric → the
     #: bootstrap base sets this False (docs/specs/m5-implementation-plan.md D1).
+    #: The symmetry this asserts is ENFORCED at the inversion since m13 STAT-3a —
+    #: see :attr:`asymmetric_ci` below, whose True is this flag's contradiction.
     supports_sequential: ClassVar[bool] = True
     #: Exposes the M7 WP2 array-wise significance kernel ``from_suffstats_array``
     #: (the validate hot path). Opt-in, mirroring the ``supports_sequential``
@@ -334,6 +336,26 @@ class BaseMethod(ABC):
     #: functional through the whole-``compare_pair`` path — a method without the
     #: split is never special-cased, only recomputed.
     supports_resample_memo: ClassVar[bool] = False
+    #: The fixed CI is NOT ``effect ± z·SE`` — a score/Fieller-type interval whose
+    #: SE cannot be recovered by inverting its width (m13 STAT-3a, plan §6a item 1).
+    #: Every SE-by-CI-inversion entry refuses such a method LOUDLY
+    #: (:class:`~abkit.stats.exceptions.AsymmetricCIError`) instead of returning the
+    #: mean half-width over ``z`` and calling it a standard error.
+    #:
+    #: Deliberately NOT a ``ClassVar``, unlike its four siblings above: the interval
+    #: shape is switchable by a PARAM (m13 STAT-3 ships Miettinen–Nurminen as an
+    #: identity-flagged param on ``z-test``, not as a new class), so the honest
+    #: granularity is the bound INSTANCE — a subclass sets ``self.asymmetric_ci``
+    #: from ``self.params`` after ``super().__init__()``. A class-level read would
+    #: answer for the default params of every instance; the guard therefore accepts
+    #: an instance only.
+    #:
+    #: ``supports_sequential = True`` asserts the opposite property (a symmetric
+    #: normal CI). Declaring both is a contradiction the transform resolves by
+    #: refusing; an asymmetric method that wants to stay usable outside the
+    #: sequential mode declares ``supports_sequential = False`` and is simply left
+    #: fixed everywhere, with no error.
+    asymmetric_ci: bool = False
 
     def __init__(self, alpha: float = 0.05, **params: Any) -> None:
         if not 0.0 < alpha < 1.0:

@@ -135,6 +135,11 @@ def _sequential_tau2(
     method_cls = get_method_class(comparison.method.name)
     if not method_cls.supports_sequential:
         return {}
+    # The BOUND method, not the class: the CI-inversion guard resolves asymmetry per
+    # instance (m13 STAT-3a), and the same binding analyze_cutoff performs is what
+    # produced the intervals inverted below. Bootstrap's seed never reaches here —
+    # the supports_sequential gate above returned already.
+    probe = comparison.method.bind(alpha=effective_alpha)
     for cutoff in grid.cutoffs:
         loaded = backend.load_cutoff(comparison, metric, metric_sql, grid, cutoff)
         outcomes = analyze_cutoff(
@@ -144,7 +149,7 @@ def _sequential_tau2(
         for outcome in outcomes:
             if outcome.result is None:
                 continue
-            se = se_from_ci_length(outcome.result.ci_length, effective_alpha)
+            se = se_from_ci_length(outcome.result.ci_length, effective_alpha, method=probe)
             if math.isfinite(se) and se > 0.0:
                 tau2[(outcome.name_1, outcome.name_2)] = mixture_tau2(se * se, effective_alpha)
         if tau2:

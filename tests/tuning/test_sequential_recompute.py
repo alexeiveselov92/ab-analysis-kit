@@ -38,6 +38,8 @@ from synthetic_ab import (
 
 from abkit.config import ExperimentConfig
 from abkit.database.internal_tables import InternalTablesManager
+from abkit.stats.exceptions import AsymmetricCIError
+from abkit.stats.registry import get_method_class
 from abkit.tuning import KnobState
 
 TTEST = {"name": "t-test", "params": {"test_type": "relative"}}
@@ -59,6 +61,24 @@ def tables(warehouse):
 
 
 class TestSequentialRecompute:
+    def test_asymmetric_ci_refuses_instead_of_widening(self, warehouse, tables, monkeypatch):
+        """m13 STAT-3a: the cockpit's live widening runs the same CI-inversion.
+
+        The engine hands the guard the live knob state's BOUND probe, so a method whose
+        interval a param (or a class flag) made asymmetric refuses here too — rather
+        than drawing a symmetric sequence around the point estimate on a chart labelled
+        always-valid.
+        """
+        exp = make_experiment("seq_arpu", "arpu", TTEST, sequential=SEQ)
+        run_pipeline(warehouse, tables, exp)
+        engine = build_engine(warehouse, tables, exp)
+
+        # the REGISTRY's class, not the imported symbol (the registry test reloads
+        # the ttest module, leaving every imported reference stale)
+        monkeypatch.setattr(get_method_class("t-test"), "asymmetric_ci", True)
+        with pytest.raises(AsymmetricCIError):
+            engine.recompute("arpu", engine.default_knobs("arpu"))
+
     def test_default_recompute_reproduces_baked_always_valid(self, warehouse, tables):
         """The configured knob state's live CI == the baked always-valid CI."""
         exp = make_experiment("seq_arpu", "arpu", TTEST, sequential=SEQ)
