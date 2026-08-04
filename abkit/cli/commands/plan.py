@@ -34,6 +34,8 @@ import click
 from abkit.cli._output import echo_done, echo_error, echo_tree
 from abkit.cli.commands._context import load_project_context
 from abkit.config import select_experiments
+from abkit.config.experiment_config import ExperimentConfig
+from abkit.config.project_config import ProjectConfig
 from abkit.core.period_planner import GridLimitExceeded, as_local_datetime
 from abkit.pipeline import comparison_alpha, effective_alphas
 from abkit.planning.sizing import (
@@ -52,6 +54,16 @@ from abkit.planning.sizing import (
     size_comparison,
 )
 from abkit.stats import get_method_class
+from abkit.stats.correction import READ_TIME_CORRECTIONS
+
+
+def _resolved_correction(experiment: ExperimentConfig, project: ProjectConfig) -> str:
+    """The scheme actually in force — the experiment's, else the project's."""
+    return (
+        experiment.correction
+        if experiment.correction is not None
+        else project.statistics.correction
+    )
 
 
 def run_plan(
@@ -794,7 +806,7 @@ def _fmt_n(value) -> str:
     return f"{int(round(value)):,}"
 
 
-def _correction_note(experiment, alphas) -> str:
+def _correction_note(experiment, alphas, correction: str) -> str:
     """The header's alpha statement — the ONLY one `abk plan` prints.
 
     The per-comparison rows below it report sizing, never their own level, so a
@@ -809,6 +821,11 @@ def _correction_note(experiment, alphas) -> str:
     can equal ``main`` numerically (3 arms with one screening metric) while still
     being a different tier — a value-equality test would drop it exactly when the
     coincidence makes it most confusing.
+
+    ``correction`` is REQUIRED rather than defaulted (m13 STAT-1): under a
+    read-time scheme every level printed here is the raw alpha, and a caller that
+    forgot to pass the scheme would print the most misleading header of the three
+    — a per-comparison level that no comparison is actually judged at.
     """
     note = (
         f"main {alphas.main:.4g} / secondary {alphas.secondary:.4g}"
@@ -826,11 +843,24 @@ def _correction_note(experiment, alphas) -> str:
 
     if alphas.guardrail is not None and any(c.is_guardrail for c in experiment.comparisons):
         note += f" / guardrail {alphas.guardrail:.4g} (uncorrected)"
+
+    if correction in READ_TIME_CORRECTIONS:
+        # A read-time scheme has no compute-time level to print: every row carries
+        # the RAW alpha and the decision is recomputed over the family at read time.
+        # Silence would leave the header claiming the sizing level IS the decision
+        # level, which is the optimistic direction — Holm's own first step is α/m.
+        note += (
+            f" — {correction} is applied read-time, so the level above is the raw "
+            "alpha this plan sizes at; the decision threshold depends on the "
+            "family's p-values"
+        )
     return note
 
 
 def _emit_plan(experiment, project, alphas, power, looks, grid, rows_per_refresh, plans) -> None:
-    correction_note = _correction_note(experiment, alphas)
+    correction_note = _correction_note(
+        experiment, alphas, _resolved_correction(experiment, project)
+    )
     header = f"{experiment.name}: plan · α raw={alphas.alpha:.4g} → {correction_note} · power {power:.2f}"
 
     children: list[str] = []

@@ -294,6 +294,47 @@ def test_bh_family_budget_anchors_to_member_level_not_the_composition():
     assert result.family.budget < 0.10
 
 
+def test_holm_family_budget_anchors_to_member_level_too():
+    """m13 STAT-1: the anchor is chosen by KIND (read-time), not by scheme name —
+    a name test here would leave Holm judged against the Bonferroni composition
+    (≈Σα) and under-flag a miscalibrated method, exactly the M5 round-2 defect."""
+    warehouse = _seeded_warehouse()
+    experiment = ExperimentConfig.model_validate(
+        {
+            "name": "holm_family",
+            "start_ts": "2024-07-01",
+            "horizon_ts": "2024-07-05",
+            "unit_key": "user_id",
+            "alpha": 0.05,
+            "correction": "holm",
+            "assignment": {
+                "query": "SELECT user_id, variant, exposure_ts FROM assignments",
+                "variants": ["control", "treatment"],
+                "expected_split": {"control": 0.5, "treatment": 0.5},
+            },
+            "comparisons": [
+                {"metric": "arpu", "is_main_metric": True, "method": {"name": "t-test"}},
+                {"metric": "conversion", "method": {"name": "z-test"}},
+                {"metric": "ctr", "method": {"name": "ratio-delta"}},
+            ],
+        }
+    )
+    backend = RecomputeBackend(warehouse, experiment)
+    result = run_validation(
+        backend,
+        experiment,
+        PROJECT,
+        METRICS,
+        {name: cfg.get_query_text(None) for name, cfg in METRICS.items()},
+        _grid(experiment),
+        ValidateSettings(iterations=300, family_sweep=True),
+        now_iso=NOW_ISO,
+    )
+    assert result.family is not None
+    assert result.family.correction == "holm"
+    assert result.family.budget < 0.10  # member level 0.05×1.5, not the ≈0.21 composition
+
+
 def test_metric_filter_skips_the_family_sweep():
     warehouse = _seeded_warehouse()
     experiment = _two_tier_experiment()

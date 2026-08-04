@@ -10,6 +10,7 @@ leaked in (no severity/recovery/no-data/detector vocabulary).
 
 from __future__ import annotations
 
+import json
 import math
 
 import pytest
@@ -106,6 +107,54 @@ def test_weekly_cycle_line_only_when_present():
     assert ch.build_context(_readout(weekly_cycle_pct=None))["weekly_cycle_line"] == ""
     line = ch.build_context(_readout(weekly_cycle_pct=42.0))["weekly_cycle_line"]
     assert "42%" in line and "weekly" in line
+
+
+def test_family_divergence_reaches_every_channel_body():
+    """m13 STAT-1: a notification shows a CI beside a verdict and has no report to
+    click through to, so the one case where the two legitimately disagree has to
+    travel with the numbers. Asserted over the CHANNELS, not just the context: the
+    line is useless if a channel builds its body by hand and drops it."""
+    from abkit.notify.discord import DiscordChannel
+    from abkit.notify.email import EmailChannel
+    from abkit.notify.googlechat import GoogleChatChannel
+    from abkit.notify.mattermost import MattermostChannel
+    from abkit.notify.ntfy import NtfyChannel
+    from abkit.notify.slack import SlackChannel
+    from abkit.notify.teams import TeamsChannel
+    from abkit.notify.telegram import TelegramChannel
+
+    # the two hand-built bodies (telegram HTML, the email table) render through
+    # their own builders, not `build_payload` — which is exactly why they are here
+    renderers = [
+        (WebhookChannel("http://x"), lambda c, r: json.dumps(c.build_payload(r))),
+        (SlackChannel(SLACK_URL), lambda c, r: json.dumps(c.build_payload(r))),
+        (MattermostChannel("http://x/hooks/y"), lambda c, r: json.dumps(c.build_payload(r))),
+        (
+            DiscordChannel("https://discord.com/api/webhooks/1/t"),
+            lambda c, r: json.dumps(c.build_payload(r)),
+        ),
+        (
+            TeamsChannel("https://example.logic.azure.com/workflows/x"),
+            lambda c, r: json.dumps(c.build_payload(r)),
+        ),
+        (
+            GoogleChatChannel("https://chat.googleapis.com/v1/spaces/x"),
+            lambda c, r: json.dumps(c.build_payload(r)),
+        ),
+        (NtfyChannel("t"), lambda c, r: json.dumps(c.build_payload(r))),
+        (TelegramChannel("123:abc", "-100"), lambda c, r: c._build_html_message(r)),
+        (
+            EmailChannel("smtp.example.com", 587, "bot@x", ["a@x"]),
+            lambda c, r: c._build_html_body(r),
+        ),
+    ]
+    quiet = _readout(family_divergence=False)
+    loud = _readout(family_divergence=True)
+    for channel, render in renderers:
+        rendered = render(channel, loud)
+        assert "multiple-testing rule" in rendered, type(channel)
+        assert "does not " in rendered, type(channel)
+        assert "multiple-testing rule" not in render(channel, quiet), type(channel)
 
 
 # ── webhook payload / Slack vs Mattermost ───────────────────────────────────────

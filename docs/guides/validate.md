@@ -157,7 +157,8 @@ being changed — and the composed **family** sweep below carries the same twin.
 ## The composed family sweep
 
 An experiment runs a **family** of metrics under one shared assignment, corrected by
-two-tier Bonferroni (compute-time) then Benjamini-Hochberg (read-time). Per-cell FPR is
+two-tier Bonferroni (compute-time) then a read-time family rule (Benjamini-Hochberg,
+or Holm since 0.8.0). Per-cell FPR is
 necessary but not sufficient, so `abk validate` can also sweep the empirical
 **family-wise error rate** and **false-discovery rate** over one shared union-cohort
 placebo assignment per iteration, under the _same_ composed rule the readout applies
@@ -171,7 +172,9 @@ placebo assignment per iteration, under the _same_ composed rule the readout app
 On the complete null the two rates coincide (every rejection is false) and sit at the
 composed rule's **nominal rate** — ≈ α _per tier_, so ≈ 2α whole-family under the
 default two-tier Bonferroni (which protects the main and secondary tiers each at α, by
-design). The budget is anchored to that nominal rate, so "over budget" means the
+design). Under a **read-time** scheme the anchor is the members' own level (≈ α), since
+BH controls the complete-null family error there and Holm controls the FWER at α by
+construction. The budget is anchored to that nominal rate, so "over budget" means the
 **methods** are miscalibrated (clustering, variance underestimation), not that the
 correction is loose. It surfaces as one sentinel `_ab_aa_runs` row and a composed-family
 band above the report matrix.

@@ -20,6 +20,7 @@ from abkit.config.method_config import MethodConfig
 from abkit.config.metric_config import MetricConfig
 from abkit.config.project_config import ProjectConfig
 from abkit.pipeline.analyze import comparison_alpha, effective_alphas
+from abkit.stats.correction import READ_TIME_CORRECTIONS
 from abkit.stats.exceptions import StatsError
 from abkit.stats.registry import get_method_class
 from abkit.validate._types import DecisionEntry, ValidateError
@@ -460,12 +461,15 @@ def _run_family_sweep(
     # `correction: none` does not.
     per_cell_budget = _budget(project, alphas.alpha, None)
     headroom = per_cell_budget / alphas.alpha if alphas.alpha else 1.5
-    if correction == "benjamini_hochberg":
+    if correction in READ_TIME_CORRECTIONS:
         # BH controls the complete-null family error at ≈ the members' level (FWER==FDR≈α
         # under the complete null — test_null_bh_controls_fdr_near_nominal), NOT the
         # Bonferroni composition ≈Σα. Anchoring to the composition rate would leave the
         # BH budget ~n× too lenient and under-flag a miscalibrated method (M5 exit-gate
-        # round-2 finding); anchor to the members' level instead.
+        # round-2 finding); anchor to the members' level instead. Holm (m13 STAT-1)
+        # anchors at the same place for the stronger reason: it controls the FWER at α
+        # by construction, so a family measuring ≈Σα under it means the METHODS are
+        # miscalibrated — which is precisely what this sweep exists to catch.
         nominal_family = max(member.alpha for member in members)
     else:
         # Bonferroni / none: the complete-null family FWER is the composed nominal rate.

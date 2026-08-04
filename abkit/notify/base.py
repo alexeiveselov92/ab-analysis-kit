@@ -66,6 +66,12 @@ class ReadoutData:
     srm_flag: bool = False
     srm_pvalue: float | None = None
     weekly_cycle_pct: float | None = None
+    #: Fork B (m13 STAT-1): under a read-time correction the family rule declined
+    #: to reject this comparison while its own interval excludes zero. Rendered as
+    #: one caveat line beside the numbers — without it the message shows a CI that
+    #: excludes zero under a verdict that does not call it, with no explanation
+    #: and nowhere to look one up.
+    family_divergence: bool = False
     n_1: int | None = None
     n_2: int | None = None
     timestamp: datetime | None = None
@@ -233,6 +239,17 @@ class BaseChannel(ABC):
             )
         weekly_cycle_line = f"{weekly_cycle_display}\n" if weekly_cycle_display else ""
 
+        family_divergence_display = ""
+        if readout.family_divergence:
+            family_divergence_display = (
+                "Note: the interval above excludes zero, but the read-time "
+                "multiple-testing rule over this experiment's metric family does not "
+                "reject — the interval is per-comparison, the verdict is family-wide"
+            )
+        family_divergence_line = (
+            f"{family_divergence_display}\n" if family_divergence_display else ""
+        )
+
         dashboard_url = readout.dashboard_url or ""
         dashboard_line = f"Report: {dashboard_url}\n" if dashboard_url else ""
 
@@ -277,6 +294,8 @@ class BaseChannel(ABC):
             "srm_line": srm_line,
             "weekly_cycle_display": weekly_cycle_display,
             "weekly_cycle_line": weekly_cycle_line,
+            "family_divergence_display": family_divergence_display,
+            "family_divergence_line": family_divergence_line,
             "dashboard_url": dashboard_url,
             "dashboard_line": dashboard_line,
             "help_url": help_url,
@@ -302,6 +321,7 @@ class BaseChannel(ABC):
             "{samples_line}"
             "{srm_line}"
             "{weekly_cycle_line}"
+            "{family_divergence_line}"
             "Observed: {timestamp}\n"
             "{dashboard_line}"
             "{help_line}"

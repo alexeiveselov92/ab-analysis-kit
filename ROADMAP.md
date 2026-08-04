@@ -806,10 +806,26 @@ today's pooled z at δ=0), and the relative-effect fix moves **no verdict**
 endpoints, guardrail α, and — for whoever opts in — `method_config_id`.
 
 5 WP (uniform ddof dropped), ordered by value rather than dependency —
-**STAT-1c (guardrails uncorrected), STAT-2 (the false-positive sign instrument)
-and STAT-1b (the declared contrast set) are ✅ shipped**; STAT-1 (Holm + the
-claim), STAT-3 (Miettinen–Nurminen) and STAT-4 (Fieller) remain. Baseline
+**STAT-1c (guardrails uncorrected), STAT-2 (the false-positive sign instrument),
+STAT-1b (the declared contrast set) and STAT-1 (Holm + the claim) are ✅
+shipped**; STAT-3 (Miettinen–Nurminen) and STAT-4 (Fieller) remain. Baseline
 goldens stay untouched; new numbers get **new** goldens.
+
+**STAT-1 as built:** `correction: holm` sits beside `benjamini_hochberg` in the
+one read-time seam (`composed_significance`) — the two differ only in the p-value
+adjuster — and the two-tier levels are byte-identical, because the FWER item was
+a **claim** defect: the scheme's main tier is at α and its whole-experiment bound
+is `2α` at the single-main-metric default — flat in the arm count and in the
+number of secondary metrics — and that is now written down
+(statistics-changes §4.3) instead of an unqualified "FWER ≤ α". Fork B (D7) is
+ratified and made visible: a verdict may legitimately disagree with the interval
+stored beside it, one-directionally, and the pair carries an explicit caveat when
+it does — abkit had been in that position under BH since M3 without saying so.
+Two load-bearing deltas the design did not have: a scheme is classified
+compute-time vs read-time in ONE place with a roster test against the config
+literal (the three scattered `!= "benjamini_hochberg"` tests would each have
+silently degraded a new scheme to the per-row CI rule), and the readout's
+rationale stops saying "CI excludes zero" when the family rule is what decided.
 
 **STAT-1b as built:** `contrasts: all_pairs | vs_control` on the experiment,
 with no project default on purpose — the family a surface reads must not depend

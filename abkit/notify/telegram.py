@@ -99,6 +99,8 @@ class TelegramChannel(BaseChannel):
                 parts.append(f"<b>{esc(ctx['srm_display'])}</b>")
             if ctx["weekly_cycle_display"]:
                 parts.append(esc(ctx["weekly_cycle_display"]))
+            if ctx["family_divergence_display"]:
+                parts.append(esc(ctx["family_divergence_display"]))
         links = []
         if readout.dashboard_url:
             links.append(

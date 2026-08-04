@@ -26,7 +26,7 @@ paths:                           # optional — directory names
 statistics:                      # project-wide defaults; an experiment overrides any
   alpha: 0.05                    # default significance level (0,1) (default 0.05)
   test_type: relative            # relative | absolute (default relative)
-  correction: bonferroni         # none | bonferroni | benjamini_hochberg (default bonferroni)
+  correction: bonferroni         # none | bonferroni | benjamini_hochberg | holm (default bonferroni)
   power: 0.8                     # target power for MDE / plan (0,1) (default 0.8)
   aa_fpr_budget: null            # optional A/A false-positive budget the validate matrix colours against
 
@@ -73,7 +73,7 @@ file is just those two lines. `abk init` writes those plus an explicit
 |---|---|
 | `alpha` | Experiment-level significance, **pre-correction**. The per-comparison post-correction alpha is derived (see two-tier below), never set here. |
 | `test_type` | `relative` (percent lift) or `absolute` (raw difference) — the units the persisted `effect` and any `min_effect` live in. |
-| `correction` | Multiple-testing correction across a comparison family. `bonferroni` = the config-time two-tier scheme; `benjamini_hochberg` = read-time FDR across the experiment's metrics; `none` disables. |
+| `correction` | Multiple-testing correction across a comparison family. `bonferroni` = the compute-time two-tier scheme; `benjamini_hochberg` (FDR) and `holm` (FWER) are **read-time** family rules — the rows keep the raw alpha; `none` disables. |
 | `power` | Target power for MDE reporting and `abk plan` sizing. |
 | `aa_fpr_budget` | Tuning-only band for the `abk validate` matrix: a fraction in `(0,1]`; a cell whose measured FPR exceeds it colours red. A `metric.aa_fpr_budget` overrides it. Never touches the pipeline math. |
 
@@ -261,8 +261,14 @@ inspect them there; do not compute alpha by hand. `abk validate` persists at and
 `abk plan` sizes at this **same effective** alpha (the same resolver), so an A/A
 cell calibrated for a metric matches what the pipeline actually applied.
 
-`benjamini_hochberg` instead controls FDR **read-time** across the family;
-`none` disables correction. See `.claude/rules/ab-analysis-kit/experiments.md`
+`benjamini_hochberg` (FDR) and `holm` (FWER ≤ α under arbitrary dependence)
+instead decide **read-time** over the whole family — one cutoff's metrics ×
+declared arm pairs — so the rows keep the RAW alpha and the decision is
+recomputed at every read. Two consequences: a verdict may legitimately differ
+from the interval stored beside it (one-directional — a band excluding zero
+under a verdict that declines to call it; the pair carries a caveat when it
+happens), and `_ab_results.reject` is the **pre-family** flag, not the composed
+decision, which is never persisted. `none` disables correction. See `.claude/rules/ab-analysis-kit/experiments.md`
 for `is_main_metric` / `is_guardrail` on the comparison, and `validate.md` for how
 the calibration chip reads the effective alpha.
 

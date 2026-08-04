@@ -90,7 +90,11 @@ class TeamsChannel(BaseChannel):
             if ctx["samples_display"]:
                 facts.append({"title": "Samples", "value": ctx["samples_display"]})
             body.append({"type": "FactSet", "facts": facts})
-            for extra in (ctx["srm_display"], ctx["weekly_cycle_display"]):
+            for extra in (
+                ctx["srm_display"],
+                ctx["weekly_cycle_display"],
+                ctx["family_divergence_display"],
+            ):
                 if extra:
                     body.append(_text_block(extra, wrap=True))
 

@@ -24,11 +24,11 @@ import click
 
 from abkit.cli._output import (
     StageLogRenderer,
+    alpha_lines,
     echo_done,
     echo_error,
     echo_noop,
     echo_tree,
-    pairs_phrase,
 )
 from abkit.cli.commands._context import load_project_context
 from abkit.config import select_experiments, validate_level2
@@ -159,14 +159,12 @@ def _validate_one(
 
     # the inspectable effective alphas (R28), echoed like `abk run`
     alphas = effective_alphas(experiment, context.project)
-    echo_tree(
-        f"{experiment.name}: effective alphas",
-        [
-            f"alpha={alphas.alpha} over {alphas.groups_count} variants "
-            f"({pairs_phrase(alphas)})",
-            f"main-metric alpha: {alphas.main:.6g}",
-        ],
+    correction = (
+        experiment.correction
+        if experiment.correction is not None
+        else context.project.statistics.correction
     )
+    echo_tree(f"{experiment.name}: effective alphas", alpha_lines(alphas, correction))
 
     # the manager's whole lifetime is under an OUTER try/finally so a raise anywhere —
     # incl. acquire_lock itself before the inner try — never leaks the warehouse

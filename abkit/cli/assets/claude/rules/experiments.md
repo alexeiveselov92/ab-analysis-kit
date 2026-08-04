@@ -43,7 +43,7 @@ assignment:                      # READ-ONLY exposure source — abkit never ran
   #   maturity_delay: 0          # batch_intervals_per_round_trip: 30 — intervals, not rows)
 
 alpha: 0.05                      # experiment-level significance (unset -> project default)
-correction: bonferroni           # none | bonferroni | benjamini_hochberg (unset -> project default)
+correction: bonferroni           # none | bonferroni | benjamini_hochberg | holm (unset -> project default)
 # contrasts: vs_control          # all_pairs (default) | vs_control — the family this experiment
                                  # CLAIMS: vs_control compares only the g-1 treatments against the
                                  # first declared variant, divides alpha by g-1 instead of C(g,2)

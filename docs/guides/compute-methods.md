@@ -188,8 +188,9 @@ method_config_id = sha256( name + json_dumps_sorted(non-default identity params)
   because it only bounds memory).
 - **`alpha` is not identity, either.** It is the post-correction,
   experiment-level significance level: two-tier Bonferroni splits main vs
-  secondary metrics to different alphas, and read-time Benjamini–Hochberg is
-  applied across the family. Changing `alpha` re-decides `reject` without
+  secondary metrics to different alphas, while the read-time schemes
+  (Benjamini–Hochberg, Holm) leave the raw alpha on the row and decide across the
+  family at read time. Changing `alpha` re-decides `reject` without
   orphaning the series.
 
 ## Sequential (peeking-safe) eligibility

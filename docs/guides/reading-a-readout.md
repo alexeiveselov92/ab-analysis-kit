@@ -32,10 +32,17 @@ metrics do not get their own verdict; they *modify* the main-metric verdict (see
 
 | Verdict | Meaning |
 |---|---|
-| **WIN** | The CI excludes zero in the **desired** direction, and that has held over the stabilization window. |
-| **LOSE** | The CI excludes zero in the **adverse** direction, stably. |
-| **FLAT** | The CI includes zero **and** the test is powered enough to rule out a business-meaningful effect. A confident "no effect", not "we didn't look hard enough". |
+| **WIN** | Significant in the **desired** direction, and that has held over the stabilization window. |
+| **LOSE** | Significant in the **adverse** direction, stably. |
+| **FLAT** | Not significant **and** the test is powered enough to rule out a business-meaningful effect. A confident "no effect", not "we didn't look hard enough". |
 | **INCONCLUSIVE** | Everything else — keep running, or something is blocking a call (SRM, pre-horizon, too little data, not yet stabilized, or underpowered). |
+
+"Significant" means *the CI excludes zero* under `correction: none` or
+`bonferroni`, and *the family rule rejects* under the read-time schemes
+(`benjamini_hochberg`, `holm`), where the two can differ — see
+[p vs the row's effective alpha](#p-vs-the-rows-effective-alpha) below. FLAT is
+never called against a pair whose own interval excludes zero, whatever the
+scheme.
 
 Every verdict comes with a **rationale** (why this call) and often **caveats**
 (things you should know even so). Read them — they name the exact gate that fired.
@@ -78,18 +85,26 @@ significance level — not necessarily the `alpha: 0.05` you wrote in YAML
   doesn't quietly inflate your error rate. The stored CI band already reflects this
   tightened alpha — so for `none` and `bonferroni`, "significant" is simply "the
   band excludes zero".
-- **Benjamini-Hochberg** (`correction: benjamini_hochberg`) is applied **at read
-  time**, per cutoff, across the experiment's comparisons (`readout.py`
+- **The read-time rules** — Benjamini-Hochberg (`correction:
+  benjamini_hochberg`, FDR) and Holm (`correction: holm`, FWER) — are applied
+  **at read time**, per cutoff, across the experiment's comparisons (`readout.py`
   `_build_sig_map`). Compute-time rows deliberately store the *raw* alpha; the
-  readout adjusts the family of p-values and compares against it when it builds the
-  verdict. This means a row's stored `reject` flag is pre-BH — the **verdict's**
-  significance is the BH-aware one, so under BH the two can differ. Trust the
-  verdict's `significant`, and pass your project config to whatever renders the
-  readout so the correction resolves correctly (`abk run --report` does this for
-  you).
+  readout adjusts the family of p-values and compares against it when it builds
+  the verdict. This means a row's stored `reject` flag is **pre-family** — the
+  **verdict's** significance is the family-aware one, so under those schemes the
+  two can differ. Trust the verdict's `significant`, and pass your project config
+  to whatever renders the readout so the correction resolves correctly (`abk run
+  --report` does this for you).
+
+  The divergence is deliberate and one-directional: a family rule is never
+  looser than the row's own alpha, so what you can see is **a band excluding zero
+  under a verdict that declines to call it** — never the reverse. When it
+  happens, the pair carries a caveat saying exactly that, so you never have to
+  guess which of the two numbers is wrong (neither is).
 
 The practical upshot: don't eyeball `pvalue < 0.05`. Compare `pvalue` to the row's
-own `alpha`, and remember BH does the comparison for you at read time.
+own `alpha`, and remember a read-time scheme does the comparison for you at read
+time.
 
 ## The SRM gate — a hard block
 

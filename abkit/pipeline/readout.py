@@ -26,10 +26,19 @@ Decision order per pair (each gate may short-circuit to INCONCLUSIVE):
    ``guardrail_policy: block`` caps WIN at INCONCLUSIVE; ``warn`` keeps WIN
    with a mandatory loud caveat. LOSE is never upgraded or blocked.
 
-Benjamini-Hochberg (``correction: benjamini_hochberg``) is applied HERE at
-read time, per cutoff across the experiment's comparisons — compute-time rows
-deliberately carry the raw alpha (``analyze.effective_alphas``); an M3 readout
-ignoring it would verdict at the wrong alpha.
+The read-time schemes — Benjamini-Hochberg (FDR) and, since m13 STAT-1, Holm
+(FWER) — are applied HERE, per cutoff across the experiment's comparisons;
+compute-time rows deliberately carry the raw alpha
+(``analyze.effective_alphas``), because a step procedure has no per-comparison
+level at all. A readout ignoring them would verdict at the wrong alpha.
+
+**Fork B (m13 D7): under a read-time scheme the verdict and the stored interval
+may legitimately disagree.** The interval is one comparison at its own alpha;
+the decision is the family's. The divergence is one-directional (the family
+rule is never looser than the member's raw alpha), so what an operator can see
+is an interval excluding zero under a verdict that refuses to call it — which
+is why every non-rejecting pair whose stored CI excludes zero carries an
+explicit caveat rather than leaving the contradiction to be discovered.
 
 MDE fallback (D5(b)): rows persisted with ``calculate_mde: false`` carry NULL
 ``mde_1/2``. For t-test and z-test rows the pair MDE is recomputed read-time
@@ -51,7 +60,11 @@ from typing import Any, Literal
 
 from abkit.config.experiment_config import ComparisonConfig, ExperimentConfig
 from abkit.config.project_config import ProjectConfig
-from abkit.stats.correction import SignificanceInput, composed_significance
+from abkit.stats.correction import (
+    READ_TIME_CORRECTIONS,
+    SignificanceInput,
+    composed_significance,
+)
 from abkit.stats.exceptions import UnknownMethodError
 from abkit.stats.power import get_fraction_mde, get_ttest_mde
 from abkit.stats.registry import get_method_class
@@ -128,6 +141,12 @@ class PairVerdict:
     #: it to a representativeness chip (§6.5). ``None`` on INCONCLUSIVE or ≥7d.
     weekly_cycle_pct: float | None
     guardrails: tuple[GuardrailStatus, ...]
+    #: Fork B, as a FLAG rather than a sentence (m13 STAT-1): the family rule
+    #: declined to reject this pair while its own stored interval excludes zero.
+    #: `caveats` carries the explanation for the surfaces that render prose; a
+    #: surface that renders fields (the notification payload) needs the fact
+    #: itself, and sniffing it out of a caveat STRING is how prose becomes API.
+    family_divergence: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -157,7 +176,7 @@ class ExperimentReadout:
         }
 
 
-# ── significance (BH-aware) ──────────────────────────────────────────────────
+# ── significance (read-time-scheme aware) ────────────────────────────────────
 
 
 @dataclass(frozen=True)
@@ -195,35 +214,130 @@ def _sig_input(row: dict) -> SignificanceInput:
     )
 
 
-def _build_sig_map(rows: Sequence[dict], correction: str) -> dict[_RowKey, _Sig]:
+def _build_sig_map(
+    rows: Sequence[dict],
+    correction: str,
+    untiered_metrics: frozenset[str] = frozenset(),
+) -> dict[_RowKey, _Sig]:
     """Per-row significance under the experiment's correction scheme.
 
     Delegates the composed multiple-testing rule to the shared
     ``stats.correction.composed_significance`` (WP7) so the readout and the A/A
     composed FWER/FDR sweep apply ONE rule. Bonferroni/none: the CI already
     reflects the stored effective alpha ⇒ significance is "the CI excludes zero"
-    (per-row, no cross-row interaction). Benjamini-Hochberg: the family is one
-    cadence cutoff's informative rows (metrics × pairs — the compute-time
-    ``n_comparisons`` convention), adjusted then compared against the stored raw
-    alpha.
+    (per-row, no cross-row interaction). A read-time scheme (Benjamini-Hochberg,
+    or Holm since m13 STAT-1): the family is one cadence cutoff's informative rows
+    (metrics × declared pairs — the compute-time ``n_comparisons`` convention),
+    adjusted then compared against the stored raw alpha.
+
+    The branch asks ``READ_TIME_CORRECTIONS``, never a scheme NAME: a per-cutoff
+    family is what every read-time scheme needs, so a name test here would silently
+    hand the next one the per-row CI rule — a scheme that appears to work while
+    controlling nothing.
+
+    ``untiered_metrics`` are the comparisons a ``guardrail_correction: none``
+    declaration took OUT of the corrected family (m13 D8). Under Bonferroni that
+    declaration has two halves — raw alpha, and out of the divisor — and
+    ``analyze.effective_alphas`` resolves both; at read time the divisor IS this
+    family, so the same declaration has to be honoured HERE or D8 would be a
+    silent no-op under every read-time scheme (m13 STAT-1 review). Their own rows
+    are then judged by the per-row CI rule at the raw alpha they carry, which is
+    what D8 asks for and what ``_guardrail_statuses`` already does.
     """
     sig: dict[_RowKey, _Sig] = {}
     informative = [row for row in rows if _informative(row)]
 
-    if correction != "benjamini_hochberg":
+    if correction not in READ_TIME_CORRECTIONS:
         outcomes = composed_significance([_sig_input(row) for row in informative], correction)
         for row, outcome in zip(informative, outcomes, strict=True):
             sig[_row_key(row)] = _Sig(outcome.significant, outcome.sign)
         return sig
 
+    untiered = [row for row in informative if str(row["metric"]) in untiered_metrics]
+    family = [row for row in informative if str(row["metric"]) not in untiered_metrics]
+    if untiered:
+        outcomes = composed_significance([_sig_input(row) for row in untiered], "none")
+        for row, outcome in zip(untiered, outcomes, strict=True):
+            sig[_row_key(row)] = _Sig(outcome.significant, outcome.sign)
+
     by_cutoff: dict[Any, list[dict]] = {}
-    for row in informative:
+    for row in family:
         by_cutoff.setdefault(row["end_ts"], []).append(row)
     for cutoff_rows in by_cutoff.values():
         outcomes = composed_significance([_sig_input(row) for row in cutoff_rows], correction)
         for row, outcome in zip(cutoff_rows, outcomes, strict=True):
             sig[_row_key(row)] = _Sig(outcome.significant, outcome.sign)
     return sig
+
+
+def _mixed_alpha_warning(rows: Sequence[dict], correction: str) -> str | None:
+    """A read-time family whose members carry DIFFERENT stored alphas.
+
+    The composed rule compares each member's adjusted p against that member's own
+    alpha, so such a family is controlled at ``max`` of them, not at the alpha the
+    config declares. It is reachable because alpha is deliberately outside
+    ``method_config_id``: lowering it never re-plans an existing series, and a
+    scoped ``abk run --metric … --full-refresh`` rewrites one metric's rows at the
+    new level while its siblings keep the old one (m13 STAT-1 review). Loud,
+    because the readout has no way to tell which alpha the operator meant.
+    """
+    if correction not in READ_TIME_CORRECTIONS:
+        return None
+    levels = {
+        _num(row.get("alpha")) for row in rows if _informative(row) and _num(row.get("alpha"))
+    }
+    if len(levels) < 2:
+        return None
+    shown = ", ".join(f"{level:.4g}" for level in sorted(levels))  # type: ignore[arg-type]
+    return (
+        f"rows in this series carry MIXED alphas ({shown}) and the correction is "
+        f"read-time ({correction}): the family rule then controls the error rate at the "
+        "LOOSEST of them, not at the experiment's declared alpha — re-homogenise with "
+        "`abk run --full-refresh --from ... --to ...`"
+    )
+
+
+#: How each read-time scheme is NAMED to the operator. A verdict that diverges
+#: from the interval printed beside it has to say which rule made the call. Pinned
+#: EQUAL to ``READ_TIME_CORRECTIONS`` by the roster gate: a scheme without a label
+#: would otherwise reach ``_scheme_label`` and — before the gate — crash a report.
+_SCHEME_LABELS = {"benjamini_hochberg": "Benjamini-Hochberg", "holm": "Holm"}
+
+
+def _scheme_label(correction: str) -> str:
+    """The operator-facing name of a scheme; the scheme's own key if unlabelled."""
+    return _SCHEME_LABELS.get(correction, correction)
+
+
+def _ci_excludes_zero(row: dict) -> bool:
+    """The per-comparison, PRE-family reading of one row's stored interval.
+
+    Identical to the persisted ``reject`` flag's meaning (data-contract §1) and to
+    what every surface draws beside the verdict. Under a read-time scheme it is no
+    longer the decision — which is exactly why the readout must be able to detect
+    the two disagreeing.
+    """
+    left, right = _num(row.get("left_bound")), _num(row.get("right_bound"))
+    return (left is not None and left > 0) or (right is not None and right < 0)
+
+
+def _sig_phrase(correction: str) -> str:
+    """How to describe what made a cutoff significant, in the scheme's own terms.
+
+    Saying "CI excludes zero" under a read-time family rule is not a wording
+    preference: it names a per-comparison fact as the reason for a family-level
+    decision, and the two can disagree in both directions once the family moves.
+    """
+    if correction not in READ_TIME_CORRECTIONS:
+        return "CI excludes zero"
+    return f"the {_scheme_label(correction)}-adjusted p is below alpha"
+
+
+def _quiet_phrase(correction: str) -> str:
+    """The negation of :func:`_sig_phrase`, in a sentence-leading form."""
+    if correction not in READ_TIME_CORRECTIONS:
+        return "CI includes zero"
+    return f"not significant under the {_scheme_label(correction)} family rule"
 
 
 # ── MDE (D5(b)) ──────────────────────────────────────────────────────────────
@@ -390,6 +504,24 @@ def srm_summary(experiment: ExperimentConfig, rows: Sequence[dict]) -> tuple[boo
     return _srm_from_series(experiment, _group_series(filtered))
 
 
+def _untiered_metrics(
+    experiment: ExperimentConfig, project: ProjectConfig | None
+) -> frozenset[str]:
+    """The metrics ``guardrail_correction: none`` took out of the corrected family.
+
+    Resolved exactly as ``analyze.effective_alphas`` resolves it (experiment first,
+    then project) — the compute-time and read-time halves of D8 must read ONE
+    declaration. With no project and no experiment override the default is
+    ``inherit``, i.e. the empty set, so a notebook call degrades conservatively.
+    """
+    guardrail_correction = experiment.guardrail_correction
+    if guardrail_correction is None and project is not None:
+        guardrail_correction = project.statistics.guardrail_correction
+    if guardrail_correction != "none":
+        return frozenset()
+    return frozenset(c.metric for c in experiment.comparisons if c.is_guardrail)
+
+
 def evaluate(
     experiment: ExperimentConfig,
     rows: Sequence[dict],
@@ -404,9 +536,10 @@ def evaluate(
     for notebook convenience). When BOTH are absent the readout falls back to
     stored-alpha CI significance — correct for ``none``/``bonferroni`` (the
     persisted bounds already carry the effective alpha) but WRONG for a
-    project-level ``benjamini_hochberg`` default, so the degradation is
-    surfaced as a loud ``ExperimentReadout.warnings`` entry, never silent
-    (review finding; D5(g): read-time BH is required, not optional).
+    project-level READ-time default (``benjamini_hochberg``/``holm``), so the
+    degradation is surfaced as a loud ``ExperimentReadout.warnings`` entry,
+    never silent (review finding; D5(g): a read-time scheme is required, not
+    optional).
     """
     correction = experiment.correction
     unresolved_correction = correction is None and project is None
@@ -418,10 +551,14 @@ def evaluate(
         warnings.append(
             "correction is unset on the experiment and no project config was "
             "passed — significance falls back to the stored-alpha CI; a "
-            "project-level 'benjamini_hochberg' default would be mis-scored "
-            "(pass project= to resolve the effective correction)"
+            "project-level read-time default ('benjamini_hochberg' / 'holm') "
+            "would be mis-scored (pass project= to resolve the effective "
+            "correction)"
         )
-    sig_map = _build_sig_map(filtered, correction)
+    mixed = _mixed_alpha_warning(filtered, correction)
+    if mixed:
+        warnings.append(mixed)
+    sig_map = _build_sig_map(filtered, correction, _untiered_metrics(experiment, project))
 
     series = _group_series(filtered)
 
@@ -442,6 +579,7 @@ def evaluate(
                     series,
                     sig_map,
                     guardrail_comparisons,
+                    correction,
                 )
             )
 
@@ -522,11 +660,17 @@ def _pair_verdict(
     series: dict[tuple[str, str, str], list[dict]],
     sig_map: dict[_RowKey, _Sig],
     guardrail_comparisons: list[ComparisonConfig],
+    correction: str,
 ) -> PairVerdict:
     metric = comparison.metric
     group = series.get((metric, control, treatment), [])
     rationale: list[str] = []
     caveats: list[str] = []
+    #: has the family rule actually been consulted for this pair? Every earlier
+    #: gate (SRM, pre-horizon, demotion, too few cutoffs) answers INCONCLUSIVE for
+    #: a reason of its own, and attaching a "the family rule does not reject"
+    #: caveat there would blame the correction for someone else's decision.
+    family_consulted = False
 
     def build(verdict: VerdictKind, latest: dict | None) -> PairVerdict:
         guardrails = _guardrail_statuses(control, treatment, series, guardrail_comparisons)
@@ -557,6 +701,45 @@ def _pair_verdict(
             )
         key = _row_key(latest) if latest else None
         latest_sig = sig_map.get(key, _Sig(False, 0)) if key else _Sig(False, 0)
+        # Fork B (m13 D7), made visible: under a step procedure the family decision
+        # and the per-comparison interval printed beside it may legitimately point
+        # opposite ways. It happens in ONE direction — the family rule is never
+        # looser than the member's own raw alpha — so the operator sees an interval
+        # excluding zero under a verdict that refuses to call it. Unexplained, the
+        # first occurrence reads as a bug in whichever number they trust less. The
+        # HTML report and `abk dashboard` render `caveats` verbatim; notifications
+        # carry the `family_divergence` FLAG instead (they have no report to click
+        # through to). `abk explore` shows neither — it renders uncorrected
+        # per-comparison inference by design and never calls `evaluate`.
+        family_divergence = (
+            correction in READ_TIME_CORRECTIONS
+            and family_consulted
+            and latest is not None
+            and not latest_sig.significant
+            and _ci_excludes_zero(latest)
+        )
+        if family_divergence:
+            assert latest is not None  # implied by the condition; narrows the type
+            stored_alpha = _num(latest.get("alpha"))
+            level = f" (α={stored_alpha:.4g})" if stored_alpha is not None else ""
+            caveats.append(
+                f"the stored per-comparison interval{level} excludes zero, but the "
+                f"read-time {_scheme_label(correction)} rule over this cutoff's "
+                "family does not reject — the interval is per-comparison, the "
+                "decision is family-wide, and under a step procedure they may "
+                "legitimately disagree"
+            )
+        if verdict == "FLAT" and correction in READ_TIME_CORRECTIONS:
+            # FLAT's power story is `pair_mde`, solved at the row's RAW alpha. The
+            # family rule decides at a threshold that is never looser and is
+            # `alpha/m` at worst, so "adequately powered" is optimistic by exactly
+            # the ratio of the two critical values — say so rather than let a stop
+            # decision inherit a power claim from a level nothing was judged at.
+            caveats.append(
+                f"the power behind FLAT (MDE vs min_effect) is solved at this row's raw "
+                f"alpha; the {_scheme_label(correction)} family threshold is tighter, so "
+                "the 'adequately powered' claim is optimistic under a family rule"
+            )
         mde_value, _ = pair_mde(latest) if latest else (None, None)
         return PairVerdict(
             metric=metric,
@@ -578,6 +761,7 @@ def _pair_verdict(
             min_effect=comparison.min_effect,
             weekly_cycle_pct=weekly_cycle_pct,
             guardrails=guardrails,
+            family_divergence=family_divergence,
         )
 
     if not group:
@@ -658,7 +842,10 @@ def _pair_verdict(
         )
         return build("INCONCLUSIVE", latest)
 
-    # 5. Significance + sign consistency over the window.
+    # 5. Significance + sign consistency over the window. From here on the
+    # correction is what decides, so a divergence with the stored interval is
+    # attributable to it (the `family_consulted` gate on the caveat above).
+    family_consulted = True
     sigs = [sig_map.get(_row_key(row), _Sig(False, 0)) for row in window]
     desired_sign = 1 if comparison.desired_direction == "increase" else -1
 
@@ -668,7 +855,7 @@ def _pair_verdict(
             sign = signs.pop()
             direction = "desired" if sign == desired_sign else "adverse"
             rationale.append(
-                f"CI excludes zero in the {direction} direction "
+                f"{_sig_phrase(correction)} in the {direction} direction "
                 f"({'up' if sign > 0 else 'down'}) at every informative cutoff in the "
                 f"trailing {stabilization_days:g}-day window ({len(window)} cutoffs)"
             )
@@ -680,18 +867,38 @@ def _pair_verdict(
         return build("INCONCLUSIVE", latest)
 
     if any(s.significant for s in sigs):
+        crossed = (
+            "the CI crossed zero"
+            if correction not in READ_TIME_CORRECTIONS
+            else f"the {_scheme_label(correction)} family rule stopped rejecting"
+        )
         rationale.append(
-            "not stabilized: the CI crossed zero within the trailing "
+            f"not stabilized: {crossed} within the trailing "
             f"{stabilization_days:g}-day window (significant at some cutoffs, "
             "not at others)"
         )
         return build("INCONCLUSIVE", latest)
 
-    # All quiet: FLAT needs the power story (D5(b)).
+    # All quiet — but under a read-time family rule "all quiet" no longer implies
+    # "the interval covers zero" (m13 STAT-1 review). FLAT is an affirmative claim
+    # of no meaningful effect; making it against a pair whose OWN interval excludes
+    # zero would read the family's refusal to reject as evidence of absence, and it
+    # is the one direction the Fork B caveat cannot excuse — the caveat explains a
+    # withheld call, not an opposite one.
+    if correction in READ_TIME_CORRECTIONS and _ci_excludes_zero(latest):
+        rationale.append(
+            f"the {_scheme_label(correction)} family rule does not reject at the latest "
+            "cutoff, but this pair's own interval excludes zero — no stop decision is "
+            "called (FLAT would claim no meaningful effect against that interval)"
+        )
+        return build("INCONCLUSIVE", latest)
+
+    # FLAT needs the power story (D5(b)).
     min_effect = comparison.min_effect
     if min_effect is None:
         rationale.append(
-            "CI includes zero across the window but no min_effect is configured — "
+            f"{_quiet_phrase(correction)} across the window but no min_effect is "
+            "configured — "
             "cannot distinguish flat from underpowered (set comparisons[].min_effect)"
         )
         return build("INCONCLUSIVE", latest)
@@ -707,14 +914,15 @@ def _pair_verdict(
         av_half = (hi - lo) / 2.0 if lo is not None and hi is not None else None
         if av_half is None:
             rationale.append(
-                "CI includes zero across the window but the always-valid interval is "
-                "unavailable — FLAT is not callable"
+                f"{_quiet_phrase(correction)} across the window but the always-valid "
+                "interval is unavailable — FLAT is not callable"
             )
             return build("INCONCLUSIVE", latest)
         if av_half <= min_effect:
             rationale.append(
-                f"CI includes zero across the trailing {stabilization_days:g}-day window "
-                f"and the always-valid interval rules out a meaningful effect "
+                f"{_quiet_phrase(correction)} across the trailing "
+                f"{stabilization_days:g}-day window and the always-valid interval "
+                f"rules out a meaningful effect "
                 f"(half-width {av_half:.4g} <= min_effect {min_effect:g})"
             )
             return build("FLAT", latest)
@@ -727,14 +935,16 @@ def _pair_verdict(
     mde_value, mde_reason = pair_mde(latest)
     if mde_value is None:
         rationale.append(
-            "CI includes zero across the window but the MDE is unavailable: "
+            f"{_quiet_phrase(correction)} across the window but the MDE is "
+            "unavailable: "
             f"{mde_reason} — FLAT is not callable"
         )
         return build("INCONCLUSIVE", latest)
     if mde_value <= min_effect:
         rationale.append(
-            f"CI includes zero across the trailing {stabilization_days:g}-day window "
-            f"and the test is adequately powered (MDE {mde_value:.4g} <= "
+            f"{_quiet_phrase(correction)} across the trailing "
+            f"{stabilization_days:g}-day window and the test is adequately powered "
+            f"(MDE {mde_value:.4g} <= "
             f"min_effect {min_effect:g})"
         )
         return build("FLAT", latest)

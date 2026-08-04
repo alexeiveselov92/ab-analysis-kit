@@ -57,7 +57,7 @@ paths:                           # optional — directory names, relative to the
 statistics:                      # project-wide defaults; an experiment overrides any of these
   alpha: 0.05                    # significance level, a fraction in (0,1) (default 0.05)
   test_type: relative            # relative | absolute (default relative)
-  correction: bonferroni         # none | bonferroni | benjamini_hochberg (default bonferroni)
+  correction: bonferroni         # none | bonferroni | benjamini_hochberg | holm (default bonferroni)
   power: 0.8                     # target power for MDE / `abk plan` (0,1) (default 0.8)
   aa_fpr_budget: null            # optional — fraction in (0,1] the `abk validate` matrix colours against
 
@@ -104,7 +104,7 @@ changing `alpha`, `correction`, or `power` never orphans a results series
 |---|---|
 | `alpha` | Experiment-level significance, **pre-correction**. The per-comparison post-correction alpha is *derived* (see below), never set here. Must be in `(0,1)`. |
 | `test_type` | `relative` (percent lift) or `absolute` (raw difference) — the units the persisted `effect` and any `min_effect` live in. |
-| `correction` | Multiple-testing correction across a comparison family: `bonferroni` (the config-time two-tier scheme), `benjamini_hochberg` (read-time FDR across the experiment's metrics), or `none`. |
+| `correction` | Multiple-testing correction across a comparison family: `bonferroni` (the compute-time two-tier scheme), `benjamini_hochberg` (read-time FDR), `holm` (read-time FWER), or `none`. See [below](#correction). |
 | `power` | Target power for MDE reporting and `abk plan` sizing. Must be in `(0,1)`. |
 | `aa_fpr_budget` | Tuning-only band for the `abk validate` matrix: a fraction in `(0,1]`; a cell whose measured false-positive rate exceeds it colours red. A per-metric `aa_fpr_budget` overrides it (declarative-config §8). Never touches the pipeline math. |
 
@@ -120,6 +120,42 @@ by hand — `abk run`, `abk validate`, `abk plan`, and the HTML report all **ech
 the effective per-comparison alpha and the `C × metrics` divisor, and all four use
 the same resolver so an A/A cell calibrated for a metric matches what the pipeline
 actually applied.
+
+#### `correction`
+
+Two of the four schemes are **compute-time** and two are **read-time**, and the
+difference is visible in the stored rows:
+
+| Value | Kind | Controls | The persisted `alpha` |
+|---|---|---|---|
+| `none` | compute-time | nothing | the raw alpha |
+| `bonferroni` (default) | compute-time | FWER (per tier; see below) | the two-tier effective alpha |
+| `benjamini_hochberg` | read-time | FDR | the **raw** alpha |
+| `holm` | read-time | FWER ≤ α, under arbitrary dependence | the **raw** alpha |
+
+A read-time scheme decides over the **whole family at once** (one cutoff's
+metrics × declared arm pairs), so there is no per-comparison level to stamp on a
+row: whether one comparison is rejected depends on the others' p-values. `abk
+run` therefore stores the raw alpha and the readout — the HTML report, `abk
+dashboard`, notifications — recomputes the decision every time it is read.
+
+**Two consequences worth knowing before you switch:**
+
+1. **The verdict and the interval beside it may legitimately disagree.** The
+   stored CI is one comparison at its own alpha; the verdict is the family's.
+   The disagreement is one-directional — you can see an interval excluding zero
+   under a verdict that declines to call it, never the reverse — and the readout
+   attaches an explicit caveat to that pair when it happens.
+2. **`reject` in `_ab_results` is the per-comparison flag**, not the composed
+   decision (which is not persisted at all). BI charts reading the table
+   directly see the pre-family reading; the report is the authority.
+
+`holm` is uniformly more powerful than dividing alpha by the family size, at the
+same guarantee. It is *not* uniformly more powerful than the default two-tier
+scheme, whose main tier is deliberately loose (it protects the main and the
+secondary tiers at α each — see
+[statistics-changes §4.3](https://github.com/alexeiveselov92/ab-analysis-kit/blob/main/docs/specs/statistics-changes.md)).
+Switching schemes is opt-in and moves no number until you switch.
 
 ### The `limits` block (cadence & small-sample gates)
 

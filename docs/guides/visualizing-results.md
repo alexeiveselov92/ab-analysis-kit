@@ -128,10 +128,12 @@ them if you write your own, because getting one wrong makes the dashboard lie.
    so the effective `alpha` differs per row and is stored per row
    (data-contract-and-reporting §1). Hardcoding `alpha = 0.05` mis-reports every
    secondary metric. Prefer abkit's own `reject` flag (`pvalue < alpha`), which
-   encodes that per-row Bonferroni decision. Read-time Benjamini-Hochberg
-   (opt-in `correction: benjamini_hochberg`) is applied by the readout and HTML
-   report, **not** baked into the stored `alpha`/`reject` — a BI chart reading
-   `_ab_results` directly sees the two-tier Bonferroni decision.
+   encodes that per-row Bonferroni decision. The **read-time** schemes (opt-in
+   `correction: benjamini_hochberg` or `holm`) are applied by the readout and
+   HTML report, **not** baked into the stored `alpha`/`reject` — a BI chart
+   reading `_ab_results` directly sees the per-comparison decision, which under
+   those schemes can differ from the verdict the report shows (that divergence
+   is deliberate — see [Configuration](configuration.md#correction)).
 
 4. **Respect the peeking guard.** A fixed-horizon CI read *before* the planned
    horizon is **not** peeking-valid — treating it as a stop signal is exactly
@@ -164,7 +166,7 @@ the columns you'll reach for most:
 | `name_1`, `name_2` | control arm, treatment arm |
 | `start_ts`, `end_ts`, `elapsed_days`, `is_horizon` | the cumulative window; `end_ts` is the cutoff key, `is_horizon` marks the planned decision cutoff |
 | `effect`, `left_bound`, `right_bound`, `ci_length`, `ci_kind` | the estimate + CI; `ci_kind` is `fixed` or `always_valid` |
-| `pvalue`, `alpha`, `reject` | test result; `alpha` is the effective (post-correction) threshold; `reject` is abkit's composed decision |
+| `pvalue`, `alpha`, `reject` | test result; `alpha` is the effective threshold this row was tested at; `reject` is the **per-comparison** flag (`pvalue < alpha`) — under a read-time correction (`benjamini_hochberg`, `holm`) the composed family decision is the readout's and is not stored |
 | `value_1/2`, `std_1/2`, `cov_value_1/2`, `size_1/2` | per-arm means, std, per-arm covariate (pre-period) means CUPED/post-normed methods adjust against (NULL when no covariate is used), arm sizes |
 | `mde_1/2` | achieved minimum detectable effect per arm (planning read-back) |
 | `srm_flag`, `srm_pvalue`, `decision_blocked`, `insufficient_data` | validity gates |

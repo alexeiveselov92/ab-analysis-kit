@@ -81,6 +81,8 @@ class WebhookChannel(BaseChannel):
                 lines.append(self._bold(ctx["srm_display"]))
             if ctx["weekly_cycle_display"]:
                 lines.append(ctx["weekly_cycle_display"])
+            if ctx["family_divergence_display"]:
+                lines.append(ctx["family_divergence_display"])
         link_parts = []
         if readout.dashboard_url:
             link_parts.append(self._link(readout.dashboard_url, "Open report"))

@@ -88,8 +88,13 @@ class ProjectStatisticsConfig(BaseModel):
 
     alpha: float = Field(default=0.05, description="Default significance level")
     test_type: Literal["relative", "absolute"] = Field(default="relative")
-    correction: Literal["none", "bonferroni", "benjamini_hochberg"] = Field(
-        default="bonferroni", description="Default multiple-testing correction"
+    correction: Literal["none", "bonferroni", "benjamini_hochberg", "holm"] = Field(
+        default="bonferroni",
+        description=(
+            "Default multiple-testing correction. 'bonferroni' is the compute-time "
+            "two-tier scheme; 'benjamini_hochberg' (FDR) and 'holm' (FWER) are "
+            "read-time family rules that leave the compute-time alpha raw"
+        ),
     )
     guardrail_correction: Literal["inherit", "none"] = Field(
         default="inherit",

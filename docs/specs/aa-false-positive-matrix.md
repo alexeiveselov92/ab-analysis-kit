@@ -245,14 +245,17 @@ renders it as a "peeking (AV)" column + a second green curve.)
 
 **The composed family (D9).** Per-cell FPR is necessary but not sufficient: an experiment
 runs a *family* of metrics under a shared assignment, corrected by two-tier Bonferroni
-(compute-time) ∘ Benjamini-Hochberg (read-time). `abk validate` sweeps the empirical
+(compute-time) ∘ a read-time family rule (Benjamini-Hochberg, or Holm since m13 STAT-1). `abk validate` sweeps the empirical
 **family-wise error rate** (any false rejection across the family) and **false-discovery
 rate** (mean false fraction among rejections) over one shared union-cohort placebo
 assignment per iteration, under the *same* composed rule the readout applies. On the
 placebo (complete) null the two coincide by construction (every rejection is false), and
 they sit at the composed rule's **nominal rate** — ≈α *per tier*, so ≈2α whole-family
 under the default two-tier Bonferroni (which protects the main tier and the secondary
-tier each at α, by design). The budget is therefore anchored to that nominal rate (× the
+tier each at α, by design). Under a **read-time** scheme the anchor is instead the
+members' own level (≈α): BH controls the complete-null family error there, and Holm
+controls the FWER at α by construction, so a family measuring ≈Σα under either means the
+METHODS are miscalibrated. The budget is therefore anchored to that nominal rate (× the
 `aa_fpr_budget` headroom), so "over budget" means the **methods** are miscalibrated
 (clustering / variance underestimation — the family analog of the §8 z-test), not that
 the correction is loose. A planted true effect in one metric leaves the null metrics'

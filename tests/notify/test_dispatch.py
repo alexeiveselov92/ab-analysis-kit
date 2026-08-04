@@ -211,6 +211,9 @@ class TestReadoutDataFromVerdict:
         assert (data.alpha, data.elapsed_days) == (verdict.alpha, verdict.elapsed_days)
         assert data.verdict == verdict.verdict
         assert data.weekly_cycle_pct == verdict.weekly_cycle_pct
+        # m13 STAT-1: the Fork B flag travels too — a channel shows a CI beside a
+        # verdict with no report to click through to
+        assert data.family_divergence == verdict.family_divergence
         assert (data.name_1, data.name_2) == (verdict.name_1, verdict.name_2)
         # the SRM gate is a whole-experiment property, taken from the readout
         assert (data.srm_flag, data.srm_pvalue) == (readout.srm_flag, readout.srm_pvalue)

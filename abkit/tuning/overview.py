@@ -76,7 +76,8 @@ literal reading of the plan, each with the hazard it avoids:
   a trap worth renaming out of existence.
 * **``project`` is required, not optional.** With it absent and the experiment
   leaving ``correction`` unset, ``evaluate`` falls back to stored-alpha CI
-  significance and mis-scores a project-level ``benjamini_hochberg`` — it says
+  significance and mis-scores a project-level read-time scheme
+  (``benjamini_hochberg`` / ``holm``) — it says
   so in its own warnings, which a glanceable row has nowhere to put. A
   docstring sentence is not a defense; the signature is.
 * **``locked`` probes the ``run`` lock only**, not the out-of-band ``validate``

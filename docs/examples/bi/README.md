@@ -53,7 +53,7 @@ reference SQL you copy into any of them, plus one importable Grafana dashboard.
 | `name_1`, `name_2` | control arm, treatment arm |
 | `start_ts`, `end_ts`, `elapsed_days`, `is_horizon` | the cumulative window; `is_horizon` marks the planned decision cutoff |
 | `effect`, `left_bound`, `right_bound`, `ci_length`, `ci_kind` | the estimate + CI; `ci_kind` ∈ {`fixed`, `always_valid`} |
-| `pvalue`, `alpha`, `reject` | test result; `alpha` is the effective (post-correction) threshold; `reject` is abkit's composed decision |
+| `pvalue`, `alpha`, `reject` | test result; `alpha` is the effective threshold this row was tested at; `reject` is the **per-comparison** flag (`pvalue < alpha`) — under a read-time correction (`benjamini_hochberg`, `holm`) the composed family decision is the readout's and is not stored |
 | `value_1/2`, `std_1/2`, `cov_value_1/2`, `size_1/2` | per-arm means, std, CUPED-adjusted means, arm sizes |
 | `mde_1/2` | achieved minimum detectable effect per arm |
 | `srm_flag`, `srm_pvalue`, `decision_blocked`, `insufficient_data` | validity gates (see `srm_panel.sql`) |

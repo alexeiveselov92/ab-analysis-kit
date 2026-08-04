@@ -35,12 +35,12 @@ import click
 
 from abkit.cli._output import (
     StageLogRenderer,
+    alpha_lines,
     echo_done,
     echo_error,
     echo_noop,
     echo_srm,
     echo_tree,
-    pairs_phrase,
 )
 from abkit.cli.commands._context import load_project_context
 from abkit.config import select_experiments, validate_level2
@@ -324,18 +324,12 @@ def run_run(
 
     for _, experiment in selected:
         alphas = effective_alphas(experiment, context.project)
-        pairs = alphas.pairs_count
-        children = [
-            f"alpha={alphas.alpha} over {alphas.groups_count} variants "
-            f"({pairs_phrase(alphas)})",
-            f"main-metric alpha: {alphas.main:.6g}",
-        ]
-        if alphas.secondary is not None and alphas.metrics_count:
-            children.append(
-                f"secondary alpha: {alphas.secondary:.6g} "
-                f"(÷{pairs:g}×{alphas.metrics_count} non-main metrics)"
-            )
-        echo_tree(f"{experiment.name}: effective alphas", children)
+        correction = (
+            experiment.correction
+            if experiment.correction is not None
+            else context.project.statistics.correction
+        )
+        echo_tree(f"{experiment.name}: effective alphas", alpha_lines(alphas, correction))
 
     full_refresh_window = None
     if full_refresh:

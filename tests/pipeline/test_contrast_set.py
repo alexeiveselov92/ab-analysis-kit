@@ -380,12 +380,14 @@ class TestTheOperatorCanReconcileTheNumber:
         from abkit.cli.commands.plan import _correction_note
 
         exp = _experiment(contrasts="vs_control")
-        note = _correction_note(exp, effective_alphas(exp, _project()))
+        note = _correction_note(exp, effective_alphas(exp, _project()), "bonferroni")
         assert "vs_control" in note
         assert "0.025" in note
 
         default = _experiment()
-        assert "vs_control" not in _correction_note(default, effective_alphas(default, _project()))
+        assert "vs_control" not in _correction_note(
+            default, effective_alphas(default, _project()), "bonferroni"
+        )
 
     def test_the_plan_note_stays_quiet_when_nothing_was_divided(self) -> None:
         """Under `correction: none` no divisor applied, so naming the family
@@ -395,7 +397,7 @@ class TestTheOperatorCanReconcileTheNumber:
 
         exp = _experiment(contrasts="vs_control")
         alphas = effective_alphas(exp, _project(correction="none"))
-        assert "vs_control" not in _correction_note(exp, alphas)
+        assert "vs_control" not in _correction_note(exp, alphas, "bonferroni")
 
     def test_the_divisor_line_stays_loud_where_the_plan_note_is_quiet(self) -> None:
         """The two surfaces answer different questions, so they differ on
@@ -437,7 +439,9 @@ class TestTheOperatorCanReconcileTheNumber:
                 "expected_split": {"control": 0.5, "treatment": 0.5},
             },
         )
-        assert "vs_control" not in _correction_note(exp, effective_alphas(exp, _project()))
+        assert "vs_control" not in _correction_note(
+            exp, effective_alphas(exp, _project()), "bonferroni"
+        )
 
 
 class TestTheReadoutFiltersTheFamilyItself:

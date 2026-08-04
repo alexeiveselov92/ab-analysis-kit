@@ -232,6 +232,107 @@ D9; dispatch on `ExperimentConfig.is_sub_day()`.
   withheld — cumulative-intervals §6.1(4)). No schema change (reuses the existing
   `srm_flag`/`srm_pvalue` columns).
 
+### 4.3 The FWER claim, and Holm — as built (M13 STAT-1)
+
+Two things ship here, and only one of them is code. **No number moved**: `holm`
+is a new opt-in enum value, the two-tier Bonferroni levels are byte-identical,
+and no `ALGORITHM_VERSION` was bumped (nothing method-level changed).
+
+**(a) What the two-tier scheme actually guarantees** (the blind re-derivation,
+[multiplicity.derivation.json](../research/2026-08-m13-blind-rederive/multiplicity.derivation.json)).
+Under `correction: bonferroni` abkit tests the main comparison of each declared
+arm pair at `α/P` (`P` = the declared pair count) and that pair's `k` secondary
+comparisons at `α/(P·k)`. Stated precisely:
+
+- the **main tier** spends a full α **per main comparison**. With the usual ONE
+  main metric — the shape every guide writes, and the only shape the blind
+  re-derivation considered — that is *"the probability of shipping on a spurious
+  main-metric win is ≤ α"*, the claim the ship decision rests on. The config
+  permits **several** main comparisons (`is_main_metric` is a per-comparison
+  flag; the validator asks only for at least one), and `two_tier_alphas` hands
+  each of them `α/P` regardless of how many there are, so with `M` main
+  comparisons the main tier spends up to `M·α`;
+- the **secondary tier** independently spends a second full α;
+- so the **experiment-wide** family error is bounded by `(M+1)·α` — `2α` at the
+  single-main-metric default, attained by explicit construction (`1 − e^{−2α}` =
+  0.0952 under independence). It is **flat in the arm count and in the number of
+  secondary metrics** — the two the operator scales — and linear only in the
+  number of comparisons the experiment declares as *main*, i.e. in the number of
+  independent ship decisions it is making;
+- `guardrail_correction: none` (STAT-1c/D8) adds one more raw-α test per
+  guardrail comparison: `+G·P·α`. That is the price of the guardrail flip, and
+  it is the intended direction — a guardrail exists to fire.
+
+These are exactly the levels of a **valid** procedure — per arm pair, test the
+main comparison at `α/P`, and only if it rejects test that pair's secondaries at
+`α/(P·k)` (serial gatekeeping, FWER ≤ α under arbitrary dependence). abkit does
+not enforce the gate, and deliberately does not: it would suppress a secondary
+metric exactly when it is most diagnostic ("the main metric is flat but retention
+dropped" is the reading it forbids), and after D8 it would gate only the
+*screening* metrics whose job is to generate hypotheses. So the defect was in
+the **claim**, and this entry is the fix; the arithmetic is unchanged.
+
+**(b) `correction: holm` — read-time, opt-in, FWER ≤ α over the whole family.**
+`stats.correction.holm_adjusted` computes `adj_(i) = max_{j≤i} (m−j+1)·p_(j)`
+over the ascending order (capped at 1); `composed_significance` rejects a member
+whose adjusted p is below its **stored raw alpha**, exactly as BH already does —
+the two schemes share one body and differ only in the adjuster.
+
+- **It is uniformly more powerful than one-step Bonferroni at the same FWER**,
+  under arbitrary dependence, and it is *not* uniformly more powerful than the
+  current two-tier scheme: Holm's first step is `α/m` over the whole family,
+  where the two-tier main tier is `α/P`. The two-tier scheme buys that looseness
+  by spending 2α (see (a)); Holm's α is the honest one.
+- **Read-time, and it cannot be anything else.** No fixed per-comparison level
+  reproduces a step procedure: with α=0.05, m=2, p₂=0.03, Holm rejects H₂ when
+  p₁=0.001 and refuses when p₁=0.9 — same p₂, opposite decisions. The same two
+  lines kill Hochberg, Hommel, BH and BY.
+- **Fork B (D7) is therefore the milestone's ratified semantics: a verdict and
+  the interval stored beside it MAY disagree.** The persisted row carries the raw
+  alpha and its own interval; the decision is the family's. This has been live
+  under BH since M3 without being written down. The divergence is
+  **one-directional** — a family rule is never looser than the member's own raw
+  alpha — so what an operator sees is an interval excluding zero under a verdict
+  that declines to call it, and `readout.evaluate()` attaches an explicit caveat
+  saying so rather than leaving it to be discovered.
+- **Three consequences the review of this WP forced, all of them read-time-only
+  and all conservative:**
+  1. **FLAT is withheld when the pair's own interval excludes zero.** Under
+     `none`/`bonferroni`, "no cutoff was significant" *is* "the interval covers
+     zero", so FLAT's claim of no meaningful effect follows. Under a family rule
+     it does not: a comparison can be refused by the family while its own
+     interval sits entirely off zero, and calling FLAT there would read the
+     family's refusal as evidence of absence. The readout answers INCONCLUSIVE
+     with a rationale saying exactly that.
+  2. **FLAT's power story is disclosed as optimistic.** `pair_mde` solves at the
+     row's raw alpha; the family threshold is never looser and is `α/m` at worst,
+     so "adequately powered" is optimistic by the ratio of the two critical
+     values. A caveat says so rather than letting a stop decision inherit a power
+     claim from a level nothing was judged at.
+  3. **A `guardrail_correction: none` guardrail leaves the read-time family too.**
+     D8's declaration has two halves — raw alpha, and out of the divisor — and at
+     read time the family IS the divisor. Honouring only the first would have made
+     D8 a silent no-op under every read-time scheme while the docs promised it
+     loosens the level for the metrics that remain. A guardrail's own decision was
+     already correction-independent (D5(c)), so nothing about its flagging changed.
+- **A family whose rows carry MIXED alphas is reported loudly.** The composed rule
+  compares each member's adjusted p against that member's own stored alpha, so
+  such a family is controlled at the LOOSEST of them. It is reachable because
+  alpha is outside `method_config_id` (lowering it never re-plans a series, and a
+  scoped `abk run --metric … --full-refresh` rewrites one metric's rows at the new
+  level), and the readout cannot know which alpha was meant — so it warns and
+  names `--full-refresh`.
+- **`_ab_results.reject` is a PRE-family flag** (`pvalue < alpha` for that one
+  comparison), not the composed decision. It is not renamed — it is a published
+  BI contract (data-contract §1, `docs/examples/bi/`) — but every document that
+  called it "abkit's composed decision" now says what it is. Under a read-time
+  scheme the decision exists only at read time, which is why it is not persisted:
+  a stored copy would go stale the moment the family changed.
+- **A/A arbitration**: `abk validate --family-sweep` measures the composed family
+  FWER/FDR and anchors Holm's budget at the members' level (α), like BH — under
+  Holm a family measuring ≈Σα means the *methods* are miscalibrated, which is
+  what the sweep exists to catch.
+
 ## 5. CUPED covariate window — DECIDED: fixed lookback (2026-07)
 
 The legacy CUPED covariate uses a **growing** symmetric pre-window. The choice was

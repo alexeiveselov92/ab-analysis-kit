@@ -77,7 +77,7 @@ assignment:                      # READ-ONLY exposure source (abkit does not ran
   expected_split: {control: 0.5, treatment: 0.5}   # drives the SRM chi-square gate
 
 alpha: 0.05                      # experiment-level significance (see §6 — inspectable)
-correction: bonferroni           # none | bonferroni (config-time, legacy) | benjamini_hochberg (read-time)
+correction: bonferroni           # none | bonferroni (compute-time two-tier) | benjamini_hochberg | holm (read-time, §6.3)
 sequential: {enabled: false, scheme: always_valid}   # opt-in peeking-correct CIs (default off = legacy)
 
 notify:                          # OPTIONAL routing for `abk run --notify` (M12 NTF-1). Routing
@@ -234,8 +234,9 @@ inspectable**:
   for the default family, `(groups−1) × metrics` under `contrasts: vs_control`
   (§6.2), and the line names which family it counted.
 - A golden test reproduces the exact two-tier scheme keyed off `is_main_metric`.
-- Benjamini-Hochberg (`correction: benjamini_hochberg`) is applied **read-time**
-  across an experiment's metrics; its interaction with peeking is documented in
+- The **read-time** schemes — Benjamini-Hochberg (FDR) and Holm (FWER, §6.3) —
+  are applied across an experiment's metrics at every read; their interaction
+  with peeking is documented in
   [aa-false-positive-matrix.md](aa-false-positive-matrix.md).
 
 ### 6.1 `guardrail_correction` — the guardrail tier (m13 STAT-1c, decision D8)
@@ -331,8 +332,8 @@ Notes:
   narrowing direction leaves the surviving rows at the old, *tighter* level
   (conservative, never anti-conservative); `abk run --full-refresh --from … --to …`
   re-homogenises those.
-- **Under `correction: benjamini_hochberg` the narrowing is retroactive.** BH is
-  read-time, so an already-published look is re-scored against the smaller
+- **Under a read-time scheme (`benjamini_hochberg`, `holm`) the narrowing is
+  retroactive**, so an already-published look is re-scored against the smaller
   family the next time it is read. That is self-consistent — every surface reads
   the same declaration — but it is a verdict that can change without a run, the
   same class as the D7 decision/interval divergence.
@@ -366,6 +367,82 @@ Notes:
   sites share therefore needs no project config. It is also a statement about an
   experiment's *design* — which arms it compares — rather than a project-wide
   statistical policy.
+
+### 6.3 `correction: holm` — the read-time FWER rule (m13 STAT-1, decisions D7/D9)
+
+`correction` takes four values, and they split into two kinds:
+
+| Value | Kind | What the persisted row carries |
+|---|---|---|
+| `none` | compute-time | the raw alpha; significance ≡ the CI excludes zero |
+| `bonferroni` (**default**) | compute-time | the two-tier effective alpha (§6) |
+| `benjamini_hochberg` | **read-time** (FDR) | the RAW alpha — the decision is recomputed over the family at every read |
+| `holm` (new in `0.8.0`) | **read-time** (FWER ≤ α) | the RAW alpha — same |
+
+Holm is the step-down rule: sort the family's p-values, reject `H_(i)` while
+every step `j ≤ i` clears `α/(m−j+1)`. It controls the FWER at α under
+**arbitrary dependence** — the same assumption-free guarantee Bonferroni gives —
+and is uniformly more powerful than a one-step Bonferroni at the same α. It is
+*not* uniformly more powerful than abkit's two-tier scheme, whose main tier sits
+at `α/P`: that scheme reaches `2α` overall (statistics-changes §4.3(a)), and
+Holm's α is the honest one.
+
+**The family is one cutoff's informative rows** (metrics × declared pairs) — the
+same membership BH uses, so a cumulative series is never treated as `looks × m`
+tests. Peeking stays the sequential toggle's and `abk validate`'s business.
+
+**Fork B (D7): a verdict and the interval stored beside it may legitimately
+disagree, and the surfaces say so.** No fixed per-comparison level can reproduce
+a step procedure (α=0.05, m=2, p₂=0.03: Holm rejects H₂ when p₁=0.001 and
+refuses when p₁=0.9), so the choice was between forgoing every step procedure
+and letting the decision leave the interval. abkit has been in Fork B under BH
+since M3 without saying so; STAT-1 ratifies and documents it. The divergence is
+one-directional (the family rule is never looser than the member's raw alpha),
+so the visible case is *an interval excluding zero under a verdict that declines
+to call it* — `readout.evaluate()` attaches an explicit caveat to exactly that
+pair (and sets `PairVerdict.family_divergence`). The HTML report and `abk
+dashboard` render the caveat; a notification renders its own sentence off the
+flag, because it shows an interval beside a verdict with no report to click
+through to. `abk explore` renders neither: it never calls `evaluate` and shows
+uncorrected per-comparison inference by design (below).
+
+Three read-time-only consequences, all conservative:
+
+- **FLAT is withheld when the pair's own interval excludes zero.** "Nothing was
+  significant" no longer implies "the interval covers zero", and FLAT is an
+  affirmative claim of no meaningful effect — the readout answers INCONCLUSIVE
+  and says why.
+- **FLAT's power claim is disclosed as optimistic**: the MDE is solved at the
+  row's raw alpha while the family threshold is tighter.
+- **A `guardrail_correction: none` guardrail leaves this family too** (§6.1), so
+  D8's second half — the divisor — applies at read time, where the family *is*
+  the divisor. Its own regression check is unchanged and correction-independent.
+
+Notes:
+
+- **A family whose rows carry mixed alphas is warned about**: the rule then
+  controls the error rate at the loosest of them (`abk run --full-refresh
+  --from … --to …` re-homogenises the series).
+- **`_ab_results.reject` is a pre-family flag**, not the composed decision
+  (data-contract §1). It stays as-is — a published BI contract — and is
+  documented as what it is. The family decision is not persisted at all: under a
+  read-time scheme it exists only at read time, and a stored copy would go stale
+  the moment a metric was added or the contrast set narrowed.
+- `abk plan` sizes at the raw alpha under a read-time scheme and **says so** in
+  its header: the decision threshold depends on the family's p-values, so the
+  level printed there is the interval's, not the decision's.
+- **Opt-in, so no default moves** (D1); no `ALGORITHM_VERSION` bump (nothing
+  method-level changed). Flipping to `holm` from `bonferroni` writes raw-alpha
+  rows into an existing series, exactly as flipping to `benjamini_hochberg`
+  does; `abk run --full-refresh` re-homogenises it, and `_ab_aa_runs` cells keyed
+  on the old effective alpha read `alpha_mismatch` until `abk validate` re-runs.
+- The explore cockpit shows **uncorrected per-comparison** inference under every
+  read-time scheme (it is a knob-turning surface, not a decision surface) and
+  labels the α echo accordingly.
+- A scheme is classified as compute-time or read-time in exactly one place
+  (`stats.correction.READ_TIME_CORRECTIONS` / `COMPUTE_TIME_CORRECTIONS`), and a
+  roster test asserts their union equals the config literal — a fifth scheme
+  cannot be added on one side only.
 
 ## 7. `method_config_id` (must-fix: ONE canonical spec)
 

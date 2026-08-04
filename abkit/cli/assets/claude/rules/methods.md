@@ -103,8 +103,10 @@ params**. It is the key of a result *series* in `_ab_results`.
   cutoff, `n_samples`). Bootstrap results are reproducible, not random per run.
 - **`alpha` is NOT in identity.** It is the post-correction, experiment-level
   significance level (two-tier Bonferroni: main vs secondary metrics land at
-  different alphas; read-time BH across a family). Changing `alpha` re-decides
-  `reject` without orphaning the series.
+  different alphas; the read-time schemes BH / Holm decide over the whole family
+  instead and leave the raw alpha on the row). Changing `alpha` re-decides
+  `reject` without orphaning the series — and under a read-time scheme `reject`
+  is the pre-family flag, not the verdict.
 - **`guardrail_correction: none`** (project or experiment level; default
   `inherit` = the old behaviour) takes guardrails OUT of the corrected family:
   they are tested at the raw alpha, because correcting a metric whose job is to

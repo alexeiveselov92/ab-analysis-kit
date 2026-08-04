@@ -73,7 +73,7 @@ assignment:                      # READ-ONLY exposure source — abkit never ran
   # cohort_copy: {enabled: true} # opt-in persisted _ab_exposures copy (default OFF — see below)
 
 alpha: 0.05                      # experiment-level significance (unset -> project default)
-correction: bonferroni           # none | bonferroni | benjamini_hochberg (unset -> project default)
+correction: bonferroni           # none | bonferroni | benjamini_hochberg | holm (unset -> project default)
 contrasts: all_pairs             # all_pairs (default) | vs_control (only control-vs-treatment)
 sequential: {enabled: false, scheme: always_valid}   # opt-in peeking-safe CIs (default OFF)
 # incremental_reads: true        # override project.compute.incremental_reads for this experiment
@@ -331,11 +331,14 @@ covariate (declarative-config §3). Units absent from the pre-period default to
 - **`alpha`** (optional, in `(0, 1)`) — the experiment-level significance. If
   unset it falls back to the project statistics default (see
   [Project setup](configuration.md#the-statistics-block)).
-- **`correction`** (optional) — `none`, `bonferroni`, or `benjamini_hochberg`.
-  Unset falls back to the project default. Bonferroni is applied as an
+- **`correction`** (optional) — `none`, `bonferroni`, `benjamini_hochberg`, or
+  `holm`. Unset falls back to the project default. Bonferroni is applied as an
   inspectable **two-tier** scheme (main metrics get a tighter alpha than
-  secondary metrics); Benjamini-Hochberg is applied read-time across the
-  experiment's metrics (declarative-config §6).
+  secondary metrics); Benjamini-Hochberg (FDR) and Holm (FWER) are **read-time**
+  rules applied across the experiment's metrics at every read — the rows keep
+  the raw alpha, and under them a verdict may legitimately differ from the
+  interval stored beside it (declarative-config §6; the trade-offs are in
+  [Project setup](configuration.md#correction)).
 
 - **`guardrail_correction`** (optional, project or experiment) — `inherit`
   (default, the pre-`0.8.0` scheme: a guardrail shares the secondary tier) or

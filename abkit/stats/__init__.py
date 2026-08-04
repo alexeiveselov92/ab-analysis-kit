@@ -18,12 +18,15 @@ from abkit.stats.base import (
     method_config_payload,
 )
 from abkit.stats.correction import (
+    COMPUTE_TIME_CORRECTIONS,
+    READ_TIME_CORRECTIONS,
     Significance,
     SignificanceInput,
     TwoTierAlphas,
     adjust_alpha,
     benjamini_hochberg,
     composed_significance,
+    holm_adjusted,
     n_comparisons,
     two_tier_alphas,
 )
@@ -59,6 +62,7 @@ from abkit.stats.srm import (
 __all__ = [
     "AbkitStatsWarning",
     "BaseMethod",
+    "COMPUTE_TIME_CORRECTIONS",
     "DEFAULT_SRM_ALPHA",
     "Fraction",
     "JointMoments",
@@ -66,6 +70,7 @@ __all__ = [
     "PairedSufficientStats",
     "ParamSpec",
     "QuarantinedMethodError",
+    "READ_TIME_CORRECTIONS",
     "RatioSample",
     "RatioSufficientStats",
     "Sample",
@@ -87,6 +92,7 @@ __all__ = [
     "create_method",
     "derive_seed",
     "get_method_class",
+    "holm_adjusted",
     "make_rng",
     "merge_joint_moments",
     "merge_ratio_suffstats",

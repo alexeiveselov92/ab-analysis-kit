@@ -1,11 +1,13 @@
 """The shared composed-correction rule (m5-implementation-plan.md WP7).
 
-Pins ``stats.correction.composed_significance`` — the extracted two-tier
-Bonferroni ∘ read-time Benjamini-Hochberg rule the readout and the A/A composed
-FWER/FDR sweep both use — against a faithful transcription of the pre-extraction
-inline rule, plus explicit hand-computed cases. The behaviour-preservation
-guarantee at the readout level is covered by the unchanged
-``tests/pipeline/test_readout.py::TestBenjaminiHochberg`` verdict tests.
+Pins ``stats.correction.composed_significance`` — the compute-time two-tier
+Bonferroni ∘ the read-time family rules (Benjamini-Hochberg; Holm since m13
+STAT-1) that the readout and the A/A composed FWER/FDR sweep both use — against a
+faithful transcription of the pre-extraction inline rule, plus explicit
+hand-computed cases. The behaviour-preservation guarantee at the readout level is
+covered by the unchanged ``tests/pipeline/test_readout.py::TestBenjaminiHochberg``
+verdict tests; ``TestSchemeRoster`` is what forces a NEW scheme to be classified
+rather than silently taking the per-row CI branch.
 """
 
 from __future__ import annotations
@@ -15,17 +17,37 @@ import itertools
 import pytest
 
 from abkit.stats.correction import (
+    COMPUTE_TIME_CORRECTIONS,
+    READ_TIME_CORRECTIONS,
     Significance,
     SignificanceInput,
     benjamini_hochberg,
     composed_significance,
+    holm_adjusted,
 )
+from abkit.stats.exceptions import MethodParamError
+
+
+def _holm_reference(pvalues):
+    """Holm's adjusted p-values as the textbook sequence — no numpy, no shared
+    helper. An independent transcription is the only thing that can disagree with
+    the implementation."""
+    order = sorted(range(len(pvalues)), key=lambda i: pvalues[i])
+    m = len(pvalues)
+    out = [0.0] * m
+    running = 0.0
+    for rank, idx in enumerate(order):
+        running = max(running, (m - rank) * pvalues[idx])
+        out[idx] = min(running, 1.0)
+    return out
 
 
 def _reference(inputs, correction):
     """A faithful transcription of the pre-WP7 ``readout._build_sig_map`` inner rule,
-    applied to ONE family — the snapshot the extraction must reproduce byte-for-byte."""
-    if correction != "benjamini_hochberg":
+    applied to ONE family — the snapshot the extraction must reproduce byte-for-byte.
+    Extended to Holm (m13 STAT-1) over an independent adjuster, so the matrix below
+    sweeps heterogeneous member alphas and None members under it too."""
+    if correction not in ("benjamini_hochberg", "holm"):
         out = []
         for it in inputs:
             if it.left_bound is not None and it.left_bound > 0:
@@ -39,7 +61,12 @@ def _reference(inputs, correction):
     fam = [i for i, it in enumerate(inputs) if it.pvalue is not None]
     if not fam:
         return results
-    adjusted = benjamini_hochberg([inputs[i].pvalue for i in fam])
+    family_p = [inputs[i].pvalue for i in fam]
+    adjusted = (
+        benjamini_hochberg(family_p)
+        if correction == "benjamini_hochberg"
+        else _holm_reference(family_p)
+    )
     for pos, adj in zip(fam, adjusted, strict=True):
         it = inputs[pos]
         significant = it.alpha is not None and float(adj) < it.alpha
@@ -121,7 +148,7 @@ def test_bh_significant_but_zero_effect_cannot_orient_so_not_significant():
 # ── equivalence to the pre-extraction inline rule over a matrix ──────────────────
 
 
-@pytest.mark.parametrize("correction", ["none", "bonferroni", "benjamini_hochberg"])
+@pytest.mark.parametrize("correction", ["none", "bonferroni", "benjamini_hochberg", "holm"])
 def test_matches_reference_over_a_matrix(correction):
     bounds = [(0.1, 0.5), (-0.5, -0.1), (-0.2, 0.4), (None, None)]
     pvals = [0.001, 0.04, 0.6, None]
@@ -149,3 +176,228 @@ def test_matches_reference_over_a_matrix(correction):
 def test_empty_family_returns_empty():
     assert composed_significance([], "benjamini_hochberg") == []
     assert composed_significance([], "none") == []
+
+
+# ── Holm (m13 STAT-1): step-down FWER, read-time ────────────────────────────────
+
+
+class TestHolmAdjuster:
+    """The arithmetic, against hand-computed values and Holm's own definition."""
+
+    def test_hand_computed_step_down(self):
+        # ascending 0.01, 0.03, 0.04 × multipliers 3, 2, 1 → 0.03, 0.06, 0.04,
+        # then the running maximum lifts the last to 0.06
+        adj = holm_adjusted([0.01, 0.04, 0.03])
+        assert adj == pytest.approx([0.03, 0.06, 0.06])
+
+    def test_the_running_maximum_is_not_optional(self):
+        """Without it a LARGER raw p could end up rejected while a smaller one is not.
+
+        Bare per-rank multipliers give [0.06, 0.031]: at alpha=0.05 the second member
+        (raw p=0.031) would be rejected and the first (raw p=0.03) would not — Holm's
+        step-down is a sequence, not m independent thresholds.
+        """
+        adj = holm_adjusted([0.03, 0.031])
+        assert adj == pytest.approx([0.06, 0.06])
+        assert all(a >= 0.05 for a in adj)
+
+    def test_equal_pvalues_get_equal_adjustments(self):
+        adj = holm_adjusted([0.02, 0.02])
+        assert adj[0] == adj[1] == pytest.approx(0.04)
+
+    def test_capped_at_one(self):
+        adj = holm_adjusted([0.4, 0.9, 0.5])
+        assert max(adj) <= 1.0  # 0.4*3 = 1.2 before the cap
+
+    def test_adjusted_values_come_back_in_INPUT_order(self):
+        """The scatter through ``argsort`` is the whole mapping, and every other
+        fixture here is sorted, tied or saturated at the cap — so dropping it
+        (returning the ascending-order array) would be invisible. Descending input
+        with two distinct adjusted values."""
+        adj = holm_adjusted([0.9, 0.03])
+        assert adj == pytest.approx([0.9, 0.06])
+        # the mis-ordered array would flip WHICH member is judged significant
+        assert [a < 0.5 for a in adj] == [False, True]
+
+    def test_single_member_is_unadjusted(self):
+        assert holm_adjusted([0.031]) == pytest.approx([0.031])
+
+    @pytest.mark.parametrize("bad", [[], [0.1, 1.5], [0.1, float("nan")], [[0.1, 0.2]]])
+    def test_rejects_malformed_input(self, bad):
+        with pytest.raises(MethodParamError):
+            holm_adjusted(bad)
+
+    def test_uniformly_at_least_as_powerful_as_one_step_bonferroni(self):
+        """The claim m13 STAT-1 makes: Holm rejects everything Bonferroni does, and more."""
+        alpha, pvals = 0.05, [0.001, 0.012, 0.02, 0.4]
+        m = len(pvals)
+        bonf = [p < alpha / m for p in pvals]
+        holm = [a < alpha for a in holm_adjusted(pvals)]
+        assert all(h or not b for b, h in zip(bonf, holm, strict=True))
+        assert sum(holm) > sum(bonf)  # 0.012 and 0.02 clear Holm but not alpha/4
+
+
+class TestHolmComposedRule:
+    def test_holm_is_not_the_ci_rule(self):
+        """The regression this WP exists to prevent: a name test would silently hand
+        Holm the per-row CI rule, which controls nothing across the family."""
+        inputs = [
+            SignificanceInput(
+                left_bound=0.01, right_bound=0.4, pvalue=0.03, effect=0.2, alpha=0.05
+            ),
+            SignificanceInput(
+                left_bound=0.01, right_bound=0.4, pvalue=0.04, effect=0.2, alpha=0.05
+            ),
+        ]
+        assert composed_significance(inputs, "none") == [Significance(True, 1)] * 2
+        # Holm: sorted 0.03·2 = 0.06 > 0.05 ⇒ nothing is rejected
+        assert composed_significance(inputs, "holm") == [Significance(False, 0)] * 2
+
+    def test_holm_rejects_the_family_when_the_smallest_p_clears_alpha_over_m(self):
+        inputs = [
+            SignificanceInput(
+                left_bound=0.2, right_bound=0.5, pvalue=0.001, effect=0.3, alpha=0.05
+            ),
+            SignificanceInput(
+                left_bound=-0.5, right_bound=-0.01, pvalue=0.03, effect=-0.2, alpha=0.05
+            ),
+        ]
+        # 0.001*2 = 0.002 < 0.05 and 0.03*1 = 0.03 < 0.05 ⇒ both rejected, signs from effect
+        assert composed_significance(inputs, "holm") == [
+            Significance(True, 1),
+            Significance(True, -1),
+        ]
+
+    def test_the_same_member_is_decided_by_its_neighbours(self):
+        """The two-line proof that no fixed per-comparison level reproduces Holm
+        (m13 STAT-1, the Fork): same p2, opposite decisions."""
+        p2 = SignificanceInput(
+            left_bound=0.01, right_bound=0.4, pvalue=0.03, effect=0.2, alpha=0.05
+        )
+        strong = SignificanceInput(
+            left_bound=0.2, right_bound=0.5, pvalue=0.001, effect=0.3, alpha=0.05
+        )
+        weak = SignificanceInput(
+            left_bound=-0.4, right_bound=0.5, pvalue=0.9, effect=0.05, alpha=0.05
+        )
+        assert composed_significance([strong, p2], "holm")[1].significant is True
+        assert composed_significance([weak, p2], "holm")[1].significant is False
+
+    def test_none_pvalue_member_is_excluded_from_m(self):
+        with_none = [
+            SignificanceInput(
+                left_bound=0.01, right_bound=0.4, pvalue=0.03, effect=0.2, alpha=0.05
+            ),
+            SignificanceInput(
+                left_bound=None, right_bound=None, pvalue=None, effect=None, alpha=0.05
+            ),
+        ]
+        assert composed_significance(with_none, "holm")[0].significant is True  # m=1, not 2
+        assert composed_significance(with_none, "holm")[1] == Significance(False, 0)
+
+    def test_significant_but_zero_effect_cannot_orient(self):
+        inputs = [SignificanceInput(0.0, 0.0, pvalue=0.001, effect=0.0, alpha=0.05)]
+        assert composed_significance(inputs, "holm") == [Significance(False, 0)]
+
+    @pytest.mark.parametrize("scheme", sorted(READ_TIME_CORRECTIONS))
+    def test_a_family_rule_never_rejects_more_than_the_stored_interval(self, scheme):
+        """Fork B's divergence is ONE-directional — the property the readout's caveat,
+        the FLAT withholding and the docs all rest on: a rejected member has
+        p < its own alpha, so its stored raw-alpha interval excludes zero too.
+
+        Bounds are DERIVED from the p-values (the per-row duality "CI excludes zero
+        iff p < alpha"), so a rule that rejected something looser than the raw alpha
+        — ``adj = p / m`` instead of ``p * (m - j)``, say — breaks the implication
+        instead of quietly agreeing with a hand-written fixture."""
+        alpha = 0.05
+        for pvalues in ([0.001, 0.02, 0.06], [0.06, 0.07, 0.9], [0.001, 0.001], [0.049, 0.051]):
+            inputs = [
+                SignificanceInput(
+                    left_bound=0.01 if p < alpha else -0.4,
+                    right_bound=0.4 if p < alpha else 0.5,
+                    pvalue=p,
+                    effect=0.2,
+                    alpha=alpha,
+                )
+                for p in pvalues
+            ]
+            family = composed_significance(inputs, scheme)
+            ci_rule = composed_significance(inputs, "none")
+            assert all(
+                not f.significant or c.significant for f, c in zip(family, ci_rule, strict=True)
+            ), pvalues
+
+    def test_holm_can_reject_strictly_less_than_the_stored_interval(self):
+        """The other half: the implication is not an equivalence, which is what
+        makes the divergence caveat necessary at all."""
+        inputs = [
+            SignificanceInput(
+                left_bound=0.01, right_bound=0.4, pvalue=0.02, effect=0.2, alpha=0.05
+            ),
+            SignificanceInput(
+                left_bound=0.01, right_bound=0.4, pvalue=0.04, effect=0.2, alpha=0.05
+            ),
+            SignificanceInput(
+                left_bound=-0.4, right_bound=0.5, pvalue=0.5, effect=0.05, alpha=0.05
+            ),
+        ]
+        holm = composed_significance(inputs, "holm")
+        ci = composed_significance(inputs, "none")
+        assert all(not h.significant or c.significant for h, c in zip(holm, ci, strict=True))
+        assert [c.significant for c in ci] == [True, True, False]
+        assert [h.significant for h in holm] == [False, False, False]  # 0.02*3 = 0.06 > 0.05
+
+
+class TestSchemeRoster:
+    """A scheme must be classified as compute-time or read-time — the m12 NTF-1
+    roster-gate pattern. Adding a config value without a classification here (or an
+    adjuster) silently degrades it to the per-row CI rule."""
+
+    def test_the_config_literal_equals_the_two_classification_sets(self):
+        from typing import get_args
+
+        from abkit.config.experiment_config import CorrectionKind
+
+        declared = set(get_args(CorrectionKind))
+        assert declared == READ_TIME_CORRECTIONS | COMPUTE_TIME_CORRECTIONS
+        assert not (READ_TIME_CORRECTIONS & COMPUTE_TIME_CORRECTIONS)
+
+    def test_the_project_default_literal_matches_the_experiment_one(self):
+        from typing import get_args
+
+        from abkit.config.experiment_config import CorrectionKind
+        from abkit.config.project_config import ProjectStatisticsConfig
+
+        project_literal = ProjectStatisticsConfig.model_fields["correction"].annotation
+        assert set(get_args(project_literal)) == set(get_args(CorrectionKind))
+
+    def test_every_read_time_scheme_has_an_adjuster_that_is_actually_used(self):
+        from abkit.stats.correction import _FAMILY_ADJUSTERS
+
+        assert set(_FAMILY_ADJUSTERS) == READ_TIME_CORRECTIONS
+        # and each one is REACHED — a family whose per-row CI rule and family rule
+        # disagree, so a scheme that quietly fell through to the CI branch fails here
+        inputs = [
+            SignificanceInput(
+                left_bound=0.01, right_bound=0.4, pvalue=0.04, effect=0.2, alpha=0.05
+            ),
+            SignificanceInput(
+                left_bound=-0.4, right_bound=0.5, pvalue=0.9, effect=0.05, alpha=0.05
+            ),
+        ]
+        ci_rule = composed_significance(inputs, "none")
+        assert [s.significant for s in ci_rule] == [True, False]
+        for scheme in READ_TIME_CORRECTIONS:
+            assert composed_significance(inputs, scheme) != ci_rule
+
+    def test_every_read_time_scheme_has_an_operator_facing_label(self):
+        """The one per-scheme map outside stats-core, and the hole the roster gate
+        itself did not cover: a scheme in READ_TIME_CORRECTIONS with no label reaches
+        ``_scheme_label`` on the first diverging readout."""
+        from abkit.pipeline.readout import _SCHEME_LABELS
+
+        assert set(_SCHEME_LABELS) == READ_TIME_CORRECTIONS
+
+    def test_an_unknown_scheme_takes_the_compute_time_branch(self):
+        inputs = [SignificanceInput(0.1, 0.5, pvalue=0.9, effect=0.3, alpha=0.05)]
+        assert composed_significance(inputs, "not-a-scheme") == [Significance(True, 1)]
