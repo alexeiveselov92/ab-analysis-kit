@@ -38,7 +38,7 @@ from synthetic_ab import (
 
 from abkit.config import ExperimentConfig
 from abkit.database.internal_tables import InternalTablesManager
-from abkit.stats.exceptions import AsymmetricCIError
+from abkit.stats.exceptions import MethodParamError
 from abkit.stats.registry import get_method_class
 from abkit.tuning import KnobState
 
@@ -62,12 +62,15 @@ def tables(warehouse):
 
 class TestSequentialRecompute:
     def test_asymmetric_ci_refuses_instead_of_widening(self, warehouse, tables, monkeypatch):
-        """m13 STAT-3a: the cockpit's live widening runs the same CI-inversion.
+        """m13 STAT-3a's refusal, m13 STAT-3's message.
 
-        The engine hands the guard the live knob state's BOUND probe, so a method whose
-        interval a param (or a class flag) made asymmetric refuses here too — rather
-        than drawing a symmetric sequence around the point estimate on a chart labelled
-        always-valid.
+        The cockpit's live widening runs the same CI-inversion, so a method whose
+        interval a param (or a class flag) made asymmetric must not draw a symmetric
+        sequence around the point estimate on a chart labelled always-valid. What
+        STAT-3 changed is WHERE and HOW it is said: the knob state is refused up front
+        with the same two-knob sentence config-lint uses, instead of an
+        ``AsymmetricCIError`` escaping the sequential tier and naming an internal
+        helper the operator has never heard of.
         """
         exp = make_experiment("seq_arpu", "arpu", TTEST, sequential=SEQ)
         run_pipeline(warehouse, tables, exp)
@@ -76,7 +79,32 @@ class TestSequentialRecompute:
         # the REGISTRY's class, not the imported symbol (the registry test reloads
         # the ttest module, leaving every imported reference stale)
         monkeypatch.setattr(get_method_class("t-test"), "asymmetric_ci", True)
-        with pytest.raises(AsymmetricCIError):
+        with pytest.raises(MethodParamError) as exc:
+            engine.recompute("arpu", engine.default_knobs("arpu"))
+        message = str(exc.value)
+        assert "asymmetric" in message and "sequential.enabled" in message
+        assert "se_from_ci_length" not in message
+
+    def test_the_knob_refusal_does_not_wait_for_the_rows_to_be_always_valid(
+        self, warehouse, tables, monkeypatch
+    ):
+        """m13 STAT-3: deciding the refusal off ``sequential.enabled`` rather than off
+        the baked rows is what makes it total.
+
+        A toggle flipped but not yet re-run leaves every row ``ci_kind='fixed'``, so
+        the always-valid tier is not entered at all — the preview would succeed, and
+        the explore Apply seam (level 1 only) would then write the very pair
+        ``abk run`` refuses. Judging the CONFIG closes that window.
+        """
+        exp = make_experiment("seq_fixed_rows", "arpu", TTEST)  # ran WITHOUT sequential
+        run_pipeline(warehouse, tables, exp)
+        baked = persisted(tables, exp, "arpu")
+        assert baked and all(r["ci_kind"] == "fixed" for r in baked.values())
+
+        toggled = make_experiment("seq_fixed_rows", "arpu", TTEST, sequential=SEQ)
+        engine = build_engine(warehouse, tables, toggled)
+        monkeypatch.setattr(get_method_class("t-test"), "asymmetric_ci", True)
+        with pytest.raises(MethodParamError):
             engine.recompute("arpu", engine.default_knobs("arpu"))
 
     def test_default_recompute_reproduces_baked_always_valid(self, warehouse, tables):

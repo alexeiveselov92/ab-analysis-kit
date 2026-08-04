@@ -111,6 +111,7 @@ class TestKnownAnswers:
         ``θ = 1`` for the same reason."""
         count_1, nobs_1, count_2, nobs_2 = _tables()
         pooled = (count_1 + count_2) / (nobs_1 + nobs_2)
+        assert np.isfinite(pooled).all()
         zeros = np.zeros_like(pooled)
         ones = np.ones_like(pooled)
         for got in (
@@ -128,6 +129,7 @@ class TestKnownAnswers:
         count_1, nobs_1, count_2, nobs_2 = _tables()
         expected = _pooled_z(count_1, nobs_1, count_2, nobs_2)
         usable = np.isfinite(expected)
+        assert usable.sum() > count_1.size // 2, "the fixture must mostly produce a real z"
         for got in (
             score_z_difference(count_1, nobs_1, count_2, nobs_2, np.zeros_like(expected)),
             score_z_ratio(count_1, nobs_1, count_2, nobs_2, np.ones_like(expected)),
@@ -187,6 +189,20 @@ class TestTheOpenQuestionsTheDerivationLeft:
         conversions cannot exclude a −100% lift, so ``θ_L = 0``; a table whose point
         estimate already SITS on the feasible edge has that edge as an endpoint,
         where the statistic is 0/0 and no bracketing scan can find a crossing."""
+        # (a) A REAL bracket with no crossing. An empty control arm bounds no ratio
+        # from above: Z stays above −critical for every θ, so the search runs the
+        # full width of (0, ∞) and still finds nothing. This is the case that
+        # distinguishes the fallback from an initialisation — the two fixtures below
+        # are degenerate brackets and would pass against a constant Z.
+        lower, upper = score_interval_ratio(
+            np.array([0.0]), np.array([500.0]), np.array([7.0]), np.array([500.0]), 1.96
+        )
+        assert lower[0] > 0.0, "the LOWER endpoint is a genuine crossing"
+        assert math.isinf(upper[0])
+
+        # (b) Degenerate brackets: the point estimate already sits on the feasible
+        # edge, so the endpoint IS the edge and no search happens. Asserted for what
+        # they are — that the engine reports the edge rather than a NaN.
         few = np.array([12.0])
         lower, upper = score_interval_ratio(few, np.array([40.0]), np.array([0.0]), few, 1.96)
         assert lower[0] == 0.0
@@ -281,6 +297,7 @@ class TestCoherence:
         pooled = _pooled_z(count_1, nobs_1, count_2, nobs_2)
         pvalue = 2.0 * np.minimum(special.ndtr(pooled), special.ndtr(-pooled))
         usable = np.isfinite(pvalue)
+        assert usable.sum() > count_1.size // 2, "the fixture must mostly produce a real p"
         rejects = pvalue < alpha
 
         left, right = score_interval_difference(count_1, nobs_1, count_2, nobs_2, critical)

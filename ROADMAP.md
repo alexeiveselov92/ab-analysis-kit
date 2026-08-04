@@ -869,10 +869,26 @@ come from a fixed-iteration bisection (fixed work, not a tolerance loop, so the
 scalar and batch entries are the same code and bit-identical by construction).
 The refusal for `sequential.enabled` moved from a mid-run `AsymmetricCIError` to
 a **level-2 config error** naming both knobs — the failure was reachable only
-after the cohort had been loaded. And `abk plan` had to learn the interval shape
-too: it sizes on the normal power formula while the analysis inverts the score
-statistic, a gap now MEASURED at `C·z²/n_arm` (C = 4.01 at a 5% baseline) rather
-than assumed ignorable.
+after the cohort had been loaded — and the same sentence now refuses the pair at
+the explore knob and at its Apply seam. And `abk plan` had to learn the interval
+shape too: it sizes on the normal power formula while the analysis inverts the
+score statistic, a gap now MEASURED at `C·z²/n_arm` (C = 4.01 at a 5% baseline)
+rather than assumed ignorable.
+
+**STAT-3 also amends STAT-3a.** That WP made `abk validate` REFUSE an asymmetric
+method's cell, which was the right answer while no method could declare the flag
+and the wrong one the moment a method could: the τ² anchor runs unconditionally
+at the top of both scoring engines, so the refusal failed *every* cell — the
+change-control instrument unable to measure the estimator it exists to certify,
+and explore's calibration chip stuck at `uncalibrated` with no command able to
+clear it. Such a cell now degrades exactly as a bootstrap one does: fixed columns
+scored, no always-valid column, and a note saying which of the two reasons
+applied. The generalisable lesson is the one the milestone keeps re-teaching at
+each level: **a capability flag's granularity has to match its switch, and the
+enumeration of who reads that flag has to be checked rather than recalled** — the
+design's "five class-level readers" was right about the five and silently wrong
+about the three instance-level readers inside `abk validate`, which were the ones
+that mattered.
 
 **The sequential question is answered (D14):** the confidence sequence *does*
 extend to score intervals — the always-valid rule is a standardised test with a

@@ -71,14 +71,19 @@ variants):
 
 `interval: score` swaps the z-test's interval for the inversion of the test it
 already runs (Miettinen–Nurminen). **P-values do not change** — the statistic at
-the null is the same pooled z — but the interval becomes valid at every effect
-size instead of only at zero, asymmetric (render it `[low, high]`, never `±`),
-and inside a possible range. It matters most where the arms are IMBALANCED: at a
+the null is the same pooled z — with ONE exception, which is a fix: a table with no
+conversions in either arm has no pooled statistic at all, and now reports `p = 1`
+beside a real interval instead of a blank row (visible under `test_type: absolute`;
+under `relative` a lift over a zero baseline stays undefined). Otherwise the interval
+becomes valid at every effect size instead of only at zero, asymmetric (render it
+`[low, high]`, never `±`), and inside a possible range. It matters most where the arms are IMBALANCED: at a
 900/100 holdout the pooled SE is 24% too small, i.e. the legacy interval is
 anti-conservative, and worse as the correction shrinks alpha. Two constraints: it
 is identity-bearing (switching starts a new series), and it CANNOT be combined
-with `sequential: {enabled: true}` — config validation refuses the pair, because
-the always-valid transform needs a symmetric interval. On a relative metric with
+with `sequential: {enabled: true}` — config validation refuses the pair (as do the
+explore knob and its Apply seam), because the always-valid transform needs a
+symmetric interval. `abk validate` still scores such a metric: it simply has no
+always-valid column, exactly like a bootstrap method. On a relative metric with
 few CONVERSIONS (not few users — the precision law reads counts) the row carries a
 "weakly identified" warning; the interval is still reported.
 

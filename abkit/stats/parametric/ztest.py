@@ -20,8 +20,11 @@ an exception.
 **``interval: score`` (m13 STAT-3, opt-in)** replaces the interval — and ONLY
 the interval — with the inversion of the score test the p-value already is
 (:mod:`abkit.stats.proportion_score`). The p-value branch below is untouched
-byte-for-byte, so opting in moves no reported p; what moves is the pair of
-bounds, which stop being ``effect ± z·σ̂₀`` (a variance frozen at the null,
+byte-for-byte, so opting in moves no reported p — with ONE exception it also
+fixes: a table whose pooled variance is zero (both arms at the same degenerate
+proportion) has no pooled statistic at all, and the score construction answers
+``p = 1`` beside a real interval where the legacy branch returned NaN. What else
+moves is the pair of bounds, which stop being ``effect ± z·σ̂₀`` (a variance frozen at the null,
 valid nowhere else) and become the set of contrasts the same statistic does not
 reject. See ``docs/specs/statistics-changes.md`` §4.4 for the deviation record.
 """
@@ -91,18 +94,23 @@ def _identification_warning(count_1: float, count_2: float, critical: float) -> 
     Under ``interval: score`` only — the default path is byte-frozen, and a new
     warning is still a new persisted cell. The threshold is on the interval's own
     half-width so it cannot be read as a rule about traffic.
+
+    An empty TREATMENT cell is the widest case the score construction still bounds:
+    the lift interval runs down to −100% and up to a finite value, so the message
+    must not call it unbounded. (An empty CONTROL cell never arrives — the relative
+    point estimate is undefined there and H5 refuses the whole row first.)
     """
-    if count_1 <= 0.0 or count_2 <= 0.0:
-        precision = "an unbounded"
+    if count_2 <= 0.0:
+        precision = "a [−100%, +…] "
     else:
         half_width = critical * math.sqrt(1.0 / count_1 + 1.0 / count_2)
         if half_width <= RELATIVE_IDENTIFICATION_HALF_WIDTH:
             return []
-        precision = f"a ±{half_width:.0%}"
+        precision = f"a ±{half_width:.0%} "
     needed = 2.0 * (critical / RELATIVE_IDENTIFICATION_HALF_WIDTH) ** 2
     return [
         f"relative effect weakly identified: {count_1:.0f} and {count_2:.0f} conversions "
-        f"give {precision} interval at this alpha; ±"
+        f"give {precision}interval at this alpha; ±"
         f"{RELATIVE_IDENTIFICATION_HALF_WIDTH:.0%} needs ~{needed:.0f} CONVERSIONS per arm "
         "(the width law reads counts, not exposed units)"
     ]

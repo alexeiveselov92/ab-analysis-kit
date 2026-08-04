@@ -27,7 +27,7 @@ number change).
   (null) variance — and built its interval from the same frozen number. That kept
   "the CI excludes zero" and "p < α" in exact agreement, which the readout relies
   on, at the price of an interval that is a valid confidence set at **zero only**.
-  An SE mis-scaled by `r` inflates the achieved error rate by `exp(z²(1−r²)/2)`:
+  An SE mis-scaled by `r` inflates the achieved error rate by `(1/r)·exp(z²(1−r²)/2)`:
   at a 900/100 holdout the pooled SE is **24% too small** — pooling is not the
   conservative choice it is widely believed to be — which is 2.7× at α = 0.05 and
   **30× at α = 1e-4**. The damage grows as the multiple-testing correction shrinks
@@ -40,9 +40,15 @@ number change).
   therefore preserved **by construction**, on both scales at once, while the
   interval becomes valid everywhere, asymmetric in the direction the sampling
   distribution actually is, and confined to `[−1, 1]`. Boundary tables stop being
-  special cases: `x₁ = x₂ = 0` — the first cutoff of any sparse metric — now
-  reports `p = 1` beside the Wilson zero bound `±z²/(n+z²)`, where the pooled path
-  returned a NaN p and a zero-width interval asserting infinite precision.
+  special cases: with `test_type: absolute`, `x₁ = x₂ = 0` — the first cutoff of any
+  sparse metric — now reports `p = 1` beside the Wilson zero bound `±z²/(n+z²)`,
+  where the pooled path returned a NaN p and NaN bounds, a row no reader can act on.
+  **That is the one table where a p-value moves** (from absent to 1), and the one
+  place this release's "no p-value moves" needs its exception read aloud; a lift over
+  a zero baseline stays undefined under `relative` whatever the interval method. Such
+  a row is also newly *informative*, so under a read-time correction (BH / Holm) it
+  joins the family and tightens the threshold its siblings are judged against —
+  conservative, but a cross-metric consequence of a per-metric knob.
 
   **Consequences, each recorded rather than assumed.** The relative interval is
   the ratio-scale score construction, not the difference interval divided by `p̂₁`
@@ -52,15 +58,18 @@ number change).
   `z·√(1/x₁ + 1/x₂)` reads counts and not exposed units. `abk plan` prints a
   caveat: it sizes on the normal power formula while the analysis inverts the
   score statistic, and the two half-widths differ by `C·z²/n_arm` (measured:
-  C = 4.01 at a 5% baseline, 0.060 at 30% — 0.15% at 10k units per arm). In
-  `abk explore`, dragging alpha over a score series yields a **gap** rather than an
-  "approx" point: Tier α re-derives a symmetric normal CI, which for this
-  interval approximates nothing.
+  C = 4.01 at a 5% baseline, 0.0595 at 30% — 0.15% at 10k units per arm). In
+  `abk explore`, the `±CI` chip renders `[low, high]` for such an interval instead of
+  a half-width, and a cutoff that cannot be reconstructed exactly at a dragged alpha
+  becomes a **reported gap** rather than an "approx" point — Tier α re-derives a
+  symmetric normal CI, which for this interval approximates nothing. (Ordinary rows
+  are unaffected: Tier E is exact for them and is tried first.)
 
 - **STAT-3a — the `asymmetric_ci` guard: SE-by-CI-inversion refuses instead of
   mis-recovering** (M13, decision D17). **No number moves** — no shipped method
-  builds an asymmetric interval, so every refusal below is unreachable today and
-  the whole suite is byte-identical. It is the prerequisite STAT-3
+  builds an asymmetric interval — true when it shipped, and superseded above by
+  STAT-3, which adds the first configuration that does. Every refusal below was
+  unreachable at the time and the suite was byte-identical. It is the prerequisite STAT-3
   (Miettinen–Nurminen) and STAT-4 (Fieller) cannot ship without.
 
   **The defect it closes.** The always-valid transform never receives a standard
@@ -275,8 +284,20 @@ number change).
 ### Changed
 - **`sequential.enabled` together with an asymmetric interval is now a level-2
   config error** naming both knobs, instead of an `AsymmetricCIError` raised
-  mid-run once the cohort had already been loaded (the STAT-3a guard remains the
-  backstop under it). The always-valid mode *can* be built on a score interval —
+  mid-run once the cohort had already been loaded. The same sentence refuses the
+  combination at the `abk explore` knob and at its Apply seam, decided off the
+  experiment's own `sequential.enabled` rather than off the baked rows — a toggle
+  flipped but not yet re-run would otherwise let the cockpit write the very pair
+  `abk run` refuses. The STAT-3a guard remains the backstop under all three.
+- **`abk validate` DEGRADES on an asymmetric interval instead of failing.** STAT-3a
+  shipped a failing cell, which was right while no method could declare the flag and
+  wrong the moment one could: the τ² anchor runs unconditionally at the top of both
+  scoring engines, so the refusal failed *every* cell — leaving the A/A matrix unable
+  to measure the estimator the change-control process invokes it to certify, and
+  explore's calibration chip permanently `uncalibrated` with no command able to clear
+  it. Such a cell now scores its fixed columns and simply has no always-valid column
+  (exactly what a bootstrap method gets), with a note naming that reason rather than
+  "τ² could not be anchored". The always-valid mode *can* be built on a score interval —
   by substituting the sequence's critical value inside the root-find — but
   `to_always_valid` cannot express it: it widens a finished interval, recovering
   an SE the method does not have. That is a named future extension, not a

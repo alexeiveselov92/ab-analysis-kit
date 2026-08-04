@@ -207,6 +207,24 @@ def _significance(left: float, right: float) -> tuple[bool, int] | None:
     return (False, 0)
 
 
+def _sequential_skip_note(method: BaseMethod) -> str:
+    """Why this cell has no always-valid column — the reason, not a catch-all.
+
+    Both engines emit it (they are deliberate verbatim mirrors, m7 WP4), so the
+    text lives once: two copies of a message that depends on a method CAPABILITY is
+    the shape that goes stale in one of them. "τ² could not be anchored" is true of
+    a degenerate horizon and false of an asymmetric interval, where the column is
+    skipped by construction and no anchoring was ever attempted.
+    """
+    if method.asymmetric_ci:
+        return (
+            "always-valid column skipped — this method builds an asymmetric interval, "
+            "which the confidence sequence cannot be derived from by widening "
+            "(the fixed columns below are unaffected)"
+        )
+    return "always-valid column skipped — τ² could not be anchored (degenerate horizon)"
+
+
 def _cell_tau2(
     panel: PlaceboPanel,
     method: BaseMethod,
@@ -223,11 +241,22 @@ def _cell_tau2(
     with a finite positive ``SE`` (recovered by CI-inversion); pass ``SE²`` to the
     shared :func:`abkit.stats.sequential.mixture_tau2` (the SAME helper the pipeline
     uses — the parity requirement). ``None`` when the method is sequential-ineligible
-    (``supports_sequential=False``) or no look is usable → the cell has no sequential
-    column. Validity is robust to the anchor; τ² only sets where the sequence is
-    tightest (here: early, aligned with the impatient-experimenter use-case).
+    (``supports_sequential=False``), when its interval is asymmetric, or when no look
+    is usable → the cell has no sequential column. Validity is robust to the anchor;
+    τ² only sets where the sequence is tightest (here: early, aligned with the
+    impatient-experimenter use-case).
+
+    **The asymmetry test is a SECOND gate, not a restatement of the first** (m13
+    STAT-3). ``supports_sequential`` is a ``ClassVar``, so a method whose interval
+    shape is chosen by a PARAM still declares it True — and this function is the
+    first substantive statement of both engines, run unconditionally (the D8 peeking
+    column is measured side-by-side even with ``sequential.enabled`` off). Without
+    this line the CI-inversion below raises for every cell of an asymmetric
+    comparison, so `abk validate` — the instrument the change-control process names
+    for exactly such a deviation — would fail on the very estimator it was asked to
+    calibrate, and the D3 chip could never leave ``uncalibrated``.
     """
-    if not method.supports_sequential:
+    if not method.supports_sequential or method.asymmetric_ci:
         return None
     mask = placebo_mask(panel.n_units, share_a, anchor_seed)
     for cut in panel.cutoffs:
@@ -609,9 +638,7 @@ def _score_cell_scalar(
             "no iteration produced a usable horizon cutoff — the population is too small to score"
         )
     if method.supports_sequential and not has_seq and valid_iterations:
-        warnings.append(
-            "always-valid column skipped — τ² could not be anchored (degenerate horizon)"
-        )
+        warnings.append(_sequential_skip_note(method))
 
     return CellScore(
         iterations=iterations,
@@ -1028,9 +1055,7 @@ def _score_cell_vectorized(  # noqa: PLR0912, PLR0915 — mirrors the scalar eng
             "no iteration produced a usable horizon cutoff — the population is too small to score"
         )
     if method.supports_sequential and not has_seq and valid_iterations:
-        warnings.append(
-            "always-valid column skipped — τ² could not be anchored (degenerate horizon)"
-        )
+        warnings.append(_sequential_skip_note(method))
 
     return CellScore(
         iterations=iterations,

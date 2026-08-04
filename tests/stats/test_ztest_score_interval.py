@@ -11,6 +11,7 @@ tables that made the pooled interval indefensible.
 from __future__ import annotations
 
 import math
+import re
 
 import numpy as np
 import pytest
@@ -18,17 +19,31 @@ import scipy.special as special
 
 from abkit.stats import create_method, get_method_class
 from abkit.stats.parametric.ztest import RELATIVE_IDENTIFICATION_HALF_WIDTH
+from abkit.stats.proportion_score import score_interval_ratio
 from abkit.stats.samples import Fraction
 
 TABLES = [
     (500, 10_000, 560, 10_000),  # the ordinary case
     (9, 900, 2, 100),  # the derivation's 900/100 imbalance
+    (50, 5_000, 12, 500),  # 10:1 the other way
+    (2_000, 100_000, 30, 1_000),  # 100:1 — the harmonic-n regime
     (1, 50_000, 12, 50_000),  # sparse both arms
-    (25_000, 50_000, 25_500, 50_000),  # p ≈ 0.5
+    (25_000, 50_000, 25_500, 50_000),  # p ≈ 0.5 (where the separation VANISHES)
     (0, 1_000, 3, 1_000),  # empty control cell
     (5, 1_000, 0, 1_000),  # empty treatment cell
     (1_000, 1_000, 999, 1_000),  # saturated arms
+    (1_000, 1_000, 1_000, 1_000),  # doubly FULL — the mirror of the doubly-empty KAT
 ]
+
+#: The tables where the POOLED path has no p-value at all, and why. Named rather
+#: than detected, so an exemption cannot grow silently: a formula change that
+#: started NaN-ing ordinary tables would otherwise turn the equality test green by
+#: quietly exempting them.
+NO_POOLED_PVALUE = {
+    ("relative", (0, 1_000, 3, 1_000)),  # H5: a lift over a zero baseline
+    ("absolute", (1_000, 1_000, 1_000, 1_000)),  # pooled variance 0 (both arms at 1)
+    ("relative", (1_000, 1_000, 1_000, 1_000)),
+}
 
 
 def _pair(row):
@@ -71,10 +86,14 @@ class TestNoDefaultMoves:
         """``interval: pooled`` is the untouched legacy branch, and "untouched" is a
         byte claim, not a tolerance one — the golden suite pins the same code from
         the other side."""
-        left, right = (_method(iv, test_type).from_suffstats(*_pair(row)) for iv in ("pooled",) * 2)
-        assert left.to_dict() == right.to_dict()
+        explicit = _method("pooled", test_type).from_suffstats(*_pair(row))
         unset = create_method("z-test", alpha=0.05, params={"test_type": test_type})
-        assert unset.from_suffstats(*_pair(row)).to_dict() == left.to_dict()
+        assert unset.from_suffstats(*_pair(row)).to_dict() == explicit.to_dict()
+        # `effect_distribution` is dropped by to_dict(), and the diff restructured
+        # exactly that assignment — so assert it separately or the claim has a hole.
+        assert (unset.from_suffstats(*_pair(row)).effect_distribution is None) == (
+            explicit.effect_distribution is None
+        )
 
 
 class TestThePValueDoesNotMove:
@@ -89,12 +108,12 @@ class TestThePValueDoesNotMove:
         pooled = _method("pooled", test_type).from_suffstats(*_pair(row))
         score = _method("score", test_type).from_suffstats(*_pair(row))
         if math.isnan(pooled.pvalue):
-            # Naming the ONE row allowed to land here is the difference between a
-            # skip and a hole: a formula change that started NaN-ing ordinary tables
-            # would otherwise turn this test green by exempting them.
-            assert (test_type, row) == ("relative", (0, 1_000, 3, 1_000))
-            assert math.isnan(score.pvalue)
+            assert (test_type, row) in NO_POOLED_PVALUE, "an unexpected table lost its p-value"
+            # score answers 1.0 where the table is exactly null, NaN where the
+            # relative effect itself is undefined — never the other way round
+            assert score.pvalue == 1.0 or math.isnan(score.pvalue)
             return
+        assert (test_type, row) not in NO_POOLED_PVALUE
         assert score.pvalue == pooled.pvalue
         assert score.effect == pooled.effect
         assert score.reject == pooled.reject
@@ -158,6 +177,11 @@ class TestWhatTheIntervalBuys:
         score = _method("score").from_suffstats(*imbalanced)
         assert score.ci_length > pooled.ci_length
 
+        # The fixture's REGIME, not abkit's arithmetic: both sides are literals, and
+        # the point is that this row sits where the derivation says the separation
+        # lives (SE_pooled/SE_unpooled = 0.764). It guards the fixture against being
+        # "tidied" into a balanced one, where the whole comparison above is a
+        # rounding difference and certifies nothing.
         pooled_se = math.sqrt(0.011 * 0.989 * (1 / 900 + 1 / 100))
         unpooled_se = math.sqrt(0.01 * 0.99 / 900 + 0.02 * 0.98 / 100)
         assert pooled_se / unpooled_se == pytest.approx(0.764174, rel=1e-5)
@@ -177,15 +201,42 @@ class TestWhatTheIntervalBuys:
         assert abs(above - below) / below > 0.05
         assert result.effect_distribution is None
 
+    @pytest.mark.parametrize("test_type", ["absolute", "relative"])
     @pytest.mark.parametrize("row", TABLES)
-    def test_an_empty_cell_still_yields_a_finite_two_sided_interval(self, row):
+    def test_no_row_ever_carries_a_non_finite_bound(self, test_type, row):
         """ "This is the common case at an early cutoff on a 1e-3 metric, not an
         exotic one" — the derivation on single-empty-cell tables, where a Wald
         interval contributes zero variance from the empty arm and can exclude zero
-        on the strength of the other arm alone."""
-        result = _method("score").from_suffstats(*_pair(row))
-        assert math.isfinite(result.left_bound) and math.isfinite(result.right_bound)
-        assert -1.0 <= result.left_bound <= result.right_bound <= 1.0
+        on the strength of the other arm alone.
+
+        BOTH scales, because only the relative one can produce ``+inf`` at all — and
+        an infinite bound is not cosmetic downstream: ``enrich`` cleans a non-finite
+        float to NULL and the readout's ``_informative`` then drops the row from the
+        stabilization scan, so a rejecting look would silently stop being a look.
+        The kernel CAN return ``inf`` (an empty CONTROL arm bounds no ratio from
+        above); what makes it unreachable here is H5 refusing that row first — a
+        dependency worth pinning rather than assuming."""
+        result = _method("score", test_type).from_suffstats(*_pair(row))
+        for bound in (result.left_bound, result.right_bound):
+            assert math.isfinite(bound) or math.isnan(bound), (row, bound)
+        if math.isfinite(result.left_bound):
+            assert result.left_bound <= result.right_bound
+            if test_type == "absolute":
+                assert -1.0 <= result.left_bound and result.right_bound <= 1.0
+
+    def test_the_kernel_bound_that_h5_makes_unreachable(self):
+        """The ``+inf`` branch of the ratio search, exercised where it IS reachable.
+
+        With no conversions in the control arm the ratio has no upper bound at all,
+        and the kernel says so instead of inventing a large finite number. The
+        z-test never sees it because the relative POINT estimate is undefined there
+        (H5) — which is what the test above depends on, asserted directly."""
+        lower, upper = score_interval_ratio(
+            np.array([0.0]), np.array([1_000.0]), np.array([5.0]), np.array([1_000.0]), 1.96
+        )
+        assert lower[0] > 0.0 and math.isinf(upper[0])
+        refused = _method("score", "relative").from_suffstats(*_pair((0, 1_000, 5, 1_000)))
+        assert math.isnan(refused.right_bound)
 
 
 class TestTheRelativeIdentificationWarning:
@@ -239,6 +290,26 @@ class TestTheRelativeIdentificationWarning:
         critical = float(special.ndtri(0.975))
         needed = 2.0 * (critical / RELATIVE_IDENTIFICATION_HALF_WIDTH) ** 2
         count = int(math.ceil(needed))
+
+        # Read the figure back OUT of the warning rather than trusting this file's
+        # copy of the formula: a message that quotes a constant the code does not use
+        # is the exact failure the warning's own docstring names, and two
+        # transcriptions of one formula cannot detect a change in either.
+        noisy_message = next(
+            w
+            for w in _method("score", "relative")
+            .from_suffstats(*_pair((count - 2, 100_000, count - 2, 100_000)))
+            .warnings
+            if "weakly identified" in w
+        )
+        quoted = int(re.search(r"~(\d+) CONVERSIONS", noisy_message).group(1))
+        assert quoted == round(needed)
+        assert not any(
+            "weakly identified" in w
+            for w in _method("score", "relative")
+            .from_suffstats(*_pair((quoted, 100_000, quoted, 100_000)))
+            .warnings
+        )
         quiet = _method("score", "relative").from_suffstats(
             *_pair((count, 100_000, count, 100_000))
         )
@@ -316,3 +387,89 @@ def test_the_batch_entry_is_the_same_code_as_the_scalar_one():
             for field in ("left_bound", "right_bound", "pvalue"):
                 got, want = getattr(batch, field)[index], getattr(scalar, field)
                 assert (got == want) or (math.isnan(got) and math.isnan(want)), (row, field)
+
+
+def test_the_fixture_set_can_actually_separate_the_two_constructions():
+    """The guard on every `score`-vs-`pooled` test in this file.
+
+    Coherence, bounded intervals and an unchanged p-value are all properties the
+    LEGACY interval has too, so a hostile `interval: score` that silently returned
+    the pooled bounds would pass most of them. What it cannot survive is a fixture
+    that separates the two — and the derivation is explicit that balanced arms and
+    p = 0.5 are exactly where the separation vanishes, so "some table differs" is a
+    claim about THIS table set, not a generality."""
+    imbalanced = [row for row in TABLES if max(row[1], row[3]) >= 5 * min(row[1], row[3])]
+    assert len(imbalanced) >= 3, "the table set must keep genuinely imbalanced rows"
+    for row in imbalanced:
+        pooled = _method("pooled").from_suffstats(*_pair(row))
+        score = _method("score").from_suffstats(*_pair(row))
+        relative_gap = abs(score.ci_length - pooled.ci_length) / abs(pooled.ci_length)
+        assert relative_gap > 1e-3, (row, pooled.ci_length, score.ci_length)
+
+
+def test_the_p_value_moves_on_exactly_one_kind_of_table_and_nowhere_else():
+    """The precise form of "no p-value moves", swept rather than asserted on seven rows.
+
+    The claim the CHANGELOG and the spec make is an equality with ONE exception; a
+    fixture list can only ever illustrate that. This walks a wide grid — sparse
+    rates, 100:1 imbalance, empty and full cells — and requires: equal p, or a
+    pooled NaN paired with a score answer, and never a score NaN where pooled had a
+    number. If the `p = 1.0` branch ever widened beyond the degenerate table, this
+    is what would catch it."""
+    rng = np.random.default_rng(19)
+    size = 900
+    nobs_1 = rng.integers(5, 200_000, size)
+    nobs_2 = np.maximum((nobs_1 * 10 ** rng.uniform(-2, 2, size)).astype(int), 5)
+    count_1 = np.minimum((nobs_1 * 10 ** rng.uniform(-5, 0, size)).astype(int), nobs_1)
+    count_2 = np.minimum((nobs_2 * 10 ** rng.uniform(-5, 0, size)).astype(int), nobs_2)
+    count_1[:70] = 0
+    count_2[70:140] = 0
+    count_1[140:210] = 0
+    count_2[140:210] = 0
+    count_1[210:280] = nobs_1[210:280]
+    count_2[210:280] = nobs_2[210:280]
+
+    moved = 0
+    for index in range(size):
+        row = (int(count_1[index]), int(nobs_1[index]), int(count_2[index]), int(nobs_2[index]))
+        pooled = _method("pooled").from_suffstats(*_pair(row))
+        score = _method("score").from_suffstats(*_pair(row))
+        if math.isnan(pooled.pvalue):
+            assert score.pvalue == 1.0, row  # absolute scale: the exactly-null table
+            moved += 1
+            continue
+        assert score.pvalue == pooled.pvalue, row
+    assert moved > 20, "the sweep must actually reach the degenerate branch"
+
+
+def test_the_scalar_and_batch_entries_agree_under_a_DIFFERENT_array_length():
+    """The premise behind the bit-exact parity gate, pinned so it fails loudly.
+
+    "Same kernel, so parity is structural" holds for IEEE `+ − × ÷ √`, but the
+    constrained-MLE seed goes through ``arccos``/``cos``, whose numpy loops dispatch
+    on CPU features AND on array length. A 1-ULP seed difference would survive four
+    Newton steps and land in bisection comparisons whose last halvings differ by
+    less than an ULP — so the endpoint could move and ``assert_array_equal`` would
+    fail somewhere far away, on someone else's numpy build. This is the project's
+    ``_libm_pow`` hazard without a structural fix available; making the premise its
+    own test means a future numpy change reports the CAUSE."""
+    rng = np.random.default_rng(23)
+    size = 977  # deliberately not a multiple of any SIMD width
+    nobs_1 = rng.integers(5, 200_000, size).astype(float)
+    nobs_2 = rng.integers(5, 200_000, size).astype(float)
+    count_1 = np.minimum(np.floor(nobs_1 * 10 ** rng.uniform(-5, 0, size)), nobs_1)
+    count_2 = np.minimum(np.floor(nobs_2 * 10 ** rng.uniform(-5, 0, size)), nobs_2)
+
+    for test_type in ("absolute", "relative"):
+        method = _method("score", test_type)
+        batch = method.from_suffstats_array(
+            {"count": count_1, "nobs": nobs_1}, {"count": count_2, "nobs": nobs_2}
+        )
+        for index in range(0, size, 61):
+            scalar = method.from_suffstats(
+                Fraction(count=count_1[index], nobs=nobs_1[index]),
+                Fraction(count=count_2[index], nobs=nobs_2[index]),
+            )
+            for field in ("left_bound", "right_bound"):
+                got, want = getattr(batch, field)[index], getattr(scalar, field)
+                assert (got == want) or (math.isnan(got) and math.isnan(want)), (index, field)

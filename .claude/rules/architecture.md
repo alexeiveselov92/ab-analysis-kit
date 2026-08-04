@@ -548,19 +548,49 @@ two-process lock race) is deferred to a Docker-equipped environment.
   feasible boundary** — that IS the derivation's required fallback, not an error
   branch, and it is what makes `θ_L = 0` (an empty treatment arm cannot exclude a
   −100% lift) and `[−1, 1]` real answers instead of NaN.
-- **`supports_sequential` is the WRONG vehicle for a param-switched refusal.** It is
-  a `ClassVar` read at CLASS level in five places (`plan`, `recompute`, `analyze`,
-  `driver` ×2), so narrowing it per instance would be invisible to every eligibility
-  gate — STAT-3a's lesson one level up. The refusal ships where the contradiction is
-  STATIC: `sequential.enabled` + an asymmetric interval is a **level-2 config
-  error** naming both knobs, moving the failure off the warehouse read. The
-  `AsymmetricCIError` remains the backstop under it, and its explore test is now a
-  DIRECT call on `_alpha_inverted_bounds` — the caller skips the tier, so a guard
-  nobody can reach is a guard nobody notices deleting.
+- **`supports_sequential` is the WRONG vehicle for a param-switched refusal, and
+  the reason is narrower than it first looks.** Of its eight readers, FIVE take the
+  `ClassVar` off the class (`plan`, `recompute`'s `av_pairs`, `analyze`, `driver` ×2)
+  and would be blind to a per-instance narrowing; the three in `validate/scoring.py`
+  read the bound INSTANCE and would see it. Do not repeat the overbroad form of this
+  claim — the three that would have seen it are exactly the ones that mattered, and
+  believing otherwise is what left `abk validate` unguarded. The refusal therefore
+  ships where the contradiction is STATIC: `sequential.enabled` + an asymmetric
+  interval is a **level-2 config error** naming both knobs, refused with the SAME
+  sentence at the explore knob state and at the explore Apply seam (one helper,
+  `config.validator.asymmetric_interval_conflict` — a rule spelled differently per
+  surface is a rule an operator cannot learn once). The explore refusal is decided
+  off the experiment's `sequential.enabled`, never off the baked rows: a toggle
+  flipped but not yet re-run leaves every row `fixed`, so a row-based test would let
+  Apply write the pair `abk run` refuses. `AsymmetricCIError` is the backstop under
+  all three, and its explore test is now a DIRECT call on `_alpha_inverted_bounds` —
+  the caller skips the tier, so a guard nobody can reach is a guard nobody notices
+  deleting.
+- **`abk validate` DEGRADES, it does not refuse — STAT-3a's contract is amended
+  here.** `_cell_tau2` is the first substantive statement of BOTH scoring engines
+  and runs unconditionally (the D8 peeking column is measured side-by-side even with
+  `sequential.enabled` off), so a refusal there fails EVERY cell of the comparison.
+  A failed cell carries no FPR, `find_calibration` counts only successful rows, and
+  explore's D3 chip would sit at `uncalibrated` forever — with the command it names
+  being the one that cannot clear it. The gate is therefore `not
+  supports_sequential OR asymmetric_ci → no sequential column`, exactly what
+  bootstrap already gets, and the skip NOTE names which of the two reasons applied
+  (one helper for both engines; "τ² could not be anchored" is false here and would
+  send the operator to look at their data).
 - **Explore's α tier answers with a GAP for an asymmetric method**, not an "approx"
-  point. Tier E is tried first and is exact for a fraction row, so a row that
-  reaches the α tier genuinely has no point at the dragged alpha — and "approx" is
-  precisely the label under which a wrong-shaped interval would go unnoticed.
+  point, and the gap is REPORTED in `engine_warnings` — a chart that quietly loses
+  points is the one degradation this engine must never do silently. Tier E is tried
+  first and reconstructs an ordinary fraction row exactly, so in practice the gap is
+  rare; it is NOT universal, because `_invert_fraction` refuses a degenerate row
+  (`p ∈ {0, 1}` ⇒ `std = 0`) — which is precisely the boundary table STAT-3 made
+  reportable. The guard also sits BELOW the NULL-row pass-through, whose contract is
+  that an H5-NULLed row rides along under ANY same-identity knob state.
+- **The `±CI` chip renders `[low, high]` for an asymmetric interval.** The server
+  sends the SHAPE (`ci_symmetric` + the bounds), not a formatted string; `ci_half` is
+  half the interval's WIDTH and is a `±` radius only when the interval is centred.
+  The report, the dashboard and the notifications already rendered bounds — explore
+  was the one surface that would have contradicted the rule this WP itself wrote
+  into the packaged operator docs.
 - **`abk plan` is the third surface that must know the estimator** (STAT-1's rule
   about levels, applied to intervals): it suppresses the ASN, because `abk run`
   refuses that mode, and says its sizing is Wald-based. §6(b) is measured, not

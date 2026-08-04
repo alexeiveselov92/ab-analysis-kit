@@ -775,6 +775,53 @@ def test_added_filters_get_their_own_disclosure(project, monkeypatch):
     assert "added_filters narrows the real cohort" in result.output
 
 
+def test_plan_resolves_the_interval_shape_from_the_comparison_itself(ran):
+    """The WIRE, not the leaf, and through the real CLI.
+
+    `_build_runtime` is exercised below with the flag passed by hand; this proves
+    `_plan_comparison` DERIVES it from a valid `interval: score` comparison, hands it
+    on, and that both user-visible halves reach the terminal. Without it, dropping the
+    argument at the call site or hard-coding `asymmetric_ci = False` leaves every
+    other test green — and `abk plan` deliberately skips config-lint, so it is the one
+    surface that will still be asked about a configuration `abk run` refuses.
+    """
+    from pathlib import Path
+
+    exp_yml = Path("experiments") / f"{EXP}.yml"
+    text = exp_yml.read_text()
+    text = text.replace(
+        "{name: z-test, params: {test_type: relative, calculate_mde: true}}",
+        "{name: z-test, params: {test_type: relative, calculate_mde: true, interval: score}}",
+    )
+    assert "interval: score" in text, "the scaffold's method line moved — the edit is a no-op"
+    exp_yml.write_text(text + "\nsequential:\n  enabled: true\n  scheme: always_valid\n")
+
+    # opting in changes method_config_id, so the persisted baseline is orphaned by
+    # construction (that IS the D4 signal) — size off an explicit baseline instead
+    result = runner.invoke(
+        cli,
+        [
+            "plan",
+            "--select",
+            EXP,
+            "--mde",
+            "0.05",
+            "--arrival-rate",
+            "1000",
+            "--baseline",
+            "example_signup_cr:prop=0.1,n=10000",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "sizing uses the normal (Wald) power formula" in result.output
+    # the SPECIFIC line, not "ASN is absent from the output" — the scaffold's second
+    # comparison is symmetric and legitimately prints one
+    assert (
+        "sequential ASN: n/a — fixed-horizon (asymmetric interval — the always-valid "
+        "mode is refused)" in result.output
+    )
+
+
 def test_an_asymmetric_interval_gets_a_fixed_horizon_asn_note_and_a_sizing_caveat():
     """m13 STAT-3: `abk plan` is the third surface that must know the interval shape.
 

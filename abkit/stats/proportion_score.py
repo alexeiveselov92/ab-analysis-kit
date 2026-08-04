@@ -11,8 +11,13 @@ two-sample score statistic is
 and the confidence set is ``{contrast : Z² ≤ z²}``. **At the null both reduce to
 the classical pooled two-sample z** — ``Z(0)`` and ``Z(1)`` are the same number,
 Pearson's χ² for the 2×2 table — so "the interval excludes zero", "the ratio
-interval excludes 1" and "p < α" are ONE event, by construction rather than by
-coincidence. That is the whole reason this construction was chosen over a Wald
+interval excludes 1" and "p < α" are ONE event. Algebraically, not bit-wise: the
+caller derives ``reject`` from the pooled p-value while the endpoints come from
+this root-find, so a table whose ``|Z(0)|`` sits within ~1e-15 relative of the
+critical value could in principle disagree. (The derivation's condition (b) —
+"derive both from the one Z" — would close even that; abkit keeps the legacy
+p-value computation instead, which is what makes "no p-value moves" an equality
+rather than a tolerance.) That is the whole reason this construction was chosen over a Wald
 interval with an unpooled SE: the coherence the pooled interval bought by being
 invalid away from the null is kept, and the validity is bought back.
 
@@ -290,10 +295,12 @@ def score_interval_ratio(
 
     The search runs on ``v = θ/(1+θ) ∈ (0, 1)`` — a monotone reparametrisation
     of the whole positive line onto a bounded bracket, so the unbounded scale
-    needs no expansion loop and no cap: ``v → 1`` IS ``θ → ∞``. 70 halvings
-    resolve θ out to ~1e21, and an upper endpoint that large is reported as the
-    number it is rather than clipped, because the caller's job (a warning about
-    an unidentified relative effect) needs to see it.
+    needs no expansion loop and no cap: ``v → 1`` IS ``θ → ∞``. The practical
+    ceiling is ``θ ≈ 9e15``, set by float64 spacing at 1.0 rather than by the
+    iteration count; past it the answer is ``inf``, never a wrong finite number.
+    A large upper endpoint is reported as the number it is rather than clipped,
+    because the caller's job (a warning about an unidentified relative effect)
+    needs to see it.
 
     ``θ_L = 0`` is a real answer, not a failure: a treatment arm with no
     conversions cannot exclude a −100% lift. Arm 1 having no conversions is

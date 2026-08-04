@@ -265,6 +265,9 @@ export function makeReply(requestId, overrides = {}) {
         chips: {
           lift: 0.12,
           ci_half: 0.06,
+          ci_low: 0.06,
+          ci_high: 0.18,
+          ci_symmetric: true,
           pvalue: 0.002,
           power: 0.91,
           power_note: null,

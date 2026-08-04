@@ -122,15 +122,21 @@ inversion of the test abkit already runs (Miettinen–Nurminen):
 method: {name: z-test, params: {test_type: relative, interval: score}}
 ```
 
-- **your p-values do not change**, at all: the statistic at the null is the same
-  pooled z, so `interval: score` re-reads the same evidence with a better ruler;
+- **your p-values do not change** — the statistic at the null is the same pooled z,
+  so `interval: score` re-reads the same evidence with a better ruler. (One
+  exception, and it is a fix: a metric with no conversions in *either* arm has no
+  pooled statistic at all, and now reports `p = 1` where the legacy path reported
+  nothing.)
 - the interval is valid at every effect size, **asymmetric** about the point
   estimate (report it as `[low, high]`, never as `±`), and confined to a possible
   range — a lift can no longer read below −100%;
 - the relative interval is the same construction on the ratio scale, so the lift
   interval, the difference interval and the p-value are one decision;
-- empty cells stop being a hole: a metric with no conversions in either arm at an
-  early cutoff now reports `p = 1` and a real interval, instead of a blank row.
+- empty cells stop being a hole: with `test_type: absolute`, a metric with no
+  conversions in either arm at an early cutoff now reports `p = 1` and a real
+  interval instead of a blank row. Under `relative` (the default) that row stays
+  blank either way — a lift over a zero baseline is undefined whatever the interval
+  method.
 
 Two things to know before turning it on. It is **identity-bearing**, so switching
 starts a new result series (see identity below) — plan it like any method change.

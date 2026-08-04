@@ -356,8 +356,9 @@ and so did its CI (`ztest.py`). That is what made "the CI excludes zero" and
 "p < α" agree exactly — and `pipeline/readout.py` decides significance by CI
 exclusion — but it makes the interval a valid confidence set at **zero only**.
 The damage is not uniform: an SE mis-scaled by `r` inflates the achieved error
-rate by `exp(z²(1−r²)/2)`, so at a 900/100 holdout (`r = 0.764`, i.e. the pooled
-SE is 24% too *small* — pooling is not the conservative choice it is widely
+rate by `(1/r)·exp(z²(1−r²)/2)` (the derivation's master law; the figures below are
+the exact tail ratio `Φ̄(zr)/Φ̄(z)` it approximates), so at a 900/100 holdout
+(`r = 0.764`, i.e. the pooled SE is 24% too *small* — pooling is not the conservative choice it is widely
 believed to be) that is **2.7× at α = 0.05, 7.0× at α = 0.004, 30× at α = 1e-4**.
 It worsens exactly as the multiple-testing correction shrinks α, so the two
 defects compound.
@@ -390,10 +391,21 @@ disagreement.
   only.
 - **Boundary tables stop being special cases.** `x₁ = x₂ = 0` — the first cutoff
   of any sparse metric — returns the Wilson zero bound `±z²/(n+z²)` beside
-  `p = 1`, instead of the pooled path's `NaN` p and zero-width interval (an
-  assertion of infinite precision from a table with no information). Under
+  `p = 1`, where the pooled path returns a **NaN p and NaN bounds**: a row no
+  reader can act on. (The textbook Wald interval returns `[0, 0]` there, an
+  assertion of infinite precision from a table with no information; abkit's guarded
+  branch never did, and the spec should not credit it with that defect.) Under
   `test_type: relative` the H5 refusal **stands**: a lift over a zero baseline is
-  undefined whatever the interval method.
+  undefined whatever the interval method. This is the ONE table where a p-value
+  moves, and it moves from "absent" to 1.
+- **A newly-informative degenerate row joins a READ-TIME family.** That same table
+  used to carry NULL bounds, so `readout._informative` skipped it; under `score` it
+  is a real row and enters the BH/Holm family, whose threshold every other metric is
+  then judged against. The direction is conservative (the comparison WAS tested;
+  excluding tested hypotheses is the anti-conservative error), but it means flipping
+  `interval` on one metric can move another metric's verdict — a cross-metric
+  consequence of a per-metric knob, stated here because "no p-value moves" would
+  otherwise be read as "nothing else moves".
 - **The relative scale is the score construction on the ratio scale (Route C)**,
   not the difference interval divided by `p̂₁` (which omits the denominator's
   sampling error, can return a lift below −100%, and inverts no test) and not a
@@ -409,13 +421,23 @@ disagreement.
   fallback). The confidence sequence *does* extend to score intervals — by
   substituting `c(V)` for `z` inside the root-find — but `to_always_valid` cannot
   express that: it widens a finished interval, recovering an SE the method does
-  not have. Declaring both is now a **level-2 config error** naming both knobs
-  (STAT-3a's `AsymmetricCIError` remains the backstop under it).
+  not have. Declaring both is now a **level-2 config error** naming both knobs,
+  refused identically at the explore knob and at the explore Apply seam (STAT-3a's
+  `AsymmetricCIError` remains the backstop under all three).
+- **STAT-3a's A/A behaviour is AMENDED here.** It shipped "an asymmetric method's
+  cell fails, carrying its reason", which was right while no method could declare the
+  flag and wrong the moment one can: `_cell_tau2` runs unconditionally at the top of
+  both scoring engines, so that refusal failed EVERY cell — leaving `abk validate`
+  unable to measure the estimator the change-control process invokes it to certify,
+  and explore's D3 calibration chip permanently `uncalibrated` with no command able to
+  clear it. The cell now scores its fixed columns and simply has no always-valid
+  column, exactly as a bootstrap method does, with a note naming that reason instead
+  of "τ² could not be anchored".
 - **`abk plan` sizes on the normal power formula** while the analysis inverts the
   score statistic, so a stated MDE does not exactly invert the applied rule
   (§6b). Measured rather than assumed: the half-widths differ by
   `C·z²/n_arm` with `C` stable in `n` to three significant digits — **4.01 at a
-  5% baseline, 0.060 at 30%**, i.e. 0.15% of the half-width at 10k units per arm
+  5% baseline, 0.0595 at 30%**, i.e. 0.15% of the half-width at 10k units per arm
   and 0.015% at 100k. Ignorable, and `abk plan` says so on the comparison.
 - **A/A arbitration is DELIBERATELY NOT the referee here** (§0.4, and the
   derivation's own warning): the FPR difference between the two rules is
