@@ -14,10 +14,23 @@ set* are a correctness one: a surface that resolved ``contrasts`` differently
 would either chart pairs the alphas never paid for (a broken FWER claim) or drop
 rows nobody warned about, and neither is visible in a diff of any one file.
 
-The walk therefore forbids ``itertools.combinations`` outside two allowed homes:
-the factory itself, and ``stats/base.py``'s generic ``compare(groups)``, which
-knows nothing about experiments. It is a lint, not a sandbox — a future
-legitimate use adds itself to ``ALLOWED`` with a reason.
+The walk forbids ``itertools.combinations`` outside two allowed homes: the
+factory itself, and ``stats/base.py``'s generic ``compare(groups)``, which knows
+nothing about experiments.
+
+**What it does NOT model, stated so nobody reads more into it.** A pair set can
+be written without calling ``combinations`` — a slice (``variants[0]`` ×
+``variants[1:]``), a comprehension, ``product``/``permutations``/``zip``, a
+nested loop. One such shape is deliberately live in the tree:
+``pipeline/readout.py`` builds ``control × treatments`` for the verdict list and
+the SRM rollup, because a VERDICT has always been control-vs-treatment by design
+(m11) — a subset of both families, and therefore correct under either. It is
+pinned below so the exemption is a recorded decision rather than a gap, and so
+the M14 note travels with it: an explicit ``control:`` field must reach all
+three positional resolutions, not just the factory.
+
+It is a lint, not a sandbox — a future legitimate use adds itself to ``ALLOWED``
+with a reason.
 """
 
 from __future__ import annotations
@@ -40,12 +53,26 @@ ALLOWED = {
 
 
 def _aliases_for_target(tree: ast.Module) -> set[str]:
+    """Local names bound to ``combinations``: the import alias AND a rebinding.
+
+    ``_c = itertools.combinations`` then ``_c(variants, 2)`` is two lines of
+    evasion that an import-only walk never sees.
+    """
     names = {TARGET}
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
             for alias in node.names:
                 if alias.name == TARGET and alias.asname:
                     names.add(alias.asname)
+        elif isinstance(node, ast.Assign):
+            value = node.value
+            bound = (isinstance(value, ast.Name) and value.id in names) or (
+                isinstance(value, ast.Attribute) and value.attr == TARGET
+            )
+            if bound:
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        names.add(target.id)
     return names
 
 
@@ -95,20 +122,58 @@ def _inside_factory(chain: list[str]) -> bool:
 
 def test_arm_pairs_are_enumerated_only_by_the_factory():
     offenders: list[str] = []
+    scanned = 0
     for path in sorted(PACKAGE.rglob("*.py")):
         if path in ALLOWED:
             continue
+        scanned += 1
         tree = ast.parse(path.read_text(), filename=str(path))
         for call in _calls_to_target(tree):
             chain = _scope_chain(tree, call)
             rel = path.relative_to(PACKAGE.parent)
             where = ".".join(chain) or "<module level>"
             offenders.append(f"{rel}:{call.lineno} (in {where})")
+    # a gate that scans nothing passes forever: a `src/` move or a renamed
+    # package would empty the rglob and leave `offenders` trivially empty
+    assert scanned > 50, f"the walk only reached {scanned} modules — is PACKAGE right?"
     assert not offenders, (
         "arm pairs must come from ExperimentConfig.contrast_pairs() — a "
         "hand-rolled combinations() ignores `contrasts` and disagrees with the "
         "alphas that were divided by it:\n  " + "\n  ".join(offenders)
     )
+
+
+def test_the_stats_core_allowance_is_still_needed_and_still_generic():
+    """An allowlist entry must not outlive the thing it allows.
+
+    ``stats/base.py`` is excused wholesale (unlike the factory's file, whose
+    entry is scope-checked below) because ``compare(groups)`` enumerates the
+    groups it is HANDED — it never sees an experiment. Both halves are asserted:
+    that the call is still there, and that the module still cannot reach a
+    config (the purity invariant is what makes the exemption safe).
+    """
+    source = (PACKAGE / "stats" / "base.py").read_text()
+    assert _calls_to_target(ast.parse(source)), (
+        "stats/base.py no longer enumerates pairs — drop its ALLOWED entry "
+        "before it silently excuses a future experiment-aware helper"
+    )
+    assert "abkit.config" not in source
+
+
+def test_the_verdict_layers_control_shape_is_a_recorded_exemption():
+    """``readout.py`` builds ``control × treatments`` without the factory.
+
+    That is correct today — a verdict is control-vs-treatment by m11 design, a
+    subset of BOTH families — and the AST walk cannot see it, so it is pinned
+    here instead: if the shape moves or multiplies, this test fails and the next
+    author has to re-decide rather than inherit a silent second answer to "which
+    pairs exist". It is also the M14 hazard in test form: an explicit
+    ``control:`` field must reach every positional resolution, and there are
+    three (this file's factory plus these two).
+    """
+    source = (PACKAGE / "pipeline" / "readout.py").read_text()
+    assert source.count("experiment.assignment.variants[0]") == 2
+    assert source.count("experiment.assignment.variants[1:]") == 2
 
 
 def test_the_factory_is_where_the_allowed_call_lives():
@@ -155,6 +220,10 @@ def test_every_declared_family_is_reachable_from_the_factory():
 
 
 EVASIONS = {
+    "local_rebinding": (
+        "import itertools\n_c = itertools.combinations\n"
+        "def pairs(exp):\n    return list(_c(exp.assignment.variants, 2))\n"
+    ),
     "direct_import": (
         "from itertools import combinations\n"
         "def pairs(exp):\n    return list(combinations(exp.assignment.variants, 2))\n"

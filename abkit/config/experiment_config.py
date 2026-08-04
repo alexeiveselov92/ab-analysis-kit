@@ -931,6 +931,7 @@ class ExperimentConfig(BaseModel):
             "correction": (
                 effective_correction if effective_correction is not None else self.correction
             ),
+            "contrasts": self.contrasts,
             "sequential_enabled": self.sequential.enabled,
             "sequential_scheme": self.sequential.scheme,
             "comparisons": json_dumps_sorted(

@@ -157,15 +157,16 @@ class TestTheDivisor:
 
     def test_the_guardrail_tier_is_not_divided_by_the_family(self) -> None:
         """D8 × STAT-1b: an untiered guardrail is the RAW alpha under both
-        families — a level it does not pay for cannot tighten it."""
-        exp = _experiment(
-            contrasts="vs_control",
-            comparisons=[*MIXED, {"metric": "crashes", "is_guardrail": True, "method": METHOD}],
-        )
-        alphas = effective_alphas(exp, _project(guardrail_correction="none"))
-        per_metric = {c.metric: comparison_alpha(c, alphas) for c in exp.comparisons}
-        assert per_metric["crashes"] == pytest.approx(0.05)
-        assert per_metric["arpu"] == pytest.approx(0.025)  # 0.05 / (g−1 = 2)
+        families — a level it does not pay for cannot tighten it. Both are
+        constructed, because "under both families" is the claim."""
+        comparisons = [*MIXED, {"metric": "crashes", "is_guardrail": True, "method": METHOD}]
+        expected_main = {"all_pairs": 0.05 / 3, "vs_control": 0.05 / 2}
+        for family, main in expected_main.items():
+            exp = _experiment(contrasts=family, comparisons=comparisons)
+            alphas = effective_alphas(exp, _project(guardrail_correction="none"))
+            per_metric = {c.metric: comparison_alpha(c, alphas) for c in exp.comparisons}
+            assert per_metric["crashes"] == pytest.approx(0.05), family
+            assert per_metric["arpu"] == pytest.approx(main), family
 
 
 class _Loaded:
@@ -206,6 +207,30 @@ class TestTheAnalyzeStageComputesTheDeclaredPairsOnly:
         )
         return [(o.name_1, o.name_2) for o in outcomes]
 
+    def _outcomes_full(self, exp: ExperimentConfig):
+        from datetime import datetime
+
+        from abkit.config.metric_config import MetricConfig
+
+        project = _project()
+        metric = MetricConfig.model_validate(
+            {
+                "name": "arpu",
+                "type": "sample",
+                "columns": {"variant": "variant", "value": "value"},
+                "query": "SELECT variant, value FROM facts",
+            }
+        )
+        return analyze_cutoff(
+            exp,
+            exp.comparisons[0],
+            metric,
+            _Loaded(list(exp.assignment.variants)),
+            datetime(2024, 7, 3),
+            effective_alphas(exp, project),
+            project,
+        )
+
     def test_all_pairs_computes_every_pair(self) -> None:
         assert self._outcomes(_experiment()) == [
             ("control", "t1"),
@@ -224,17 +249,36 @@ class TestTheAnalyzeStageComputesTheDeclaredPairsOnly:
 
     def test_the_computed_pairs_are_tested_at_the_declared_family_alpha(self) -> None:
         """Divisor and enumeration are one declaration — a fixture where they
-        disagree is exactly the half-implementation this file guards against."""
+        disagree is exactly the half-implementation this file guards against.
+
+        Asserted on the OUTCOME, not only on the resolver: a stage that
+        re-derived its own level internally (``C(g,2)`` while enumerating
+        ``g−1``) would satisfy every alpha assertion above and still write rows
+        at the wrong level.
+        """
         exp = _experiment(contrasts="vs_control")
         project = _project()
         alphas = effective_alphas(exp, project)
         assert len(exp.contrast_pairs()) == alphas.pairs_count
         assert alphas.main == pytest.approx(0.05 / len(exp.contrast_pairs()))
 
+        outcomes = self._outcomes_full(exp)
+        assert [(o.name_1, o.name_2) for o in outcomes] == [
+            ("control", "t1"),
+            ("control", "t2"),
+        ]
+        for outcome in outcomes:
+            assert outcome.result is not None
+            assert outcome.result.alpha == pytest.approx(0.05 / 2)
+
 
 class TestTheReadSurfacesAgreeOnTheFamily:
-    """The three persisted-row filters (report / dashboard / notify) and the
-    producer must answer the same question. They are separate two-line
+    """Every persisted-row reader must answer the same question.
+
+    Two of them are pure functions and are exercised directly here (notify,
+    dashboard); the report's is inline in ``build_report_payload`` and is
+    covered in ``tests/reporting/test_builder.py``; the readout's own filter is
+    below; the cockpit's is in ``tests/tuning``. They are separate
     comprehensions on purpose (m11 DASH-2, m12 NTF-1), but the SET now comes
     from one factory — before STAT-1b each carried its own ``combinations``
     call, and a knob resolved in one place would have reached none of them."""
@@ -341,9 +385,46 @@ class TestTheOperatorCanReconcileTheNumber:
         assert "0.025" in note
 
         default = _experiment()
-        assert "vs_control" not in _correction_note(
-            default, effective_alphas(default, _project())
+        assert "vs_control" not in _correction_note(default, effective_alphas(default, _project()))
+
+    def test_the_plan_note_stays_quiet_when_nothing_was_divided(self) -> None:
+        """Under `correction: none` no divisor applied, so naming the family
+        would explain a division that did not happen — the same gating the
+        guardrail clause beside it uses (`alphas.guardrail is not None`)."""
+        from abkit.cli.commands.plan import _correction_note
+
+        exp = _experiment(contrasts="vs_control")
+        alphas = effective_alphas(exp, _project(correction="none"))
+        assert "vs_control" not in _correction_note(exp, alphas)
+
+    def test_the_divisor_line_stays_loud_where_the_plan_note_is_quiet(self) -> None:
+        """The two surfaces answer different questions, so they differ on
+        purpose: `pairs_phrase` reports what the family IS (true at two arms and
+        under `none`), `_correction_note` explains why a LEVEL moved (which at
+        two arms, or without a correction, it did not)."""
+        from abkit.cli._output import pairs_phrase
+
+        two_arm = _experiment(
+            contrasts="vs_control",
+            assignment={
+                "query": "SELECT user_id, variant, exposure_ts FROM assignments",
+                "variants": ["control", "treatment"],
+                "expected_split": {"control": 0.5, "treatment": 0.5},
+            },
         )
+        assert "vs_control" in pairs_phrase(effective_alphas(two_arm, _project()))
+        assert "vs_control" in pairs_phrase(
+            effective_alphas(_experiment(contrasts="vs_control"), _project(correction="none"))
+        )
+
+    def test_the_planned_row_estimate_counts_the_declared_pairs(self) -> None:
+        """`abk plan`'s `~N _ab_results rows/full-refresh` is the number an
+        operator sizes storage on; under `vs_control` it is g−1 per look, not
+        C(g,2)."""
+        wide = _experiment(assignment=FOUR_ARMS)
+        narrow = _experiment(assignment=FOUR_ARMS, contrasts="vs_control")
+        assert len(wide.contrast_pairs()) == 6
+        assert len(narrow.contrast_pairs()) == 3
 
     def test_two_arms_do_not_advertise_a_family_that_changes_nothing(self) -> None:
         from abkit.cli.commands.plan import _correction_note
@@ -357,3 +438,107 @@ class TestTheOperatorCanReconcileTheNumber:
             },
         )
         assert "vs_control" not in _correction_note(exp, effective_alphas(exp, _project()))
+
+
+class TestTheReadoutFiltersTheFamilyItself:
+    """``evaluate()`` must not need a caller's help to know the family.
+
+    The three surfaces filter before they call it, so this only shows up for a
+    direct caller (a notebook, a future surface) — but the read-time BH family
+    is built from every informative row at a cutoff, so an unfiltered call
+    scores a family of ``C(g,2)`` for an experiment that declared ``g−1`` and
+    contradicts ``abk run --report`` on identical rows (the m11 DASH-2 finding,
+    one layer down).
+    """
+
+    def _rows(self) -> list[dict]:
+        from datetime import datetime
+
+        base = {
+            "metric": "arpu",
+            "method_config_id": None,  # filled per experiment below
+            "end_ts": datetime(2024, 7, 3),
+            "start_ts": datetime(2024, 7, 1),
+            "alpha": 0.025,
+            "pvalue": 0.001,
+            "effect": 0.1,
+            "left_bound": 0.05,
+            "right_bound": 0.15,
+            "reject": True,
+            "size_1": 500,
+            "size_2": 500,
+            "insufficient_data": False,
+            "srm_flag": False,
+            "elapsed_days": 2.0,
+            "is_horizon": False,
+        }
+        pairs = [("control", "t1"), ("control", "t2"), ("t1", "t2")]
+        return [{**base, "name_1": a, "name_2": b} for a, b in pairs]
+
+    def test_undeclared_pairs_are_dropped_and_announced(self) -> None:
+        from abkit.pipeline.readout import _filter_rows
+
+        exp = _experiment(contrasts="vs_control")
+        mcid = exp.comparisons[0].method.method_config_id
+        rows = [{**row, "method_config_id": mcid} for row in self._rows()]
+
+        kept, warnings = _filter_rows(exp, rows)
+
+        assert [(r["name_1"], r["name_2"]) for r in kept] == [
+            ("control", "t1"),
+            ("control", "t2"),
+        ]
+        assert any("outside the declared contrast set" in w for w in warnings)
+
+    def test_the_default_family_keeps_every_pair_and_says_nothing(self) -> None:
+        from abkit.pipeline.readout import _filter_rows
+
+        exp = _experiment()
+        mcid = exp.comparisons[0].method.method_config_id
+        rows = [{**row, "method_config_id": mcid} for row in self._rows()]
+
+        kept, warnings = _filter_rows(exp, rows)
+
+        assert len(kept) == 3
+        assert not any("contrast set" in w for w in warnings)
+
+
+class TestProjectLevelDeclarationIsRefused:
+    """D16 says the family has no project default. A pydantic model that merely
+    IGNORES the key would make that decision look like a broken knob: the
+    operator writes it beside `alpha`/`correction`/`guardrail_correction`, which
+    all do have project defaults, and nothing happens at all."""
+
+    def test_a_project_level_contrasts_is_a_loud_error(self) -> None:
+        with pytest.raises(ValueError, match="per EXPERIMENT"):
+            ProjectConfig.model_validate(
+                {
+                    "name": "p",
+                    "default_profile": "dev",
+                    "statistics": {"alpha": 0.05, "contrasts": "vs_control"},
+                }
+            )
+
+    def test_the_neighbours_still_resolve(self) -> None:
+        project = _project(correction="none", guardrail_correction="none")
+        assert project.statistics.correction == "none"
+        assert project.statistics.guardrail_correction == "none"
+
+
+class TestTheStatsCoreLiteralAndTheConfigLiteralAgree:
+    def test_the_two_literals_are_the_same_set(self) -> None:
+        """``abkit.stats`` may not import config (purity), so the family literal
+        exists twice. A third value added on one side only would type-check and
+        then raise ``MethodParamError`` from inside a CLI header line."""
+        from typing import get_args
+
+        from abkit.config.experiment_config import ContrastSet
+        from abkit.stats.correction import ContrastFamily
+
+        assert set(get_args(ContrastSet)) == set(get_args(ContrastFamily))
+
+    def test_stats_core_refuses_a_family_it_does_not_know(self) -> None:
+        from abkit.stats import MethodParamError
+
+        with pytest.raises(MethodParamError, match="all_pairs"):
+            n_comparisons(3, 1, "vs_everything")

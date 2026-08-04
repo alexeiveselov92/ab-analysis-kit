@@ -356,6 +356,85 @@ class TestIdempotency:
         assert len(tables.load_results("signup_test")) == 5
 
 
+def seed_third_arm(warehouse) -> None:
+    """Add a `variant_b` arm to the fixture cohort (the golden-alphas shape)."""
+    for i in range(150):
+        warehouse.cohort.append((f"x{i}", "variant_b", START + timedelta(hours=1)))
+        for day in range(5):
+            warehouse.events.append(
+                (f"x{i}", "variant_b", START + timedelta(days=day, hours=12), 1.0 + i % 3)
+            )
+
+
+def three_arm_experiment(**overrides) -> ExperimentConfig:
+    return make_experiment(
+        assignment={
+            "query": "SELECT user_id, variant, exposure_ts FROM assignments",
+            "variants": ["control", "treatment", "variant_b"],
+            "expected_split": {"control": 1 / 3, "treatment": 1 / 3, "variant_b": 1 / 3},
+        },
+        **overrides,
+    )
+
+
+class TestContrastSetThroughTheDriver:
+    """m13 STAT-1b at the driver, not at the pure functions.
+
+    Two things only the real planning loop can prove: that the narrowed family
+    does not force an endless re-plan (the `declared_pairs` guard is passed at
+    the call site, not merely accepted by the predicate), and that WIDENING the
+    family backfills the pairs the historical looks are missing.
+    """
+
+    def test_narrowing_the_family_does_not_re_plan_the_series(self, warehouse, tables):
+        seed_third_arm(warehouse)
+        wide = three_arm_experiment(sequential={"enabled": True})
+        run(warehouse, tables, experiment=wide, metrics={"arpu": ARPU})
+
+        narrow = three_arm_experiment(sequential={"enabled": True}, contrasts="vs_control")
+        outcome = run(warehouse, tables, experiment=narrow, metrics={"arpu": ARPU})
+
+        # every declared pair is already complete at every cutoff ⇒ nothing to do.
+        # Without the declared-pairs guard on _sequential_mode_changed the stale
+        # (t1, t2) rows would read as a sequential-mode mismatch and re-plan the
+        # WHOLE series here — on this run and on every run after it.
+        assert outcome.cutoffs_planned == 0
+
+    def test_widening_the_family_backfills_the_missing_pairs(self, warehouse, tables):
+        seed_third_arm(warehouse)
+        narrow = three_arm_experiment(contrasts="vs_control")
+        run(warehouse, tables, experiment=narrow, metrics={"arpu": ARPU})
+        rows = tables.load_results("signup_test")
+        assert {(r["name_1"], r["name_2"]) for r in rows} == {
+            ("control", "treatment"),
+            ("control", "variant_b"),
+        }
+        looks = len({r["end_ts"] for r in rows})
+
+        wide = three_arm_experiment()
+        outcome = run(warehouse, tables, experiment=wide, metrics={"arpu": ARPU})
+
+        # a pair-blind anti-join would call every cutoff "computed" and leave
+        # (treatment, variant_b) missing for the whole history, while its
+        # siblings kept an alpha bought for the two-contrast family
+        assert outcome.cutoffs_planned == looks
+        after = tables.load_results("signup_test")
+        assert {(r["name_1"], r["name_2"]) for r in after} == {
+            ("control", "treatment"),
+            ("control", "variant_b"),
+            ("treatment", "variant_b"),
+        }
+        alphas = {round(float(r["alpha"]), 10) for r in after}
+        assert alphas == {round(0.05 / 3, 10)}, "the re-plan re-homogenised the series"
+
+    def test_the_widened_run_then_settles(self, warehouse, tables):
+        """Convergence: the completeness rule must not re-plan forever."""
+        seed_third_arm(warehouse)
+        run(warehouse, tables, experiment=three_arm_experiment(contrasts="vs_control"))
+        run(warehouse, tables, experiment=three_arm_experiment())
+        assert run(warehouse, tables, experiment=three_arm_experiment()).cutoffs_planned == 0
+
+
 class TestTwoTierBonferroni:
     def test_golden_two_tier_alphas(self, warehouse, tables):
         """3 variants, 1 main + 2 secondary: main α/C(3,2), secondary α/(C(3,2)·2)."""

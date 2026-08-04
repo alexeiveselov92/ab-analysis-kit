@@ -14,6 +14,7 @@ Every correctness-sensitive read is deduped (FINAL on ClickHouse).
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
@@ -90,6 +91,52 @@ class _ResultsMixin(_InternalTablesBase):
             if ts is not None:
                 cutoffs.add(ts)
         return cutoffs
+
+    def list_complete_cutoffs(
+        self,
+        experiment: str,
+        metric: str,
+        method_config_id: str,
+        required_pairs: Sequence[tuple[str, str]],
+    ) -> set[datetime]:
+        """The planner anti-join source, at (cutoff × declared pair) resolution.
+
+        ``list_computed_cutoffs`` answers "has this ``end_ts`` been touched?",
+        which stopped being the same question once an experiment could declare
+        its family (m13 STAT-1b). WIDENING the family — `vs_control` back to
+        `all_pairs`, or an added arm — leaves every historical cutoff *touched*
+        but MISSING the newly declared pairs, and a pair-blind anti-join never
+        re-plans them: the new contrasts exist only from the flip onward, while
+        the surviving pairs keep an alpha bought for the narrower family. That
+        is the anti-conservative direction of the FWER claim, so it must not be
+        silent.
+
+        A cutoff therefore counts as computed iff it carries a row for EVERY
+        declared pair. It converges: ``analyze_cutoff`` writes one row per
+        declared pair at every cutoff it computes, demoted ones included, so a
+        re-planned cutoff becomes complete and the next run plans zero. A
+        cutoff past the watermark is never pending regardless, so an
+        incompletable one cannot loop.
+        """
+        full_table_name = self._manager.get_full_table_name(TABLE_RESULTS, use_internal=True)
+        query = f"""
+        SELECT DISTINCT end_ts, name_1, name_2
+        FROM {full_table_name}{self._manager.final_modifier}
+        WHERE experiment = %(e)s
+          AND metric = %(m)s
+          AND method_config_id = %(mc)s
+        """
+        rows = self._manager.execute_query(
+            query, {"e": experiment, "m": metric, "mc": method_config_id}
+        )
+        seen: dict[datetime, set[tuple[str, str]]] = {}
+        for row in rows:
+            ts = to_naive_utc(row.get("end_ts"))
+            if ts is None:
+                continue
+            seen.setdefault(ts, set()).add((str(row.get("name_1")), str(row.get("name_2"))))
+        needed = set(required_pairs)
+        return {ts for ts, pairs in seen.items() if needed <= pairs}
 
     def series_pair_ci_kinds(
         self, experiment: str, metric: str, method_config_id: str

@@ -41,6 +41,10 @@ TOP_LEVEL_KEYS = {
     "cadence_seconds",
     "tz",
     "arms",
+    # m13 STAT-1b: which of the C(g,2) pairs the experiment claims. Additive,
+    # so no PAYLOAD_VERSION bump (the WP3 precedent) — the renderer types it
+    # optional and an older baked payload still loads.
+    "contrasts",
     "srm",
     "calibration",
     "verdicts",

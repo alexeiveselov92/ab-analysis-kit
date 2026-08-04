@@ -115,6 +115,21 @@ params**. It is the key of a result *series* in `_ab_results`.
   `abk run --full-refresh` if you want the whole series at one alpha, and expect
   guardrail `_ab_aa_runs` rows to read `alpha_mismatch` until `abk validate`
   re-runs them.
+- **`contrasts: vs_control`** (experiment level; default `all_pairs` = the old
+  behaviour) declares that the family is the `g-1` contrasts against the FIRST
+  declared variant, not all `C(g,2)` pairs. The divisor drops accordingly, so
+  every tier's alpha is multiplied by `g/2` (≈ +10 points of power at four
+  arms). It is one declaration with two halves: the treatment-vs-treatment pairs
+  are also **not computed** — no result rows, no verdicts, no BH family members
+  — because keeping them at the loosened level is exactly what would break the
+  FWER claim the loosening was bought with. Inert at two arms. Like
+  `guardrail_correction`, it moves persisted alphas, so `abk run --full-refresh`
+  re-homogenises a series and A/A rows read `alpha_mismatch` until re-run;
+  rows for pairs the narrowed family dropped are ignored loudly by every read
+  surface (`abk run --full-refresh --from <start> --to <horizon>` removes them —
+  `abk clean` prunes by `method_config_id` and never touched them). Widening the
+  family back (or adding an arm) is the direction abkit heals for you: a look
+  missing a declared pair is re-planned automatically.
 - Execution-only params (`max_block_bytes`) never enter the hash.
 
 ## Sequential eligibility

@@ -566,7 +566,15 @@ def run_experiment(
             method_cls = get_method_class(comparison.method.name)
             seq_eligible = experiment.sequential.enabled and method_cls.supports_sequential
 
-            computed = tables.list_computed_cutoffs(experiment.name, metric.name, method_config_id)
+            # m13 STAT-1b: complete at (cutoff × declared pair), not merely
+            # touched — widening the contrast set adds pairs the historical
+            # cutoffs do not carry, and a pair-blind anti-join would leave them
+            # missing forever while their siblings kept the narrower family's
+            # alpha.
+            declared_pairs = experiment.contrast_pairs()
+            computed = tables.list_complete_cutoffs(
+                experiment.name, metric.name, method_config_id, declared_pairs
+            )
             if full_refresh_window is not None:
                 tables.delete_results(
                     experiment.name,
@@ -618,7 +626,7 @@ def run_experiment(
                 tables.series_pair_ci_kinds(experiment.name, metric.name, method_config_id),
                 seq_eligible,
                 sequential_tau2,
-                frozenset(experiment.contrast_pairs()),
+                frozenset(declared_pairs),
             ):
                 computed = set()
                 pending = pending_cutoffs(grid, computed, watermark_ts, full_refresh_window)

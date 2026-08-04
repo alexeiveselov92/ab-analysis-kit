@@ -10,15 +10,22 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Literal
 
 import numpy as np
 import numpy.typing as npt
 
 from abkit.stats.exceptions import MethodParamError
 
+#: The declared comparison family (m13 STAT-1b). Stats-core keeps its own
+#: literal because it may not import config (the purity invariant); the two are
+#: pinned equal by ``tests/pipeline/test_contrast_set.py`` so a third family
+#: cannot be added on one side only.
+ContrastFamily = Literal["all_pairs", "vs_control"]
+
 
 def n_comparisons(
-    groups_count: int, metrics_count: int = 1, contrasts: str = "all_pairs"
+    groups_count: int, metrics_count: int = 1, contrasts: ContrastFamily = "all_pairs"
 ) -> float:
     """The declared comparison count: ``pairs(groups) × metrics``.
 
@@ -39,14 +46,15 @@ def n_comparisons(
     elif contrasts == "all_pairs":
         pairs = groups_count * (groups_count - 1) / 2
     else:
-        raise MethodParamError(
-            f"contrasts must be 'all_pairs' or 'vs_control', got {contrasts!r}"
-        )
+        raise MethodParamError(f"contrasts must be 'all_pairs' or 'vs_control', got {contrasts!r}")
     return pairs * metrics_count
 
 
 def adjust_alpha(
-    alpha: float, groups_count: int, metrics_count: int = 1, contrasts: str = "all_pairs"
+    alpha: float,
+    groups_count: int,
+    metrics_count: int = 1,
+    contrasts: ContrastFamily = "all_pairs",
 ) -> float:
     """Bonferroni: ``alpha / (pairs(groups) × metrics)`` — legacy transcription."""
     if not 0.0 < alpha < 1.0:
@@ -81,7 +89,7 @@ class TwoTierAlphas:
     main: float
     secondary: float | None
     guardrail: float | None = None
-    contrasts: str = "all_pairs"
+    contrasts: ContrastFamily = "all_pairs"
 
     @property
     def pairs_count(self) -> float:
@@ -94,7 +102,7 @@ def two_tier_alphas(
     groups_count: int,
     metrics_count: int,
     guardrail_alpha: float | None = None,
-    contrasts: str = "all_pairs",
+    contrasts: ContrastFamily = "all_pairs",
 ) -> TwoTierAlphas:
     """The exact legacy two-tier scheme keyed off ``is_main_metric``.
 

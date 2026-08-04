@@ -491,11 +491,29 @@ def load_session(
             )
             continue
         metric = metrics_by_name[comparison.metric]
-        rows = tables.load_results(
+        loaded_rows = tables.load_results(
             experiment.name,
             metric=metric.name,
             method_config_id=comparison.method.method_config_id,
         )
+        # The cockpit is the FOURTH reader of persisted rows, and it must drop
+        # the same ones the report does (m13 STAT-1b): a pair outside the
+        # declared contrast set — a renamed arm, or a family narrowed to
+        # `vs_control` — is not on the page, so recomputing its series would
+        # spend the Tier-S memo budget on rows nobody reads and could raise the
+        # engine's sequential-reload warning for a contrast the experiment does
+        # not claim. The payload half already filters (it is built by
+        # `reporting/builder.py`); this is the recompute half.
+        declared_pairs = set(experiment.contrast_pairs())
+        rows = [
+            row for row in loaded_rows if (str(row["name_1"]), str(row["name_2"])) in declared_pairs
+        ]
+        if len(rows) != len(loaded_rows):
+            session.warnings.append(
+                f"{metric.name}: ignored {len(loaded_rows) - len(rows)} persisted rows for "
+                "variant pairs outside the declared contrast set (renamed arms, or "
+                "`contrasts: vs_control`?)"
+            )
         cutoffs = sorted({row["end_ts"] for row in rows if row.get("end_ts") is not None})
         session.series_by_metric[metric.name] = ComparisonSeries(
             comparison=comparison,

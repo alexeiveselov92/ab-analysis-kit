@@ -495,6 +495,11 @@ def build_report_payload(
         "cadence_seconds": experiment.cadence_seconds_min(),
         "tz": experiment.timezone,
         "arms": variants,
+        # m13 STAT-1b: the family the per-row alphas were divided by. Without
+        # it a 4-arm `vs_control` report shows four arms, three pair blocks and
+        # α = 0.05/3, and nothing on the page reconciles the three numbers —
+        # the same argument that put the family on the CLI's divisor line.
+        "contrasts": experiment.contrasts,
         "srm": {
             "flag": bool(srm_flag),
             "pvalue": _num_or_none(srm_pvalue),

@@ -227,52 +227,91 @@ adopt Holm.
 `(lo, hi, level)` is lossy — it cannot be re-inverted to another level without SE
 and df, and that permanently forecloses every step procedure.
 
-### STAT-1b — declare the contrast set (`vs_control` | `all_pairs`)
+### STAT-1b — declare the contrast set (`vs_control` | `all_pairs`) ✅ SHIPPED
 
 **New, from the derivation (c).** The largest power gain in the milestone, and it
 is a *config declaration*, not new math: correcting for treatment-vs-treatment
 contrasts nobody claims costs a factor of `g/2` in level. Under D1 it is opt-in
-by construction (default `all_pairs` = today's behaviour). Interacts with M14
-(the multi-arm decision layer), which is where an explicit `control:` field is
-already planned — check for collision before building.
+by construction (default `all_pairs` = today's behaviour). D15 settled the M14
+question: the contrast SET and M14's `control:` field are different declarations,
+and the second is already resolved positionally, so this WP did not wait.
 
-The maintainer's decision D2 puts this first and standalone: it is a different
-layer from the estimators, it fails different tests, and its A/A revalidation
-measures a different quantity (family FWER, not CI coverage).
+*What already existed and was not rebuilt:* the two-tier resolver
+`analyze.effective_alphas` + `stats.correction.two_tier_alphas`; the client
+mirror `explore.ts#effectiveAlpha`; the `abk validate --family-sweep` instrument.
 
-*What already exists and must not be rebuilt:*
+*What shipped:*
 
-- the config knob — `correction: none|bonferroni|benjamini_hochberg`
-  (`config/project_config.py:91`) with an experiment-level override;
-- the read-time seam — `stats.correction.composed_significance(inputs,
-  correction)`, shared by `pipeline/readout.py` and the A/A family sweep;
-- the instrument — `abk validate --family-sweep` (M5 D9 / M7 WP7) already
-  measures composed FWER/FDR over the family;
-- the client mirror — `explore.ts:133` falls through to the raw alpha for any
-  non-`bonferroni` scheme, so a new **read-time** value passes correctly by
-  construction.
+- **`contrasts: all_pairs | vs_control` on the experiment**, with **no
+  project-level default** — the one deliberate asymmetry against the
+  `correction`/`guardrail_correction` precedent (D16 below).
+- **`ExperimentConfig.contrast_pairs()`** — the factory, and the WP's
+  load-bearing delta. `contrasts` reaches the alpha divisor
+  (`n_comparisons`/`adjust_alpha`/`two_tier_alphas` gained a `contrasts`
+  argument defaulting to the legacy family, and `TwoTierAlphas` carries it) AND
+  the enumeration in `analyze_cutoff`, so both halves resolve from one place.
+- **The four filters that decide which persisted rows are still declared** —
+  `reporting/builder.py`, `tuning/overview.py`, `notify/dispatch.py` and the
+  producer — now read that factory, gated by
+  `tests/config/test_contrast_pairs_is_the_only_entry.py`. Each had carried its
+  own `combinations(experiment.assignment.variants, 2)`; `notify/dispatch.py`
+  said in a comment that "a fourth copy should force the extraction", and a
+  knob-dependent set is exactly the case where four copies stop being a style
+  question.
+- **The display surfaces**: `pairs_phrase` (shared by `abk run`/`abk validate`),
+  `abk plan`'s header note, its per-refresh row estimate and its multi-arm
+  warning, and the explore client mirror + baked knob block.
 
-*What this WP builds:*
+*As-built deltas the design did not have:*
 
-- `holm` as a new enum value, implemented **read-time** beside BH in
-  `composed_significance` — Holm is a whole-family, p-value-ordering rule and
-  cannot be expressed as a per-comparison α fixed at COMPUTE time;
-- a **new** enum value for the budget-corrected two-tier scheme. The existing
-  `bonferroni` keeps its exact current arithmetic, byte-frozen (§3, D5);
-- the `statistics-changes.md` entry + a new golden; `test_golden_power_correction.py`
-  keeps pinning the legacy scheme.
+1. **The sequential re-plan predicate had to learn the family.**
+   `driver._sequential_mode_changed` re-plans a whole series when a persisted
+   `ci_kind` disagrees with the mode the run would stamp. A row for a pair the
+   narrowed family no longer claims can never be superseded — nothing recomputes
+   it — so the predicate would have stayed true forever: a full-series re-plan on
+   every scheduled run, silent, for rows no surface reads. It now judges declared
+   pairs only.
+2. **The stale-pair warning named the wrong remedy, and had before this WP.**
+   It advised `abk clean`, which prunes series by `method_config_id` and has
+   never had a pair-level sweep; `abk run --full-refresh --from … --to …` is
+   what deletes the window before rewriting the declared pairs (the window
+   bounds are required, so the first replacement string was itself unrunnable —
+   caught by the review). STAT-1b gave the same warning a second cause, which is
+   how the wrong advice surfaced.
+3. **The anti-join had to become pair-complete.** `list_computed_cutoffs` asks
+   "has this `end_ts` been touched?", which stopped being the same question once
+   the family was declarable: WIDENING it (back to `all_pairs`, or by adding an
+   arm) leaves every historical look touched-but-incomplete, so the new
+   contrasts exist only from the flip onward while the surviving pairs keep an
+   alpha bought for the narrower family — the anti-conservative direction, and
+   silent. `list_complete_cutoffs` counts a cutoff as computed iff it carries a
+   row for every declared pair; a re-planned cutoff rewrites all of them by LWW,
+   so the alpha re-homogenises for exactly the affected looks and the next run
+   plans zero.
+4. **The filter belonged in `evaluate()` too.** The three surface copies protect
+   their own warnings, but the read-time BH family is built inside the readout —
+   so a direct caller (a notebook) scored a family of `C(g,2)` for an experiment
+   that declared `g−1`. `_filter_rows` now drops undeclared pairs with its own
+   warning, alongside the orphaned-`method_config_id` and unbound-metric cases.
+5. **The cockpit was an unfiltered fourth reader.** `tuning/session.py` loaded
+   every persisted pair, so `/recompute` spent Tier-S budget on series that are
+   not on the page and could raise the sequential-reload warning for a contrast
+   the experiment does not claim.
+6. **A project-level `contrasts:` is refused loudly** (D16's own consequence):
+   pydantic's `extra="ignore"` would have accepted the key beside `alpha`,
+   `correction` and `guardrail_correction` — all of which DO have project
+   defaults — and changed nothing.
+7. **Two surfaces that state a level had to name the family**: the HTML report
+   (arms line) and `_ab_experiments.contrasts` (added additively, for the BI
+   join). `guardrail_correction` is still absent from that catalog — a recorded
+   gap from STAT-1c, with the per-row `alpha` the authority in both cases.
 
-⏳ *Awaiting the derivation:* whether the current two-tier scheme controls FWER
-at α at all (main spends `α/C(g,2)`, secondaries spend `α/(C(g,2)·k)` **on top**);
-what the correct weighted allocation is; and — the question that decides whether
-the readout survives unchanged — **what confidence interval is compatible with a
-step-down rule**, given that this engine persists an interval per comparison and
-reads significance off it.
-
-*Known and to be documented either way:* CI-vs-verdict divergence is **already**
-a live property under BH — compute-time α stays raw (`analyze.py:76-78`) while
-the decision uses the BH-adjusted p. Holm inherits the same shape. No document
-states this today.
+*What the instrument cannot say (D6 posture).* `abk validate --family-sweep`
+composes over **metrics**, never over arm pairs, so both the measured family
+FWER and the nominal budget move together when the divisor changes: the sweep
+can neither confirm nor refute the `g/2` claim. The claim is arithmetic and is
+pinned as arithmetic (`tests/pipeline/test_contrast_set.py`); a pair-dimensioned
+sweep is a named follow-up, not something this WP pretended to have.
 
 ### STAT-1c — guardrails stop being corrected like growth metrics ✅ SHIPPED
 
@@ -496,10 +535,10 @@ written into `statistics-changes.md`.
 ## 2. Dependency graph
 
 ```
-STAT-1c (guardrails)  ────────────────────────────────────┐   safety; independent
-STAT-1b (contrast set) ───────────────────────────────────┤   biggest power win
+STAT-1c (guardrails) ✅ ───────────────────────────────────┐   safety; independent
+STAT-1b (contrast set) ✅ ─────────────────────────────────┤   biggest power win
 STAT-1  (Holm / the Fork) ────────────────────────────────┤
-STAT-2  (sign instrument) ──▶ STAT-4 (relative effect) ───┼──▶ STAT-6 (exit gate)
+STAT-2  (sign instrument) ✅ ─▶ STAT-4 (relative effect) ──┼──▶ STAT-6 (exit gate)
 STAT-3  (proportions) ⏳ ─────────────────────────────────┤
 STAT-5  (ddof — recommended dropped) ─────────────────────┘
 ```
@@ -507,10 +546,10 @@ STAT-5  (ddof — recommended dropped) ─────────────�
 The correction layer split into three independent WPs once the derivation
 landed, and their order is by **value, not dependency** — none blocks another:
 
-1. **STAT-1c** first. It is the only safety-directed item, and its declaration,
-   storage and UI already exist (audit §8b).
-2. **STAT-1b** next. Declaring the contrast set buys `g/2` in level — more power
-   than Holm gives, for a config field rather than new math.
+1. **STAT-1c** first (✅ shipped). It is the only safety-directed item, and its
+   declaration, storage and UI already exist (audit §8b).
+2. **STAT-1b** next (✅ shipped). Declaring the contrast set buys `g/2` in
+   level — more power than Holm gives, for a config field rather than new math.
 3. **STAT-1** last, because it is the one that needs the Fork settled, and the
    Fork is the maintainer's call.
 
@@ -539,6 +578,7 @@ field, and only M15's Student-t would need them.
 | D12 | **`_ab_results.reject` keeps its name and is REDOCUMENTED as pre-family** — "rejection of this one comparison at its stored α, before any read-time family rule". No family-decision column is added: under a read-time scheme that value is re-derived on every read and a persisted copy would go stale the moment `correction` changes. The BI recipes state that the family decision lives in the readout. | decided 2026-08-03, delegated |
 | D15 | **STAT-1b stays in M13 and does NOT wait for M14's `control:` field.** They are different declarations: STAT-1b declares the FAMILY (`contrasts: vs_control \| all_pairs`), M14 declares WHICH ARM is control — and the latter is already resolved positionally today (first declared variant = control = `name_1`, baseline §5 `combinations`). So the knob is expressible over the existing convention, and M14 later replaces the positional resolution in one place instead of the family being blocked on it. | decided 2026-08-04, delegated |
 | D14 | **The sequential layer DOES extend to score intervals** — the always-valid rule is a standardised test with `c(V)` in place of `z`, so the confidence sequence is `{δ : \|Z(δ)\| ≤ c(V)}`, a critical-value substitution inside the root-find MN/Fieller already run. The blocker is architectural, not mathematical: `to_always_valid` *infers* the SE from the CI width assuming symmetry, unvalidated, at six call sites (the A/A sequential column among them). **`asymmetric_ci: ClassVar[bool] = False` is a hard prerequisite of STAT-3** — it turns a silent miscomputation into a loud refusal. | decided 2026-08-03, delegated |
+| D16 | **`contrasts` is experiment-level with NO project default** — unlike `correction`/`guardrail_correction`. The family five call sites read must never depend on whether the surface reading it resolved a project default, and the factory that serves them therefore takes no `ProjectConfig`. It is also a statement about an experiment's design (which arms it compares), not a project-wide statistical policy. | decided 2026-08-04, delegated |
 | D13 | **STAT-5 (uniform ddof) is DROPPED from M13** — second-order, below the instrument's noise floor, dominated at small n by the normal-vs-Student-t error deferred to M15 (audit §7). Dropping it edits the ROADMAP contour. | decided 2026-08-03, delegated |
 
 ## 4. Exit gate (sketch)
@@ -677,7 +717,15 @@ plan` is a shipped surface with its own tests.
 
 **(c) M14 wants the same declaration as STAT-1b.** The multi-arm decision layer
 plans an explicit `control:` field; the contrast-set declaration needs exactly
-that information. Build it once.
+that information. Build it once — and note that D15's "M14 replaces the
+positional resolution in one place" is off by two: `ExperimentConfig.contrast_pairs()`
+is one, and `pipeline/readout.py` resolves `variants[0]` / `variants[1:]`
+independently for the verdict list and for the SRM rollup. A `control:` field
+that reaches only the factory would leave `evaluate()` looking up series under
+the wrong control and reporting "no computed results for this pair" on a fully
+computed experiment. Pinned by
+`tests/config/test_contrast_pairs_is_the_only_entry.py`, which fails if that
+shape moves or multiplies.
 
 **(d) BH already contradicts the interval semantics.** Under a data-dependent
 threshold there is no fixed α to build an interval at, so "the interval excludes

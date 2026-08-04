@@ -815,9 +815,13 @@ def _correction_note(experiment, alphas) -> str:
         if alphas.secondary is not None and alphas.secondary != alphas.main
         else f"per-comparison {alphas.main:.4g}"
     )
-    if alphas.contrasts == "vs_control" and alphas.groups_count > 2:
-        # the divisor is g−1, not C(g,2) — say which family bought the level,
-        # or the number cannot be reconciled with the arm count beside it
+    if alphas.contrasts == "vs_control" and alphas.groups_count > 2 and alphas.main != alphas.alpha:
+        # The divisor is g−1, not C(g,2) — say which family bought the level, or
+        # the number cannot be reconciled with the arm count beside it. Gated on
+        # the level having actually MOVED, the way the guardrail clause below is
+        # gated on its tier existing: under `correction: none` nothing was
+        # divided by anything, and naming a family there would explain a
+        # division that did not happen.
         note += " (vs_control family)"
 
     if alphas.guardrail is not None and any(c.is_guardrail for c in experiment.comparisons):
@@ -845,8 +849,10 @@ def _emit_plan(experiment, project, alphas, power, looks, grid, rows_per_refresh
     warnings: list[str] = []
     variants = experiment.assignment.variants
     if len(variants) > 2:
+        others = len(experiment.contrast_pairs()) - 1
         family = (
-            f"the other {len(variants) - 2} vs-control contrasts share the same α"
+            f"the other {others} vs-control contrast{'s' if others != 1 else ''} "
+            "shares the same α"
             if experiment.contrasts == "vs_control"
             else "the other pairs share the same α"
         )

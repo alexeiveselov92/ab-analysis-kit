@@ -59,6 +59,13 @@ def get_experiments_table_model() -> TableModel:
             ColumnDefinition("expected_split", "String"),  # canonical JSON object
             ColumnDefinition("alpha", "Nullable(Float64)", nullable=True),
             ColumnDefinition("correction", "Nullable(String)", nullable=True),
+            # m13 STAT-1b: which family the persisted alphas were divided by.
+            # Without it a BI join re-derives C(variants, 2) and lands on a
+            # divisor no _ab_results row carries, and a narrowed family is
+            # indistinguishable from an incomplete run. Added additively
+            # (`ensure_columns`), so an existing install picks it up on the next
+            # run rather than needing a recreate.
+            ColumnDefinition("contrasts", "String"),  # all_pairs|vs_control
             ColumnDefinition("sequential_enabled", "Bool"),
             ColumnDefinition("sequential_scheme", "String"),
             ColumnDefinition("comparisons", "String"),  # canonical JSON summary

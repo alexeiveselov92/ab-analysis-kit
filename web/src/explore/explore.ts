@@ -1417,7 +1417,7 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
           const reply = lastReply.get(activeMetric as string);
           if (reply) adopt(reply, lastComputed.get(activeMetric as string) || readKnobs(), 'recompute');
         },
-        'view a different variant pair — recomputes cover all pairs at once',
+        'view a different variant pair — recomputes cover all declared pairs at once',
       );
       topCommon.appendChild(pairPicker.row);
     }

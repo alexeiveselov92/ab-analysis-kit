@@ -436,8 +436,8 @@ def _declared_pair_warning(experiment: ExperimentConfig, dropped: int) -> tuple[
     return (
         f"{experiment.name}: ignored {dropped} persisted rows for variant pairs "
         "outside the declared contrast set (renamed arms, or `contrasts: "
-        "vs_control`?) — `abk run --full-refresh` rewrites the window without "
-        "them",
+        "vs_control`?) — `abk run --full-refresh --from <start> --to <horizon>` "
+        "rewrites that window without them",
     )
 
 

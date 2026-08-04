@@ -74,6 +74,7 @@ assignment:                      # READ-ONLY exposure source — abkit never ran
 
 alpha: 0.05                      # experiment-level significance (unset -> project default)
 correction: bonferroni           # none | bonferroni | benjamini_hochberg (unset -> project default)
+contrasts: all_pairs             # all_pairs (default) | vs_control (only control-vs-treatment)
 sequential: {enabled: false, scheme: always_valid}   # opt-in peeking-safe CIs (default OFF)
 # incremental_reads: true        # override project.compute.incremental_reads for this experiment
                                  # (unset -> project default). Changes HOW a number is computed
@@ -336,9 +337,29 @@ covariate (declarative-config §3). Units absent from the pre-period default to
   secondary metrics); Benjamini-Hochberg is applied read-time across the
   experiment's metrics (declarative-config §6).
 
+- **`guardrail_correction`** (optional, project or experiment) — `inherit`
+  (default, the pre-`0.8.0` scheme: a guardrail shares the secondary tier) or
+  `none` (the guardrail is tested at the **raw** alpha and leaves the secondary
+  divisor, which also loosens alpha for the screening metrics that remain). A
+  guardrail exists to catch harm, so correcting it makes you *less* likely to
+  catch it — but the flip moves persisted numbers, so it is opt-in
+  (declarative-config §6.1).
+- **`contrasts`** (optional, experiment level) — `all_pairs` (default: every
+  variant pair is compared and corrected for) or `vs_control` (only the `g−1`
+  contrasts against the **first declared variant**). Declaring the narrower
+  family multiplies every tier's alpha by `g/2` — ≈ +10 points of power at four
+  arms — because you stop paying for treatment-vs-treatment comparisons you
+  never make. Under `vs_control` those pairs are *not computed at all*: they
+  get no result rows and no verdicts (declarative-config §6.2).
+
+```yaml
+contrasts: vs_control            # all_pairs (default) | vs_control
+```
+
 `abk run`, `abk validate`, and the HTML report all echo the effective
-per-comparison alpha and the `C(variants, 2) × metrics` divisor, so the applied
-correction is never hidden.
+per-comparison alpha and the divisor it was derived from — `C(variants, 2) ×
+metrics`, or `(variants − 1) × metrics` under `contrasts: vs_control` — so the
+applied correction is never hidden.
 
 ## Sequential analysis (opt-in, default off)
 

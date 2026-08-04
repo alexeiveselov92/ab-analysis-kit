@@ -80,7 +80,9 @@ export interface MetricBlock {
   method: MethodBlock;
   /** metric_query template, deduped to one entry; rendered SQL never enters the payload */
   query: string | null;
-  /** all combinations(arms, 2) in config order, always present */
+  /** the experiment's DECLARED contrast set, in config order, always present:
+   * every combinations(arms, 2) pair, or only the control-vs-treatment ones
+   * under `contrasts: vs_control` (m13 STAT-1b) */
   pairs: PairBlock[];
   /** parsed + deduped row warnings, order-preserving */
   warnings: string[];
@@ -243,6 +245,10 @@ export interface ReportPayload {
   tz: string;
   /** variant names, config order; first = control */
   arms: string[];
+  /** m13 STAT-1b: 'all_pairs' | 'vs_control' — which pairs the experiment
+   * claims, and therefore what the per-row alpha was divided by. Optional so
+   * older baked payloads type-check. */
+  contrasts?: string;
   srm: SrmBlock;
   calibration: CalibrationBlock | null;
   verdicts: VerdictBlock[];

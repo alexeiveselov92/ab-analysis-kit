@@ -111,8 +111,11 @@ changing `alpha`, `correction`, or `power` never orphans a results series
 **Why the effective alpha isn't the alpha you set.** With `correction:
 bonferroni`, abkit applies the legacy two-tier scheme keyed off each comparison's
 `is_main_metric` flag: the main metric gets `alpha / C` (where `C` is the number
-of pairwise comparisons), and secondary metrics split a stricter
-`alpha / (C × n_secondary)` budget (declarative-config §6). Do not compute this
+of comparisons the experiment **declares** — `C(variants, 2)` by default, or
+`variants − 1` under the experiment's `contrasts: vs_control`, see
+[Experiments](experiments.md#alpha-and-multiple-testing-correction)), and
+secondary metrics split a stricter `alpha / (C × n_secondary)` budget
+(declarative-config §6). Do not compute this
 by hand — `abk run`, `abk validate`, `abk plan`, and the HTML report all **echo**
 the effective per-comparison alpha and the `C × metrics` divisor, and all four use
 the same resolver so an A/A cell calibrated for a metric matches what the pipeline

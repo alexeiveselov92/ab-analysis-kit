@@ -168,8 +168,17 @@ function buildHeader(payload: ReportPayload): HTMLElement {
 
   if (payload.description) h.appendChild(el('p', 'abk-desc', payload.description));
 
+  // Under `contrasts: vs_control` the page shows g arms but only g-1 pair
+  // blocks at an alpha divided by g-1: without naming the family, the missing
+  // treatment-vs-treatment blocks read as missing DATA (m13 STAT-1b).
+  const family =
+    payload.contrasts === 'vs_control'
+      ? ` · contrasts: vs_control (${payload.arms.length - 1} of ${
+          (payload.arms.length * (payload.arms.length - 1)) / 2
+        } pairs claimed)`
+      : '';
   h.appendChild(
-    el('div', 'abk-arms', `arms: ${payload.arms.join(' vs ')} · first = control`),
+    el('div', 'abk-arms', `arms: ${payload.arms.join(' vs ')} · first = control${family}`),
   );
 
   const chips = el('div', 'abk-chips');
