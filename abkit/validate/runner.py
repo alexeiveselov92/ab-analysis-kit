@@ -198,7 +198,49 @@ def _verdict(method_name: str, metric: str, score: CellScore, budget: float, alp
         )
     if score.peeking_fpr is not None and score.peeking_fpr > 2 * alpha:
         verdict += f"; peeking FPR {score.peeking_fpr:.1%} vs nominal α={alpha:g}"
+    verdict += _sign_lean_note(score)
     return verdict
+
+
+#: Below this many false positives the sign share is noise — at 100 hits its own
+#: standard error is already 5 points, so a "lean" read off fewer is a coin flip
+#: dressed as a finding.
+_MIN_HITS_FOR_SIGN_LEAN = 100
+#: How many standard errors of departure from 0.5 before we say anything. The SE
+#: is sqrt(0.25/hits), so this is a genuine test and not a fixed percentage —
+#: which would fire constantly on small cells and never on large ones.
+_SIGN_LEAN_SIGMAS = 3.0
+
+
+def _sign_lean_note(score: CellScore) -> str:
+    """m13 STAT-2: report a SIDED asymmetry in the false positives, or nothing.
+
+    A correct interval is sign-symmetric under the null. A systematic lean
+    identifies the ESTIMATOR, and it is the only signal that can: several
+    relative-effect formulas share an identical rejection set at the null, so
+    their FPRs agree to the last false positive while their false positives lean
+    opposite ways. This note says what the FPR column structurally cannot.
+
+    It reaches the operator through the VERDICT rather than the decision log,
+    which no CLI user ever sees (the M7 WP6 lesson).
+
+    Silent unless the departure clears both gates: a lean is a claim about the
+    estimator, and a noisy one would train the operator to ignore it.
+    """
+    share = score.fpr_negative_share
+    if share is None or score.fpr is None or not score.valid_iterations:
+        return ""
+    hits = round(score.fpr * score.valid_iterations)
+    if hits < _MIN_HITS_FOR_SIGN_LEAN:
+        return ""
+    se = math.sqrt(0.25 / hits)
+    if abs(share - 0.5) < _SIGN_LEAN_SIGMAS * se:
+        return ""
+    side = "below" if share > 0.5 else "above"
+    return (
+        f"; false positives lean {side} zero ({share:.0%} vs 50%) — "
+        "a sided asymmetry points at the interval formula, not at the data"
+    )
 
 
 def _select_recommended(cells: list[CellResult]) -> tuple[str | None, str]:
@@ -563,6 +605,7 @@ def _score_one(
         "degenerate_horizon": score.degenerate_horizon,
         "valid_iterations": score.valid_iterations,
         "single_look_fpr": score.fpr,
+        "single_look_fpr_negative_share": score.fpr_negative_share,
         "peeking_fpr": score.peeking_fpr,
         # (elapsed_days, cumulative_fpr) per look — the peeking-vs-looks curve (R10)
         "peeking_curve": [list(point) for point in score.peeking_curve],

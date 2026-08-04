@@ -352,7 +352,7 @@ loosens α for the screening metrics that remain — a second, free gain).
    keys on the **effective** α, so existing `_ab_aa_runs` rows for guardrail
    metrics read `alpha_mismatch` until re-run.
 
-### STAT-2 — the A/A matrix records the SIGN of each false positive
+### STAT-2 — the A/A matrix records the SIGN of each false positive ✅ SHIPPED
 
 **Depends on:** nothing. **Blocks:** STAT-4. Runs in parallel with STAT-1.
 
@@ -537,6 +537,7 @@ field, and only M15's Student-t would need them.
 | D10 | **STAT-4 = Fieller, not the cheap delta parity.** Decisive fact: Fieller's rejection set at θ=0 is *identical* to today's shortcut, so adopting it changes **no verdict** — only interval endpoints. The "cheap" delta fix *does* change the rejection set (that is what its sign asymmetry is). The correct change is the non-disruptive one. It also shares STAT-3's score-inversion shape, so the sequential-asymmetry problem is solved once for both. | decided 2026-08-03, delegated |
 | D11 | **MN ships WITHOUT the `N/(N−1)` factor** (Farrington–Manning form), making `Z(0)` bit-identical to today's pooled z so no reported p-value moves. Byte-stability of the p-value outranks matching R/SAS; the difference is `1/(2N)`. Golden tests compare against FM, and the docstring says why. | decided 2026-08-03, delegated |
 | D12 | **`_ab_results.reject` keeps its name and is REDOCUMENTED as pre-family** — "rejection of this one comparison at its stored α, before any read-time family rule". No family-decision column is added: under a read-time scheme that value is re-derived on every read and a persisted copy would go stale the moment `correction` changes. The BI recipes state that the family decision lives in the readout. | decided 2026-08-03, delegated |
+| D15 | **STAT-1b stays in M13 and does NOT wait for M14's `control:` field.** They are different declarations: STAT-1b declares the FAMILY (`contrasts: vs_control \| all_pairs`), M14 declares WHICH ARM is control — and the latter is already resolved positionally today (first declared variant = control = `name_1`, baseline §5 `combinations`). So the knob is expressible over the existing convention, and M14 later replaces the positional resolution in one place instead of the family being blocked on it. | decided 2026-08-04, delegated |
 | D14 | **The sequential layer DOES extend to score intervals** — the always-valid rule is a standardised test with `c(V)` in place of `z`, so the confidence sequence is `{δ : \|Z(δ)\| ≤ c(V)}`, a critical-value substitution inside the root-find MN/Fieller already run. The blocker is architectural, not mathematical: `to_always_valid` *infers* the SE from the CI width assuming symmetry, unvalidated, at six call sites (the A/A sequential column among them). **`asymmetric_ci: ClassVar[bool] = False` is a hard prerequisite of STAT-3** — it turns a silent miscomputation into a loud refusal. | decided 2026-08-03, delegated |
 | D13 | **STAT-5 (uniform ddof) is DROPPED from M13** — second-order, below the instrument's noise floor, dominated at small n by the normal-vs-Student-t error deferred to M15 (audit §7). Dropping it edits the ROADMAP contour. | decided 2026-08-03, delegated |
 

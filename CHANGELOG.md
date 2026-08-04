@@ -14,6 +14,27 @@ number change).
 ## [Unreleased]
 
 ### Added
+- **STAT-2 — the A/A matrix records WHICH SIDE each false positive fell on**
+  (M13). `abk validate` now reports `fpr_negative_share` beside the FPR: the
+  share of single-look false positives whose CI sat below zero. A correct
+  interval is sign-symmetric under the null, so it is 0.5 up to Monte-Carlo
+  noise.
+
+  It exists because the FPR *count* structurally cannot do this job. Several
+  relative-effect formulas share an **identical rejection set at the null**, so
+  their measured FPRs agree to the last false positive while their false
+  positives lean opposite ways — the sign is the only column that separates
+  them, and the lean it detects grows as α shrinks, i.e. it is worst in exactly
+  the corrected tier. The number rides in the persisted `details` JSON (no schema
+  change) and a **verdict** line names a lean when it clears two gates: at least
+  100 false positives, and a departure from 0.5 of at least 3 standard errors
+  (`sqrt(0.25/hits)`) — a test rather than a fixed percentage, which would fire
+  constantly on small cells and never on large ones. Silent otherwise, because a
+  noisy claim about the estimator trains the operator to ignore it.
+
+  Measurement only: no statistical number moves, and the scalar and vectorized
+  engines agree **exactly** (the share is a ratio of two block-invariant mask
+  counts, so it joins the parity gate's exact class, not its continuous one).
 - **STAT-1c — `guardrail_correction`: guardrails can stop being corrected like
   growth metrics** (M13, decision D8). A guardrail exists to catch harm, so
   correcting its alpha makes the engine *less* able to do the one job the metric

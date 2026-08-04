@@ -129,8 +129,17 @@ class TestFallbackExtentIsReported:
 
         output = self._run_without_state()
         assert "fell back to full recompute for 14 of 14 looks" in output
-        assert "-1" not in output
         assert "15 of 14" not in output
+        # The negative served count is asserted on the LINES THAT CARRY COUNTS,
+        # never over the whole output: `"-1" not in output` also matched pytest's
+        # own tmpdir (`pytest-12/test_…`), so the test passed while the temp
+        # counter was 0–9 and failed from 10 onward — a gate that fails for a
+        # reason unrelated to the code, and increasingly often, since the counter
+        # only grows. CI stayed green because its machines are fresh.
+        count_lines = [ln for ln in output.splitlines() if "looks" in ln]
+        assert count_lines, "the hint lines went missing — the assertion below would be vacuous"
+        for line in count_lines:
+            assert "-1" not in line, line
 
 
 class TestTheCostReportCounterfactual:

@@ -288,6 +288,26 @@ two-process lock race) is deferred to a Docker-equipped environment.
   the Apply gate is unchanged. Bootstrap A/A stayed an opt-in follow-up (D7);
   sidedness/winsorization are arbitrated-not-implemented (D14).
 
+### M13 STAT-2 fact an assistant must know (the A/A sign column)
+
+- **`fpr_negative_share` is the only column that can identify an ESTIMATOR.**
+  Several relative-effect formulas share an *identical rejection set at the null*,
+  so their measured FPRs agree to the last false positive — the FPR column is
+  structurally blind to them. The share of false positives falling BELOW zero is
+  not, and the lean it detects grows as α shrinks, i.e. it is worst in the
+  corrected tier. Denominator is the HITS, not the iterations; `None` when nothing
+  was significant (0.5 there would be a claim about data that does not exist).
+- **It is an EXACT parity field**, not a continuous one: a ratio of two
+  block-invariant mask counts. It is classified as such in
+  `tests/validate/test_vector_parity.py`, whose roster gate forces every new
+  `CellScore` field to be consciously classified.
+- **It reaches the operator through the VERDICT** (`runner._sign_lean_note`),
+  never the decision log — the M7 WP6 lesson. It is silent unless the departure
+  clears two gates (≥100 false positives, ≥3 standard errors of `sqrt(0.25/hits)`)
+  because a noisy claim about the estimator trains the operator to ignore it. The
+  sigma form is deliberate: a fixed percentage would fire constantly on small
+  cells and never on large ones.
+
 ### M7 vectorization facts an assistant must know
 
 - **`score_cell` and `sweep_family` are dispatchers** on
