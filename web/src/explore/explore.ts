@@ -124,6 +124,11 @@ const fmtAlpha = (a: number): string => Number(a.toPrecision(4)).toString();
 // (m13 STAT-1b).
 // ----------------------------------------------------------------------------
 
+//: mirrors `abkit.stats.correction.READ_TIME_CORRECTIONS` — the schemes whose
+//: decision is taken over the whole family at read time, leaving every stored row
+//: at the raw alpha (which is why `effectiveAlpha` below returns it unchanged).
+const READ_TIME_CORRECTIONS = ['benjamini_hochberg', 'holm'];
+
 function effectiveAlpha(
   rawAlpha: number,
   correction: string,
@@ -1206,9 +1211,12 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
     if (correction === 'bonferroni') note += ' (two-tier bonferroni)';
     // m13 STAT-1: every read-time scheme leaves the compute-time alpha raw, so the
     // page must say WHICH rule the verdict will use — the number beside it is the
-    // interval's level, not the decision's.
-    if (correction === 'benjamini_hochberg') note += ' (BH is read-time — raw α at compute time)';
-    if (correction === 'holm') note += ' (holm is read-time — raw α at compute time)';
+    // interval's level, not the decision's. The note names the scheme by its CONFIG
+    // key (not the seg control's short label) so `tests/tuning/test_explore_bundle.py`
+    // can assert one exists for every member of READ_TIME_CORRECTIONS.
+    if (READ_TIME_CORRECTIONS.includes(correction)) {
+      note += ` (${correction} is read-time — raw α at compute time)`;
+    }
     effAlphaEcho.textContent = note;
   }
 

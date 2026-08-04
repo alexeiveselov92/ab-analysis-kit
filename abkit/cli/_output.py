@@ -60,6 +60,38 @@ def pairs_phrase(alphas: TwoTierAlphas) -> str:
     return f"C({g},2)={shown} pairs"
 
 
+def alpha_lines(alphas: TwoTierAlphas, correction: str) -> list[str]:
+    """The `effective alphas` tree body — ONE source for `abk run` and `abk validate`.
+
+    Both printed a main/secondary pair with the Bonferroni divisor spelled out in
+    the secondary line. Under a READ-time scheme (`benjamini_hochberg`, `holm`)
+    every tier resolves to the raw alpha and nothing was divided by anything, so
+    that line asserted a division that did not happen — and neither command said
+    the decision is taken later, over the whole family, at a threshold no row
+    carries. `abk plan` gained exactly this disclosure (`plan._correction_note`);
+    these two are its siblings, so the rule lives in one place (m13 STAT-1).
+    """
+    from abkit.stats.correction import READ_TIME_CORRECTIONS
+
+    lines = [f"alpha={alphas.alpha} over {alphas.groups_count} variants ({pairs_phrase(alphas)})"]
+    if correction in READ_TIME_CORRECTIONS:
+        lines.append(
+            f"per-comparison alpha: {alphas.main:.6g} (raw — {correction} is applied "
+            "read-time over the whole family; the rows carry this level, the decision "
+            "does not)"
+        )
+        return lines
+    lines.append(f"main-metric alpha: {alphas.main:.6g}")
+    if alphas.secondary is not None and alphas.metrics_count:
+        lines.append(
+            f"secondary alpha: {alphas.secondary:.6g} "
+            f"(÷{alphas.pairs_count:g}×{alphas.metrics_count} non-main metrics)"
+        )
+    if alphas.guardrail is not None:
+        lines.append(f"guardrail alpha: {alphas.guardrail:.6g} (uncorrected)")
+    return lines
+
+
 def echo_block(
     title: str,
     children: list[str],

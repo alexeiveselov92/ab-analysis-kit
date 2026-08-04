@@ -118,7 +118,8 @@ and `abk clean` prune the strays. `seed` and `alpha` are identity-EXCLUDED.
   explicit timestamp to align to an external cycle (it may precede `start_ts`,
   making the first window partial). Cutoffs are `anchor + k*cadence`.
 - `alpha:` / `correction:` — omit to inherit project defaults; `correction:
-  bonferroni` gives the two-tier split, read-time BH is applied across a family.
+  bonferroni` gives the two-tier split, while `benjamini_hochberg` (FDR) and
+  `holm` (FWER) are read-time family rules applied at every read.
 
 ## Step 7 — Optional: enable sequential (peeking-safe)
 

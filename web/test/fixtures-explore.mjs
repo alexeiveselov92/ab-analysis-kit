@@ -141,7 +141,7 @@ export function makeExplorePayload(overrides = {}) {
       experiment: {
         alpha: 0.05,
         correction: 'bonferroni',
-        correction_choices: ['none', 'bonferroni', 'benjamini_hochberg'],
+        correction_choices: ['none', 'bonferroni', 'benjamini_hochberg', 'holm'],
         guardrail_correction: 'inherit',
         contrasts: 'all_pairs',
         groups_count: 2,
@@ -175,7 +175,7 @@ export function makeThreeArmExplorePayload(overrides = {}) {
       experiment: {
         alpha: 0.05,
         correction: 'bonferroni',
-        correction_choices: ['none', 'bonferroni', 'benjamini_hochberg'],
+        correction_choices: ['none', 'bonferroni', 'benjamini_hochberg', 'holm'],
         guardrail_correction: 'inherit',
         contrasts: 'all_pairs',
         groups_count: 3,

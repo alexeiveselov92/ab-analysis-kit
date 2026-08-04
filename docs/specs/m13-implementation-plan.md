@@ -242,12 +242,15 @@ default-off enum value.
 - **The load-bearing delta the design did not have: the scheme classification is
   in ONE place, with a roster gate.** Three modules tested `!=
   "benjamini_hochberg"` by NAME (`readout._build_sig_map`, `validate/runner`'s
-  family-budget anchor, and the compute-time branch itself) — each would have
-  silently handed Holm the per-row CI rule, i.e. a scheme that appears to work
-  while controlling nothing. `tests/pipeline/test_correction_rule.py`'s
+  family-budget anchor, and the compute-time branch itself). Two would have
+  silently handed Holm the per-row CI rule — a scheme that appears to work while
+  controlling nothing; the A/A anchor would have judged it against the Bonferroni
+  composition ≈Σα rather than ≈α, so the instrument itself would have called a
+  miscalibrated Holm family green. `tests/pipeline/test_correction_rule.py`'s
   `TestSchemeRoster` asserts `READ_TIME ∪ COMPUTE_TIME` **equals** the config
   literal, that the two are disjoint, that every read-time scheme has an adjuster
-  that is actually reached, and that the project and experiment literals agree.
+  that is actually reached, that every one has an operator-facing LABEL (the map
+  the gate first forgot), and that the project and experiment literals agree.
   This is the m12 NTF-1 roster-gate pattern, and it is what makes STAT-1's own
   regression impossible to reintroduce.
 - **Fork B is disclosed, not merely permitted.** Two changes in
@@ -255,11 +258,16 @@ default-off enum value.
   family rule decided (`_sig_phrase`/`_quiet_phrase` — it named a per-comparison
   fact as the reason for a family-level decision), and a pair whose stored
   interval excludes zero while the family rule declines to reject carries an
-  explicit caveat. Because all three renderers show `caveats`, the disclosure
-  reaches the report, the cockpit and the dashboard without a payload change.
-  The caveat is deliberately gated on the latest row being **informative**: a
-  demoted row's reason is the small-sample gate, and blaming the correction for
-  it would be a different lie.
+  explicit caveat plus the structured `PairVerdict.family_divergence`. The report
+  and the dashboard render `caveats` verbatim; notifications render their own
+  sentence off the FLAG, because a message shows an interval beside a verdict
+  with no report to click through to (M12: a notification cannot disagree with
+  the report about the same experiment) and sniffing a caveat STRING is how prose
+  becomes API; `abk explore` shows neither — it never calls `evaluate`, by design.
+  The caveat is deliberately gated on the family having been **consulted**: SRM,
+  the pre-horizon refusal and the small-sample demotion each answer INCONCLUSIVE
+  for a reason of their own, and blaming the correction for them would be a
+  different lie.
 - **The divergence is one-directional, and that is a pinned property**
   (`test_holm_never_rejects_more_than_the_stored_interval_does`): a family rule is
   never looser than the member's own raw alpha, so an operator can see an
@@ -641,10 +649,14 @@ field, and only M15's Student-t would need them.
    strings demands a property IEEE-754 does not offer).
 2. Every new estimator/scheme has a **new** golden; every legacy golden still
    passes at rel-1e-9.
-3. Opting into any new value changes `method_config_id` — pinned, since it is
-   what makes D4 safe.
-4. `abk validate --family-sweep` over the corrected scheme shows FWER ≤ α where
-   the old scheme does not (STAT-1's whole claim).
+3. Opting into a new **method param** (STAT-3/STAT-4) changes `method_config_id`
+   — pinned, since it is what makes D4 safe. It does NOT hold for the correction
+   layer: `correction` is deliberately outside `method_config_id` (§6.3), so
+   `holm` re-decides an existing series in place rather than orphaning it.
+4. `abk validate --family-sweep` over `correction: holm` shows the family FWER at
+   ≈α against the members' own level (STAT-1's claim; the two-tier default sits at
+   its own nominal ≈2α by design, which is what §4.3(a) now states rather than
+   calls a defect).
 5. The A/A matrix reports false-positive **signs** (STAT-2), and the reported
    split matches the derivation's prediction for whichever estimator is chosen.
 6. `grep ALGORITHM_VERSION` shows no bump (D4).

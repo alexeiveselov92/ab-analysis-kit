@@ -154,7 +154,7 @@ dashboard`, notifications — recomputes the decision every time it is read.
 same guarantee. It is *not* uniformly more powerful than the default two-tier
 scheme, whose main tier is deliberately loose (it protects the main and the
 secondary tiers at α each — see
-[statistics-changes §4.3](https://github.com/pipelab-dev/ab-analysis-kit/blob/main/docs/specs/statistics-changes.md)).
+[statistics-changes §4.3](https://github.com/alexeiveselov92/ab-analysis-kit/blob/main/docs/specs/statistics-changes.md)).
 Switching schemes is opt-in and moves no number until you switch.
 
 ### The `limits` block (cadence & small-sample gates)

@@ -662,6 +662,102 @@ class TestHolm:
         assert not any("legitimately disagree" in c for c in verdict.caveats)
         assert "not significant under the Holm family rule" in joined(verdict.rationale)
 
+    def test_not_stabilized_says_which_rule_stopped_rejecting(self):
+        """The mixed-window rationale is scheme-aware too: under a family rule the
+        CI need not have crossed zero for significance to come and go."""
+        experiment = self.holm_experiment()
+        rows = self._rows(experiment, {"sessions": 0.9, "retention": 0.85})
+        # revenue: strongly significant early, family-refused at the last two looks
+        for day in range(1, 15):
+            rows += make_series(
+                experiment, metric="revenue", days=day, pvalue=0.0001 if day < 13 else 0.03
+            )[-1:]
+        text = joined(single_verdict(experiment, rows).rationale)
+        assert "not stabilized" in text
+        assert "Holm family rule stopped rejecting" in text
+
+    def test_the_quiet_wording_reaches_the_no_min_effect_branch(self):
+        """`_quiet_phrase` is used at five sites; the min_effect-less one is the
+        message an operator reads when nothing is configured, and it must not claim
+        the CI includes zero when a family rule is what refused."""
+        experiment = make_experiment(
+            correction="holm",
+            comparisons=[
+                {"metric": "revenue", "is_main_metric": True, "method": {"name": "t-test"}},
+                {"metric": "sessions", "method": {"name": "t-test"}},
+            ],
+        )
+        rows = []
+        for metric in ("revenue", "sessions"):
+            rows += make_series(
+                experiment,
+                metric=metric,
+                pvalue=0.9,
+                effect=0.001,
+                left_bound=-0.05,
+                right_bound=0.05,
+            )
+        text = joined(single_verdict(experiment, rows).rationale)
+        assert "not significant under the Holm family rule" in text
+        assert "no min_effect is configured" in text
+
+    def test_an_untiered_guardrail_leaves_the_read_time_family(self):
+        """m13 D8 at read time: `guardrail_correction: none` takes the guardrail out
+        of the CORRECTED family, and at read time the family IS the divisor. Without
+        it the declaration would be a silent no-op under every read-time scheme."""
+        base = {
+            "correction": "holm",
+            "comparisons": [
+                {
+                    "metric": "revenue",
+                    "is_main_metric": True,
+                    "min_effect": 0.5,
+                    "method": {"name": "t-test"},
+                },
+                {"metric": "crashes", "is_guardrail": True, "method": {"name": "t-test"}},
+                {"metric": "errors", "is_guardrail": True, "method": {"name": "t-test"}},
+            ],
+        }
+        default_project = ProjectConfig.model_validate({"name": "p", "default_profile": "dev"})
+        untiered_project = ProjectConfig.model_validate(
+            {"name": "p", "default_profile": "dev", "statistics": {"guardrail_correction": "none"}}
+        )
+        inherit = make_experiment(**base)
+        untiered = make_experiment(**base)
+
+        def rows_for(experiment):
+            out = []
+            for metric in ("revenue", "crashes", "errors"):
+                out += make_series(experiment, metric=metric, pvalue=0.03)
+            return out
+
+        # m=3 ⇒ the first step is 0.05/3 = 0.0167 < 0.03 ⇒ nothing rejects
+        inherited = evaluate(inherit, rows_for(inherit), project=default_project)
+        assert inherited.verdicts[0].verdict != "WIN"
+        # guardrails out of the family ⇒ m=1 ⇒ 0.03 < 0.05 ⇒ the main metric is called
+        freed = evaluate(untiered, rows_for(untiered), project=untiered_project)
+        assert freed.verdicts[0].verdict == "WIN"
+
+    def test_a_mixed_alpha_family_is_reported_loudly(self):
+        """Alpha is outside `method_config_id`, so a scoped re-run can leave one
+        metric at a new level and its siblings at the old one — and a read-time rule
+        then controls the error rate at the LOOSEST of them."""
+        experiment = self.holm_experiment()
+        rows = self._rows(experiment, {"revenue": 0.0001, "sessions": 0.9, "retention": 0.85})
+        for row in rows:
+            if row["metric"] == "sessions":
+                row["alpha"] = 0.01
+        readout = evaluate(experiment, rows)
+        assert any("MIXED alphas" in w for w in readout.warnings)
+        # and a homogeneous family says nothing
+        assert not any(
+            "MIXED alphas" in w
+            for w in evaluate(
+                experiment,
+                self._rows(experiment, {"revenue": 0.0001, "sessions": 0.9, "retention": 0.85}),
+            ).warnings
+        )
+
     @pytest.mark.parametrize("correction", ["none", "bonferroni"])
     @pytest.mark.parametrize("pvalue", [0.02, 0.9])
     def test_under_a_compute_time_scheme_the_two_readings_coincide(self, correction, pvalue):
@@ -673,6 +769,116 @@ class TestHolm:
         verdict = single_verdict(experiment, rows)
         assert verdict.significant == (verdict.left_bound > 0 or verdict.right_bound < 0)
         assert not any("legitimately disagree" in c for c in verdict.caveats)
+
+    def test_a_win_carries_no_divergence_caveat(self):
+        """A caveat contradicting the verdict it decorates is worse than none: the
+        clause that prevents it (`not latest_sig.significant`) has to be pinned."""
+        experiment = self.holm_experiment()
+        rows = self._rows(experiment, {"revenue": 0.0001, "sessions": 0.9, "retention": 0.85})
+        verdict = single_verdict(experiment, rows)
+        assert verdict.verdict == "WIN"
+        assert not verdict.family_divergence
+        assert not any("legitimately disagree" in c for c in verdict.caveats)
+
+    def test_the_divergence_is_detected_on_the_LOSE_side_too(self):
+        """`_ci_excludes_zero` has two halves, and the negative one is the direction
+        an operator escalates. Dropping it would silence exactly those."""
+        experiment = self.holm_experiment()
+        rows = []
+        for metric, p in {"revenue": 0.02, "sessions": 0.03, "retention": 0.04}.items():
+            rows += make_series(
+                experiment,
+                metric=metric,
+                pvalue=p,
+                effect=-0.1,
+                left_bound=-0.15,
+                right_bound=-0.05,
+            )
+        verdict = single_verdict(experiment, rows)
+        assert verdict.family_divergence
+        assert any("excludes zero" in c for c in verdict.caveats)
+
+    def test_flat_is_withheld_when_this_pair_own_interval_excludes_zero(self):
+        """Under a read-time rule "nothing rejected" no longer implies "the interval
+        covers zero", so FLAT — an affirmative claim of no meaningful effect — must
+        not be called against the pair's own interval."""
+        experiment = self.holm_experiment()
+        # min_effect 0.5 with an MDE far below it: under `none` this is a WIN, and
+        # with the family refusing it would have been FLAT ("adequately powered")
+        rows = self._rows(experiment, {"revenue": 0.02, "sessions": 0.03, "retention": 0.04})
+        verdict = single_verdict(experiment, rows)
+        assert verdict.verdict == "INCONCLUSIVE"
+        assert "no stop decision is called" in joined(verdict.rationale)
+
+    def test_flat_is_still_reachable_when_the_interval_agrees(self):
+        """The premise of the test above: with a quiet interval FLAT still works
+        under Holm, so the withholding is about the divergence, not about the scheme."""
+        experiment = self.holm_experiment()
+        rows = []
+        for metric in ("revenue", "sessions", "retention"):
+            rows += make_series(
+                experiment,
+                metric=metric,
+                pvalue=0.9,
+                effect=0.001,
+                left_bound=-0.05,
+                right_bound=0.05,
+            )
+        verdict = single_verdict(experiment, rows)
+        assert verdict.verdict == "FLAT"
+        # and FLAT's power story is disclosed as optimistic under a family rule
+        assert any("optimistic under a family rule" in c for c in verdict.caveats)
+
+    def test_no_divergence_caveat_before_the_family_was_consulted(self):
+        """SRM and the pre-horizon refusal answer INCONCLUSIVE for reasons of their
+        own; blaming the correction for them would be a different lie."""
+        experiment = self.holm_experiment()
+        srm_rows = self._rows(experiment, {"revenue": 0.02, "sessions": 0.03, "retention": 0.04})
+        for row in srm_rows:
+            row["srm_flag"] = True
+        srm = single_verdict(experiment, srm_rows)
+        assert "SRM failed" in joined(srm.rationale)
+        assert not srm.family_divergence
+
+        pre_horizon = []
+        for metric, p in {"revenue": 0.02, "sessions": 0.03, "retention": 0.04}.items():
+            pre_horizon += make_series(experiment, metric=metric, pvalue=p, days=5)
+        early = single_verdict(experiment, pre_horizon)
+        assert "pre-horizon" in joined(early.rationale)
+        assert not early.family_divergence
+
+    def test_the_family_is_metrics_TIMES_declared_pairs(self):
+        """Three arms: the family at a cutoff is 3 metrics × 2 control-vs-treatment
+        pairs = 6, not 3. Keying it per arm pair would be anti-conservative exactly
+        where STAT-1b made multi-arm families first-class."""
+        experiment = make_experiment(
+            correction="holm",
+            assignment={
+                "query": "SELECT 1",
+                "variants": ["control", "t1", "t2"],
+                "expected_split": {"control": 0.34, "t1": 0.33, "t2": 0.33},
+            },
+            comparisons=[
+                {"metric": "revenue", "is_main_metric": True, "method": {"name": "t-test"}},
+                {"metric": "sessions", "method": {"name": "t-test"}},
+                {"metric": "retention", "method": {"name": "t-test"}},
+            ],
+        )
+        rows = []
+        for metric in ("revenue", "sessions", "retention"):
+            for treatment in ("t1", "t2"):
+                rows += make_series(experiment, metric=metric, pvalue=0.007, name_2=treatment)
+        readout = evaluate(experiment, rows)
+        # m=6 ⇒ first step 0.05/6 = 0.00833 > 0.007 ⇒ every pair rejects; per-pair
+        # families (m=3) would also reject, so pin the DISCRIMINATING case below
+        assert all(v.verdict == "WIN" for v in readout.verdicts)
+
+        borderline = []
+        for metric in ("revenue", "sessions", "retention"):
+            for treatment in ("t1", "t2"):
+                borderline += make_series(experiment, metric=metric, pvalue=0.012, name_2=treatment)
+        # m=6: 0.012*6 = 0.072 > 0.05 ⇒ nothing rejects. m=3 (per pair): 0.036 ⇒ WIN.
+        assert all(v.verdict != "WIN" for v in evaluate(experiment, borderline).verdicts)
 
     def test_a_demoted_latest_row_is_not_reported_as_a_family_divergence(self):
         """Its rationale already names the demotion; claiming the family refused it

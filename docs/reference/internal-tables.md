@@ -229,7 +229,7 @@ applies: `toDate(start_ts, '<experiment timezone>')`.
 reference line are **derived in your query**, not stored. Metric *descriptions*
 are **not** stored here — they live in `_ab_experiments` / metric YAML and are
 joined by BI, so there is one source of truth. Corrections that are applied at
-read time — read-time Benjamini-Hochberg, and the verdict WIN/LOSE/FLAT/
+read time — Benjamini-Hochberg and Holm, and the verdict WIN/LOSE/FLAT/
 INCONCLUSIVE logic — are **not** persisted: compute-time rows deliberately carry
 the raw effective alpha, and the verdict is recomputed at render. Two-tier
 Bonferroni *is* reflected here: main metrics and secondary metrics land at

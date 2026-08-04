@@ -815,7 +815,8 @@ goldens stay untouched; new numbers get **new** goldens.
 one read-time seam (`composed_significance`) — the two differ only in the p-value
 adjuster — and the two-tier levels are byte-identical, because the FWER item was
 a **claim** defect: the scheme's main tier is at α and its whole-experiment bound
-is `2α`, flat in the arm and metric counts, and that is now written down
+is `2α` at the single-main-metric default — flat in the arm count and in the
+number of secondary metrics — and that is now written down
 (statistics-changes §4.3) instead of an unqualified "FWER ≤ α". Fork B (D7) is
 ratified and made visible: a verdict may legitimately disagree with the interval
 stored beside it, one-directionally, and the pair carries an explicit caveat when

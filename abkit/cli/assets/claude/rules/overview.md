@@ -109,7 +109,10 @@ profile's `internal_database` / `internal_schema`, separate from the
   (`alpha` and `seed` excluded). Editing an identity param starts a NEW series
   and orphans the old rows (recompute, then `abk clean`).
 - **two-tier alpha** — main vs secondary metrics get different post-correction
-  (Bonferroni) alphas; read-time Benjamini-Hochberg spans a family.
+  (Bonferroni) alphas. The **read-time** schemes (`benjamini_hochberg` = FDR,
+  `holm` = FWER) instead leave the raw alpha on every row and decide over the
+  whole family at read time — so `reject` is then the pre-family flag, not the
+  verdict.
 - **always-valid / sequential** — opt-in (`sequential: {enabled: true}`)
   peeking-safe CIs. **Default OFF**: without it the readout WITHHOLDS WIN/LOSE
   AND FLAT before the horizon (FLAT is equally a stop decision). `scheme: alpha_spending` (group-sequential) is NOT

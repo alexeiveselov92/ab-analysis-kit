@@ -77,7 +77,7 @@ assignment:                      # READ-ONLY exposure source (abkit does not ran
   expected_split: {control: 0.5, treatment: 0.5}   # drives the SRM chi-square gate
 
 alpha: 0.05                      # experiment-level significance (see §6 — inspectable)
-correction: bonferroni           # none | bonferroni (config-time, legacy) | benjamini_hochberg (read-time)
+correction: bonferroni           # none | bonferroni (compute-time two-tier) | benjamini_hochberg | holm (read-time, §6.3)
 sequential: {enabled: false, scheme: always_valid}   # opt-in peeking-correct CIs (default off = legacy)
 
 notify:                          # OPTIONAL routing for `abk run --notify` (M12 NTF-1). Routing
@@ -234,8 +234,9 @@ inspectable**:
   for the default family, `(groups−1) × metrics` under `contrasts: vs_control`
   (§6.2), and the line names which family it counted.
 - A golden test reproduces the exact two-tier scheme keyed off `is_main_metric`.
-- Benjamini-Hochberg (`correction: benjamini_hochberg`) is applied **read-time**
-  across an experiment's metrics; its interaction with peeking is documented in
+- The **read-time** schemes — Benjamini-Hochberg (FDR) and Holm (FWER, §6.3) —
+  are applied across an experiment's metrics at every read; their interaction
+  with peeking is documented in
   [aa-false-positive-matrix.md](aa-false-positive-matrix.md).
 
 ### 6.1 `guardrail_correction` — the guardrail tier (m13 STAT-1c, decision D8)
@@ -331,8 +332,8 @@ Notes:
   narrowing direction leaves the surviving rows at the old, *tighter* level
   (conservative, never anti-conservative); `abk run --full-refresh --from … --to …`
   re-homogenises those.
-- **Under `correction: benjamini_hochberg` the narrowing is retroactive.** BH is
-  read-time, so an already-published look is re-scored against the smaller
+- **Under a read-time scheme (`benjamini_hochberg`, `holm`) the narrowing is
+  retroactive**, so an already-published look is re-scored against the smaller
   family the next time it is read. That is self-consistent — every surface reads
   the same declaration — but it is a verdict that can change without a run, the
   same class as the D7 decision/interval divergence.
@@ -399,10 +400,29 @@ since M3 without saying so; STAT-1 ratifies and documents it. The divergence is
 one-directional (the family rule is never looser than the member's raw alpha),
 so the visible case is *an interval excluding zero under a verdict that declines
 to call it* — `readout.evaluate()` attaches an explicit caveat to exactly that
-pair, which is why the report, the cockpit and the dashboard all show it.
+pair (and sets `PairVerdict.family_divergence`). The HTML report and `abk
+dashboard` render the caveat; a notification renders its own sentence off the
+flag, because it shows an interval beside a verdict with no report to click
+through to. `abk explore` renders neither: it never calls `evaluate` and shows
+uncorrected per-comparison inference by design (below).
+
+Three read-time-only consequences, all conservative:
+
+- **FLAT is withheld when the pair's own interval excludes zero.** "Nothing was
+  significant" no longer implies "the interval covers zero", and FLAT is an
+  affirmative claim of no meaningful effect — the readout answers INCONCLUSIVE
+  and says why.
+- **FLAT's power claim is disclosed as optimistic**: the MDE is solved at the
+  row's raw alpha while the family threshold is tighter.
+- **A `guardrail_correction: none` guardrail leaves this family too** (§6.1), so
+  D8's second half — the divisor — applies at read time, where the family *is*
+  the divisor. Its own regression check is unchanged and correction-independent.
 
 Notes:
 
+- **A family whose rows carry mixed alphas is warned about**: the rule then
+  controls the error rate at the loosest of them (`abk run --full-refresh
+  --from … --to …` re-homogenises the series).
 - **`_ab_results.reject` is a pre-family flag**, not the composed decision
   (data-contract §1). It stays as-is — a published BI contract — and is
   documented as what it is. The family decision is not persisted at all: under a

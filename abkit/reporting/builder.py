@@ -341,8 +341,8 @@ def build_report_payload(
     pinning ``end`` replays the readout as-of a historical cutoff.
     ``generated_at`` is a caller-supplied preformatted string — the builder
     never reads the wall clock (determinism; the CLI owns formatting).
-    ``project`` resolves the effective correction for the readout (BH is
-    read-time) and names the payload; ``metric_configs`` supplies the metric
+    ``project`` resolves the effective correction for the readout (the
+    ``benjamini_hochberg`` / ``holm`` schemes are read-time) and names the payload; ``metric_configs`` supplies the metric
     descriptions (D6). On a never-run project (no ``_ab_results`` table) every
     key is still present with empty series — reporting never creates schema.
 

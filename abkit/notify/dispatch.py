@@ -266,6 +266,11 @@ def readout_data_from_verdict(
         srm_flag=readout.srm_flag,
         srm_pvalue=readout.srm_pvalue,
         weekly_cycle_pct=verdict.weekly_cycle_pct,
+        # m13 STAT-1: a notification shows an interval beside a verdict and has no
+        # report to click through to, so the one case where the two legitimately
+        # disagree has to travel WITH the numbers (the M12 rule that a message
+        # cannot disagree with the report about the same experiment).
+        family_divergence=verdict.family_divergence,
         n_1=n_1,
         n_2=n_2,
         timestamp=to_naive_utc(verdict.end_ts),

@@ -89,9 +89,11 @@ class TestCompuTimeAlphaStaysRaw:
         bh = effective_alphas(_experiment(correction="benjamini_hochberg"), _project())
         assert (holm.main, holm.secondary) == (bh.main, bh.secondary)
 
-    def test_guardrail_correction_none_is_inert_under_a_read_time_scheme(self) -> None:
-        """m13 STAT-1c's flip only bites under Bonferroni — under Holm the
-        guardrail already had the raw alpha, and the divisor is unused."""
+    def test_guardrail_correction_none_moves_no_compute_time_alpha_here(self) -> None:
+        """Under a read-time scheme every tier is already the raw alpha, so D8's flip
+        changes nothing this resolver returns. It is NOT inert at read time — the
+        guardrail leaves the family instead, which is where the divisor lives; see
+        `test_readout.py::TestHolm::test_an_untiered_guardrail_leaves_the_read_time_family`."""
         experiment = _experiment(correction="holm")
         inherit = effective_alphas(experiment, _project())
         untiered = effective_alphas(experiment, _project(guardrail_correction="none"))
@@ -120,14 +122,47 @@ class TestPlanHeader:
         assert "read-time" not in note
         assert "main 0.01667" in note
 
-    def test_emit_plan_passes_the_resolved_scheme(self, capsys) -> None:
-        """The wiring, not the helper: a caller that forgot the argument would
-        print the most misleading header of the three."""
+    @pytest.mark.parametrize(
+        ("experiment_scheme", "project_scheme"),
+        [(None, "holm"), ("holm", "bonferroni")],
+        ids=["inherited-from-project", "declared-on-the-experiment"],
+    )
+    def test_emit_plan_passes_the_resolved_scheme(
+        self, capsys, experiment_scheme, project_scheme
+    ) -> None:
+        """The wiring, not the helper — and BOTH halves of the resolution: a
+        `_resolved_correction` that only ever read the project would print a
+        per-comparison level nothing is judged at for the experiment that declares
+        its own scheme."""
         from abkit.cli.commands.plan import _emit_plan
 
-        experiment = _experiment(correction=None)  # inherits the project's holm
-        project = _project(correction="holm")
+        experiment = _experiment(correction=experiment_scheme)
+        project = _project(correction=project_scheme)
         alphas = effective_alphas(experiment, project)
         grid = experiment.grid()
         _emit_plan(experiment, project, alphas, 0.8, len(grid), grid, 42, [])
         assert "holm is applied read-time" in capsys.readouterr().out
+
+
+class TestRunAndValidateAlphaEcho:
+    """`abk run` and `abk validate` print the same block through one helper. Under
+    a read-time scheme the old block asserted a division that did not happen."""
+
+    def _lines(self, correction: str) -> list[str]:
+        from abkit.cli._output import alpha_lines
+
+        experiment = _experiment(correction=correction)
+        return alpha_lines(effective_alphas(experiment, _project()), correction)
+
+    def test_a_read_time_scheme_prints_no_divisor_and_names_the_regime(self) -> None:
+        for scheme in ("holm", "benjamini_hochberg"):
+            body = " | ".join(self._lines(scheme))
+            assert "non-main metrics" not in body  # the division did not happen
+            assert "read-time" in body and scheme in body
+            assert "raw" in body
+
+    def test_bonferroni_still_prints_both_tiers_and_the_divisor(self) -> None:
+        body = " | ".join(self._lines("bonferroni"))
+        assert "main-metric alpha: 0.0166667" in body
+        assert "secondary alpha: 0.00833333" in body
+        assert "×2 non-main metrics" in body

@@ -69,6 +69,31 @@ class TestExperimentKnobBlock:
         block = _payload()["explore"]["experiment"]
         assert block["correction_choices"] == list(get_args(CorrectionKind))
 
+    def test_the_client_mirrors_READ_TIME_CORRECTIONS_exactly(self):
+        """m13 STAT-1: the choices list is derived from the config literal, so a new
+        scheme reaches the cockpit's control automatically — while the note saying
+        "the level beside it is NOT the decision level" is client-side and would not.
+        The client keeps its own array (it may not import Python); pin it against the
+        server's classification rather than hand-listing it (the m11 route-list
+        lesson), so a scheme added on one side only fails here.
+
+        Asserted over the COMMITTED bundle, not the TypeScript source: the bundle is
+        what a `pip install` user runs."""
+        import re
+        from pathlib import Path
+
+        import abkit.tuning as tuning_pkg
+        from abkit.stats.correction import READ_TIME_CORRECTIONS
+
+        bundle = (Path(tuning_pkg.__file__).parent / "assets" / "explore.js").read_text()
+        assert "is read-time" in bundle  # the note itself survives minification
+        mirrors = re.findall(r'\[(?:"[a-z_]+",)*"[a-z_]+"\]', bundle)
+        parsed = [set(m.strip("[]").replace('"', "").split(",")) for m in mirrors]
+        assert set(READ_TIME_CORRECTIONS) in parsed, (
+            "the explore bundle has no array equal to READ_TIME_CORRECTIONS — "
+            f"expected {sorted(READ_TIME_CORRECTIONS)}, arrays found: {parsed}"
+        )
+
     def test_guardrail_mode_is_baked_for_the_client_mirror(self):
         """m13 D8/STAT-1c: the client recomputes alpha live as the operator drags
         the knobs, so it needs the RULE, not a resolved number — the mode rides in

@@ -148,7 +148,9 @@ SELECT
     pvalue,
     alpha  AS alpha_effective,
     (pvalue IS NOT NULL AND pvalue < alpha) AS significant_at_effective_alpha,
-    reject AS abkit_reject   -- abkit's own decision (composed rule) for cross-check
+    reject AS abkit_reject   -- the PER-COMPARISON flag (pvalue < alpha), pre-family:
+                             -- under correction: benjamini_hochberg | holm the composed
+                             -- family decision is the readout's and is not stored
 FROM abkit_internal._ab_results FINAL
 WHERE experiment = {experiment:String}
   AND is_horizon                       -- decision-ready rows only

@@ -32,10 +32,17 @@ metrics do not get their own verdict; they *modify* the main-metric verdict (see
 
 | Verdict | Meaning |
 |---|---|
-| **WIN** | The CI excludes zero in the **desired** direction, and that has held over the stabilization window. |
-| **LOSE** | The CI excludes zero in the **adverse** direction, stably. |
-| **FLAT** | The CI includes zero **and** the test is powered enough to rule out a business-meaningful effect. A confident "no effect", not "we didn't look hard enough". |
+| **WIN** | Significant in the **desired** direction, and that has held over the stabilization window. |
+| **LOSE** | Significant in the **adverse** direction, stably. |
+| **FLAT** | Not significant **and** the test is powered enough to rule out a business-meaningful effect. A confident "no effect", not "we didn't look hard enough". |
 | **INCONCLUSIVE** | Everything else — keep running, or something is blocking a call (SRM, pre-horizon, too little data, not yet stabilized, or underpowered). |
+
+"Significant" means *the CI excludes zero* under `correction: none` or
+`bonferroni`, and *the family rule rejects* under the read-time schemes
+(`benjamini_hochberg`, `holm`), where the two can differ — see
+[p vs the row's effective alpha](#p-vs-the-rows-effective-alpha) below. FLAT is
+never called against a pair whose own interval excludes zero, whatever the
+scheme.
 
 Every verdict comes with a **rationale** (why this call) and often **caveats**
 (things you should know even so). Read them — they name the exact gate that fired.
