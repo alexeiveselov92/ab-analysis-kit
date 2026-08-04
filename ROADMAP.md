@@ -844,10 +844,14 @@ extend to score intervals — the always-valid rule is a standardised test with 
 variance-dependent `c(V)` in place of `z`, i.e. a critical-value substitution
 inside the root-find the new intervals already perform. The investigation instead
 surfaced a live hazard: `to_always_valid` **infers** the SE from the CI width
-assuming symmetry, unvalidated, at six call sites — the A/A matrix's own
-sequential column among them — so an asymmetric interval would be silently
-mis-widened rather than refused. A `asymmetric_ci` capability flag is therefore a
-hard prerequisite of the proportion WP. ~5–6 sessions.
+assuming symmetry, unvalidated — in `se_from_ci_length`, entered from eleven
+places, seven of them inside the A/A matrix's own scoring and family sweep. (The
+design session measured "six", counting only `to_always_valid`; the guard
+therefore belongs to the inference helper, and ships as its own WP **STAT-3a**
+before STAT-3 — D17.) Until it lands, an asymmetric interval would be silently
+mis-widened rather than refused, and the instrument that would catch it is one of
+the callers doing the mis-widening. ~5–6 sessions, of which the correction layer
+(STAT-1c, STAT-1b, STAT-2, STAT-1) is done.
 
 ### M14 — multi-arm decision layer (bucket B, decisions) → `0.9.0` 📐 contour
 An explicit `control:` field (or a validated positional convention);
