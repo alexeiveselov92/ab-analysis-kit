@@ -17,8 +17,12 @@ House conventions:
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 import click
+
+if TYPE_CHECKING:  # numpy would load on `abk --help` otherwise (lazy-group rule)
+    from abkit.stats import TwoTierAlphas
 
 # Pipeline stage name → display title for the streamed run-log tree
 # (architecture.md §5 stage order).
@@ -30,6 +34,30 @@ RUN_STAGE_TITLES = {
     "compute": "COMPUTE",
     "result": "RESULT",
 }
+
+
+def pairs_phrase(alphas: TwoTierAlphas) -> str:
+    """How many variant pairs the two-tier levels were divided by, and which.
+
+    ``abk run`` and ``abk validate`` print this divisor, and both printed the
+    literal ``C(g,2)`` — true only of the default family. (``abk plan`` states
+    its levels differently; its own note is ``plan._correction_note``.) Under
+    ``contrasts: vs_control`` (m13 STAT-1b) the count is ``g−1`` and the line
+    has to SAY so: a divisor an operator cannot reconcile with the alpha beside
+    it reads as a bug in whichever of the two they trust less. Reads the
+    resolved object rather than re-deriving from ``groups_count``, which no
+    longer determines the count.
+
+    Unlike ``_correction_note`` it stays loud at two arms and under
+    ``correction: none``: this line reports what the family IS, not why a level
+    moved, and "1 contrast against the control arm" is true in both cases.
+    """
+    g = alphas.groups_count
+    # integral for every integer g >= 2 in both families (g(g−1) is even)
+    shown = int(alphas.pairs_count)
+    if alphas.contrasts == "vs_control":
+        return f"contrasts: vs_control ⇒ {shown} contrast(s) against the control arm"
+    return f"C({g},2)={shown} pairs"
 
 
 def echo_block(

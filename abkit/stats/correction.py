@@ -10,27 +10,56 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Literal
 
 import numpy as np
 import numpy.typing as npt
 
 from abkit.stats.exceptions import MethodParamError
 
+#: The declared comparison family (m13 STAT-1b). Stats-core keeps its own
+#: literal because it may not import config (the purity invariant); the two are
+#: pinned equal by ``tests/pipeline/test_contrast_set.py`` so a third family
+#: cannot be added on one side only.
+ContrastFamily = Literal["all_pairs", "vs_control"]
 
-def n_comparisons(groups_count: int, metrics_count: int = 1) -> float:
-    """``C(groups, 2) × metrics`` — the legacy pairwise comparison count."""
+
+def n_comparisons(
+    groups_count: int, metrics_count: int = 1, contrasts: ContrastFamily = "all_pairs"
+) -> float:
+    """The declared comparison count: ``pairs(groups) × metrics``.
+
+    ``contrasts`` names the family the experiment CLAIMS (m13 STAT-1b):
+    ``all_pairs`` is the legacy ``C(groups, 2)``; ``vs_control`` is the
+    ``groups − 1`` many-to-one contrasts against the control arm. Correcting
+    for treatment-vs-treatment contrasts nobody makes costs a factor of
+    ``g/2`` in level, so the count — not the correction rule — is where that
+    power is recovered. The default reproduces the legacy transcription
+    exactly, at every call site that never passes the argument.
+    """
     if groups_count < 2:
         raise MethodParamError("Number of groups must be more than 1")
     if metrics_count < 1:
         raise MethodParamError(f"metrics_count must be >= 1, got {metrics_count}")
-    return groups_count * (groups_count - 1) / 2 * metrics_count
+    if contrasts == "vs_control":
+        pairs = float(groups_count - 1)
+    elif contrasts == "all_pairs":
+        pairs = groups_count * (groups_count - 1) / 2
+    else:
+        raise MethodParamError(f"contrasts must be 'all_pairs' or 'vs_control', got {contrasts!r}")
+    return pairs * metrics_count
 
 
-def adjust_alpha(alpha: float, groups_count: int, metrics_count: int = 1) -> float:
-    """Bonferroni: ``alpha / (C(groups, 2) × metrics)`` — legacy transcription."""
+def adjust_alpha(
+    alpha: float,
+    groups_count: int,
+    metrics_count: int = 1,
+    contrasts: ContrastFamily = "all_pairs",
+) -> float:
+    """Bonferroni: ``alpha / (pairs(groups) × metrics)`` — legacy transcription."""
     if not 0.0 < alpha < 1.0:
         raise MethodParamError(f"alpha must be in (0, 1), got {alpha}")
-    return alpha / n_comparisons(groups_count, metrics_count)
+    return alpha / n_comparisons(groups_count, metrics_count, contrasts)
 
 
 @dataclass(frozen=True)
@@ -46,6 +75,12 @@ class TwoTierAlphas:
     ``guardrail_correction: none`` (m13 D8), in which case ``metrics_count``
     ALREADY excludes guardrails — the two go together, and the caller resolving
     one without the other gets a scheme that helps guardrails and loosens nothing.
+
+    ``contrasts`` (m13 STAT-1b) rides along because ``groups_count`` alone no
+    longer determines the pair count: every surface that prints or re-derives
+    the divisor from this object must know WHICH family was paid for, and
+    reading ``C(groups, 2)`` off ``groups_count`` would silently report the
+    wrong one under ``vs_control``.
     """
 
     alpha: float
@@ -54,6 +89,12 @@ class TwoTierAlphas:
     main: float
     secondary: float | None
     guardrail: float | None = None
+    contrasts: ContrastFamily = "all_pairs"
+
+    @property
+    def pairs_count(self) -> float:
+        """The declared variant-pair count these levels were divided by."""
+        return n_comparisons(self.groups_count, 1, self.contrasts)
 
 
 def two_tier_alphas(
@@ -61,6 +102,7 @@ def two_tier_alphas(
     groups_count: int,
     metrics_count: int,
     guardrail_alpha: float | None = None,
+    contrasts: ContrastFamily = "all_pairs",
 ) -> TwoTierAlphas:
     """The exact legacy two-tier scheme keyed off ``is_main_metric``.
 
@@ -74,6 +116,10 @@ def two_tier_alphas(
     same caller that must then EXCLUDE them from ``metrics_count``. This function
     deliberately does not derive one from the other — it has no idea which
     comparisons are guardrails.
+
+    ``contrasts`` (m13 STAT-1b) selects the pair count both tiers divide by.
+    The guardrail tier is deliberately NOT divided by it — it is the raw alpha
+    by construction (D8), and a family it does not pay for cannot tighten it.
     """
     if metrics_count < 0:
         raise MethodParamError(f"metrics_count must be >= 0, got {metrics_count}")
@@ -83,11 +129,14 @@ def two_tier_alphas(
         alpha=alpha,
         groups_count=groups_count,
         metrics_count=metrics_count,
-        main=adjust_alpha(alpha, groups_count, 1),
+        main=adjust_alpha(alpha, groups_count, 1, contrasts),
         secondary=(
-            None if metrics_count == 0 else adjust_alpha(alpha, groups_count, metrics_count)
+            None
+            if metrics_count == 0
+            else adjust_alpha(alpha, groups_count, metrics_count, contrasts)
         ),
         guardrail=guardrail_alpha,
+        contrasts=contrasts,
     )
 
 

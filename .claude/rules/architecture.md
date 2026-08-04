@@ -288,6 +288,76 @@ two-process lock race) is deferred to a Docker-equipped environment.
   the Apply gate is unchanged. Bootstrap A/A stayed an opt-in follow-up (D7);
   sidedness/winsorization are arbitrated-not-implemented (D14).
 
+### M13 STAT-1b facts an assistant must know (the declared contrast set)
+
+- **`ExperimentConfig.contrast_pairs()` is THE arm-pair factory**, m10's
+  `grid()` discipline applied to the family: nothing under `abkit/` may
+  enumerate variant pairs itself (AST gate
+  `tests/config/test_contrast_pairs_is_the_only_entry.py`, allowlisting only the
+  factory and stats-core's experiment-agnostic `compare(groups)`). Four modules
+  had each carried their own `combinations(variants, 2)` — the analyze stage
+  that WRITES the rows plus the report / dashboard / notify filters that decide
+  which persisted rows are still declared — and `notify/dispatch.py` had
+  predicted the extraction in a comment. Four copies of a constant are style;
+  four copies of a **knob-dependent set** are correctness.
+- **`contrasts: vs_control` is one declaration with two halves.** The Bonferroni
+  divisor becomes `g−1` instead of `C(g,2)` (that is the ≈ +10 points of power
+  at four arms) AND the treatment-vs-treatment pairs stop being computed.
+  Shipping only the first hands levels bought for `g−1` contrasts to a family of
+  `C(g,2)` — a false FWER claim in the dangerous direction; only the second
+  leaves the experiment needlessly conservative. `tests/pipeline/
+  test_contrast_set.py` exists to make either half-implementation fail, and
+  every fixture in it uses **3+ arms** (at two arms `C(2,2) = 1 = g−1` and every
+  assertion would pass against a no-op).
+- **The control is the first declared variant** — the positional convention
+  `name_1`, the readout's verdicts and the SRM rollup already use. D15: the
+  family declaration and M14's `control:` field are different declarations, so
+  this did not wait for M14.
+- **No project-level default, deliberately** (D16). The family a surface reads
+  must never depend on whether that surface resolved one, so the factory takes
+  no `ProjectConfig` — unlike `correction`/`guardrail_correction`, which are
+  policy. `contrasts` also stays OUT of the m9 state identity (it moves which
+  pairs are compared, never which units/days are materialised — the
+  `interval_anchor` precedent) and out of the `_ab_experiments` catalog row.
+- **A narrowed family leaves rows nothing can rewrite**, and two places had to
+  learn it: `driver._sequential_mode_changed` now judges declared pairs only (a
+  stale pair's `ci_kind` can never be superseded, so it would have forced a
+  full-series re-plan on every run, forever), and the stale-pair warning names
+  `abk run --full-refresh --from … --to …` — `abk clean` prunes series by
+  `method_config_id` and never touched pair-orphaned rows, which was already
+  wrong for a renamed arm (and `--full-refresh` without its window bounds is a
+  `BadParameter`, so naming the bare flag would have been unrunnable advice).
+- **The anti-join is complete at (cutoff × declared pair)**, not merely "was
+  this `end_ts` touched" (`list_complete_cutoffs`). WIDENING the family — back
+  to `all_pairs`, or by adding an arm — otherwise leaves every historical look
+  touched-but-incomplete: the new contrasts exist only from the flip onward
+  while the surviving pairs keep an alpha bought for the narrower family, which
+  is the anti-conservative direction and silent. Re-planned cutoffs rewrite all
+  declared pairs by LWW, so the alpha re-homogenises and the next run plans
+  zero; the narrowing direction leaves the old rows *tighter*, never looser
+  (`--full-refresh` re-homogenises those).
+- **`readout.evaluate()` filters undeclared pairs itself.** The three surface
+  copies stay (each owes its own loud line), but the read-time BH family is
+  built INSIDE the readout, so a direct caller — a notebook, a future surface —
+  would otherwise score a family of `C(g,2)` for an experiment that declared
+  `g−1`. The explore cockpit was the fourth reader and the one without a filter;
+  it has one now, at session load.
+- **A project-level `statistics: {contrasts: …}` is a loud error.** Every
+  neighbour in that block has a project default, so the mistake is natural, and
+  pydantic's `extra="ignore"` would have accepted the key and changed nothing —
+  a silent no-op reads as a broken engine, which is the opposite of what D16
+  decided.
+- **Every surface that PRINTS a level must name the family**
+  (`cli/_output.pairs_phrase`, `plan._correction_note`, the HTML report's arms
+  line, and `_ab_experiments.contrasts` for BI): at three arms the two
+  families print different alphas off the same arm count, and a divisor the
+  operator cannot reconcile reads as a bug. The explore client mirrors the rule
+  (not a resolved number) because alpha/correction stay draggable — a page
+  dividing by `C(g,2)` against a server dividing by `g−1` would contradict its
+  own rows. `_correction_note` is gated on the level having actually MOVED
+  (silent under `correction: none` and at two arms) while `pairs_phrase` stays
+  loud: one explains a division, the other reports a family.
+
 ### M13 STAT-2 fact an assistant must know (the A/A sign column)
 
 - **`fpr_negative_share` is the only column that can identify an ESTIMATOR.**

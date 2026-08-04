@@ -99,7 +99,6 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from datetime import datetime, timedelta
-from itertools import combinations
 from pathlib import Path
 from typing import Any
 
@@ -408,17 +407,20 @@ def _headline_insufficient(pair_series: Sequence[dict], verdict: PairVerdict) ->
 
 
 def _declared_pairs_only(experiment: ExperimentConfig, rows: Sequence[dict]) -> list[dict]:
-    """Drop rows whose arm pair is not among the CURRENTLY declared variants.
+    """Drop rows whose arm pair is not in the experiment's DECLARED contrast set.
 
     Mirrors ``reporting/builder.py``, which filters the same way before it
     calls ``evaluate`` — and it is not cosmetic: ``readout._filter_rows`` drops
     rows only by metric and ``method_config_id``, while the read-time
     Benjamini-Hochberg family is built from EVERY informative row at a cutoff.
-    Rows left behind by a mid-flight arm rename would otherwise inflate the
+    Rows left behind by a mid-flight arm rename — or by narrowing the family to
+    ``contrasts: vs_control`` (m13 STAT-1b) — would otherwise inflate the
     family and tighten every member's threshold, so the dashboard would
-    contradict ``abk run --report`` on identical rows.
+    contradict ``abk run --report`` on identical rows. All three copies read
+    the set from ``ExperimentConfig.contrast_pairs()``, so they cannot
+    disagree about what is declared.
     """
-    declared = set(combinations(experiment.assignment.variants, 2))
+    declared = set(experiment.contrast_pairs())
     return [row for row in rows if (str(row["name_1"]), str(row["name_2"])) in declared]
 
 
@@ -433,7 +435,9 @@ def _declared_pair_warning(experiment: ExperimentConfig, dropped: int) -> tuple[
         return ()
     return (
         f"{experiment.name}: ignored {dropped} persisted rows for variant pairs "
-        "outside the declared variants (renamed arms?) — run `abk clean`",
+        "outside the declared contrast set (renamed arms, or `contrasts: "
+        "vs_control`?) — `abk run --full-refresh --from <start> --to <horizon>` "
+        "rewrites that window without them",
     )
 
 

@@ -230,7 +230,9 @@ inspectable**:
 
 - `alpha` + `correction` are declared at experiment (or project) level.
 - `abk run` / `validate` / the HTML report **echo the effective per-comparison
-  alpha** and the `C(groups,2) × metrics` divisor in the `StageLogRenderer`.
+  alpha** and the divisor in the `StageLogRenderer` — `C(groups,2) × metrics`
+  for the default family, `(groups−1) × metrics` under `contrasts: vs_control`
+  (§6.2), and the line names which family it counted.
 - A golden test reproduces the exact two-tier scheme keyed off `is_main_metric`.
 - Benjamini-Hochberg (`correction: benjamini_hochberg`) is applied **read-time**
   across an experiment's metrics; its interaction with peeking is documented in
@@ -270,6 +272,100 @@ Notes:
 - An experiment whose only non-main comparisons are guardrails has
   `metrics_count = 0` and therefore no secondary tier at all; the guardrail still
   gets the raw alpha, never the (tighter) main one.
+
+### 6.2 `contrasts` — the declared family (m13 STAT-1b, decision D15)
+
+Bonferroni divides by the number of comparisons you *claim*. Through `0.7.0`
+abkit always claimed `C(g,2)` — every variant pair — and paid for the
+treatment-vs-treatment contrasts even when the decision was "each treatment vs
+the incumbent". Declaring the narrower family multiplies every tier's level by
+`g/2`: ≈ +10 points of power at four arms (an 18% sample-size saving at fixed
+MDE), +6 at three — more than Holm gives, for a config field rather than new
+math.
+
+`contrasts` is declared on the **experiment**:
+
+| Value | Family | Divisor |
+|---|---|---|
+| `all_pairs` (**default**) | every variant pair — the pre-`0.8.0` behaviour | `C(g,2) × metrics` |
+| `vs_control` | the `g−1` many-to-one contrasts against the control arm | `(g−1) × metrics` |
+
+The **control is the first declared variant** (`assignment.variants[0]`), the
+positional convention `name_1`, the readout's verdicts and the SRM rollup
+already use (statistics-baseline §5). M14's explicit `control:` field will
+replace that resolution in one place; the family declaration does not wait for
+it (D15) — they are different declarations.
+
+**It is one declaration with two halves.** Under `vs_control` the
+treatment-vs-treatment pairs are also **not computed**: no `_ab_results` rows,
+no verdicts, no read-time BH family members. Loosening the divisor while still
+writing those rows would hand levels bought for `g−1` contrasts to a family of
+`C(g,2)` — a false FWER claim in the dangerous direction; narrowing only the
+enumeration would leave the experiment needlessly conservative. Both halves read
+`ExperimentConfig.contrast_pairs()`, the one place under `abkit/` that may
+enumerate arm *pairs* — before STAT-1b four modules each carried their own
+`combinations(variants, 2)`, and the AST gate
+(`tests/config/test_contrast_pairs_is_the_only_entry.py`) now forbids that call
+outside the factory and stats-core's experiment-agnostic `compare(groups)`. The
+gate models `combinations` calls, not every conceivable enumeration: the
+readout's `control × treatments` slice is a deliberate, separately pinned
+exemption, because a *verdict* has been control-vs-treatment by design since
+m11 — a subset of both families.
+
+Both halves are enforced where the rows are produced AND where they are read:
+`readout.evaluate()` filters undeclared pairs itself, so a caller that reaches
+it directly (a notebook, a future surface) cannot score a read-time BH family of
+`C(g,2)` for an experiment that declared `g−1`; the report, dashboard, cockpit
+and notification surfaces each keep their own copy of the filter because each
+owes the operator its own loud line about what it dropped.
+
+Notes:
+
+- **Inert at two arms** (`C(2,2) = 1 = g−1`). The alpha half is inert unless
+  `correction: bonferroni`; the *enumeration* half applies under every scheme,
+  `none` included.
+- **Widening the family backfills; narrowing it does not.** The planner's
+  anti-join is complete at *(cutoff × declared pair)*: a look missing a declared
+  pair is re-planned, so flipping back to `all_pairs` — or adding an arm —
+  recomputes the affected looks and re-homogenises their alpha by LWW. The
+  narrowing direction leaves the surviving rows at the old, *tighter* level
+  (conservative, never anti-conservative); `abk run --full-refresh --from … --to …`
+  re-homogenises those.
+- **Under `correction: benjamini_hochberg` the narrowing is retroactive.** BH is
+  read-time, so an already-published look is re-scored against the smaller
+  family the next time it is read. That is self-consistent — every surface reads
+  the same declaration — but it is a verdict that can change without a run, the
+  same class as the D7 decision/interval divergence.
+- The guardrail tier (§6.1) stays at the raw alpha under both families — a
+  family it does not pay for cannot tighten it.
+- **Opt-in, so no default moves** (m13 D1) and no `ALGORITHM_VERSION` is bumped
+  (D4). Since alpha is outside `method_config_id`, flipping it writes new-alpha
+  rows into an existing series; `abk run --full-refresh` re-homogenises it, and
+  `_ab_aa_runs` rows keyed on the old effective alpha read `alpha_mismatch`
+  until `abk validate` re-runs them.
+- Rows already written for a pair the narrowed family no longer claims are
+  **ignored loudly** by every read surface (report, dashboard, notifications) —
+  the same path a renamed arm takes. `abk clean` does **not** remove them (it
+  prunes series by `method_config_id`); `abk run --full-refresh` does, because
+  it deletes the window before rewriting the declared pairs.
+- `contrasts` is deliberately **not** part of the m9 state identity: it changes
+  which pairs are compared, never which units/days are materialised — the same
+  reasoning that keeps `interval_anchor` out (m10).
+- `_ab_experiments.contrasts` records the family for BI (added additively, so an
+  existing install picks it up on its next run): without it a join would
+  re-derive `C(variants, 2)` and land on a divisor no `_ab_results` row carries.
+  (`guardrail_correction` from STAT-1c is still absent from that catalog — a
+  known gap, and the per-row `alpha` remains the authority in both cases.)
+- Writing `contrasts:` under the project's `statistics:` block is a **loud
+  error**, not a silent no-op — every neighbour there does have a project
+  default, so the mistake is natural and a knob that accepts a value and changes
+  nothing reads as a broken engine.
+- **There is no project-level default**, unlike `correction` /
+  `guardrail_correction`. The family a surface reads must never depend on
+  whether that surface happened to resolve one, and the factory the five call
+  sites share therefore needs no project config. It is also a statement about an
+  experiment's *design* — which arms it compares — rather than a project-wide
+  statistical policy.
 
 ## 7. `method_config_id` (must-fix: ONE canonical spec)
 

@@ -5,7 +5,7 @@ Defines configuration structure for abkit_project.yml.
 """
 
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -105,6 +105,26 @@ class ProjectStatisticsConfig(BaseModel):
         default=None,
         description="A/A false-positive budget the validate matrix colours against",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_experiment_level_keys(cls, data: Any) -> Any:
+        """`contrasts` is an EXPERIMENT declaration and has no project default.
+
+        Every neighbour in this block (`alpha`, `correction`,
+        `guardrail_correction`) does have one, so writing `contrasts:` here is
+        the natural mistake — and pydantic's default `extra="ignore"` would
+        accept it and change nothing at all. m13 D16 deliberately keeps the
+        contrast set out of this block: the family a surface reads must never
+        depend on whether that surface resolved a project default. A silent
+        no-op would make that decision look like a bug in the engine.
+        """
+        if isinstance(data, dict) and "contrasts" in data:
+            raise ValueError(
+                "contrasts is declared per EXPERIMENT, not project-wide (m13 D16) "
+                "— move `contrasts: …` into the experiment YAML"
+            )
+        return data
 
     @field_validator("alpha", "power")
     @classmethod

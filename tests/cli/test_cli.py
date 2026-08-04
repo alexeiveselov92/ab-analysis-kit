@@ -155,6 +155,23 @@ class TestRun:
         assert "Done." in result.output
         assert len(warehouse._rows.get("_ab_results", [])) == 5
 
+    def test_the_divisor_line_names_the_declared_family(self, project, warehouse):
+        """m13 STAT-1b: `pairs_phrase` is only useful if `abk run` actually
+        calls it. The default prints the legacy `C(g,2)` phrasing; flipping the
+        experiment to `vs_control` must change the LINE, not only the resolver
+        (the two-arm scaffold makes the numbers equal — the wording is the
+        whole signal here, and it is what an operator reconciles the alpha
+        against).
+        """
+        assert "C(2,2)=1 pairs" in runner.invoke(cli, ["run"]).output
+
+        path = project / "experiments" / "signup_test.yml"
+        path.write_text(path.read_text() + "\ncontrasts: vs_control\n", encoding="utf-8")
+        result = runner.invoke(cli, ["run"])
+        assert result.exit_code == 0, result.output
+        assert "contrasts: vs_control" in result.output
+        assert "C(2,2)" not in result.output
+
     def test_rerun_is_idempotent(self, project):
         assert runner.invoke(cli, ["run"]).exit_code == 0
         result = runner.invoke(cli, ["run"])

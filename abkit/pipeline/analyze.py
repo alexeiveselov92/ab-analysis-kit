@@ -17,7 +17,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from itertools import combinations
 from typing import Any
 
 from abkit.config.experiment_config import ComparisonConfig, ExperimentConfig
@@ -72,6 +71,12 @@ def effective_alphas(experiment: ExperimentConfig, project: ProjectConfig) -> Tw
 
     The flip is inert unless the correction is Bonferroni: every other scheme
     already hands out the raw alpha, which is what a guardrail would get anyway.
+
+    ``experiment.contrasts`` (m13 STAT-1b) decides the pair count both tiers
+    divide by, and it must be the SAME declaration
+    ``ExperimentConfig.contrast_pairs()`` hands the analyze stage: alphas paid
+    for ``C(g,2)`` pairs while only ``g−1`` are computed is a silently
+    conservative experiment, and the reverse silently breaks the FWER claim.
     """
     alpha = experiment.alpha if experiment.alpha is not None else project.statistics.alpha
     correction = (
@@ -97,10 +102,16 @@ def effective_alphas(experiment: ExperimentConfig, project: ProjectConfig) -> Tw
             groups_count=groups,
             metrics_count=non_main,
             guardrail_alpha=alpha if guardrails_untiered else None,
+            contrasts=experiment.contrasts,
         )
     # none / benjamini_hochberg (BH is read-time): raw alpha at compute time
     return TwoTierAlphas(
-        alpha=alpha, groups_count=groups, metrics_count=non_main, main=alpha, secondary=alpha
+        alpha=alpha,
+        groups_count=groups,
+        metrics_count=non_main,
+        main=alpha,
+        secondary=alpha,
+        contrasts=experiment.contrasts,
     )
 
 
@@ -161,11 +172,14 @@ def analyze_cutoff(
     project: ProjectConfig,
     sequential_tau2: dict[tuple[str, str], float] | None = None,
 ) -> list[PairOutcome]:
-    """All pairwise variant outcomes for one (comparison, cutoff).
+    """One outcome per DECLARED variant pair for one (comparison, cutoff).
 
-    Pairs follow the declared variant order (first = control = ``name_1``,
-    baseline §5 ``combinations`` semantics). Stats-core warnings are captured
-    per pair and routed into the row (plan R7), never to stderr.
+    Pairs come from ``ExperimentConfig.contrast_pairs()`` and follow the
+    declared variant order (first = control = ``name_1``, baseline §5
+    ``combinations`` semantics); under ``contrasts: vs_control`` (m13 STAT-1b)
+    the treatment-vs-treatment pairs are simply never computed — the same
+    declaration that removed them from the alpha divisor. Stats-core warnings
+    are captured per pair and routed into the row (plan R7), never to stderr.
 
     ``sequential_tau2`` (M5 WP3): when the experiment's sequential mode is on,
     ``{(name_1, name_2): tau2}`` (the frozen per-pair mixture variance, anchored to the
@@ -196,8 +210,7 @@ def analyze_cutoff(
         )
 
     outcomes: list[PairOutcome] = []
-    variant_order = experiment.assignment.variants
-    for name_1, name_2 in combinations(variant_order, 2):
+    for name_1, name_2 in experiment.contrast_pairs():
         size_1 = loaded.size(name_1)
         size_2 = loaded.size(name_2)
         if size_1 < min_units or size_2 < min_units:

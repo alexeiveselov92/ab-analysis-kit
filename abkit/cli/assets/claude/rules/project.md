@@ -241,7 +241,10 @@ and a failed run, and stays quiet through routine readouts.
 ## The two-tier alpha (why the effective alpha isn't the alpha you set)
 
 `bonferroni` correction applies the legacy **two-tier** scheme keyed off each
-comparison's `is_main_metric` flag. With `C = C(groups, 2)` pairwise comparisons:
+comparison's `is_main_metric` flag. With `C` = the number of comparisons the
+experiment DECLARES — `C(groups, 2)` by default, or `groups - 1` when the
+experiment sets `contrasts: vs_control` (see
+`.claude/rules/ab-analysis-kit/experiments.md`):
 
 - **Main metric** (`is_main_metric: true`): effective per-comparison alpha
   `= alpha / C` — the full budget, only the pairwise divisor.
@@ -252,7 +255,8 @@ comparison's `is_main_metric` flag. With `C = C(groups, 2)` pairwise comparisons
 
 So the main verdict is protected at the looser (more powerful) alpha, and the
 secondary metrics split a stricter budget. `abk run`, `abk validate`, and the HTML
-report **echo** the effective per-comparison alpha and the `C × metrics` divisor —
+report **echo** the effective per-comparison alpha, the `C × metrics` divisor and
+which family it counted —
 inspect them there; do not compute alpha by hand. `abk validate` persists at and
 `abk plan` sizes at this **same effective** alpha (the same resolver), so an A/A
 cell calibrated for a metric matches what the pipeline actually applied.

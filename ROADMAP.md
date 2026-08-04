@@ -806,8 +806,22 @@ today's pooled z at δ=0), and the relative-effect fix moves **no verdict**
 endpoints, guardrail α, and — for whoever opts in — `method_config_id`.
 
 5 WP (uniform ddof dropped), ordered by value rather than dependency —
-**STAT-1c (guardrails uncorrected) is ✅ shipped**. Baseline
+**STAT-1c (guardrails uncorrected), STAT-2 (the false-positive sign instrument)
+and STAT-1b (the declared contrast set) are ✅ shipped**; STAT-1 (Holm + the
+claim), STAT-3 (Miettinen–Nurminen) and STAT-4 (Fieller) remain. Baseline
 goldens stay untouched; new numbers get **new** goldens.
+
+**STAT-1b as built:** `contrasts: all_pairs | vs_control` on the experiment,
+with no project default on purpose — the family a surface reads must not depend
+on whether that surface resolved one. It is one declaration with two halves: the
+divisor falls to `g−1` **and** the treatment-vs-treatment pairs stop being
+computed, because loosening the level while still writing those rows is the
+false-FWER half of the change. The build's load-bearing delta is the factory
+`ExperimentConfig.contrast_pairs()` + its AST gate: four modules each carried
+their own `combinations(variants, 2)` (the analyze stage plus the report,
+dashboard and notification filters), which is m10's eight-hand-copied-call-sites
+shape one milestone later — `notify/dispatch.py` had even predicted the
+extraction in a comment.
 
 **The sequential question is answered (D14):** the confidence sequence *does*
 extend to score intervals — the always-valid rule is a standardised test with a

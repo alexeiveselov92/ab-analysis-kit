@@ -44,6 +44,11 @@ assignment:                      # READ-ONLY exposure source — abkit never ran
 
 alpha: 0.05                      # experiment-level significance (unset -> project default)
 correction: bonferroni           # none | bonferroni | benjamini_hochberg (unset -> project default)
+# contrasts: vs_control          # all_pairs (default) | vs_control — the family this experiment
+                                 # CLAIMS: vs_control compares only the g-1 treatments against the
+                                 # first declared variant, divides alpha by g-1 instead of C(g,2)
+                                 # (≈ +10 points of power at 4 arms), and does NOT compute the
+                                 # treatment-vs-treatment pairs at all
 sequential: {enabled: false, scheme: always_valid}   # opt-in peeking-safe CIs (default OFF)
 # incremental_reads: true        # override project.compute.incremental_reads here (unset -> project
                                  # default): eligible closed-form comparisons read `_ab_unit_state`

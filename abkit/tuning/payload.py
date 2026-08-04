@@ -114,6 +114,11 @@ def build_explore_payload(
             ),
             "correction_choices": list(get_args(CorrectionKind)),
             "groups_count": len(experiment.assignment.variants),
+            # m13 STAT-1b: `groups_count` alone no longer fixes the divisor —
+            # the client must know WHICH family was declared, or a vs_control
+            # experiment's live alpha would be C(g,2)-corrected on the page and
+            # (g−1)-corrected on every server that answers it.
+            "contrasts": experiment.contrasts,
             # m13 D8 (STAT-1c): the client's effectiveAlpha mirrors
             # analyze.effective_alphas, so it needs the RULE, not a resolved
             # number — the operator drags alpha/correction live. Both halves ride

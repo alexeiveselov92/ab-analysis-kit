@@ -37,12 +37,14 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 T_TEST = {"name": "t-test", "params": {"test_type": "relative"}}
 
 
-def _payload(alpha: float | None = None) -> dict:
+def _payload(alpha: float | None = None, contrasts: str | None = None) -> dict:
     warehouse = SyntheticWarehouse()
     seed_cohort(warehouse)
     seed_all_events(warehouse)
     tables = InternalTablesManager(warehouse)
     experiment = make_experiment("exp_pb", "arpu", T_TEST, alpha=alpha)
+    if contrasts is not None:
+        experiment = experiment.model_copy(update={"contrasts": contrasts})
     session = build_session(warehouse, tables, experiment)
     return build_explore_payload(session, RecomputeEngine(session), {"experiment": "exp_pb"})
 
@@ -80,6 +82,26 @@ class TestExperimentKnobBlock:
         the cockpit mirrors another — silently, and only under the new mode."""
         bundle = (files("abkit.tuning") / "assets" / "explore.js").read_text(encoding="utf-8")
         assert "guardrail_correction" in bundle
+
+    def test_the_declared_family_is_baked_for_the_client_mirror(self):
+        """m13 STAT-1b: with `contrasts` absent from the block the client would
+        divide by C(g,2) while the server that answers its /recompute divided by
+        g−1 — the page and the row would disagree about the same experiment, and
+        only on multi-arm experiments that opted in.
+
+        Both values are built, because asserting only the default passes against
+        a hardcoded literal — the payload's own copy of the "3+ arms or the
+        tiers collapse" lesson.
+        """
+        assert _payload()["explore"]["experiment"]["contrasts"] == "all_pairs"
+        narrowed = _payload(contrasts="vs_control")["explore"]["experiment"]
+        assert narrowed["contrasts"] == "vs_control"
+
+    def test_the_committed_bundle_actually_learned_the_contrast_rule(self):
+        """Freshness, specifically for STAT-1b (the STAT-1c pattern): a bundle
+        built before the knob existed silently mirrors the wrong divisor."""
+        bundle = (files("abkit.tuning") / "assets" / "explore.js").read_text(encoding="utf-8")
+        assert "vs_control" in bundle
 
     def test_baked_numbers_reproduce_the_configured_effective_alpha(self):
         """The client-mirror contract: two-tier arithmetic over the baked

@@ -28,9 +28,8 @@ seconds-to-minutes at sub-day cadence; review finding).
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime
-from itertools import combinations
 from pathlib import Path
 from typing import Any
 
@@ -224,10 +223,15 @@ def _window_filter(rows: list[dict], start: datetime | None, end: datetime | Non
 def _metric_entry(
     comparison: ComparisonConfig,
     rows: list[dict],
-    variants: list[str],
+    pair_order: Sequence[tuple[str, str]],
     metric_configs: Mapping[str, MetricConfig] | None,
 ) -> dict:
     """One configured comparison → the §5.3 ``metrics[]`` entry.
+
+    ``pair_order`` is the experiment's DECLARED contrast set
+    (``ExperimentConfig.contrast_pairs()``, m13 STAT-1b) — the payload lists
+    one entry per claimed pair, present-but-empty when nothing is computed
+    yet, and never a pair the experiment does not claim.
 
     ``description`` comes from the metric YAML config (D6 — ``_ab_experiments``
     stores only the experiment description). ``method``/``query``/``alpha``
@@ -263,7 +267,7 @@ def _metric_entry(
                 warnings.append(text)
 
     pairs = []
-    for name_1, name_2 in combinations(variants, 2):
+    for name_1, name_2 in pair_order:
         group = by_pair.get((name_1, name_2), [])
         pairs.append(
             {
@@ -361,7 +365,8 @@ def build_report_payload(
     grid = experiment.grid()
     variants = list(experiment.assignment.variants)
 
-    declared_pairs = set(combinations(variants, 2))
+    pair_order = experiment.contrast_pairs()
+    declared_pairs = set(pair_order)
     ready = tables.results_table_exists()
     declared_by_comparison: dict[str, list[dict]] = {}
     rows_by_comparison: dict[str, list[dict]] = {}
@@ -374,8 +379,9 @@ def build_report_payload(
             if ready
             else []
         )
-        # pairs outside the declared variants (a mid-flight arm rename) are
-        # not chartable; drop them from EVERY payload surface — series, look,
+        # pairs outside the DECLARED CONTRAST SET (a mid-flight arm rename, or
+        # `contrasts: vs_control` narrowing the family — m13 STAT-1b) are not
+        # chartable; drop them from EVERY payload surface — series, look,
         # period, latest-row method block — loudly, never silently
         declared = [
             row for row in loaded if (str(row["name_1"]), str(row["name_2"])) in declared_pairs
@@ -422,7 +428,12 @@ def build_report_payload(
     observed = {variant: int(observed_counts.get(variant, 0)) for variant in variants}
 
     metrics = [
-        _metric_entry(comparison, rows_by_comparison[comparison.metric], variants, metric_configs)
+        _metric_entry(
+            comparison,
+            rows_by_comparison[comparison.metric],
+            pair_order,
+            metric_configs,
+        )
         for comparison in experiment.comparisons
     ]
 
@@ -439,8 +450,8 @@ def build_report_payload(
     for metric_name, dropped in stale_by_metric.items():
         warnings.append(
             f"{experiment.name}/{metric_name}: {dropped} persisted rows are for "
-            "variant pairs outside the declared variants (renamed arms?) — not "
-            "charted"
+            "variant pairs outside the declared contrast set (renamed arms, or "
+            "`contrasts: vs_control`?) — not charted"
         )
     if ready:
         # the driver's orphan scan, surfaced on the read path too: an edited
@@ -484,6 +495,11 @@ def build_report_payload(
         "cadence_seconds": experiment.cadence_seconds_min(),
         "tz": experiment.timezone,
         "arms": variants,
+        # m13 STAT-1b: the family the per-row alphas were divided by. Without
+        # it a 4-arm `vs_control` report shows four arms, three pair blocks and
+        # α = 0.05/3, and nothing on the page reconciles the three numbers —
+        # the same argument that put the family on the CLI's divisor line.
+        "contrasts": experiment.contrasts,
         "srm": {
             "flag": bool(srm_flag),
             "pvalue": _num_or_none(srm_pvalue),

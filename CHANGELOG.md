@@ -14,6 +14,65 @@ number change).
 ## [Unreleased]
 
 ### Added
+- **STAT-1b — `contrasts`: an experiment declares the family it claims**
+  (M13, decision D15). `contrasts: vs_control` on an experiment says the family
+  is the `g−1` many-to-one contrasts against the control arm (the first declared
+  variant) instead of all `C(g,2)` variant pairs. The Bonferroni divisor falls
+  accordingly, which multiplies every tier's level by `g/2`: ≈ +10 points of
+  power at four arms, +6 at three — more than Holm gives, for a config field
+  rather than new math. Default `all_pairs` is the pre-`0.8.0` behaviour, so a
+  project that changes nothing reproduces `0.7.0` (m13 D1).
+
+  **The knob is one declaration with two halves, and shipping either alone is a
+  defect.** Under `vs_control` the treatment-vs-treatment pairs are also *not
+  computed* — no `_ab_results` rows, no verdicts, no read-time BH family
+  members. Loosening the divisor while still writing those rows would hand
+  levels bought for `g−1` contrasts to a family of `C(g,2)`, i.e. a false FWER
+  claim in the dangerous direction; narrowing the enumeration alone would leave
+  the experiment needlessly conservative. Both halves read the SAME source:
+  `ExperimentConfig.contrast_pairs()`, now the only place in `abkit/` allowed to
+  enumerate arm pairs (AST-gated). Before this WP four modules each carried
+  their own `combinations(variants, 2)` — the analyze stage that writes the rows
+  and the three read filters (report, dashboard, notifications) — and
+  `notify/dispatch.py` had predicted in a comment that "a fourth copy should
+  force the extraction".
+
+  There is deliberately **no project-level default**: the family a surface reads
+  must never depend on whether that surface resolved one, and it is a statement
+  about an experiment's design rather than a project-wide policy.
+
+  Rows written for a pair the narrowed family no longer claims are ignored
+  loudly by every read surface — the path a renamed arm already took. The
+  remedy named in that warning is now `abk run --full-refresh` (which deletes
+  the window before rewriting the declared pairs); `abk clean` never removed
+  them — it prunes series by `method_config_id`. The CLI lines that printed a
+  literal `C(g,2)` divisor (`abk run`, `abk validate`, `abk plan`'s header) now
+  name the family they counted, and the explore client mirrors it — a page
+  dividing by `C(g,2)` while the server it queries divides by `g−1` would
+  disagree with its own rows.
+
+  **Four things the adversarial review added, each a hole the knob opened.**
+  (1) The planner's anti-join is now complete at *(cutoff × declared pair)*:
+  widening the family back — or adding an arm — used to leave every historical
+  look *touched but incomplete*, so the newly declared contrasts existed only
+  from the flip onward while their siblings kept an alpha bought for the
+  narrower family, which is the anti-conservative direction. (2)
+  `readout.evaluate()` filters undeclared pairs itself, so a direct caller
+  cannot build a read-time BH family the experiment does not claim. (3) The
+  explore cockpit — the fourth reader of persisted rows, and the one without a
+  filter — no longer recomputes series for pairs that are not on the page. (4)
+  A project-level `statistics: {contrasts: …}` is a loud error rather than a
+  silent no-op, because every neighbour in that block *does* have a project
+  default. `_ab_experiments` gained a `contrasts` column (additive) so a BI join
+  cannot re-derive a divisor no row carries, and the HTML report names the
+  family beside the arm list — otherwise a 4-arm `vs_control` report shows four
+  arms, three pair blocks and α = 0.05/3 with nothing reconciling the three.
+
+  Opt-in, so no default moves and no `ALGORITHM_VERSION` is bumped (D1/D4).
+  Since `alpha` is deliberately outside `method_config_id`, flipping the knob
+  writes new-alpha rows into an existing series (`abk run --full-refresh`
+  re-homogenises it) and `_ab_aa_runs` rows keyed on the old effective alpha
+  read `alpha_mismatch` until `abk validate` re-runs them.
 - **STAT-2 — the A/A matrix records WHICH SIDE each false positive fell on**
   (M13). `abk validate` now reports `fpr_negative_share` beside the FPR: the
   share of single-look false positives whose CI sat below zero. A correct

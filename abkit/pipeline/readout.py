@@ -459,17 +459,30 @@ def evaluate(
 def _filter_rows(
     experiment: ExperimentConfig, rows: Sequence[dict]
 ) -> tuple[list[dict], list[str]]:
-    """Keep only rows under each comparison's CURRENT ``method_config_id``.
+    """Keep only rows this experiment currently declares.
 
-    Orphaned series (an edited identity param leaves old rows behind) and
-    rows for metrics the config no longer binds are ignored with a warning —
-    the driver prints the same story at run time (duplicate stabilization
-    lines; ``abk clean``).
+    Three ways a persisted row stops being declared: an edited identity param
+    leaves an orphaned ``method_config_id`` series behind, the config stops
+    binding the metric, or the row's arm pair leaves the **contrast set** — a
+    renamed arm, or a family narrowed to ``contrasts: vs_control`` (m13
+    STAT-1b). All three are ignored with a warning; the driver prints the same
+    story at run time (duplicate stabilization lines; ``abk clean``).
+
+    The pair filter lives HERE, not only in the three surfaces that mirror it
+    (report / dashboard / notify), because the read-time Benjamini-Hochberg
+    family is built from every informative row at a cutoff: a caller that
+    reaches ``evaluate`` directly — a notebook, a future surface — would
+    otherwise score a family of ``C(g,2)`` for an experiment that declared
+    ``g−1``, and contradict ``abk run --report`` on identical rows. The
+    surfaces keep their own copies because each owes the operator its own
+    loud line about what it dropped.
     """
     configured = {c.metric: c.method.method_config_id for c in experiment.comparisons}
+    declared_pairs = set(experiment.contrast_pairs())
     filtered: list[dict] = []
     orphaned: dict[str, set[str]] = {}
     unconfigured: set[str] = set()
+    undeclared_pairs = 0
     for row in rows:
         metric = str(row["metric"])
         expected = configured.get(metric)
@@ -479,9 +492,17 @@ def _filter_rows(
         if str(row["method_config_id"]) != expected:
             orphaned.setdefault(metric, set()).add(str(row["method_config_id"]))
             continue
+        if (str(row["name_1"]), str(row["name_2"])) not in declared_pairs:
+            undeclared_pairs += 1
+            continue
         filtered.append(row)
 
     warnings: list[str] = []
+    if undeclared_pairs:
+        warnings.append(
+            f"ignored {undeclared_pairs} rows for variant pairs outside the declared "
+            "contrast set (renamed arms, or `contrasts: vs_control`?)"
+        )
     for metric in sorted(orphaned):
         ids = orphaned[metric]
         warnings.append(

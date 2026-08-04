@@ -156,6 +156,7 @@ def _sequential_mode_changed(
     per_pair_kinds: dict[tuple[str, str], set[str]],
     seq_eligible: bool,
     sequential_tau2: dict[tuple[str, str], float] | None,
+    declared_pairs: frozenset[tuple[str, str]] | None = None,
 ) -> bool:
     """Does the persisted series' ``ci_kind`` disagree with the mode this run stamps?
 
@@ -167,11 +168,20 @@ def _sequential_mode_changed(
     left ``fixed``). Any persisted non-demoted row of a different kind means the
     ``sequential.enabled`` toggle flipped since the series was written, so the
     driver force-re-plans it. Idempotent: after the re-plan the persisted kinds
-    match what this same predicate expects, so the next run plans zero.
+    match what this same predicate expects, so the next run plans zero — but
+    only over pairs this run can REWRITE. ``declared_pairs`` (m13 STAT-1b) is
+    the experiment's contrast set: a pair left behind by a renamed arm, or by a
+    family narrowed to ``vs_control``, keeps whatever ``ci_kind`` it was written
+    with — no re-plan can supersede a pair nothing recomputes — so counting it
+    would make the predicate permanently true and re-plan the FULL series on
+    every scheduled run, for rows no surface reads. ``None`` means "judge every
+    persisted pair", the pre-STAT-1b behaviour kept for direct callers.
     """
     tau2 = sequential_tau2 or {}
     for pair, kinds in per_pair_kinds.items():
         if not kinds:
+            continue
+        if declared_pairs is not None and pair not in declared_pairs:
             continue
         expected = "always_valid" if (seq_eligible and pair in tau2) else "fixed"
         if kinds != {expected}:
@@ -556,7 +566,15 @@ def run_experiment(
             method_cls = get_method_class(comparison.method.name)
             seq_eligible = experiment.sequential.enabled and method_cls.supports_sequential
 
-            computed = tables.list_computed_cutoffs(experiment.name, metric.name, method_config_id)
+            # m13 STAT-1b: complete at (cutoff × declared pair), not merely
+            # touched — widening the contrast set adds pairs the historical
+            # cutoffs do not carry, and a pair-blind anti-join would leave them
+            # missing forever while their siblings kept the narrower family's
+            # alpha.
+            declared_pairs = experiment.contrast_pairs()
+            computed = tables.list_complete_cutoffs(
+                experiment.name, metric.name, method_config_id, declared_pairs
+            )
             if full_refresh_window is not None:
                 tables.delete_results(
                     experiment.name,
@@ -608,6 +626,7 @@ def run_experiment(
                 tables.series_pair_ci_kinds(experiment.name, metric.name, method_config_id),
                 seq_eligible,
                 sequential_tau2,
+                frozenset(declared_pairs),
             ):
                 computed = set()
                 pending = pending_cutoffs(grid, computed, watermark_ts, full_refresh_window)
