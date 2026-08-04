@@ -559,6 +559,134 @@ class TestBenjaminiHochberg:
         assert verdict.verdict == "WIN"
 
 
+# ── read-time Holm + Fork B's disclosed divergence (m13 STAT-1) ───────────────
+
+
+class TestHolm:
+    """Holm at the readout: the family is one cutoff's rows, the decision may
+    legitimately contradict the interval printed beside it, and BOTH facts must
+    reach the operator (the rationale wording and an explicit caveat)."""
+
+    def holm_experiment(self, correction="holm"):
+        return make_experiment(
+            correction=correction,
+            comparisons=[
+                {
+                    "metric": "revenue",
+                    "is_main_metric": True,
+                    "min_effect": 0.5,
+                    "method": {"name": "t-test"},
+                },
+                {"metric": "sessions", "method": {"name": "t-test"}},
+                {"metric": "retention", "method": {"name": "t-test"}},
+            ],
+        )
+
+    def _rows(self, experiment, pvalues):
+        rows = []
+        for metric, p in pvalues.items():
+            rows += make_series(experiment, metric=metric, pvalue=p)
+        return rows
+
+    def test_holm_refuses_a_row_whose_stored_interval_excludes_zero(self):
+        """The whole point of a read-time family rule: every row here has a stored
+        CI excluding zero (default fixture) and p < alpha, and Holm still rejects
+        none — 0.02 * 3 = 0.06 > 0.05 at the first step."""
+        experiment = self.holm_experiment()
+        rows = self._rows(experiment, {"revenue": 0.02, "sessions": 0.03, "retention": 0.04})
+        verdict = single_verdict(experiment, rows)
+        assert verdict.verdict != "WIN"
+        assert not verdict.significant
+
+    def test_the_same_rows_are_a_win_under_no_correction(self):
+        """The premise of the test above — otherwise it could pass for any reason."""
+        experiment = self.holm_experiment(correction="none")
+        rows = self._rows(experiment, {"revenue": 0.02, "sessions": 0.03, "retention": 0.04})
+        assert single_verdict(experiment, rows).verdict == "WIN"
+
+    def test_holm_keeps_a_strongly_significant_row(self):
+        experiment = self.holm_experiment()
+        rows = self._rows(experiment, {"revenue": 0.0001, "sessions": 0.9, "retention": 0.85})
+        verdict = single_verdict(experiment, rows)
+        assert verdict.verdict == "WIN"
+        assert verdict.significant
+
+    def test_the_family_is_one_cutoff_not_the_whole_series(self):
+        """14 daily looks × 3 metrics is 42 rows; if the family were the series,
+        m=42 would make even p=0.001 unrejectable (0.001*42 = 0.042 — close, so use
+        a p that separates the two readings cleanly)."""
+        experiment = self.holm_experiment()
+        rows = self._rows(experiment, {"revenue": 0.002, "sessions": 0.9, "retention": 0.85})
+        # per cutoff (m=3): 0.002*3 = 0.006 < 0.05 ⇒ WIN. Per series (m=42): 0.084 ⇒ not.
+        assert single_verdict(experiment, rows).verdict == "WIN"
+
+    def test_the_rationale_names_the_rule_that_decided_not_the_interval(self):
+        experiment = self.holm_experiment()
+        rows = self._rows(experiment, {"revenue": 0.0001, "sessions": 0.9, "retention": 0.85})
+        text = joined(single_verdict(experiment, rows).rationale)
+        assert "Holm-adjusted p" in text
+        assert "CI excludes zero" not in text
+
+    def test_bonferroni_keeps_the_ci_wording(self):
+        experiment = self.holm_experiment(correction="bonferroni")
+        rows = self._rows(experiment, {"revenue": 0.0001, "sessions": 0.9, "retention": 0.85})
+        text = joined(single_verdict(experiment, rows).rationale)
+        assert "CI excludes zero" in text
+        assert "Holm" not in text
+
+    def test_the_divergence_is_disclosed_as_a_caveat(self):
+        """Fork B made visible: the interval on the row excludes zero, the verdict
+        does not call it. Unexplained, that reads as a bug."""
+        experiment = self.holm_experiment()
+        rows = self._rows(experiment, {"revenue": 0.02, "sessions": 0.03, "retention": 0.04})
+        verdict = single_verdict(experiment, rows)
+        caveats = joined(verdict.caveats)
+        assert "excludes zero" in caveats
+        assert "Holm" in caveats
+        assert verdict.left_bound is not None and verdict.left_bound > 0  # the premise
+
+    def test_no_divergence_caveat_when_the_interval_agrees(self):
+        experiment = self.holm_experiment()
+        # quiet everywhere: the stored CI covers zero, so there is nothing to explain
+        rows = []
+        for metric in ("revenue", "sessions", "retention"):
+            rows += make_series(
+                experiment,
+                metric=metric,
+                pvalue=0.9,
+                effect=0.001,
+                left_bound=-0.05,
+                right_bound=0.05,
+            )
+        verdict = single_verdict(experiment, rows)
+        assert not any("legitimately disagree" in c for c in verdict.caveats)
+        assert "not significant under the Holm family rule" in joined(verdict.rationale)
+
+    @pytest.mark.parametrize("correction", ["none", "bonferroni"])
+    @pytest.mark.parametrize("pvalue", [0.02, 0.9])
+    def test_under_a_compute_time_scheme_the_two_readings_coincide(self, correction, pvalue):
+        """Why the caveat is read-time-only: there, significance IS the interval —
+        including when the stored p disagrees with the stored bounds, in which case
+        the bounds are the authority (the persisted CI carries the effective alpha)."""
+        experiment = self.holm_experiment(correction=correction)
+        rows = self._rows(experiment, dict.fromkeys(("revenue", "sessions", "retention"), pvalue))
+        verdict = single_verdict(experiment, rows)
+        assert verdict.significant == (verdict.left_bound > 0 or verdict.right_bound < 0)
+        assert not any("legitimately disagree" in c for c in verdict.caveats)
+
+    def test_a_demoted_latest_row_is_not_reported_as_a_family_divergence(self):
+        """Its rationale already names the demotion; claiming the family refused it
+        would blame the correction for a small-sample gate."""
+        experiment = self.holm_experiment()
+        rows = self._rows(experiment, {"revenue": 0.0001, "sessions": 0.9, "retention": 0.85})
+        for row in rows:
+            if row["metric"] == "revenue" and row["elapsed_days"] == 14.0:
+                row["insufficient_data"] = True  # bounds deliberately left in place
+        verdict = single_verdict(experiment, rows)
+        assert "insufficient data" in joined(verdict.rationale)
+        assert not any("legitimately disagree" in c for c in verdict.caveats)
+
+
 # ── the NULL-MDE fallback (D5(b)) ─────────────────────────────────────────────
 
 

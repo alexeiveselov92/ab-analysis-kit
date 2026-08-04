@@ -32,7 +32,13 @@ from abkit.utils.json_utils import json_dumps_sorted
 DAY_SECONDS = 86400
 
 ExperimentStatus = Literal["design", "running", "concluded", "archived"]
-CorrectionKind = Literal["none", "bonferroni", "benjamini_hochberg"]
+#: The multiple-testing scheme. ``bonferroni`` resolves to per-comparison levels
+#: at COMPUTE time (the two-tier scheme); ``benjamini_hochberg`` and ``holm``
+#: (m13 STAT-1) are READ-time family rules — the rows carry the raw alpha and the
+#: decision is recomputed over the whole family at every read
+#: (``stats.correction.READ_TIME_CORRECTIONS``, which this literal is pinned
+#: against by ``tests/pipeline/test_correction_rule.py``).
+CorrectionKind = Literal["none", "bonferroni", "benjamini_hochberg", "holm"]
 
 #: How a guardrail comparison's alpha is resolved (m13 STAT-1c, decision D8).
 #: ``inherit`` is the pre-0.8.0 behaviour — a guardrail shares the secondary

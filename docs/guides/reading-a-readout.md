@@ -78,18 +78,26 @@ significance level — not necessarily the `alpha: 0.05` you wrote in YAML
   doesn't quietly inflate your error rate. The stored CI band already reflects this
   tightened alpha — so for `none` and `bonferroni`, "significant" is simply "the
   band excludes zero".
-- **Benjamini-Hochberg** (`correction: benjamini_hochberg`) is applied **at read
-  time**, per cutoff, across the experiment's comparisons (`readout.py`
+- **The read-time rules** — Benjamini-Hochberg (`correction:
+  benjamini_hochberg`, FDR) and Holm (`correction: holm`, FWER) — are applied
+  **at read time**, per cutoff, across the experiment's comparisons (`readout.py`
   `_build_sig_map`). Compute-time rows deliberately store the *raw* alpha; the
-  readout adjusts the family of p-values and compares against it when it builds the
-  verdict. This means a row's stored `reject` flag is pre-BH — the **verdict's**
-  significance is the BH-aware one, so under BH the two can differ. Trust the
-  verdict's `significant`, and pass your project config to whatever renders the
-  readout so the correction resolves correctly (`abk run --report` does this for
-  you).
+  readout adjusts the family of p-values and compares against it when it builds
+  the verdict. This means a row's stored `reject` flag is **pre-family** — the
+  **verdict's** significance is the family-aware one, so under those schemes the
+  two can differ. Trust the verdict's `significant`, and pass your project config
+  to whatever renders the readout so the correction resolves correctly (`abk run
+  --report` does this for you).
+
+  The divergence is deliberate and one-directional: a family rule is never
+  looser than the row's own alpha, so what you can see is **a band excluding zero
+  under a verdict that declines to call it** — never the reverse. When it
+  happens, the pair carries a caveat saying exactly that, so you never have to
+  guess which of the two numbers is wrong (neither is).
 
 The practical upshot: don't eyeball `pvalue < 0.05`. Compare `pvalue` to the row's
-own `alpha`, and remember BH does the comparison for you at read time.
+own `alpha`, and remember a read-time scheme does the comparison for you at read
+time.
 
 ## The SRM gate — a hard block
 

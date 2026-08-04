@@ -288,6 +288,61 @@ two-process lock race) is deferred to a Docker-equipped environment.
   the Apply gate is unchanged. Bootstrap A/A stayed an opt-in follow-up (D7);
   sidedness/winsorization are arbitrated-not-implemented (D14).
 
+### M13 STAT-1 facts an assistant must know (Holm + the FWER claim)
+
+- **A correction scheme is compute-time or read-time, and the classification
+  lives in ONE place** — `stats.correction.READ_TIME_CORRECTIONS` /
+  `COMPUTE_TIME_CORRECTIONS`. Never test a scheme by NAME. Three modules did
+  (`readout._build_sig_map`, `validate/runner`'s family-budget anchor, and
+  `composed_significance` itself), and each would have silently handed `holm` the
+  per-row CI rule — a scheme that appears to work while controlling nothing. The
+  roster gate (`tests/pipeline/test_correction_rule.py::TestSchemeRoster`)
+  asserts the union of the two sets EQUALS the `CorrectionKind` literal and that
+  every read-time scheme has an adjuster that is actually reached.
+- **BH and Holm share one body in `composed_significance`; only the adjuster
+  differs** (`_FAMILY_ADJUSTERS`). The step-up/step-down arithmetic is the entire
+  difference between controlling the FDR and controlling the FWER. An unknown
+  scheme name still takes the compute-time branch — the config literal is the gate
+  that rejects a typo, and raising here would turn a stale persisted string into a
+  crashing report.
+- **The FWER item moved no number, because the defect was in the CLAIM.** The
+  two-tier levels are exactly those of a valid serial-gatekeeping procedure whose
+  gate the readout does not enforce (deliberately — it would suppress a secondary
+  metric exactly when it is most diagnostic). Main tier at α, secondary tier at α,
+  whole-experiment bound `2α` — **flat in `g` and `k`**, not degrading with scale.
+  That is now stated in [statistics-changes.md §4.3](../../docs/specs/statistics-changes.md);
+  the unqualified "FWER ≤ α" is gone.
+- **Holm is NOT uniformly more powerful than abkit's two-tier scheme.** Its first
+  step is `α/m` over the whole family; the two-tier main tier is `α/P`. The
+  two-tier looseness is what the `2α` above pays for. Holm's claim is the honest
+  α, and it is uniformly more powerful than a one-step Bonferroni at that α.
+- **Fork B (D7) is ratified AND disclosed.** Under a read-time scheme the verdict
+  and the interval stored beside it may legitimately disagree; abkit had been in
+  that position under BH since M3 without saying so. The divergence is
+  **one-directional** (a family rule is never looser than the member's own raw
+  alpha — pinned by `test_holm_never_rejects_more_than_the_stored_interval_does`),
+  so the observable case is an interval excluding zero under a refusing verdict,
+  and `readout.evaluate()` attaches a caveat to exactly that pair. Because all
+  three renderers show `caveats`, the disclosure reached report + cockpit +
+  dashboard with **no payload change**.
+- **The caveat is gated on the latest row being `_informative`.** A demoted row's
+  reason is the small-sample gate; blaming the correction for it would be a
+  different lie. (Mutation-probed: removing the gate turns the demoted-row test
+  red.)
+- **The readout's rationale is scheme-aware** (`_sig_phrase`/`_quiet_phrase`).
+  Saying "CI excludes zero" under a family rule names a per-comparison fact as the
+  reason for a family-level decision — the two can part company in both directions
+  once the family moves.
+- **`_ab_results.reject` is the PRE-family flag** (D12) — redocumented, never
+  renamed (published BI contract). The composed decision is not persisted at all:
+  under a read-time scheme it exists only at read time, and a stored copy would go
+  stale the moment a metric was added or the contrast set narrowed. Two documents
+  had called it "abkit's composed decision", which is the
+  Grafana-disagrees-with-the-product failure this WP existed to prevent.
+- **`plan._correction_note` takes the resolved scheme as a REQUIRED argument.**
+  Under a read-time scheme every level it prints is the raw alpha, so a caller
+  that forgot to pass it would print the most misleading header of the three.
+
 ### M13 STAT-1b facts an assistant must know (the declared contrast set)
 
 - **`ExperimentConfig.contrast_pairs()` is THE arm-pair factory**, m10's
@@ -1093,7 +1148,9 @@ identity param orphans the prior results series.
   `SrmResult` (chi-square gate).
 - `correction.py`: `adjust_alpha`, `two_tier_alphas` (the legacy two-tier
   Bonferroni keyed off `is_main_metric`, plus the m13 D8 `guardrail_alpha`
-  pass-through), read-time `benjamini_hochberg`, `n_comparisons`.
+  pass-through), the read-time family adjusters `benjamini_hochberg` and
+  `holm_adjusted` behind `composed_significance`'s `_FAMILY_ADJUSTERS` dispatch
+  (m13 STAT-1), `n_comparisons`.
   **The guardrail tier is two changes, not one** (`guardrail_correction: none`,
   resolved in `analyze.effective_alphas`): a guardrail is tested at the RAW alpha
   AND it stops counting towards `metrics_count`, which loosens alpha for the

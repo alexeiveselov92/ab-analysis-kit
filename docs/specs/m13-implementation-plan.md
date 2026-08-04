@@ -110,7 +110,7 @@ than run a sweep and read tea leaves:
 
 ## 1. Work packages (ordered by value — see §2; none blocks another)
 
-### STAT-1 — the correction layer
+### STAT-1 — the correction layer ✅ SHIPPED
 
 **The blind derivation landed** ([multiplicity.derivation.json](../research/2026-08-m13-blind-rederive/multiplicity.derivation.json))
 and it changes this WP substantially. Four results, each decision-bearing:
@@ -226,6 +226,57 @@ adopt Holm.
 *Persistence minimum, if Fork B is ever intended:* a row storing only
 `(lo, hi, level)` is lossy — it cannot be re-inverted to another level without SE
 and df, and that permanently forecloses every step procedure.
+
+#### As built
+
+Shipped exactly as decided: **no number moved and no `ALGORITHM_VERSION` was
+bumped**; the two-tier levels are byte-identical and `holm` is a fourth,
+default-off enum value.
+
+- **`stats.correction.holm_adjusted`** — `adj_(i) = max_{j≤i} (m−j+1)·p_(j)`,
+  capped at 1 — plus the classification pair `READ_TIME_CORRECTIONS` /
+  `COMPUTE_TIME_CORRECTIONS`. `composed_significance` now dispatches on
+  `_FAMILY_ADJUSTERS`, so BH and Holm share one body and differ only in the
+  adjuster; an unknown scheme name still takes the compute-time branch (a stale
+  persisted string must not crash a report).
+- **The load-bearing delta the design did not have: the scheme classification is
+  in ONE place, with a roster gate.** Three modules tested `!=
+  "benjamini_hochberg"` by NAME (`readout._build_sig_map`, `validate/runner`'s
+  family-budget anchor, and the compute-time branch itself) — each would have
+  silently handed Holm the per-row CI rule, i.e. a scheme that appears to work
+  while controlling nothing. `tests/pipeline/test_correction_rule.py`'s
+  `TestSchemeRoster` asserts `READ_TIME ∪ COMPUTE_TIME` **equals** the config
+  literal, that the two are disjoint, that every read-time scheme has an adjuster
+  that is actually reached, and that the project and experiment literals agree.
+  This is the m12 NTF-1 roster-gate pattern, and it is what makes STAT-1's own
+  regression impossible to reintroduce.
+- **Fork B is disclosed, not merely permitted.** Two changes in
+  `pipeline/readout.py`: the rationale stops saying "CI excludes zero" when a
+  family rule decided (`_sig_phrase`/`_quiet_phrase` — it named a per-comparison
+  fact as the reason for a family-level decision), and a pair whose stored
+  interval excludes zero while the family rule declines to reject carries an
+  explicit caveat. Because all three renderers show `caveats`, the disclosure
+  reaches the report, the cockpit and the dashboard without a payload change.
+  The caveat is deliberately gated on the latest row being **informative**: a
+  demoted row's reason is the small-sample gate, and blaming the correction for
+  it would be a different lie.
+- **The divergence is one-directional, and that is a pinned property**
+  (`test_holm_never_rejects_more_than_the_stored_interval_does`): a family rule is
+  never looser than the member's own raw alpha, so an operator can see an
+  interval excluding zero under a refusing verdict but never the reverse. That is
+  what makes a single caveat sufficient.
+- **`_ab_results.reject` was redocumented, not renamed** (D12), in all five
+  places that described it — the data contract, the internal-tables reference,
+  the BI example README, the visualizing-results guide and the packaged operator
+  rules. Two of them called it "abkit's composed decision", which is exactly the
+  Grafana-disagrees-with-the-product failure this WP existed to prevent.
+- **`abk plan` now names the read-time regime in its header** and
+  `_correction_note` takes the resolved scheme as a REQUIRED argument: under a
+  read-time scheme every level it prints is the raw alpha, and a caller that
+  forgot to pass the scheme would print the most misleading header of the three.
+- **The A/A family sweep** anchors Holm's nominal rate at the members' level (α),
+  where BH already sat — under Holm a family measuring ≈Σα means the *methods*
+  are miscalibrated, which is what the sweep exists to catch.
 
 ### STAT-1b — declare the contrast set (`vs_control` | `all_pairs`) ✅ SHIPPED
 
@@ -537,7 +588,7 @@ written into `statistics-changes.md`.
 ```
 STAT-1c (guardrails) ✅ ───────────────────────────────────┐   safety; independent
 STAT-1b (contrast set) ✅ ─────────────────────────────────┤   biggest power win
-STAT-1  (Holm / the Fork) ────────────────────────────────┤
+STAT-1  (Holm / the Fork) ✅ ─────────────────────────────┤
 STAT-2  (sign instrument) ✅ ─▶ STAT-4 (relative effect) ──┼──▶ STAT-6 (exit gate)
 STAT-3  (proportions) ⏳ ─────────────────────────────────┤
 STAT-5  (ddof — recommended dropped) ─────────────────────┘
@@ -551,7 +602,7 @@ landed, and their order is by **value, not dependency** — none blocks another:
 2. **STAT-1b** next (✅ shipped). Declaring the contrast set buys `g/2` in
    level — more power than Holm gives, for a config field rather than new math.
 3. **STAT-1** last, because it is the one that needs the Fork settled, and the
-   Fork is the maintainer's call.
+   Fork is the maintainer's call (✅ shipped — D7 settled it, Fork B).
 
 STAT-2 is small and can run in parallel with any of them.
 

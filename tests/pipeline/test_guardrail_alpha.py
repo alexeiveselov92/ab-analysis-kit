@@ -201,14 +201,16 @@ class TestPlanHeaderNamesTheGuardrailTier:
         from abkit.cli.commands.plan import _correction_note
 
         exp = _experiment(MIXED)
-        note = _correction_note(exp, effective_alphas(exp, _project()))
+        note = _correction_note(exp, effective_alphas(exp, _project()), "bonferroni")
         assert note == "main 0.05 / secondary 0.025"
 
     def test_untiered_guardrail_is_named(self) -> None:
         from abkit.cli.commands.plan import _correction_note
 
         exp = _experiment(MIXED)
-        note = _correction_note(exp, effective_alphas(exp, _project(guardrail_correction="none")))
+        note = _correction_note(
+            exp, effective_alphas(exp, _project(guardrail_correction="none")), "bonferroni"
+        )
         assert "guardrail 0.05 (uncorrected)" in note
 
     def test_named_even_when_it_COINCIDES_with_the_main_alpha(self) -> None:
@@ -227,7 +229,7 @@ class TestPlanHeaderNamesTheGuardrailTier:
         )
         alphas = effective_alphas(exp, _project(guardrail_correction="none"))
         assert alphas.main == pytest.approx(alphas.secondary)  # the coincidence
-        assert "guardrail 0.05 (uncorrected)" in _correction_note(exp, alphas)
+        assert "guardrail 0.05 (uncorrected)" in _correction_note(exp, alphas, "bonferroni")
 
     def test_no_guardrail_comparison_means_no_note(self) -> None:
         from abkit.cli.commands.plan import _correction_note
@@ -238,5 +240,7 @@ class TestPlanHeaderNamesTheGuardrailTier:
                 {"metric": "clicks", "method": METHOD},
             ]
         )
-        note = _correction_note(exp, effective_alphas(exp, _project(guardrail_correction="none")))
+        note = _correction_note(
+            exp, effective_alphas(exp, _project(guardrail_correction="none")), "bonferroni"
+        )
         assert "guardrail" not in note

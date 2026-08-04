@@ -190,7 +190,7 @@ applies: `toDate(start_ts, '<experiment timezone>')`.
 | `effect` | `Nullable(Float64)` | Point estimate of the effect. |
 | `left_bound`, `right_bound` | `Nullable(Float64)` | (1−α) confidence-interval bounds. |
 | `ci_length` | `Nullable(Float64)` | Interval width. |
-| `reject` | `Nullable(Bool)` | Whether the null is rejected (≡ CI excludes zero). |
+| `reject` | `Nullable(Bool)` | Whether **this one comparison** rejects at its own stored `alpha` (≡ CI excludes zero) — a **pre-family** flag. Under `correction: benjamini_hochberg` / `holm` the decision is recomputed over the family at read time and can differ; the readout (report / dashboard / notifications) is the authority there. |
 | `mde_1`, `mde_2` | `Nullable(Float64)` | Minimum detectable effect per arm. |
 
 ### Integrity

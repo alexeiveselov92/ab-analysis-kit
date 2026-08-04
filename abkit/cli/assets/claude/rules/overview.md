@@ -82,9 +82,13 @@ profile's `internal_database` / `internal_schema`, separate from the
   `test_type: absolute` or `relative` (percent lift) is a per-method param.
 - **CI** — confidence interval on the effect; a WIN/LOSE needs it to exclude zero
   in one direction **and** be stable (excluding-then-recrossing is not a winner).
-- **verdict** — the read-time call: **WIN/LOSE** (CI excludes zero, stabilized),
-  **FLAT** (CI includes zero, adequately powered — needs `min_effect`),
-  **INCONCLUSIVE** (otherwise / underpowered). Also **blocked** (SRM) and
+- **verdict** — the read-time call: **WIN/LOSE** (significant, stabilized),
+  **FLAT** (not significant, adequately powered — needs `min_effect`),
+  **INCONCLUSIVE** (otherwise / underpowered). "Significant" is "the CI excludes
+  zero" under `correction: none`/`bonferroni`, and the family rule under the
+  read-time schemes (`benjamini_hochberg`, `holm`) — where the verdict may
+  legitimately differ from the interval shown beside it, and says so in a
+  caveat. Also **blocked** (SRM) and
   **insufficient data**. The main metric drives it; guardrails check regression.
 - **SRM (sample-ratio-mismatch)** — a χ² gate (anytime-valid multinomial below 1d
   cadence): observed arm split ≠ expected split ⇒ randomization/cohort is broken.

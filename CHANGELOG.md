@@ -14,6 +14,55 @@ number change).
 ## [Unreleased]
 
 ### Added
+- **STAT-1 — `correction: holm`, and the FWER claim stated precisely**
+  (M13, decisions D7/D9). Two things ship, and only one is code.
+
+  **The claim.** Under the default two-tier Bonferroni, abkit tests each arm
+  pair's main comparison at `α/P` and that pair's `k` secondaries at `α/(P·k)`.
+  Precisely: the **main tier spends a full α** — so *"the probability of shipping
+  on a spurious main-metric win is ≤ α"* is true and unchanged — the secondary
+  tier independently spends a second full α, and the **experiment-wide** bound is
+  therefore `2α`, not α. It is a constant factor of two, **flat in the arm and
+  metric counts**. Those are exactly the levels of a *valid* serial-gatekeeping
+  procedure whose gate abkit does not enforce, deliberately: enforcing it would
+  suppress a secondary metric exactly when it is most diagnostic ("the main
+  metric is flat but retention dropped"). So the defect was in the claim, not the
+  arithmetic — **no number moved, no `ALGORITHM_VERSION` was bumped**
+  (statistics-changes §4.3).
+
+  **The code.** `correction: holm` is a fourth scheme (project or experiment,
+  opt-in, default unchanged): the step-down rule, FWER ≤ α under **arbitrary
+  dependence**, uniformly more powerful than dividing α by the family size. It is
+  read-time, beside Benjamini-Hochberg, over one cutoff's informative rows —
+  because no fixed per-comparison level can reproduce a step procedure (α=0.05,
+  m=2, p₂=0.03: Holm rejects H₂ when p₁=0.001 and refuses when p₁=0.9). BH and
+  Holm now share one body in `composed_significance` and differ only in the
+  adjuster. Note that Holm is *not* uniformly more powerful than the two-tier
+  scheme, whose main tier sits at `α/P`: that looseness is what the `2α` above
+  pays for.
+
+  **Fork B is now ratified and visible.** A verdict and the interval stored
+  beside it MAY disagree under a read-time scheme — abkit has been in this
+  position under BH since M3 without documenting it. The divergence is
+  one-directional (a family rule is never looser than the member's own raw
+  alpha), so the observable case is *an interval excluding zero under a verdict
+  that declines to call it*; `readout.evaluate()` now attaches an explicit caveat
+  to exactly that pair, which is why the report, the cockpit and the dashboard
+  all show it. The readout's rationale also stops saying "CI excludes zero" when
+  the family rule is what decided — that sentence named a per-comparison fact as
+  the reason for a family-level decision.
+
+  `_ab_results.reject` keeps its name and meaning and is **redocumented** as the
+  pre-family, per-comparison flag it has always been (it is a published BI
+  contract); the composed decision is not persisted at all, because under a
+  read-time scheme it exists only at read time and a stored copy would go stale
+  the moment a metric was added. `abk plan` now says in its header that a
+  read-time scheme sizes at the raw alpha. A scheme is classified compute-time
+  or read-time in ONE place (`stats.correction.READ_TIME_CORRECTIONS`), with a
+  roster test asserting the union equals the config literal — the `!=
+  "benjamini_hochberg"` tests that used to be spread across the readout and the
+  A/A runner would each have silently degraded a new scheme to the per-row CI
+  rule.
 - **STAT-1b — `contrasts`: an experiment declares the family it claims**
   (M13, decision D15). `contrasts: vs_control` on an experiment says the family
   is the `g−1` many-to-one contrasts against the control arm (the first declared

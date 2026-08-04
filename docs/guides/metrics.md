@@ -204,9 +204,10 @@ abkit applies a **two-tier Bonferroni** keyed off `is_main_metric`
   number of non-main metrics.
 
 So the same reusable metric can land at a stricter or looser effective alpha
-depending on how a given experiment classifies it. Read-time
-Benjamini-Hochberg (`correction: benjamini_hochberg`) is the other supported
-correction, applied across an experiment's metrics at readout. Every `abk run` /
+depending on how a given experiment classifies it. The two **read-time**
+corrections — Benjamini-Hochberg (`benjamini_hochberg`, FDR) and Holm (`holm`,
+FWER) — are applied across an experiment's metrics at readout instead, leaving
+the raw alpha on the rows. Every `abk run` /
 `abk validate` / HTML report echoes the effective per-comparison alpha and the
 divisor, so the correction is inspectable rather than hidden.
 

@@ -119,8 +119,9 @@ const fmtAlpha = (a: number): string => Number(a.toPrecision(4)).toString();
 // abkit/pipeline/analyze.effective_alphas + abkit/stats/correction.two_tier_alphas
 // (declarative-config §6): /recompute takes the EFFECTIVE post-correction
 // per-comparison alpha, so the raw alpha/correction knobs resolve here.
-// Guardrails count as tests; `correction: none` (and read-time BH) collapse
-// both tiers to the raw alpha; `contrasts` selects the pair count (m13 STAT-1b).
+// Guardrails count as tests; `correction: none` (and the read-time schemes BH /
+// holm) collapse both tiers to the raw alpha; `contrasts` selects the pair count
+// (m13 STAT-1b).
 // ----------------------------------------------------------------------------
 
 function effectiveAlpha(
@@ -1194,7 +1195,8 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
       knobChanged();
     },
     'multiple-testing correction. bonferroni = the two-tier compute-time scheme; ' +
-      'benjamini_hochberg is applied read-time (explore shows uncorrected per-comparison inference)',
+      'benjamini_hochberg (FDR) and holm (FWER) are applied read-time over the whole ' +
+      'family (explore shows uncorrected per-comparison inference)',
   );
   const effAlphaEcho = el('div', 'abk-ctl-note');
   function refreshEffAlphaEcho(): void {
@@ -1202,7 +1204,11 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
     const eff = effAlphaFor(activeMetric);
     let note = `effective α for ${activeMetric}: ${fmtAlpha(eff)}`;
     if (correction === 'bonferroni') note += ' (two-tier bonferroni)';
+    // m13 STAT-1: every read-time scheme leaves the compute-time alpha raw, so the
+    // page must say WHICH rule the verdict will use — the number beside it is the
+    // interval's level, not the decision's.
     if (correction === 'benjamini_hochberg') note += ' (BH is read-time — raw α at compute time)';
+    if (correction === 'holm') note += ' (holm is read-time — raw α at compute time)';
     effAlphaEcho.textContent = note;
   }
 

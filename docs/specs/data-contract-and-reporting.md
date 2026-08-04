@@ -14,7 +14,12 @@ method, params)` tracked over `end_ts`, where every point is **cumulative** from
 
 1. **Significance** — at the latest `end_ts`, the (1−α) CI `[left_bound,
    right_bound]` excludes zero (≡ `pvalue < alpha` ≡ `reject = 1`); the sign of
-   `effect` says who wins.
+   `effect` says who wins. Under a **read-time** correction
+   (`benjamini_hochberg`, `holm`) this per-row reading is the **pre-family**
+   flag: the decision is recomputed over the whole family at read time and may
+   legitimately differ from it (declarative-config §6.3, m13 D7). `reject` keeps
+   its meaning and its name — it is a published BI contract — but it is not the
+   composed decision, and the composed decision is deliberately not persisted.
 2. **Stabilization** — significance must be **persistent**: the CI narrows as
    sample size grows and has stopped crossing zero over recent days; a CI that
    excludes zero only briefly then re-crosses is **not** a winner. (Early-experiment

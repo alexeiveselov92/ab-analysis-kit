@@ -85,7 +85,7 @@ without being changed.
 
 Per-cell FPR is necessary but not sufficient: an experiment runs a **family** of
 metrics under one shared assignment, corrected by two-tier Bonferroni (compute-time)
-∘ Benjamini-Hochberg (read-time). `abk validate` sweeps the empirical **family-wise
+∘ a read-time family rule (Benjamini-Hochberg, or Holm since 0.8.0). `abk validate` sweeps the empirical **family-wise
 error rate** (any false rejection across the family) and **false-discovery rate**
 (mean false fraction among rejections) over one shared union-cohort placebo
 assignment per iteration, under the *same* composed rule the readout applies.
@@ -96,7 +96,8 @@ prints a one-release notice instead).
 On the complete null the two coincide (every rejection is false) and sit at the
 composed rule's **nominal rate** — ≈ α *per tier*, so ≈ 2α whole-family under the
 default two-tier Bonferroni (which protects the main tier and the secondary tier each
-at α, by design). The budget is anchored to that nominal rate, so "over budget" means
+at α, by design). Under a **read-time** scheme (BH / Holm) the anchor is the members'
+own level (≈ α) instead. The budget is anchored to that nominal rate, so "over budget" means
 the **methods** are miscalibrated (clustering / variance underestimation), not that
 the correction is loose. It surfaces as one sentinel `_ab_aa_runs` row and a
 composed-family band above the report matrix. With `sequential.enabled` the sweep also

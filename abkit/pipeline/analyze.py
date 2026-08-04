@@ -104,7 +104,10 @@ def effective_alphas(experiment: ExperimentConfig, project: ProjectConfig) -> Tw
             guardrail_alpha=alpha if guardrails_untiered else None,
             contrasts=experiment.contrasts,
         )
-    # none / benjamini_hochberg (BH is read-time): raw alpha at compute time
+    # none, or a READ-time scheme (benjamini_hochberg / holm — m13 STAT-1): the row
+    # carries the RAW alpha, because a step procedure's rejection of one member
+    # depends on the others' p-values and therefore has no compute-time level at all
+    # (stats.correction.READ_TIME_CORRECTIONS).
     return TwoTierAlphas(
         alpha=alpha,
         groups_count=groups,

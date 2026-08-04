@@ -62,6 +62,31 @@ def test_null_bh_controls_fdr_near_nominal():
     assert s.fwer == pytest.approx(s.fdr, abs=1e-12)  # complete-null identity holds for BH too
 
 
+def test_null_holm_controls_fwer_near_nominal():
+    """m13 STAT-1: Holm controls the FWER at α over the family, so the empirical
+    rate sits at α — the same anchor BH gets, for a stronger reason. Members carry
+    the RAW alpha (a read-time scheme resolves no compute-time level)."""
+    members = _null_members(4, ALPHA)
+    s = sweep_family(
+        members, correction="holm", iterations=5000, share_a=0.5, seed_parts=("holm",)
+    )
+    assert 0.035 < s.fwer < 0.068  # the same Binomial band as Bonferroni-at-α/K
+    assert s.fwer == pytest.approx(s.fdr, abs=1e-12)  # complete null ⇒ every rejection false
+
+
+def test_holm_rejects_at_least_as_often_as_one_step_bonferroni():
+    """The power claim, measured rather than argued: over the SAME placebo draws,
+    Holm's rejection rate is never below the α/K rule's."""
+    holm = sweep_family(
+        _null_members(4, ALPHA), correction="holm", iterations=2000, share_a=0.5, seed_parts=("h",)
+    )
+    bonf = sweep_family(
+        _null_members(4, ALPHA / 4), correction="bonferroni", iterations=2000, share_a=0.5,
+        seed_parts=("h",),
+    )
+    assert holm.any_rejection_rate >= bonf.any_rejection_rate
+
+
 def test_two_tier_members_are_within_the_nominal_family_budget():
     """M5 exit-gate round-1 fix: the DEFAULT two-tier Bonferroni puts the main tier and
     the secondary tier each at α (they are NOT budget-shared), so a calibrated two-metric
