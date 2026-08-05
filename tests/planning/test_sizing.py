@@ -389,7 +389,9 @@ def test_asn_fraction_metric_is_supported():
 
 
 def _cuped_moments(rho, *, n=5000, std=8.0, mean=12.5):
-    return BaselineMoments(SAMPLE, baseline=mean, n=n, n_other=n, std=std, source="x", corr_coef=rho)
+    return BaselineMoments(
+        SAMPLE, baseline=mean, n=n, n_other=n, std=std, source="x", corr_coef=rho
+    )
 
 
 def test_cuped_sizing_matches_the_power_module_exactly():

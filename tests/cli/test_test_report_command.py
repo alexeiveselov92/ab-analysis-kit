@@ -22,7 +22,8 @@ EXP = "example_signup_test"
 WH = "https://webhook.test/team"
 WH2 = "https://webhook.test/ops"
 
-PROFILES = textwrap.dedent(f"""\
+PROFILES = textwrap.dedent(
+    f"""\
     default_profile: dev
     profiles:
       dev:
@@ -36,7 +37,8 @@ PROFILES = textwrap.dedent(f"""\
       ops:
         type: webhook
         webhook_url: "{WH2}"
-    """)
+    """
+)
 
 
 @pytest.fixture
@@ -122,7 +124,8 @@ NINE_URLS = {
     "ntfy": "https://ntfy.sh",
 }
 
-PROFILES_NINE = textwrap.dedent(f"""\
+PROFILES_NINE = textwrap.dedent(
+    f"""\
     default_profile: dev
     profiles:
       dev:
@@ -161,7 +164,8 @@ PROFILES_NINE = textwrap.dedent(f"""\
       c_ntfy:
         type: ntfy
         topic: abkit-smoke
-    """)
+    """
+)
 
 
 def test_every_channel_type_sends_the_mock_readout(tmp_path, monkeypatch):

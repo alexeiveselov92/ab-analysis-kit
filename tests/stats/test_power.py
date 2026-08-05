@@ -19,8 +19,8 @@ from abkit.stats.power import (
     get_cuped_ttest_mde,
     get_fraction_mde,
     get_fraction_power,
-    get_ttest_mde,
     get_fraction_sample_size,
+    get_ttest_mde,
     get_ttest_power,
     get_ttest_sample_size,
 )

@@ -1,15 +1,16 @@
 # abkit architecture — as built
 
 > The contributor/assistant condensation of the system **as it exists in code**.
-> Reflects: **M1–M12 shipped** and **BOTH `0.6.x` interstitials released** —
+> Reflects: **M1–M13 shipped** and **BOTH `0.6.x` interstitials released** —
 > the `abk plan` one (PLAN-1 as `0.6.1`, PLAN-2 as `0.6.2`), `0.6.3` (the
 > `paths.experiments` selection fix), and the cockpit/perf one as `0.6.4`:
 > **UI-1** (the dashboard's YAML editor), **UI-2** (`abk ui`) and **PERF-1**
 > (the additive read path made discoverable; the scaffold flipped to
 > `incremental_reads: true`). All tagged and on PyPI.
-> **M13 is code-complete and NOT yet released** — STAT-1c, STAT-2, STAT-1b,
-> STAT-1, STAT-3a, STAT-3, STAT-4 and the STAT-6 exit gate are merged, STAT-5
-> was dropped (D13), and `[Unreleased]` holds them all pending the `0.8.0` cut.
+> **M13 shipped as `0.8.0`** — STAT-1c, STAT-2, STAT-1b, STAT-1, STAT-3a,
+> STAT-3, STAT-4 and the STAT-6 exit gate are merged and released, STAT-5 was
+> dropped (D13), and **no default moved**: every new estimator and scheme is
+> opt-in, so a project that changes nothing reproduces `0.7.0` row for row.
 > M3's WP9 testcontainers hardening deferred to a Docker-equipped environment.
 > **M12 shipped as `0.7.0`** (notifications): NTF-1…NTF-6 are merged and
 > released — the send seam (`abk run --notify`), the
@@ -18,7 +19,7 @@
 > behind `abk validate --notify`), and the exit gate + `verdict_change`. The
 > milestone's implementation record is
 > [m12-implementation-plan.md](../../docs/specs/m12-implementation-plan.md) §7.
-> Design contracts for what is being *built next* (the M13–M17 polish track)
+> Design contracts for what is being *built next* (the M14–M17 polish track)
 > live in [docs/specs/](../../docs/specs/) + [ROADMAP.md](../../ROADMAP.md);
 > this file must never claim unbuilt code exists.
 > Keep in sync with `docs/` and the packaged `init-claude` payload
@@ -1595,16 +1596,24 @@ phase 2 — it shipped as the `0.6.x` UI-1 interstitial (facts below).
 `_ab_notify_states`, and fail-soft as the binding property (facts above; record:
 [m12](../../docs/specs/m12-implementation-plan.md) §7).
 
-**Next — the polish track continues: M13–M17 → `0.8.0`…`0.12.0`** (track
+**M13 shipped as `0.8.0`** — five opt-in statistical options (`correction:
+holm`, `contrasts: vs_control`, `guardrail_correction: none`, `interval: score`
+on `z-test`, `interval: fieller` on the five mean methods) plus the A/A sign
+column `fpr_negative_share`, with **no default moved** and no
+`ALGORITHM_VERSION` bumped (facts above; record:
+[m13](../../docs/specs/m13-implementation-plan.md)).
+
+**Next — the polish track continues: M14–M17 → `0.9.0`…`0.12.0`** (track
 approved 2026-07-18; it absorbs the whole "Post-baseline hardening" backlog —
 see the track section in [ROADMAP.md](../../ROADMAP.md);
 [m7](../../docs/specs/m7-implementation-plan.md),
 [m8](../../docs/specs/m8-implementation-plan.md),
 [m9](../../docs/specs/m9-implementation-plan.md),
 [m10](../../docs/specs/m10-implementation-plan.md),
-[m11](../../docs/specs/m11-implementation-plan.md) and
-[m12](../../docs/specs/m12-implementation-plan.md) are all implementation
-records now; M13–M17 are contours, each opens with a design session). The `0.6.x`
+[m11](../../docs/specs/m11-implementation-plan.md),
+[m12](../../docs/specs/m12-implementation-plan.md) and
+[m13](../../docs/specs/m13-implementation-plan.md) are all implementation
+records now; M14–M17 are contours, each opens with a design session). The `0.6.x`
 **PLAN-1/PLAN-2** interstitial is closed (released as `0.6.1`/`0.6.2`; design
 contract: [cli-and-dx.md](../../docs/specs/cli-and-dx.md) "`abk plan` sizing
 gaps"); the second `0.6.x` interstitial is closed too, released as `0.6.4` —

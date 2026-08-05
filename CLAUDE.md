@@ -22,7 +22,7 @@ The as-built condensation for contributors/assistants (detectkit-style):
 Design contracts for what is being *built next* stay in [docs/specs/](docs/specs/)
 (canonical for M2+ work — table below). Keep rules ↔ docs in sync per milestone.
 
-## Status: M1–M12 shipped; latest on PyPI: `0.7.0` (M12 = notifications); **M13 is code-complete and awaiting the `0.8.0` cut**; BOTH `0.6.x` interstitials closed (PLAN-1/PLAN-2 in `0.6.1`/`0.6.2`, UI-1 + UI-2 + PERF-1 in `0.6.4`); polish track continues with M14–M17
+## Status: M1–M13 shipped; latest on PyPI: `0.8.0` (M13 = versioned statistics, all opt-in); BOTH `0.6.x` interstitials closed (PLAN-1/PLAN-2 in `0.6.1`/`0.6.2`, UI-1 + UI-2 + PERF-1 in `0.6.4`); polish track continues with M14–M17
 
 **Done — M1, the pure statistical core** (`abkit.stats`, importable standalone;
 see [ROADMAP.md](ROADMAP.md) for the deferred-cleanup list): data model with the
@@ -275,8 +275,7 @@ routed — the backlog warning measured against the ever-advancing watermark, so
 FINISHED, fully computed experiment reported a backlog growing by a day every
 day. **Zero statistical numbers moved** (no `ALGORITHM_VERSION` bump).
 
-**Next — the `0.8.0` cut, then M14–M17 → `0.9.0`…`0.12.0`
-(track approved 2026-07-18)**. **M13 is code-complete**: STAT-1c (guardrails
+**Done — M13, versioned statistical improvements → `0.8.0`**: STAT-1c (guardrails
 uncorrected), STAT-2 (the false-positive sign instrument), STAT-1b (the declared
 contrast set), STAT-1 (Holm + the precise FWER claim), STAT-3a (the
 `asymmetric_ci` guard), STAT-3 (the score proportion interval), STAT-4 (the
@@ -286,7 +285,10 @@ milestone moves numbers but no DEFAULT** — every new estimator and scheme is
 opt-in, no `ALGORITHM_VERSION` was bumped, and a project that writes nothing new
 reproduces `0.7.0` row for row (proved against a real `v0.7.0` checkout, not
 against HEAD). Record:
-[m13-implementation-plan.md](docs/specs/m13-implementation-plan.md). The `0.6.x` **PLAN-1/PLAN-2** interstitial is
+[m13-implementation-plan.md](docs/specs/m13-implementation-plan.md).
+**Released as `0.8.0`** — tagged and published to PyPI.
+
+**Next — M14–M17 → `0.9.0`…`0.12.0` (track approved 2026-07-18)**. The `0.6.x` **PLAN-1/PLAN-2** interstitial is
 closed (released as `0.6.1`/`0.6.2`); the second `0.6.x` interstitial —
 **UI-1/UI-2/PERF-1**, added 2026-08-02 — is closed too: **UI-1** (CRUD
 YAML editing in `abk dashboard`, `abkit/tuning/config_files.py` — validate both
@@ -306,16 +308,17 @@ interstitial renumbers nothing either. Metric-YAML editing
 too, which is new surface rather than an addendum. The code-verified pain audit
 ([docs/research/2026-07-data-flow-audit/REPORT.md](docs/research/2026-07-data-flow-audit/REPORT.md))
 plus the entire hardening backlog, one minor release per milestone: M12
-notifications shipped as `0.7.0`, M13 (versioned stats) is code-complete and
-awaits `0.8.0`; M14–M17 (multi-arm decisions, new methods, owned randomization,
+notifications shipped as `0.7.0` and M13 (versioned stats) as `0.8.0`;
+M14–M17 (multi-arm decisions, new methods, owned randomization,
 app integration) stay contours, design-session-first. The
 track section in [ROADMAP.md](ROADMAP.md) is the map;
 [m7](docs/specs/m7-implementation-plan.md),
 [m8](docs/specs/m8-implementation-plan.md),
 [m9](docs/specs/m9-implementation-plan.md),
 [m10](docs/specs/m10-implementation-plan.md),
-[m11](docs/specs/m11-implementation-plan.md) and
-[m12](docs/specs/m12-implementation-plan.md) are all implementation records now.
+[m11](docs/specs/m11-implementation-plan.md),
+[m12](docs/specs/m12-implementation-plan.md) and
+[m13](docs/specs/m13-implementation-plan.md) are all implementation records now.
 Discipline: one WP = one session = one PR; **M7–M12
 moved no statistical number** (parity gates) and **M13 moved no DEFAULT** (the
 new estimators and schemes are opt-in; the byte-compatibility gate is
