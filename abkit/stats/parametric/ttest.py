@@ -19,6 +19,7 @@ import numpy as np
 from abkit.stats.base import (
     CALCULATE_MDE_PARAM,
     POWER_PARAM,
+    RELATIVE_INTERVAL_PARAM,
     TEST_TYPE_PARAM,
     BaseMethod,
     require_pair_type,
@@ -31,11 +32,10 @@ from abkit.stats.effects import (
     absolute_effect_array,
     normal_test,
     normal_test_array,
-    relative_delta_effect,
-    relative_delta_effect_array,
 )
 from abkit.stats.power import get_ttest_mde
 from abkit.stats.registry import register
+from abkit.stats.relative_interval import relative_normal_test, relative_normal_test_array
 from abkit.stats.result import TestResult
 from abkit.stats.samples import Sample, SufficientStats
 
@@ -46,7 +46,7 @@ TTEST_ARRAY_KEYS = ("n", "mean", "m2")
 @register(aliases=("ttest",))
 class TTest(BaseMethod):
     name = "t-test"
-    param_specs = (TEST_TYPE_PARAM, CALCULATE_MDE_PARAM, POWER_PARAM)
+    param_specs = (TEST_TYPE_PARAM, CALCULATE_MDE_PARAM, POWER_PARAM, RELATIVE_INTERVAL_PARAM)
     supports_vectorized = True
 
     def from_samples(self, sample_1: Sample, sample_2: Sample) -> TestResult:
@@ -64,16 +64,19 @@ class TTest(BaseMethod):
         difference_mean_var = var_mean_1 + var_mean_2
 
         if self.test_type == "absolute":
-            estimate = absolute_effect(stats_1.mean, stats_2.mean, var_mean_1, var_mean_2)
+            test = normal_test(
+                absolute_effect(stats_1.mean, stats_2.mean, var_mean_1, var_mean_2), self.alpha
+            )
         else:
-            estimate = relative_delta_effect(
+            test = relative_normal_test(
                 mean_num=difference_mean,
                 var_num=difference_mean_var,
                 mean_den=stats_1.mean,
                 var_den=var_mean_1,
                 covariance=-var_mean_1,  # num & denom share mean_1 (baseline §3.1)
+                alpha=self.alpha,
+                interval=str(self.params["interval"]),
             )
-        test = normal_test(estimate, self.alpha)
 
         mde_1 = mde_2 = None
         if self.params["calculate_mde"]:
@@ -137,12 +140,13 @@ class TTest(BaseMethod):
 
             if self.test_type == "absolute":
                 effect, var = absolute_effect_array(mean_1, mean_2, var_mean_1, var_mean_2)
-            else:
-                effect, var = relative_delta_effect_array(
-                    mean_num=mean_2 - mean_1,
-                    var_num=var_mean_1 + var_mean_2,
-                    mean_den=mean_1,
-                    var_den=var_mean_1,
-                    covariance=-var_mean_1,  # num & denom share mean_1 (baseline §3.1)
-                )
-        return normal_test_array(effect, var, self.alpha)
+                return normal_test_array(effect, var, self.alpha)
+            return relative_normal_test_array(
+                mean_num=mean_2 - mean_1,
+                var_num=var_mean_1 + var_mean_2,
+                mean_den=mean_1,
+                var_den=var_mean_1,
+                covariance=-var_mean_1,  # num & denom share mean_1 (baseline §3.1)
+                alpha=self.alpha,
+                interval=str(self.params["interval"]),
+            )

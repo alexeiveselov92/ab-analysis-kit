@@ -67,6 +67,10 @@ INTERVAL_PARAM = ParamSpec(
     types=(str,),
     default="pooled",
     choices=("pooled", "score"),
+    # The instance-level asymmetry (m13 STAT-3a) is now DECLARED here rather than
+    # resolved in __init__: STAT-4 added a second param-switched interval, and a
+    # knob-dependent capability resolved per class is the shape that rots.
+    asymmetric_values=("score",),
     description=(
         "Confidence-interval construction. 'pooled' (default, legacy parity) is "
         "effect ± z·σ̂₀ with σ̂₀ the NULL (pooled) standard error — coherent with the "
@@ -122,13 +126,6 @@ class ZTest(BaseMethod):
     input_kind = "fraction"
     param_specs = (TEST_TYPE_PARAM, CALCULATE_MDE_PARAM, POWER_PARAM, INTERVAL_PARAM)
     supports_vectorized = True
-
-    def __init__(self, alpha: float = 0.05, **params: object) -> None:
-        super().__init__(alpha=alpha, **params)
-        # Resolved per INSTANCE, not per class (m13 STAT-3a): the interval shape is
-        # a param here, so a ClassVar would answer for the default and let the one
-        # configuration the guard exists for sail through it.
-        self.asymmetric_ci = self.params["interval"] == "score"
 
     @property
     def _score_interval(self) -> bool:

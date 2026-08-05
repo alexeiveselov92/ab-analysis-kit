@@ -84,6 +84,20 @@ class LazyNormal:
         return f"LazyNormal(loc={self.loc!r}, scale={self.scale!r})"
 
 
+#: The two H5 refusals of the relative branch, as constants because the Fieller
+#: branch (m13 STAT-4) refuses on the SAME conditions and must say the same
+#: sentence — a rule spelled differently per interval is a rule an operator
+#: cannot learn once.
+H5_UNDEFINED_DENOMINATOR = (
+    "relative effect undefined: control (denominator) mean is zero or non-finite; "
+    "returning NaN (see statistics-changes.md H5)"
+)
+H5_UNSTABLE = (
+    "relative effect numerically unstable (near-zero control mean); "
+    "returning NaN (see statistics-changes.md H5)"
+)
+
+
 @dataclass
 class EffectEstimate:
     """A point effect with its (delta-method) variance and any diagnostics."""
@@ -115,10 +129,7 @@ def relative_delta_effect(
     """
     result_warnings: list[str] = []
     if mean_den == 0.0 or not math.isfinite(mean_den):
-        result_warnings.append(
-            "relative effect undefined: control (denominator) mean is zero or non-finite; "
-            "returning NaN (see statistics-changes.md H5)"
-        )
+        result_warnings.append(H5_UNDEFINED_DENOMINATOR)
         return EffectEstimate(effect=float("nan"), var=float("nan"), warnings=result_warnings)
 
     relative_mu = mean_num / mean_den
@@ -128,10 +139,7 @@ def relative_delta_effect(
         - 2.0 * (mean_num / mean_den**3) * covariance
     )
     if not (math.isfinite(relative_mu) and math.isfinite(relative_var)):
-        result_warnings.append(
-            "relative effect numerically unstable (near-zero control mean); "
-            "returning NaN (see statistics-changes.md H5)"
-        )
+        result_warnings.append(H5_UNSTABLE)
         return EffectEstimate(effect=float("nan"), var=float("nan"), warnings=result_warnings)
     return EffectEstimate(effect=relative_mu, var=relative_var, warnings=result_warnings)
 

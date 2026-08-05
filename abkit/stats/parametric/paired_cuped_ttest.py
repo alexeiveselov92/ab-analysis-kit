@@ -19,12 +19,13 @@ import math
 
 import numpy as np
 
-from abkit.stats.base import COVARIATE_LOOKBACK_PARAM, TEST_TYPE_PARAM
-from abkit.stats.effects import EffectEstimate, normal_test, relative_delta_effect
+from abkit.stats.base import COVARIATE_LOOKBACK_PARAM, RELATIVE_INTERVAL_PARAM, TEST_TYPE_PARAM
+from abkit.stats.effects import EffectEstimate, normal_test
 from abkit.stats.exceptions import SampleValidationError
 from abkit.stats.parametric.cuped_ttest import correlation_warning
 from abkit.stats.parametric.paired_ttest import BasePairedMethod
 from abkit.stats.registry import register
+from abkit.stats.relative_interval import relative_normal_test
 from abkit.stats.result import TestResult
 from abkit.stats.samples import PAIRED_CUPED_LABELS, JointMoments, PairedSufficientStats
 
@@ -43,7 +44,7 @@ class PairedCupedTTest(BasePairedMethod):
     name = "paired-cuped-t-test"
     requires_covariate = True
     is_paired = True
-    param_specs = (TEST_TYPE_PARAM, COVARIATE_LOOKBACK_PARAM)
+    param_specs = (TEST_TYPE_PARAM, COVARIATE_LOOKBACK_PARAM, RELATIVE_INTERVAL_PARAM)
 
     def from_suffstats(self, stats_1: PairedSufficientStats, stats_2: None = None) -> TestResult:
         joint = self._as_joint(stats_1, stats_2)
@@ -84,18 +85,21 @@ class PairedCupedTTest(BasePairedMethod):
         difference_mean_var = moments.linear_var0(weights_cup_diff) / n
 
         if self.test_type == "absolute":
-            estimate = EffectEstimate(effect=difference_mean, var=difference_mean_var)
+            test = normal_test(
+                EffectEstimate(effect=difference_mean, var=difference_mean_var), self.alpha
+            )
         else:
             weights_y1 = joint.weights(y1=1.0)
-            estimate = relative_delta_effect(
+            test = relative_normal_test(
                 mean_num=difference_mean,
                 var_num=difference_mean_var,
                 mean_den=moments.linear_mean(weights_y1),  # ORIGINAL control mean
                 var_den=moments.linear_var0(weights_y1) / n,
                 # np.cov parity (ddof=1): −cov(cup_2 − cup_1, y1)/n — baseline fact #1.
                 covariance=-moments.linear_cov1(weights_cup_diff, weights_y1) / n,
+                alpha=self.alpha,
+                interval=str(self.params["interval"]),
             )
-        test = normal_test(estimate, self.alpha)
 
         index_y1 = moments.index("y1")
         index_y2 = moments.index("y2")

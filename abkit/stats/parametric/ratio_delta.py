@@ -27,7 +27,13 @@ from collections.abc import Mapping
 
 import numpy as np
 
-from abkit.stats.base import TEST_TYPE_PARAM, BaseMethod, require_pair_type, suffstats_pair_columns
+from abkit.stats.base import (
+    RELATIVE_INTERVAL_PARAM,
+    TEST_TYPE_PARAM,
+    BaseMethod,
+    require_pair_type,
+    suffstats_pair_columns,
+)
 from abkit.stats.effects import (
     BatchEffectResult,
     FloatArray,
@@ -36,10 +42,9 @@ from abkit.stats.effects import (
     absolute_effect_array,
     normal_test,
     normal_test_array,
-    relative_delta_effect,
-    relative_delta_effect_array,
 )
 from abkit.stats.registry import register
+from abkit.stats.relative_interval import relative_normal_test, relative_normal_test_array
 from abkit.stats.result import TestResult
 from abkit.stats.samples import RatioSample, RatioSufficientStats
 
@@ -98,7 +103,7 @@ class RatioDelta(BaseMethod):
     name = "ratio-delta"
     input_kind = "ratio"
     supports_vectorized = True
-    param_specs = (TEST_TYPE_PARAM,)
+    param_specs = (TEST_TYPE_PARAM, RELATIVE_INTERVAL_PARAM)
 
     def from_samples(self, sample_1: RatioSample, sample_2: RatioSample) -> TestResult:
         require_pair_type(self.name, sample_1, sample_2, RatioSample)
@@ -119,16 +124,19 @@ class RatioDelta(BaseMethod):
         var_ratio_2 = var_unit_2 / stats_2.n
 
         if self.test_type == "absolute":
-            estimate = absolute_effect(ratio_1, ratio_2, var_ratio_1, var_ratio_2)
+            test = normal_test(
+                absolute_effect(ratio_1, ratio_2, var_ratio_1, var_ratio_2), self.alpha
+            )
         else:
-            estimate = relative_delta_effect(
+            test = relative_normal_test(
                 mean_num=ratio_2 - ratio_1,
                 var_num=var_ratio_1 + var_ratio_2,
                 mean_den=ratio_1,
                 var_den=var_ratio_1,
                 covariance=-var_ratio_1,  # independent arms: num & denom share only R̂1
+                alpha=self.alpha,
+                interval=str(self.params["interval"]),
             )
-        test = normal_test(estimate, self.alpha)
 
         return self._result_from_normal_test(
             test,
@@ -171,12 +179,13 @@ class RatioDelta(BaseMethod):
 
             if self.test_type == "absolute":
                 effect, var = absolute_effect_array(ratio_1, ratio_2, var_ratio_1, var_ratio_2)
-            else:
-                effect, var = relative_delta_effect_array(
-                    mean_num=ratio_2 - ratio_1,
-                    var_num=var_ratio_1 + var_ratio_2,
-                    mean_den=ratio_1,
-                    var_den=var_ratio_1,
-                    covariance=-var_ratio_1,  # independent arms: num & denom share only R̂1
-                )
-        return normal_test_array(effect, var, self.alpha)
+                return normal_test_array(effect, var, self.alpha)
+            return relative_normal_test_array(
+                mean_num=ratio_2 - ratio_1,
+                var_num=var_ratio_1 + var_ratio_2,
+                mean_den=ratio_1,
+                var_den=var_ratio_1,
+                covariance=-var_ratio_1,  # independent arms: num & denom share only R̂1
+                alpha=self.alpha,
+                interval=str(self.params["interval"]),
+            )

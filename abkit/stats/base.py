@@ -54,6 +54,17 @@ class ParamSpec:
     maximum: float | None = None
     exclusive_bounds: bool = False
     description: str = ""
+    #: Values of THIS param that make the method's fixed CI asymmetric
+    #: (:attr:`BaseMethod.asymmetric_ci`). Declaring it here rather than in each
+    #: method's ``__init__`` is the m13 STAT-1b lesson applied to a capability:
+    #: two methods now switch their interval by param, and a hand-written
+    #: resolution per method is a knob-dependent fact copied per class.
+    asymmetric_values: tuple[Any, ...] = ()
+    #: True when this param is consulted only under ``test_type: relative`` — a
+    #: non-default value beside ``absolute`` is then refused at construction
+    #: rather than silently ignored, because the param is IDENTITY-BEARING and a
+    #: no-op that still forks ``method_config_id`` splits a series for nothing.
+    relative_only: bool = False
 
     def validate(self, value: Any, method_name: str) -> Any:
         # Normalise numpy scalars (e.g. an np.int64 seed from the pipeline) to
@@ -113,6 +124,24 @@ TEST_TYPE_PARAM = ParamSpec(
     default="relative",
     choices=("relative", "absolute"),
     description="Effect estimand: relative lift over control (default) or absolute difference.",
+)
+RELATIVE_INTERVAL_PARAM = ParamSpec(
+    name="interval",
+    types=(str,),
+    default="delta",
+    choices=("delta", "fieller"),
+    relative_only=True,
+    asymmetric_values=("fieller",),
+    description=(
+        "Confidence-interval construction for the RELATIVE effect (m13 STAT-4). "
+        "'delta' (default, legacy parity) is the Wald interval effect ± z·SE with the "
+        "variance evaluated at the estimate — a different test from the absolute "
+        "p-value beside it, so the two can disagree about the same hypothesis. "
+        "'fieller' inverts the score test at every candidate lift: asymmetric, "
+        "coherent with the absolute p-value BY CONSTRUCTION, exact coverage, and "
+        "honestly unbounded when the control mean is not distinguishable from zero. "
+        "Identity-bearing — opting in starts a new results series."
+    ),
 )
 CALCULATE_MDE_PARAM = ParamSpec(
     name="calculate_mde",
@@ -384,7 +413,35 @@ class BaseMethod(ABC):
                 self.params[name] = spec.validate(params[name], self.name)
             else:
                 self.params[name] = spec.default
+        # Declarative first, per-method second: the shared specs carry their own
+        # cross-param rule and their own capability consequence, so a method that
+        # merely ADOPTS one cannot forget either (m13 STAT-4).
+        self._validate_shared_params(specs)
+        self.asymmetric_ci = self.asymmetric_ci or any(
+            spec.asymmetric_values and self.params[name] in spec.asymmetric_values
+            for name, spec in specs.items()
+        )
         self._validate_params()
+
+    def _validate_shared_params(self, specs: Mapping[str, ParamSpec]) -> None:
+        """Cross-param rules declared ON the shared specs, enforced in one place.
+
+        Today that is ``relative_only``: an interval construction that exists only
+        for a ratio estimand must not be accepted beside ``test_type: absolute``.
+        Ignoring it would be worse than it sounds — the param is identity-bearing,
+        so two configurations computing byte-identical numbers would carry
+        different ``method_config_id``s and split a published series for nothing.
+        """
+        if self.params.get("test_type") != "absolute":
+            return
+        for name, spec in specs.items():
+            if spec.relative_only and self.params[name] != spec.default:
+                raise MethodParamError(
+                    f"{self.name}: param {name!r}={self.params[name]!r} is only consulted "
+                    "under test_type: relative — with test_type: absolute it would change "
+                    f"nothing while still forking the results series; set {name}="
+                    f"{spec.default!r} or test_type: relative"
+                )
 
     def _validate_params(self) -> None:  # noqa: B027 — optional hook, deliberately non-abstract
         """Hook for cross-parameter validation (override as needed)."""

@@ -30,7 +30,7 @@ and two more WPs the contour never named (STAT-1b, STAT-1c) were added:
 | main-tier `metrics_count=1` FWER fix | **STAT-1** | same layer, same enum, same instrument |
 | unpooled SE in the z-test CI | **STAT-3** | *one decision* with the item below — see §0.2 |
 | Agresti-Caffo / Wilson proportion CIs | **STAT-3** | inverting the score test *is* Wilson |
-| restore the relative-z "covariance term" | **STAT-4** | misnamed; it is the `R²` coefficient |
+| restore the relative-z "covariance term" | **STAT-4** | misnamed; it is the `R²` coefficient — and STAT-3 answered it for the z-test, so STAT-4 shipped on the MEAN methods |
 | uniform ddof=1 | ~~STAT-5~~ **DROPPED** | below the noise floor of our own instrument (D13) |
 
 ### 0.2 The two regroupings, stated once
@@ -675,9 +675,20 @@ work is what makes the scalar entry (a length-1 batch through the same kernel)
 bit-identical to the vectorized one, so the M7 parity gate keeps its equality
 assertion. `test_ztest_parity` is now parametrized on `interval` as well.
 
-### STAT-4 — the relative effect: what the z-test should compute
+### STAT-4 — the relative effect: what the mean methods should compute ✅ SHIPPED
 
 **Depends on:** STAT-2 (without the sign instrument this cannot be arbitrated).
+
+**Scope correction made at build time, and it is the WP's first as-built delta.**
+The heading said "what the **z-test** should compute", because the contour item
+was "restore the relative-z covariance term". STAT-3 answered that question for
+the z-test — its relative interval is the ratio-scale score construction, the
+exact analogue of Fieller for proportions rather than a normal-theory
+approximation of it — so what remained was the **mean-based** family, whose
+relative branch is the `delta` variant of the table below. STAT-4 therefore ships
+on `t-test`, `cuped-t-test`, `paired-t-test`, `paired-cuped-t-test` and
+`ratio-delta`, and `z-test` is deliberately not an adopter (pinned by a
+registry-derived roster test).
 
 Three candidates, and the cheap one is not obviously right:
 
@@ -715,7 +726,77 @@ cached-SE × new-z path degrades to a delta interval at every α except the
 computed one — and the tier is already labelled "approx", so the drift would not
 look like a fault. Either Fieller recomputes `g` (making it Tier E, not an
 inversion) or the relative effect leaves α-inversion. **This is a required
-sub-task of choosing Fieller, not a follow-up.**
+sub-task of choosing Fieller, not a follow-up.** *(As built: it needed no code
+at all. STAT-3a's guard already refuses `_alpha_inverted_bounds` for any method
+whose bound instance declares `asymmetric_ci`, and STAT-3 already decided what
+the tier shows instead — a reported gap, never an approximation. The required
+sub-task was paid a WP early, by the twelfth entry point STAT-3a's count found.)*
+
+#### As built
+
+`interval: delta | fieller` on the five mean methods — identity-flagged,
+defaulted to the legacy branch. **No default moved**; `ALGORITHM_VERSION`
+untouched. Deviation record:
+[statistics-changes.md §4.5](statistics-changes.md). The math is one pure module
+(`abkit/stats/relative_interval.py`), which also owns the ONE dispatch point that
+replaced the `relative_delta_effect` + `normal_test` pair each method used to
+compose for itself; the gates are `tests/stats/test_fieller_interval.py` (the
+derivation's KATs) and `tests/stats/test_relative_interval_param.py` (the
+contract, swept over a registry-derived roster).
+
+**The load-bearing deltas, none of which the design had:**
+
+- **The defect is ONE-SIDED, not a coverage loss**, and stating it correctly is
+  what makes the WP worth shipping. The design (and §0.4) predicted the A/A matrix
+  would be blind because the rejection sets coincide *at the null*; measured, the
+  two-sided rates agree to the third decimal (0.0498 vs 0.0499) — but delta's
+  TAILS are 0.0168/0.0327 at a control-mean CV of 5% and 0.0083/0.0393 at 10%,
+  **independent of the true effect**. Every abkit verdict is a one-sided claim, so
+  the real directional error rate runs at up to 1.6× the configured one, and an
+  A/A run at the null measures that faithfully and still reports "calibrated".
+  STAT-2's `fpr_negative_share` reads 0.664 against the derivation's predicted
+  0.659 — the instrument doing exactly what it was built a WP early for.
+- **The p-value moves, deliberately.** Under `fieller` the relative p-value is the
+  ABSOLUTE comparison's, bit-for-bit (asserted with `==`, not a tolerance, across
+  all five methods). D10 said "changes no verdict" of replacing the *shortcut*;
+  the mean methods carry *delta*, whose rejection set genuinely differs, and
+  keeping its Wald p beside an inverted-test interval would have rebuilt the
+  incoherence the WP exists to remove.
+- **The unbounded branch is reported as MISSING BOUNDS.** Not a wide interval, not
+  an error: `readout._informative` already treats NULL bounds as a gap. The
+  disclosed cost is that a comparison can reject on the absolute scale and not be
+  called a WIN — on evidence (`g ≥ 1`) that could not support a lift figure
+  anyway. An EMPTY set is a separate sentence, reachable only through a non-PSD
+  moment triple; five causes of missing bounds now carry five messages.
+- **`ParamSpec.asymmetric_values` replaced STAT-3's per-class resolution.** With a
+  second param-switched interval across five classes, resolving the capability in
+  each `__init__` is five copies of a knob-dependent fact — the STAT-1b lesson.
+  `BaseMethod` folds every spec's declaration into the bound instance, and the
+  entire STAT-3a consequence set followed with **no new surface code** (proved by
+  a real-config leg added to `tests/validate/test_asymmetric_ci_refusal.py`, whose
+  earlier probes could only `setattr` the flag because no value method could
+  declare one). `ParamSpec.relative_only` is its sibling: the inert
+  `fieller` + `absolute` pair is refused at construction rather than forking
+  `method_config_id` for nothing.
+- **`abk plan`'s sizing turned out to be CLOSER under the new estimator.**
+  `get_ttest_mde`'s relative branch sizes the absolute difference and divides by
+  the control mean — the null-variance rule, i.e. Fieller's own rejection
+  boundary. So the planner has disagreed with the shipped DEFAULT all along;
+  STAT-3's note ("the two rules differ by O(z²/N)") would have been a false caveat
+  here, and now claims a difference in half-widths instead.
+- **One disclosed limitation, handed to STAT-6.** An unbounded row is the first
+  in the project's history to carry a valid p-value with NULL bounds, and
+  `readout._informative` keys on the bounds — so under a READ-TIME scheme it
+  leaves the family and shrinks `m` for its siblings (anti-conservative). Pinned
+  as behaviour rather than fixed, because relaxing `_informative` is a
+  readout-wide semantics change the stabilization scan shares.
+- **Two numerical choices were measured, and one of them lost.** The
+  cancellation-free discriminant is 30× better and gets a Decimal-referenced gate
+  at `z_stat = 10⁴` (where `B² − AC` reads 6.5e-10, past rel-1e-9). The textbook
+  `s = B + sign(B)√disc` root pairing buys **nothing** (2.3e-15 vs 3.3e-15
+  relative to the width, worse in three of four probed regimes) and was deleted
+  rather than kept as an unfalsifiable comment. Mutation probes: 8 hostile edits,
+  6 caught by the KATs; the two survivors became the two tests above.
 
 ### ~~STAT-5 — uniform ddof~~ — **DROPPED (D13)**
 
@@ -747,7 +828,7 @@ written into `statistics-changes.md`.
 STAT-1c (guardrails) ✅ ───────────────────────────────────┐   safety; independent
 STAT-1b (contrast set) ✅ ─────────────────────────────────┤   biggest power win
 STAT-1  (Holm / the Fork) ✅ ─────────────────────────────┤
-STAT-2  (sign instrument) ✅ ─▶ STAT-4 (relative effect) ──┼──▶ STAT-6 (exit gate)
+STAT-2  (sign instrument) ✅ ─▶ STAT-4 (relative effect) ✅ ┼──▶ STAT-6 (exit gate)
 STAT-3a (asymmetric_ci guard) ✅ ─▶ STAT-3 (proportions) ✅ ┤
 STAT-5  (ddof — recommended dropped) ─────────────────────┘
 ```

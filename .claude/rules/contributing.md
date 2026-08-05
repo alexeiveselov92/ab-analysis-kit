@@ -85,10 +85,16 @@ CI runs the full matrix on every push; keep it green.
    `tests/stats/test_bootstrap_methods.py` requires flag, override and
    inherited template together; without the flag the method is simply
    recomputed per alpha — never special-cased.
-4c. (M13 STAT-3a) **If the method's CI is not `effect ± z·SE`** — a score,
-   Fieller or percentile interval — say so: set `asymmetric_ci = True` (from
-   `self.params` in `__init__` when a param selects the interval shape; it is a
-   plain attribute, not a `ClassVar`, precisely so that is expressible). Every
+4c. (M13 STAT-3a, amended by STAT-4) **If the method's CI is not `effect ± z·SE`**
+   — a score, Fieller or percentile interval — say so: set `asymmetric_ci = True`.
+   When a PARAM selects the interval shape, declare it on the `ParamSpec`
+   (`asymmetric_values=("fieller",)`) rather than resolving it in `__init__`:
+   `BaseMethod` folds every spec's declaration into the bound instance, so a
+   method that merely adopts a shared spec cannot forget the capability. (STAT-3
+   resolved it in `ZTest.__init__`; STAT-4 added a second param-switched interval
+   across five methods, which is where one hand-written resolution per class turns
+   into five copies of a knob-dependent fact.) It stays a plain attribute rather
+   than a `ClassVar` precisely so the instance can differ from the class. Every
    SE-by-CI-inversion entry then refuses loudly instead of widening a number that
    is not a standard error. Do **not** reach for `supports_sequential = False` to
    express the consequence: that flag is a `ClassVar` read at CLASS level by five
@@ -98,8 +104,13 @@ CI runs the full matrix on every push; keep it green.
    interval, naming both knobs — and the `AsymmetricCIError` at the inversion is
    the backstop under it. The roster gate in
    `tests/stats/sequential/test_asymmetric_ci_guard.py` asserts no method declares
-   the flag at class level, so flipping the CLASS default is a conscious act;
-   `z-test`'s `interval: score` is the shipped example of the instance form.
+   the flag at class level and enumerates every declared asymmetric
+   (method, param, value) triple, so flipping the CLASS default — or adding a
+   configuration nobody recorded — is a conscious act. Shipped examples:
+   `z-test`'s `interval: score` and the five mean methods' `interval: fieller`.
+   A param that is consulted only under one `test_type` also declares
+   `relative_only=True`, which makes the inert combination a refusal instead of
+   a no-op that still forks `method_config_id`.
 5. Tests: known-answer test; dual-entry equivalence; params/identity hash
    addition to `tests/stats/test_identity.py`; golden test if reproducing a
    legacy method.

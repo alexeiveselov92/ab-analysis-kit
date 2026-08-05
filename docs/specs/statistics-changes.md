@@ -448,6 +448,124 @@ disagreement.
   arbitrates instead is the coherence identity above, checked exhaustively, plus
   the closed-form boundary answers.
 
+### 4.5 The relative interval: `interval: fieller` — as built (M13 STAT-4)
+
+**No default moves.** `interval` is a new identity-flagged param on the five
+mean-based closed-form methods (`t-test`, `cuped-t-test`, `paired-t-test`,
+`paired-cuped-t-test`, `ratio-delta`), default `delta` = today's branch
+byte-for-byte; `ALGORITHM_VERSION` is untouched (D4). `z-test` is deliberately
+NOT among them — §4.4's ratio-scale score construction is the exact analogue for
+proportions, and Fieller would be a normal-theory approximation of it.
+
+**What was wrong, stated at the granularity abkit's verdicts live at.** The
+relative branch reports `θ̂ ± z·SÊ` with the variance evaluated at the ESTIMATE
+(a Wald interval; §0.2(b) shows the shortcut/delta difference is the `R²`
+coefficient on `V₁`, not a covariance). Two consequences, and the second is the
+one that matters:
+
+- **It is a different test from the p-value printed beside it.** Wald statistics
+  are not invariant to reparametrisation, so "θ = 0" and "μ₂ − μ₁ = 0" — one
+  hypothesis — get two p-values, and a report can carry "the absolute effect is
+  significant" next to "the lift CI contains 0".
+- **Its two-sided coverage is nominal while its tails are not.** Measured over
+  200k draws from the exact normal model, at CV₁ (the CV of the control MEAN)
+  = 0.05: total miss 0.0495, split **0.0168 / 0.0327**; at CV₁ = 0.10: 0.0475,
+  split **0.0083 / 0.0393**. A WIN or a LOSE is a **one-sided** claim, so the
+  error rate an abkit verdict actually runs at is up to 1.6× the one bought. The
+  imbalance is a property of the denominator's noise, not of the effect —
+  identical at θ = 0 and θ = +0.5 — which is why an A/A run measures the live
+  experiment's error faithfully and still reports "calibrated".
+
+**What ships.** The blind re-derivation
+([relative-effect.derivation.json](../research/2026-08-m13-blind-rederive/relative-effect.derivation.json))
+recommends Fieller, and D10 adopted it. It inverts the same statistic at every
+candidate lift instead of only at the estimate:
+
+    { θ : (a − θ·b)² ≤ z²·(V_a − 2θ·V_ab + θ²·V_b) }
+
+with `a` the numerator effect, `b` the control mean and `V_ab = Cov(a, b)` — the
+five moments `relative_delta_effect` already takes, so CUPED (whose numerator is
+adjusted and whose denominator is not) is covered by the same code rather than
+by a special case. Endpoints are the roots of `A·θ² − 2B·θ + C ≤ 0`.
+
+| Property | Delta (default) | Fieller (opt-in) |
+|---|---|---|
+| p-value for θ = 0 | its own Wald p | **the absolute comparison's, bit-for-bit** |
+| interval excludes 0 ⟺ p < α | not guaranteed | **by construction** |
+| one-sided error rates | 0.017 / 0.033 at CV₁ = 0.05 | **0.025 / 0.025 at every CV₁ ≤ 0.10** |
+| A/A false-positive RATE | 0.0498 | 0.0499 — the column is blind (§0.4) |
+| A/A false-positive SIGN split | 0.66 at CV₁ = 0.05 | **0.50** |
+| near-zero control mean | always a finite interval | declines, and says why |
+
+**The sub-decisions, recorded rather than assumed:**
+
+- **The p-value moves, and that is the point.** Under `fieller` the relative
+  p-value IS the absolute test's — same expression, same operand order, asserted
+  with `==` across all five methods. Keeping the Wald p beside an inverted-test
+  interval would have rebuilt the incoherence the change exists to remove. (The
+  ⟺ is algebraic, not bit-wise: `a² > z²V_a` and `|a| > z√V_a` are the same
+  comparison in two roundings, so a table within an ULP of the critical value may
+  be answered differently by each — §4.4's caveat, unchanged.)
+- **The point estimate is untouched.** Fieller's centre is shifted by
+  `R̂·g/(1−g)`, `g = z²V̂_b/b²`, but that shift belongs to the confidence set's
+  geometry, not to the estimator; abkit reports the same lift it always did and
+  moves only the bounds. (Nor is it a bias correction — it moves the same way
+  the O(CV₁²) bias does.)
+- **The unbounded branch is reported as MISSING BOUNDS, not as a wide interval.**
+  When `g ≥ 1` — the control mean is not distinguishable from zero at this α — no
+  bounded confidence set for a ratio exists at level 1−α. Gleser & Hwang (1987):
+  any procedure with guaranteed coverage must produce unbounded sets with
+  positive probability, so delta's always-finite interval has guaranteed coverage
+  **zero**. abkit reports the effect and the p-value with NULL bounds, which
+  `readout._informative` already treats as a gap rather than a zero. The cost is
+  stated: a comparison whose absolute test rejects while its relative interval is
+  unbounded loses a WIN it would have been given under `delta`, on evidence that
+  could not support a lift figure anyway. Measured share of unbounded answers: 0%
+  at CV₁ ≤ 0.10, 8.5% at 0.30.
+- **A DISCLOSED limitation the unbounded branch creates.** An unbounded row is
+  the first row in the project's history to carry a **valid p-value with NULL
+  bounds** — before STAT-4 the two were always NULL together. `readout._informative`
+  keys on the bounds, so such a row is skipped: correct under a compute-time
+  correction (it cannot exclude zero), but under a **read-time** scheme (BH/Holm)
+  it also leaves the family, which shrinks `m` for its siblings — the
+  anti-conservative direction. It is pinned as behaviour rather than fixed here,
+  because relaxing `_informative` is a readout-wide semantics change (the
+  stabilization scan reads the same predicate) and belongs to STAT-6, not to the
+  estimator that made it reachable.
+- **An EMPTY confidence set is a distinct sentence.** Reachable only through a
+  non-PSD moment triple (`V_ab² > V_aV_b`), which abkit's mixed-ddof convention
+  can produce on adversarial data — the same anomaly the delta branch reports as
+  a negative variance. Five causes of missing bounds, five messages: a reader
+  told "near-zero control mean" about a zero-variance table looks at the wrong
+  half of their data.
+- **`interval: fieller` beside `test_type: absolute` is REFUSED**, not ignored.
+  It would compute nothing and still fork `method_config_id`, splitting a
+  published series for no numeric reason. Declared on the `ParamSpec`
+  (`relative_only`) and enforced once in `BaseMethod`, so a sixth adopter cannot
+  reintroduce it.
+- **The interval is asymmetric, so `asymmetric_ci` is True on the bound
+  instance** and every STAT-3a consequence follows with no new surface code: the
+  always-valid mode is a level-2 config error naming both knobs, `abk validate`
+  scores the fixed columns and omits the sequential one, explore's α tier answers
+  with a gap, and the `±CI` chip renders `[low, high]`. STAT-3 resolved that flag
+  in `ZTest.__init__`; STAT-4 moves the resolution onto the `ParamSpec`
+  (`asymmetric_values`) — two param-switched intervals is where a per-class
+  resolution starts to rot.
+- **`abk plan`'s sizing is closer under Fieller than under the default, and the
+  note says less than it used to.** `get_ttest_mde`'s relative branch sizes the
+  ABSOLUTE difference and divides by the control mean — the null-variance rule,
+  which is exactly Fieller's own rejection boundary. So the planner and the
+  analysis rule have disagreed under `delta` all along, and opting in closes that
+  gap rather than opening one. The comparison note therefore claims a difference
+  in **half-widths** (`O(z²/N)`, true for both asymmetric intervals) instead of
+  "the two rules differ", which was never true for Fieller.
+- **A/A arbitration is again NOT the referee** (§0.4, D6), and this is the case
+  the plan predicted: the rejection sets at the null are *algebraically*
+  different but their measured rates agree to the third decimal. The instrument
+  that can tell them apart is STAT-2's `fpr_negative_share`, which reads 0.50 for
+  Fieller against the derivation's predicted `0.5 + φ(z)z²·CV₁√w₁/α` for delta
+  (0.66 at CV₁ = 0.05, measured 0.664).
+
 ## 5. CUPED covariate window — DECIDED: fixed lookback (2026-07)
 
 The legacy CUPED covariate uses a **growing** symmetric pre-window. The choice was

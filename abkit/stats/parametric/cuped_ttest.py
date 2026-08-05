@@ -32,6 +32,7 @@ from abkit.stats.base import (
     CALCULATE_MDE_PARAM,
     COVARIATE_LOOKBACK_PARAM,
     POWER_PARAM,
+    RELATIVE_INTERVAL_PARAM,
     TEST_TYPE_PARAM,
     BaseMethod,
     require_pair_type,
@@ -45,12 +46,11 @@ from abkit.stats.effects import (
     absolute_effect_array,
     normal_test,
     normal_test_array,
-    relative_delta_effect,
-    relative_delta_effect_array,
 )
 from abkit.stats.exceptions import AbkitStatsWarning, SampleValidationError
 from abkit.stats.power import get_cuped_ttest_mde
 from abkit.stats.registry import register
+from abkit.stats.relative_interval import relative_normal_test, relative_normal_test_array
 from abkit.stats.result import TestResult
 from abkit.stats.samples import Sample, SufficientStats
 
@@ -87,6 +87,7 @@ class CupedTTest(BaseMethod):
         CALCULATE_MDE_PARAM,
         POWER_PARAM,
         COVARIATE_LOOKBACK_PARAM,
+        RELATIVE_INTERVAL_PARAM,
     )
 
     def from_samples(self, sample_1: Sample, sample_2: Sample) -> TestResult:
@@ -134,19 +135,23 @@ class CupedTTest(BaseMethod):
         var_cup_2 = (stats_2.m2 - 2.0 * theta * stats_2.cross_c + theta**2 * stats_2.cov_m2) / n_2
 
         if self.test_type == "absolute":
-            estimate = absolute_effect(mean_cup_1, mean_cup_2, var_cup_1 / n_1, var_cup_2 / n_2)
+            test = normal_test(
+                absolute_effect(mean_cup_1, mean_cup_2, var_cup_1 / n_1, var_cup_2 / n_2),
+                self.alpha,
+            )
         else:
             # np.cov parity (ddof=1): cov(cup_1, y1) = (m2 − θ·cross_c)/(n1 − 1);
             # n1 ≥ 2 is guaranteed — cov1_value_covariate above raised otherwise.
             cov1_cup_value = (stats_1.m2 - theta * stats_1.cross_c) / (n_1 - 1)
-            estimate = relative_delta_effect(
+            test = relative_normal_test(
                 mean_num=mean_cup_2 - mean_cup_1,
                 var_num=var_cup_2 / n_2 + var_cup_1 / n_1,
                 mean_den=stats_1.mean,  # ORIGINAL control mean (baseline §3.3 subtlety)
                 var_den=stats_1.var / n_1,
                 covariance=-cov1_cup_value / n_1,
+                alpha=self.alpha,
+                interval=str(self.params["interval"]),
             )
-        test = normal_test(estimate, self.alpha)
 
         mde_1 = mde_2 = None
         if self.params["calculate_mde"]:
@@ -242,14 +247,15 @@ class CupedTTest(BaseMethod):
                 effect, var = absolute_effect_array(
                     mean_cup_1, mean_cup_2, var_cup_1 / n_1, var_cup_2 / n_2
                 )
-            else:
-                # np.cov parity (ddof=1): cov(cup_1, y1) = (m2 − θ·cross_c)/(n1 − 1).
-                cov1_cup_value = (m2_1 - theta * cross_c_1) / (n_1 - 1.0)
-                effect, var = relative_delta_effect_array(
-                    mean_num=mean_cup_2 - mean_cup_1,
-                    var_num=var_cup_2 / n_2 + var_cup_1 / n_1,
-                    mean_den=mean_1,  # ORIGINAL control mean (baseline §3.3 subtlety)
-                    var_den=(m2_1 / n_1) / n_1,
-                    covariance=-cov1_cup_value / n_1,
-                )
-        return normal_test_array(effect, var, self.alpha)
+                return normal_test_array(effect, var, self.alpha)
+            # np.cov parity (ddof=1): cov(cup_1, y1) = (m2 − θ·cross_c)/(n1 − 1).
+            cov1_cup_value = (m2_1 - theta * cross_c_1) / (n_1 - 1.0)
+            return relative_normal_test_array(
+                mean_num=mean_cup_2 - mean_cup_1,
+                var_num=var_cup_2 / n_2 + var_cup_1 / n_1,
+                mean_den=mean_1,  # ORIGINAL control mean (baseline §3.3 subtlety)
+                var_den=(m2_1 / n_1) / n_1,
+                covariance=-cov1_cup_value / n_1,
+                alpha=self.alpha,
+                interval=str(self.params["interval"]),
+            )
