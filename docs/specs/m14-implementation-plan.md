@@ -64,10 +64,12 @@ exit-gate leg (§4):
    the family, treatment-vs-treatment rows included, because they are persisted
    whenever `contrasts: all_pairs` declares them. Issuing a verdict for a row
    that is already in the family cannot move a threshold.
-2. **The alphas are unchanged.** The Bonferroni divisor is
-   `len(contrast_pairs()) × metrics_count`; M14 changes neither the size of the
-   contrast set nor the metric count. A declared `control:` re-*orients* pairs,
-   it does not add or remove any (D3).
+2. **The alphas are unchanged.** The divisor is derived from the arm count and
+   the declared family, never from an enumeration
+   (`stats.correction.n_comparisons(groups_count, metrics_count, contrasts)`),
+   and equals `|contrast_pairs()| × metrics_count`. M14 moves none of its three
+   inputs: a declared `control:` re-*orients* pairs, it does not add or remove
+   any, and it changes neither the arm count nor the `contrasts` family (D3).
 3. **A two-arm experiment is byte-identical on every surface.** With two arms
    there is no treatment-vs-treatment pair and the rollup has exactly one
    candidate, so the payload, the report, the dashboard row, the messages and
@@ -135,12 +137,17 @@ non-control reason (there may be none — the audit found none).
    `itertools.combinations` order. Under the default this is a **no-op by
    construction** — `combinations` already emits `variants[0]` first in every
    pair that contains it — which is what keeps `0.8.0` byte-identical.
-3. **Declaring a non-first control orphans rows, and flips a sign.** The pairs
-   containing the new control change `(name_1, name_2)` order, so their
+3. **Declaring a non-first control orphans rows, and re-bases the effect.** The
+   pairs containing the new control change `(name_1, name_2)` order, so their
    persisted rows leave the declared set (the STAT-1b stale-pair path: the
    driver warns, `readout._filter_rows` drops them with a loud line) and the
-   effect of the re-oriented pair is the negation of the old one. Both halves go
-   in the config docs and in the validator's message; the repair is
+   re-oriented pair's effect is measured against the other arm. On the absolute
+   scale that is the negation of the old number; **on the relative scale it is
+   not** — the denominator swaps arms too, so `(m₂−m₁)/m₁` becomes
+   `(m₁−m₂)/m₂`, and an operator comparing an old chart against a new one will
+   not find the sign flip they were promised. Say the relative case explicitly;
+   `test_type: relative` is the common configuration, not the exotic one. All of
+   this goes in the config docs and in the validator's message; the repair is
    `abk run --full-refresh --from … --to …` (never a bare `--full-refresh` — it
    is a `BadParameter` without its window bounds, STAT-1b again).
 4. **Catalog:** `_ab_experiments.control`, `Nullable(String)`. Three edits, and
