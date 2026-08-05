@@ -231,13 +231,19 @@ def validate_experiment_level2(
         report.warnings.append(
             f"{where}: assignment.control '{experiment.control}' is not the first "
             f"declared variant, so every pair containing it is stored as "
-            f"('{experiment.control}', other). Rows persisted under the previous "
-            "orientation leave the declared contrast set (the readout drops "
-            "them with a warning) and the re-oriented pair's effect is measured "
-            "against the other arm — on the ABSOLUTE scale that is the negation "
-            "of the old number, but on the RELATIVE scale it is not, because the "
-            "denominator swaps arms too ((m2−m1)/m1 becomes (m1−m2)/m2). Recompute "
-            "with `abk run --full-refresh --from <start> --to <end>`."
+            f"('{experiment.control}', other) and the re-oriented pair's effect "
+            "is measured against the other arm — on the ABSOLUTE scale that is "
+            "the negation of the old number, but on the RELATIVE scale it is "
+            "NOT, because the denominator swaps arms too ((m2−m1)/m1 becomes "
+            "(m1−m2)/m2). The next plain `abk run` recomputes the WHOLE series "
+            "(no --full-refresh: no look carries the re-oriented pair, so every "
+            "cutoff re-plans); until it does, the read-time correction families "
+            "are built from the surviving rows only, so a verdict read now can "
+            "be looser than the one that will settle. The previous "
+            "orientation's rows are never deleted — abkit's own surfaces drop "
+            "them with a warning, but raw SQL over _ab_results sees BOTH "
+            "orientations of that pair (join _ab_experiments.control to tell "
+            "them apart)."
         )
 
     # ── reference integrity + per-comparison method/metric rules ────────────

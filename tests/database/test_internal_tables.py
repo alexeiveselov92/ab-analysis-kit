@@ -154,15 +154,29 @@ class TestSchemaMigration:
         assert not backend.table_exists(TABLE_RESULTS)
 
 
-#: the m13 STAT-1b additive column — the CATALOG's first post-release change
-NEW_CATALOG_COLUMNS = ("contrasts",)
+#: Every ``_ab_experiments`` column added since ``0.7.0``, newest release last.
+#: **A work package that adds a catalog column MUST extend this**, and the
+#: reason is that the omission is INVISIBLE: the pre-release model below is
+#: derived as "the current model minus these", so a column missing from the set
+#: is already present in the supposedly-old table and its migration is never
+#: exercised. Measured during the m14 DEC-1 review — with ``control`` absent
+#: here, declaring it ``String`` NOT-NULL/no-default (the exact shape m13
+#: STAT-1b shipped, which would kill every installed project's first run) left
+#: 775 tests and the m13 exit gate green.
+POST_0_7_0_CATALOG_COLUMNS = (
+    "contrasts",  # m13 STAT-1b (0.8.0)
+    "control",  # m14 DEC-1 (0.9.0)
+)
+
+#: Kept as the old name for the assertions that name the STAT-1b column alone.
+NEW_CATALOG_COLUMNS = POST_0_7_0_CATALOG_COLUMNS
 
 
 def _pre_stat1b_experiments_model() -> TableModel:
     """``_ab_experiments`` as shipped through 0.7.0."""
     model = get_experiments_table_model()
     return TableModel(
-        columns=[col for col in model.columns if col.name not in NEW_CATALOG_COLUMNS],
+        columns=[col for col in model.columns if col.name not in POST_0_7_0_CATALOG_COLUMNS],
         primary_key=model.primary_key,
         engine=model.engine,
         order_by=model.order_by,
@@ -191,16 +205,34 @@ class TestCatalogSchemaMigration:
         }
         backend.insert_batch(full, row)
 
-    def test_ensure_tables_adds_the_column_without_a_recreate(self, backend):
+    def test_the_seeded_model_is_really_older_than_the_current_one(self):
+        """The gate's own precondition, asserted rather than assumed.
+
+        ``_pre_stat1b_experiments_model`` is derived by SUBTRACTION, so it is
+        only "0.7.0" while ``POST_0_7_0_CATALOG_COLUMNS`` is complete. A WP that
+        adds a column and forgets the set seeds a table that already has it,
+        and this class silently stops testing a migration at all — which is
+        exactly what happened to ``control`` before the DEC-1 review.
+        """
+        current = {col.name for col in get_experiments_table_model().columns}
+        old = {col.name for col in _pre_stat1b_experiments_model().columns}
+        assert old < current, "the seeded catalog is not a strict subset of the current one"
+        assert current - old == set(POST_0_7_0_CATALOG_COLUMNS)
+
+    def test_ensure_tables_adds_the_columns_without_a_recreate(self, backend):
         self._seed_old_catalog(backend)
         InternalTablesManager(backend).ensure_tables()
 
         live = backend.list_columns(TABLE_EXPERIMENTS)
-        for col in NEW_CATALOG_COLUMNS:
+        for col in POST_0_7_0_CATALOG_COLUMNS:
             assert col in live, col
+        row = backend._rows[TABLE_EXPERIMENTS][0]
         # the DEFAULT, not NULL: the column is NOT NULL, and a pre-0.8.0
         # experiment did compare all pairs
-        assert backend._rows[TABLE_EXPERIMENTS][0]["contrasts"] == "all_pairs"
+        assert row["contrasts"] == "all_pairs"
+        # NULL, not a default: no literal could be right for a per-experiment
+        # variant name, and NULL is the honest reading of a pre-0.9.0 row
+        assert row["control"] is None
 
     def test_the_next_run_writes_the_declared_family(self, backend):
         """The other half of the same defect: the writer's field whitelist."""

@@ -499,6 +499,16 @@ def build_report_payload(
         "cadence_seconds": experiment.cadence_seconds_min(),
         "tz": experiment.timezone,
         "arms": variants,
+        # m14 DEC-1: WHICH arm every effect on the page is measured against.
+        # The page had said "first = control" beside `arms` since M3, which was
+        # a tautology until a control could be declared — and becomes a lie the
+        # moment one is, with the pair blocks below rendering "c vs a" under a
+        # header naming `a` as the baseline. Both renderers keep the old
+        # sentence when the control IS the first arm (so a two-arm and every
+        # default experiment stays byte-identical, §0.2) and name the arm
+        # otherwise. Baking it also lets the surfaces STOP inferring it, which
+        # is what DEC-3/DEC-4 will need.
+        "control": experiment.control,
         # m13 STAT-1b: the family the per-row alphas were divided by. Without
         # it a 4-arm `vs_control` report shows four arms, three pair blocks and
         # α = 0.05/3, and nothing on the page reconciles the three numbers —

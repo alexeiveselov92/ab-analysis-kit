@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from synthetic_ab import (
     METRICS,
     PROJECT,
@@ -582,3 +583,42 @@ def test_family_sweep_flag_with_metric_filter_is_logged_not_run():
     )
     assert result.family is None
     assert any("--family-sweep ignored" in d.message for d in result.decision_log)
+
+
+class TestDeclaredControlReachesThePlaceboSplit:
+    """m14 DEC-1, behaviourally: ``_share_a`` mirrors the CONTROL's share.
+
+    The placebo's arm A is the baseline, so its share has to come from the
+    declared control — otherwise a 20/40/40 experiment declaring ``control: c``
+    is calibrated at a 20% baseline it never runs. No test in this package
+    built a config with ``control:`` before, which is how the review's probe
+    reverted the site with every validate test still green.
+    """
+
+    @staticmethod
+    def _experiment(control=None) -> ExperimentConfig:
+        assignment = {
+            "query": "SELECT 1",
+            "variants": ["a", "b", "c"],
+            "expected_split": {"a": 0.2, "b": 0.4, "c": 0.4},
+        }
+        if control is not None:
+            assignment["control"] = control
+        return ExperimentConfig.model_validate(
+            {
+                "name": "share_a",
+                "start_ts": "2024-07-01",
+                "horizon_ts": "2024-07-15",
+                "unit_key": "user_id",
+                "assignment": assignment,
+                "comparisons": [
+                    {"metric": "cr", "is_main_metric": True, "method": {"name": "z-test"}}
+                ],
+            }
+        )
+
+    def test_the_share_follows_the_declaration(self):
+        from abkit.validate.runner import _share_a
+
+        assert _share_a(self._experiment()) == pytest.approx(0.2)
+        assert _share_a(self._experiment(control="c")) == pytest.approx(0.4)

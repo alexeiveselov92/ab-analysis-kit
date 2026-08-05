@@ -1462,13 +1462,29 @@ class TestDeclaredControl:
         assert readout.srm_flag is True
         assert readout.srm_pvalue == pytest.approx(1e-6)
 
-    def test_rows_in_the_old_orientation_are_dropped_with_a_warning(self):
+    def test_rows_in_the_old_orientation_are_dropped_before_the_srm_rollup(self):
         """Declaring a non-first control re-orients pairs, so rows persisted
         under the previous orientation leave the declared set — the STAT-1b
-        stale-pair path, reached by a new cause."""
+        stale-pair path, reached by a new cause.
+
+        The stale series is built HOSTILE (a failing SRM gate) on purpose. With
+        healthy stale rows the ``srm_flag is False`` assertion could not fail —
+        every row in the fixture carries ``make_row``'s default — and a test
+        that cannot fail is worse than no test. As written it says the real
+        thing: an undeclared pair does not reach the experiment-level rollup,
+        in EITHER direction.
+        """
         experiment = self._three_arm()
-        stale = make_series(experiment, name_1="a", name_2="b")
+        stale = make_series(
+            experiment,
+            name_1="a",
+            name_2="b",
+            srm_flag=True,
+            decision_blocked=True,
+            srm_pvalue=1e-9,
+        )
         readout = evaluate(experiment, self._declared_rows(experiment) + stale)
         assert any("outside the declared contrast set" in w for w in readout.warnings)
         assert any("assignment.control" in w for w in readout.warnings), readout.warnings
         assert readout.srm_flag is False
+        assert readout.srm_pvalue == pytest.approx(0.8)

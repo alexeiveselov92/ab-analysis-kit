@@ -59,26 +59,47 @@ ALLOWED = {
 
 
 def _is_variants(node: ast.expr) -> bool:
-    """``…​.variants`` or a bare local named ``variants``.
+    """Does the subscripted expression MENTION ``variants``?
 
-    The local form is not paranoia: ``plan.py`` bound
-    ``variants = experiment.assignment.variants`` and then subscripted the
-    alias four times, so an attribute-only walk would have seen none of them.
+    Three widenings, each from a real evasion rather than from imagination:
+
+    * ``….variants`` — the attribute chain;
+    * a bare local named ``variants`` — ``plan.py`` bound
+      ``variants = experiment.assignment.variants`` and subscripted the alias
+      four times, so an attribute-only walk would have seen none of them;
+    * **any expression containing either** — ``list(exp.assignment.variants)[0]``
+      is the same read with a call wrapped around it, and the review's mutation
+      probe used exactly that shape to revert five call sites with the gate
+      still green. Matching the whole subtree costs a theoretical false
+      positive (some other list built FROM variants) and buys immunity to
+      ``list``/``tuple``/``sorted`` and to any future wrapper.
     """
-    if isinstance(node, ast.Attribute):
-        return node.attr == ATTRIBUTE
-    return isinstance(node, ast.Name) and node.id == ATTRIBUTE
+    for child in ast.walk(node):
+        if isinstance(child, ast.Attribute) and child.attr == ATTRIBUTE:
+            return True
+        if isinstance(child, ast.Name) and child.id == ATTRIBUTE:
+            return True
+    return False
 
 
 def _positional_control_reads(tree: ast.Module) -> list[tuple[int, str]]:
-    """``variants[0]`` (the control) and ``variants[1:]`` (the treatments)."""
+    """The three positional shapes, all of which name an arm BY POSITION.
+
+    ``variants[0]`` is the control and ``variants[1:]`` the treatments — but
+    ``variants[1]`` is here too, and the reason is the review's sharpest
+    finding: this gate's first draft *whitelisted* it as "indexing a treatment,
+    which is DEC-1-neutral". That premise holds only while the control sits at
+    index 0. Declare ``control: b`` on ``[a, b, c]`` and ``variants[1]`` IS the
+    control — an allowlist sanctioning the wrong-arm read it exists to forbid.
+    The first treatment is ``ExperimentConfig.treatments[0]``.
+    """
     found: list[tuple[int, str]] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Subscript) or not _is_variants(node.value):
             continue
         index = node.slice
-        if isinstance(index, ast.Constant) and index.value == 0:
-            found.append((node.lineno, "variants[0]"))
+        if isinstance(index, ast.Constant) and index.value in (0, 1):
+            found.append((node.lineno, f"variants[{index.value}]"))
         elif (
             isinstance(index, ast.Slice)
             and index.upper is None
@@ -162,6 +183,13 @@ EVASIONS = {
     ),
     "treatment_slice": ("def treatments(exp):\n    return exp.assignment.variants[1:]\n"),
     "module_level": ("variants = ['a', 'b']\nCONTROL = variants[0]\n"),
+    # the shape the review's mutation probe used to revert five call sites
+    # while this gate stayed green
+    "call_wrapper": ("def control(exp):\n    return list(exp.assignment.variants)[0]\n"),
+    "sorted_wrapper": ("def control(exp):\n    return sorted(exp.assignment.variants)[0]\n"),
+    # `variants[1]` is the CONTROL as soon as `control: b` is declared on
+    # [a, b, c] — this gate's first draft whitelisted it
+    "second_arm": ("def first_treatment(exp):\n    return exp.assignment.variants[1]\n"),
 }
 
 #: Shapes that must NOT be flagged — a gate that fires on these is a gate
@@ -171,8 +199,11 @@ INNOCENT = {
     "trailing_slice": "def x(exp):\n    return exp.assignment.variants[:1]\n",
     # a different list entirely
     "other_list": "def x(exp):\n    return exp.comparisons[0]\n",
-    # indexing a treatment, which is DEC-1-neutral (it is not the baseline)
-    "second_arm": "def x(exp):\n    return exp.assignment.variants[1]\n",
+    # a variable index is not a positional CONVENTION — it is a loop
+    "variable_index": "def x(exp, i):\n    return exp.assignment.variants[i]\n",
+    # an arm past the first treatment carries no baseline meaning under any
+    # control declaration
+    "third_arm": "def x(exp):\n    return exp.assignment.variants[2]\n",
 }
 
 

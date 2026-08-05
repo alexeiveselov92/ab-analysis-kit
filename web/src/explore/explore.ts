@@ -59,6 +59,7 @@ import {
   token,
 } from '../shared/chart';
 import type { MetricBlock, PairBlock, ReportPayload, SeriesPoint } from '../shared/payload';
+import { baselineNote } from '../shared/payload';
 import { makeBrandLockup } from '../shared/logo';
 import type {
   ApplyComparison,
@@ -2030,7 +2031,7 @@ function buildHeader(payload: ExplorePayload, live: boolean): HTMLElement {
   const meta =
     `${fmtDate(payload.period.start)} – horizon ${fmtDate(payload.period.horizon)} (UTC)` +
     ` · cadence ${humanCadence(payload.cadence_seconds)} · tz ${esc(payload.tz)}` +
-    ` · arms: ${payload.arms.map(esc).join(' vs ')} (first = control) · ${esc(watermark)}`;
+    ` · arms: ${payload.arms.map(esc).join(' vs ')} (${esc(baselineNote(payload))}) · ${esc(watermark)}`;
   const metaDiv = el('div', 'abk-meta');
   metaDiv.innerHTML = meta;
   h.appendChild(metaDiv);

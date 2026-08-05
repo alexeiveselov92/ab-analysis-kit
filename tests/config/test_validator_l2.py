@@ -479,7 +479,15 @@ class TestDeclaredControl:
         # the half an operator will NOT predict: relative effects do not merely
         # flip sign, because the denominator swaps arms too
         assert "RELATIVE" in warning
-        assert "--full-refresh --from" in warning
+        # the repair, corrected during review: `--full-refresh --from X --to Y`
+        # was off by one look (`--to` is EXCLUSIVE on end_ts and the horizon
+        # cutoff's end_ts IS horizon_ts) and timezone-fragile, and it is not
+        # needed at all — no cutoff carries the re-oriented pair, so the
+        # anti-join re-plans the whole series on a plain run
+        assert "plain `abk run`" in warning
+        assert "--full-refresh" in warning and "no --full-refresh" in warning
+        # the half no abkit surface can fix for the operator
+        assert "raw SQL" in warning and "BOTH" in warning
 
     def test_the_positional_default_is_silent(self):
         """A warning printed for every experiment is a warning nobody reads."""

@@ -190,7 +190,11 @@ def test_the_verdict_layers_control_shape_is_a_recorded_exemption():
         and node.value.id == "experiment"
     ]
     assert sorted(reads) == ["control", "control", "treatments", "treatments"]
-    assert "variants[0]" not in source and "variants[1:]" not in source
+    # No substring check on `variants[0]` here on purpose. The AST list above
+    # already bites on both a missing and an extra site, and the positional
+    # SHAPE has its own dedicated gate; a `not in source` line would only add
+    # the failure mode this test just moved away from — going red because
+    # someone wrote the words in a docstring.
 
 
 def test_the_factory_is_where_the_allowed_call_lives():

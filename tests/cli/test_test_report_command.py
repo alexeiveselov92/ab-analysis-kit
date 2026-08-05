@@ -208,3 +208,24 @@ def test_every_channel_type_sends_the_mock_readout(tmp_path, monkeypatch):
     assert result.exit_code == 0, result.output
     assert "9/9 channel(s)" in result.output
     assert "✗" not in result.output
+
+
+def test_the_mock_is_labelled_with_the_declared_control(project, monkeypatch):
+    """m14 DEC-1, behaviourally. Cosmetic — a smoke-test payload — but it is
+    the arm an operator reads to confirm the channel works, and a mock naming
+    the wrong baseline teaches the wrong convention. Three arms with the
+    control declared LAST, so the positional answer differs."""
+    import yaml
+
+    from abkit.cli.commands._context import load_project_context
+    from abkit.cli.commands.test_report import _build_mock
+
+    path = project / "experiments" / f"{EXP}.yml"
+    body = yaml.safe_load(path.read_text())
+    body["assignment"]["variants"] = ["a", "b", "c"]
+    body["assignment"]["control"] = "c"
+    body["assignment"]["expected_split"] = {"a": 0.34, "b": 0.33, "c": 0.33}
+    path.write_text(yaml.safe_dump(body, sort_keys=False))
+
+    readout = _build_mock(EXP, load_project_context())
+    assert (readout.name_1, readout.name_2) == ("c", "a")

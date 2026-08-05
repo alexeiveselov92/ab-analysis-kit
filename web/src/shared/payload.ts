@@ -243,8 +243,14 @@ export interface ReportPayload {
   cadence_seconds: number;
   /** experiment timezone (IANA) */
   tz: string;
-  /** variant names, config order; first = control */
+  /** variant names, config order. The first is the control ONLY when
+   * `control` is absent (a pre-0.9.0 payload) or equal to it — m14 DEC-1 lets
+   * an experiment declare any arm as the baseline. */
   arms: string[];
+  /** m14 DEC-1: the resolved baseline arm — the one every `effect` on the page
+   * is measured against, and `name_1` of every pair that contains it. Optional
+   * so older baked payloads type-check; absent means the positional default. */
+  control?: string;
   /** m13 STAT-1b: 'all_pairs' | 'vs_control' — which pairs the experiment
    * claims, and therefore what the per-row alpha was divided by. Optional so
    * older baked payloads type-check. */
@@ -264,4 +270,25 @@ export interface ReportPayload {
 /** The report renderer's global entry, exposed by the bundled IIFE. */
 export interface AbkReportGlobal {
   render(payload: ReportPayload, mount: HTMLElement): void;
+}
+
+/**
+ * How the header names the baseline arm (m14 DEC-1).
+ *
+ * ONE rule, shared, because the report and the explore cockpit both print it
+ * and two transcriptions are how two surfaces end up naming different
+ * baselines for the same experiment (the STAT-1 `family_divergence` lesson: a
+ * fact more than one renderer needs is API, not something each re-infers).
+ *
+ * The old wording is kept whenever it is TRUE — an absent `control` (any
+ * payload baked before 0.9.0) or a control that is the first arm — so a
+ * two-arm experiment and every experiment that never declares the field render
+ * byte-identically to 0.8.0. It only changes where it had become a lie: with
+ * `control: c` on `[a, b, c]` the pair blocks read "c vs a" while the header
+ * said the baseline was `a`.
+ */
+export function baselineNote(payload: ReportPayload): string {
+  const control = payload.control;
+  if (!control || control === payload.arms[0]) return 'first = control';
+  return `control: ${control}`;
 }
