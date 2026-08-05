@@ -100,9 +100,8 @@ def _build_mock(experiment_name: str, context):
         )
     _, experiment = selected[0]
 
-    variants = experiment.assignment.variants
-    name_1 = variants[0] if variants else "control"
-    name_2 = variants[1] if len(variants) > 1 else "treatment"
+    name_1 = experiment.control
+    name_2 = experiment.treatments[0]
 
     comparisons = experiment.comparisons
     main = next(

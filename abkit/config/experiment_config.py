@@ -62,6 +62,18 @@ GuardrailCorrectionKind = Literal["inherit", "none"]
 #: to resolve one.
 ContrastSet = Literal["all_pairs", "vs_control"]
 
+#: Why a persisted row can be for a pair the experiment no longer declares.
+#: FOUR surfaces print this list (readout, report, dashboard, explore) and each
+#: had its own copy of it until m14 DEC-1 added a third cause — a declared
+#: control re-orienting ``(name_1, name_2)``. A cause list that is wrong on
+#: three surfaces out of four sends the operator hunting for a rename that
+#: never happened, so it is written once here, beside the factory whose set the
+#: rows fall outside of.
+UNDECLARED_PAIR_CAUSES = (
+    "renamed arms, a declared `assignment.control` re-orienting a pair, "
+    "or `contrasts: vs_control`?"
+)
+
 SequentialScheme = Literal["always_valid", "alpha_spending"]
 
 #: ``interval_anchor``'s two symbolic forms (the third is an explicit instant).
@@ -244,7 +256,19 @@ class AssignmentConfig(BaseModel):
         default_factory=CohortCopyConfig,
         description="Opt-in persisted cohort copy + its incremental-load knobs",
     )
-    variants: list[str] = Field(..., description="Variant names; FIRST is control (name_1)")
+    variants: list[str] = Field(
+        ..., description="Variant names; the FIRST is the control unless `control` says otherwise"
+    )
+    # m14 DEC-1. Optional because the positional convention it replaces is
+    # right for almost every experiment and an unset field must keep meaning
+    # exactly what it meant in 0.8.0. There is deliberately NO project-level
+    # default (m13 STAT-1b D16's reason, and it binds harder here): the
+    # baseline a surface measures against must not depend on whether that
+    # surface happened to resolve a ProjectConfig.
+    control: str | None = Field(
+        default=None,
+        description="Which variant is the baseline (default: the first declared variant)",
+    )
     expected_split: dict[str, float] = Field(
         ..., description="Expected assignment shares; drives the SRM chi-square gate"
     )
@@ -304,6 +328,19 @@ class AssignmentConfig(BaseModel):
         total = sum(self.expected_split.values())
         if abs(total - 1.0) > 1e-6:
             raise ValueError(f"expected_split must sum to 1.0, got {total}")
+        return self
+
+    @model_validator(mode="after")
+    def validate_control(self) -> AssignmentConfig:
+        # Names BOTH sides: a control that is not in `variants` is usually a
+        # typo or an arm renamed on one line and not the other, and a message
+        # that only echoes the rejected value makes the operator go looking
+        # for the list themselves.
+        if self.control is not None and self.control not in self.variants:
+            raise ValueError(
+                f"assignment.control '{self.control}' is not one of "
+                f"assignment.variants {self.variants}"
+            )
         return self
 
     @model_validator(mode="after")
@@ -801,15 +838,69 @@ class ExperimentConfig(BaseModel):
             interval_anchor=self.interval_anchor,
         )
 
+    @property
+    def control(self) -> str:
+        """THE baseline arm (m14 DEC-1): the declared ``assignment.control``,
+        else the first declared variant.
+
+        This property is the ONE place the positional convention is resolved.
+        Seven sites used to spell ``variants[0]`` to mean "the control" and
+        they do not fail the same way when the convention is wrong: the family
+        factory below picks the wrong pairs (so the alphas are divided by a set
+        nothing computed), ``readout.evaluate`` verdicts against the wrong
+        baseline — and ``readout._srm_from_series`` fails **silently**, because
+        every ``(metric, control, treatment)`` series lookup misses and the
+        experiment reads ``srm_flag=False, srm_pvalue=None``: a broken
+        assignment looks healthy. A knob that reaches none of its call sites is
+        the m10 ``interval_anchor`` failure; a knob whose missed call site turns
+        a safety gate quiet is worse, which is why this follows the
+        ``grid()`` / ``contrast_pairs()`` precedent and is AST-gated
+        (``tests/config/test_control_is_the_only_entry.py``).
+        """
+        return self.assignment.control or self.assignment.variants[0]
+
+    @property
+    def treatments(self) -> tuple[str, ...]:
+        """The non-control arms in DECLARATION order.
+
+        Declaration order, not "everything after the control": with a declared
+        control in the middle of the list the arms before it are treatments
+        too, and a slice would drop them from every verdict.
+        """
+        control = self.control
+        return tuple(v for v in self.assignment.variants if v != control)
+
+    @property
+    def control_reorients_pairs(self) -> bool:
+        """Does the DECLARED control differ from the positional convention?
+
+        Lives here rather than at its one call site (the level-2 validator)
+        for the same reason the resolver does: it is the other question about
+        the positional convention, and answering it means reading
+        ``variants[0]`` — the exact shape
+        ``tests/config/test_control_is_the_only_entry.py`` forbids everywhere
+        else. ``control:`` naming the first variant is the default written out
+        and re-orients nothing, so it is deliberately False.
+        """
+        declared = self.assignment.control
+        return declared is not None and declared != self.assignment.variants[0]
+
     def contrast_pairs(self) -> tuple[tuple[str, str], ...]:
         """THE experiment → variant-pair factory (m13 STAT-1b): the declared family.
 
         ``all_pairs`` reproduces ``combinations(variants, 2)`` exactly — same
         pairs, same order, so nothing about a pre-0.8.0 experiment moves.
-        ``vs_control`` keeps only the pairs whose first element is the control
-        (the first declared variant, baseline §5), which is a prefix-ordered
-        SUBSET of the same sequence: the shared rows keep their identity and
-        their order.
+        ``vs_control`` keeps only the pairs whose first element is the control,
+        which is a prefix-ordered SUBSET of the same sequence: the shared rows
+        keep their identity and their order.
+
+        A DECLARED control (m14 DEC-1) re-*orients* the pairs that contain it
+        so the baseline is always ``name_1``; it never adds or removes one, so
+        the family size — and therefore the alpha divisor — is untouched. Under
+        the default the re-orientation is a no-op **by construction**:
+        ``combinations`` already emits ``variants[0]`` first in every pair that
+        contains it. The sequence order is preserved even when it does bite, so
+        a treatment pair keeps the position it had.
 
         Five call sites read this set — the analyze stage that PRODUCES the
         rows, and the four surfaces that filter persisted rows down to what is
@@ -823,11 +914,13 @@ class ExperimentConfig(BaseModel):
 
         Pinned by ``tests/config/test_contrast_pairs_is_the_only_entry.py``.
         """
-        variants = self.assignment.variants
+        control = self.control
         if self.contrasts == "vs_control":
-            control = variants[0]
-            return tuple((control, treatment) for treatment in variants[1:])
-        return tuple(itertools.combinations(variants, 2))
+            return tuple((control, treatment) for treatment in self.treatments)
+        return tuple(
+            (control, a) if b == control else (a, b)
+            for a, b in itertools.combinations(self.assignment.variants, 2)
+        )
 
     def cadence_fits_horizon(self) -> bool:
         """Can the densest cadence step produce a cutoff inside the window?
@@ -932,6 +1025,14 @@ class ExperimentConfig(BaseModel):
             "data_lag_seconds": self.data_lag_seconds(),
             "timezone": self.timezone,
             "variants": json_dumps_sorted(self.assignment.variants),
+            # m14 DEC-1: the RESOLVED baseline, not the declared field. The
+            # column answers "which arm are these effects measured against",
+            # and that question has an answer for every experiment — writing
+            # NULL whenever the operator relied on the positional default would
+            # make BI re-derive the convention from the `variants` JSON, which
+            # is exactly the re-derivation `contrasts` was added to stop. NULL
+            # therefore means one thing only: a row written before 0.9.0.
+            "control": self.control,
             "expected_split": json_dumps_sorted(self.assignment.expected_split),
             "alpha": effective_alpha if effective_alpha is not None else self.alpha,
             "correction": (

@@ -223,6 +223,23 @@ def validate_experiment_level2(
     report = ValidationReport()
     where = f"experiment '{experiment.name}'" + (f" ({experiment_path})" if experiment_path else "")
 
+    # ── the declared baseline (m14 DEC-1) ──────────────────────────────────
+    # Only a control that is NOT the first declared variant re-orients pairs;
+    # `control:` naming variants[0] is the positional default written out, and
+    # warning about it would train the operator to ignore the line.
+    if experiment.control_reorients_pairs:
+        report.warnings.append(
+            f"{where}: assignment.control '{experiment.control}' is not the first "
+            f"declared variant, so every pair containing it is stored as "
+            f"('{experiment.control}', other). Rows persisted under the previous "
+            "orientation leave the declared contrast set (the readout drops "
+            "them with a warning) and the re-oriented pair's effect is measured "
+            "against the other arm — on the ABSOLUTE scale that is the negation "
+            "of the old number, but on the RELATIVE scale it is not, because the "
+            "denominator swaps arms too ((m2−m1)/m1 becomes (m1−m2)/m2). Recompute "
+            "with `abk run --full-refresh --from <start> --to <end>`."
+        )
+
     # ── reference integrity + per-comparison method/metric rules ────────────
     for comparison in experiment.comparisons:
         label = f"{where}, comparison '{comparison.metric}'"

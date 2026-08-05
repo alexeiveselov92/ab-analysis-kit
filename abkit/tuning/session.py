@@ -52,7 +52,11 @@ from datetime import datetime
 from typing import NamedTuple
 
 from abkit.compute.recompute_backend import RecomputeBackend
-from abkit.config.experiment_config import ComparisonConfig, ExperimentConfig
+from abkit.config.experiment_config import (
+    UNDECLARED_PAIR_CAUSES,
+    ComparisonConfig,
+    ExperimentConfig,
+)
 from abkit.config.metric_config import MetricConfig
 from abkit.config.project_config import ProjectConfig
 from abkit.core.period_planner import Cutoff, Grid
@@ -511,8 +515,7 @@ def load_session(
         if len(rows) != len(loaded_rows):
             session.warnings.append(
                 f"{metric.name}: ignored {len(loaded_rows) - len(rows)} persisted rows for "
-                "variant pairs outside the declared contrast set (renamed arms, or "
-                "`contrasts: vs_control`?)"
+                f"variant pairs outside the declared contrast set ({UNDECLARED_PAIR_CAUSES})"
             )
         cutoffs = sorted({row["end_ts"] for row in rows if row.get("end_ts") is not None})
         session.series_by_metric[metric.name] = ComparisonSeries(

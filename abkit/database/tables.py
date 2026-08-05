@@ -56,6 +56,17 @@ def get_experiments_table_model() -> TableModel:
             ColumnDefinition("data_lag_seconds", "Int64"),
             ColumnDefinition("timezone", "String"),
             ColumnDefinition("variants", "String"),  # canonical JSON array, order = config
+            # m14 DEC-1: the RESOLVED baseline arm — which arm every `effect`
+            # in _ab_results is measured AGAINST. Nullable rather than
+            # defaulted, and the reason is not style: `ensure_columns` refuses
+            # a NOT-NULL/no-default addition (so an existing install would meet
+            # a drop-and-recreate error on its first 0.9.0 run — m13 STAT-6),
+            # and no literal default could be right, because the value is a
+            # per-experiment variant name. NULL means exactly one thing: a row
+            # written before 0.9.0, when the baseline was positional.
+            ColumnDefinition(
+                "control", "Nullable(String)", nullable=True, max_length=MAX_VARIANT_NAME_LENGTH
+            ),
             ColumnDefinition("expected_split", "String"),  # canonical JSON object
             ColumnDefinition("alpha", "Nullable(Float64)", nullable=True),
             ColumnDefinition("correction", "Nullable(String)", nullable=True),

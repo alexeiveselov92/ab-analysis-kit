@@ -167,13 +167,30 @@ def test_the_verdict_layers_control_shape_is_a_recorded_exemption():
     subset of BOTH families — and the AST walk cannot see it, so it is pinned
     here instead: if the shape moves or multiplies, this test fails and the next
     author has to re-decide rather than inherit a silent second answer to "which
-    pairs exist". It is also the M14 hazard in test form: an explicit
-    ``control:`` field must reach every positional resolution, and there are
-    three (this file's factory plus these two).
+    pairs exist".
+
+    The M14 hazard this test used to carry (it counted two literal
+    ``variants[0]`` slices and warned that a ``control:`` field must reach them)
+    is DISCHARGED: DEC-1 routed both through ``ExperimentConfig.control``, and
+    the positional resolution now has its own AST gate,
+    ``test_control_is_the_only_entry.py``. What survives here is the narrower
+    claim — the readout still composes the pair set itself, and it does so from
+    the resolver.
     """
     source = (PACKAGE / "pipeline" / "readout.py").read_text()
-    assert source.count("experiment.assignment.variants[0]") == 2
-    assert source.count("experiment.assignment.variants[1:]") == 2
+    # AST, not `str.count`: the two sites carry prose ABOUT the resolver in
+    # their docstrings, and a substring count of code plus commentary is a
+    # number that moves when someone edits an explanation.
+    reads = [
+        node.attr
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Attribute)
+        and node.attr in {"control", "treatments"}
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "experiment"
+    ]
+    assert sorted(reads) == ["control", "control", "treatments", "treatments"]
+    assert "variants[0]" not in source and "variants[1:]" not in source
 
 
 def test_the_factory_is_where_the_allowed_call_lives():

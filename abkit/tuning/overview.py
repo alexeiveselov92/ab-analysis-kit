@@ -105,7 +105,7 @@ from typing import Any
 
 import numpy as np
 
-from abkit.config.experiment_config import ExperimentConfig
+from abkit.config.experiment_config import UNDECLARED_PAIR_CAUSES, ExperimentConfig
 from abkit.config.project_config import ProjectConfig
 from abkit.database.internal_tables import InternalTablesManager
 from abkit.database.internal_tables._tasks import DEFAULT_PROCESS_TYPE, DEFAULT_SCOPE
@@ -436,8 +436,8 @@ def _declared_pair_warning(experiment: ExperimentConfig, dropped: int) -> tuple[
         return ()
     return (
         f"{experiment.name}: ignored {dropped} persisted rows for variant pairs "
-        "outside the declared contrast set (renamed arms, or `contrasts: "
-        "vs_control`?) — `abk run --full-refresh --from <start> --to <horizon>` "
+        f"outside the declared contrast set ({UNDECLARED_PAIR_CAUSES}) — "
+        "`abk run --full-refresh --from <start> --to <horizon>` "
         "rewrites that window without them",
     )
 

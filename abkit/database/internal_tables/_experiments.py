@@ -32,6 +32,7 @@ class _ExperimentsMixin(_InternalTablesBase):
         "data_lag_seconds",
         "timezone",
         "variants",
+        "control",
         "expected_split",
         "alpha",
         "correction",

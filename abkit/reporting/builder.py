@@ -35,7 +35,11 @@ from typing import Any
 
 import numpy as np
 
-from abkit.config.experiment_config import ComparisonConfig, ExperimentConfig
+from abkit.config.experiment_config import (
+    UNDECLARED_PAIR_CAUSES,
+    ComparisonConfig,
+    ExperimentConfig,
+)
 from abkit.config.metric_config import MetricConfig
 from abkit.config.project_config import ProjectConfig
 from abkit.database.internal_tables import InternalTablesManager
@@ -450,8 +454,8 @@ def build_report_payload(
     for metric_name, dropped in stale_by_metric.items():
         warnings.append(
             f"{experiment.name}/{metric_name}: {dropped} persisted rows are for "
-            "variant pairs outside the declared contrast set (renamed arms, or "
-            "`contrasts: vs_control`?) — not charted"
+            f"variant pairs outside the declared contrast set "
+            f"({UNDECLARED_PAIR_CAUSES}) — not charted"
         )
     if ready:
         # the driver's orphan scan, surfaced on the read path too: an edited

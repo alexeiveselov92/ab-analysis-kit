@@ -58,7 +58,11 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import Any, Literal
 
-from abkit.config.experiment_config import ComparisonConfig, ExperimentConfig
+from abkit.config.experiment_config import (
+    UNDECLARED_PAIR_CAUSES,
+    ComparisonConfig,
+    ExperimentConfig,
+)
 from abkit.config.project_config import ProjectConfig
 from abkit.stats.correction import (
     READ_TIME_CORRECTIONS,
@@ -467,9 +471,15 @@ def _srm_from_series(
     ``method_config_id`` (e.g. right after an explore Apply edited the main
     method) while flagged rows still exist on other series (§6 must stay
     loud — milestone-review finding).
+
+    The baseline comes from ``experiment.control`` (m14 DEC-1) because this is
+    the site where the positional convention failed QUIETLY: a declared control
+    this lookup did not know about makes every ``series`` key miss, and a miss
+    is indistinguishable here from "no rows yet" — the function would return
+    ``(False, None)`` and a broken assignment would read healthy.
     """
-    control = experiment.assignment.variants[0]
-    treatments = experiment.assignment.variants[1:]
+    control = experiment.control
+    treatments = experiment.treatments
     srm_flag = False
     flagged_pvalues: list[float] = []
     healthy_pvalues: list[float] = []
@@ -562,8 +572,8 @@ def evaluate(
 
     series = _group_series(filtered)
 
-    control = experiment.assignment.variants[0]
-    treatments = experiment.assignment.variants[1:]
+    control = experiment.control
+    treatments = experiment.treatments
     main_comparisons = [c for c in experiment.comparisons if c.is_main_metric]
     guardrail_comparisons = [c for c in experiment.comparisons if c.is_guardrail]
 
@@ -639,7 +649,7 @@ def _filter_rows(
     if undeclared_pairs:
         warnings.append(
             f"ignored {undeclared_pairs} rows for variant pairs outside the declared "
-            "contrast set (renamed arms, or `contrasts: vs_control`?)"
+            f"contrast set ({UNDECLARED_PAIR_CAUSES})"
         )
     for metric in sorted(orphaned):
         ids = orphaned[metric]

@@ -111,11 +111,17 @@ def _budget(project: ProjectConfig, alpha: float, metric: MetricConfig | None) -
 
 
 def _share_a(experiment: ExperimentConfig) -> float:
-    """Arm-A split share from the first variant's ``expected_split`` (default 0.5)."""
+    """Arm-A split share from the CONTROL's ``expected_split`` (default 0.5).
+
+    The control is ``experiment.control`` (m14 DEC-1), not the first declared
+    variant: the placebo split has to mirror the real one, and A is the
+    baseline arm. (That the N-arm cohort is collapsed into a two-arm placebo at
+    all is a separate, wider issue — DEC-5's.)
+    """
     variants = experiment.assignment.variants
     split = experiment.assignment.expected_split
     if variants and split:
-        first = float(split.get(variants[0], 0.5))
+        first = float(split.get(experiment.control, 0.5))
         total = float(sum(split.values())) or 1.0
         share = first / total
         return min(max(share, 0.01), 0.99)

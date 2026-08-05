@@ -258,6 +258,28 @@ class TestStateIdentity:
         run_pipeline(warehouse, tables, edited)
         assert {r["column_set_id"] for r in state_rows(warehouse)} == {new_series}
 
+    def test_a_declared_control_does_not_orphan_the_series(self):
+        """m14 DEC-1 step 5: ``control`` moves which pairs are COMPARED, never
+        which units or days are materialised — the ``interval_anchor`` and
+        ``contrasts`` precedent. Folding it in would throw away every
+        experiment's day state for a knob the STATE render cannot even see.
+        """
+        payload = experiment_payload("exp_control", "arpu", T_TEST)
+        payload["assignment"]["variants"] = ["control", "treatment", "challenger"]
+        payload["assignment"]["expected_split"] = {
+            "control": 0.34,
+            "treatment": 0.33,
+            "challenger": 0.33,
+        }
+        positional = ExperimentConfig.model_validate(payload)
+
+        declared = dict(payload)
+        declared["assignment"] = {**payload["assignment"], "control": "challenger"}
+        declared = ExperimentConfig.model_validate(declared)
+
+        assert declared.control == "challenger"  # the knob really did move
+        assert series_key(declared, REVENUE) == series_key(positional, REVENUE)
+
 
 class TestFullRefresh:
     def test_full_refresh_rematerializes_the_windowed_days(self, warehouse, tables):

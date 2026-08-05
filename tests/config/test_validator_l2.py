@@ -455,3 +455,36 @@ class TestAsymmetricIntervalVersusTheSequentialMode:
         for interval, sequential in (("fieller", False), ("delta", True), ("delta", False)):
             report = run_l2(self.experiment_with_fieller(interval, sequential), [make_metric()])
             assert report.ok, (interval, sequential, report.errors)
+
+
+class TestDeclaredControl:
+    """m14 DEC-1: a non-first ``assignment.control`` re-orients persisted pairs."""
+
+    @staticmethod
+    def three_arm(control=None):
+        assignment = {
+            "query": ASSIGNMENT_QUERY,
+            "variants": ["a", "b", "c"],
+            "expected_split": {"a": 1 / 3, "b": 1 / 3, "c": 1 / 3},
+        }
+        if control is not None:
+            assignment["control"] = control
+        return make_experiment(assignment=assignment)
+
+    def test_a_non_first_control_warns_about_the_rebased_effect(self):
+        report = run_l2(self.three_arm(control="b"), [make_metric()])
+        assert report.ok, report.errors
+        warning = "\n".join(report.warnings)
+        assert "assignment.control 'b'" in warning
+        # the half an operator will NOT predict: relative effects do not merely
+        # flip sign, because the denominator swaps arms too
+        assert "RELATIVE" in warning
+        assert "--full-refresh --from" in warning
+
+    def test_the_positional_default_is_silent(self):
+        """A warning printed for every experiment is a warning nobody reads."""
+        assert run_l2(self.three_arm(), [make_metric()]).warnings == []
+
+    def test_declaring_the_first_variant_is_silent_too(self):
+        """`control: a` is the default written out — it re-orients nothing."""
+        assert run_l2(self.three_arm(control="a"), [make_metric()]).warnings == []

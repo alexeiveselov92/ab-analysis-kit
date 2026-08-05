@@ -237,7 +237,7 @@ def _resolve_arrival_rate(
     runtime is then SKIPPED with a reason, never guessed.
     """
     variants = experiment.assignment.variants
-    control = variants[0]
+    control = experiment.control
     split = experiment.assignment.expected_split
     total_weight = sum(split.values()) or float(len(variants))
     control_share = (split.get(control, 0.0) or 0.0) / total_weight
@@ -514,10 +514,9 @@ def _build_runtime(
 
 def _plan_ratio(experiment) -> float:
     """Forward-looking treatment:control allocation from ``expected_split`` (defaults 1.0)."""
-    variants = experiment.assignment.variants
     split = experiment.assignment.expected_split
-    control = split.get(variants[0])
-    treatment = split.get(variants[1])
+    control = split.get(experiment.control)
+    treatment = split.get(experiment.treatments[0])
     if control and treatment and control > 0:
         return treatment / control
     return 1.0
@@ -758,9 +757,15 @@ def _covariate_note(moments: BaselineMoments) -> str:
 
 
 def _moments_from_results(experiment, comparison, kind: str, tables) -> BaselineMoments | None:
-    """Latest usable persisted control/treatment moments for the first-pair series."""
-    variants = experiment.assignment.variants
-    name_1, name_2 = variants[0], variants[1]
+    """Latest usable persisted control/treatment moments for the first-pair series.
+
+    The "first pair" is the control against the first declared treatment (m14
+    DEC-1) — the same pair the sizing header names. It is deliberately not
+    ``contrast_pairs()[0]``: under ``all_pairs`` with a control declared late
+    in the list that entry is a treatment-vs-treatment pair, which carries no
+    baseline moments.
+    """
+    name_1, name_2 = experiment.control, experiment.treatments[0]
     rows = tables.load_results(
         experiment.name, comparison.metric, method_config_id=comparison.method.method_config_id
     )
@@ -920,7 +925,7 @@ def _emit_plan(experiment, project, alphas, power, looks, grid, rows_per_refresh
         )
         warnings.append(
             f"{len(variants)}-arm experiment — sizing is shown for the "
-            f"{variants[0]} vs {variants[1]} contrast only ({family})"
+            f"{experiment.control} vs {experiment.treatments[0]} contrast only ({family})"
         )
     warn_looks = project.limits.warn_looks
     if looks > warn_looks and not experiment.sequential.enabled:
