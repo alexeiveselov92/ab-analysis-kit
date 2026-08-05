@@ -145,13 +145,41 @@ class TestExperimentsCatalogSchema:
         assert get_experiments_table_model().get_column("interval_anchor").type == "String"
 
     def test_every_catalog_record_key_is_a_column(self):
-        """The three-way lockstep (catalog_record keys ↔ _EXPERIMENT_FIELDS ↔
-        columns): a partial rename raises 'missing fields' at write time, far
-        from the edit that caused it."""
+        """The three-way lockstep: catalog_record keys ↔ _EXPERIMENT_FIELDS ↔ columns.
+
+        The assertion used to be ``_EXPERIMENT_FIELDS <= columns`` while the
+        docstring claimed all three — and the direction it could not see is the
+        one that broke: m13 STAT-1b added ``contrasts`` to the model AND to
+        ``catalog_record`` but not to ``_EXPERIMENT_FIELDS``, whose projection
+        is a whitelist, so the column was silently never written. Equality in
+        both directions, and it is EQUALITY rather than containment — a column
+        no writer fills is as broken as a field no column stores.
+        """
+        from abkit.config import ExperimentConfig
         from abkit.database.internal_tables._experiments import _ExperimentsMixin
 
         columns = {c.name for c in get_experiments_table_model().columns}
-        assert set(_ExperimentsMixin._EXPERIMENT_FIELDS) <= columns
+        fields = set(_ExperimentsMixin._EXPERIMENT_FIELDS)
+        record = ExperimentConfig.model_validate(
+            {
+                "name": "lockstep",
+                "start_ts": "2024-07-01",
+                "horizon_ts": "2024-07-05",
+                "unit_key": "user_id",
+                "assignment": {
+                    "query": "SELECT user_id, variant, exposure_ts FROM a",
+                    "variants": ["control", "treatment"],
+                    "expected_split": {"control": 0.5, "treatment": 0.5},
+                },
+                "comparisons": [
+                    {"metric": "m", "is_main_metric": True, "method": {"name": "t-test"}}
+                ],
+            }
+        ).catalog_record()
+
+        # created_at/updated_at are stamped by the writer, never by the caller.
+        assert fields == columns - {"created_at", "updated_at"}
+        assert set(record) == fields
 
 
 class TestTableRegistry:

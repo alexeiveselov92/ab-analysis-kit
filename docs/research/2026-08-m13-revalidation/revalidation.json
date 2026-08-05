@@ -1,0 +1,169 @@
+[
+ {
+  "case": "z-test/absolute",
+  "knob": "interval",
+  "value": "pooled",
+  "iterations": 20000,
+  "fpr": 0.04445,
+  "peeking_fpr": 0.04445,
+  "fpr_negative_share": 0.5106861642294713,
+  "power": 0.05375,
+  "coverage": 0.94195,
+  "effect_exaggeration": 0.020686164229471324
+ },
+ {
+  "case": "z-test/relative",
+  "knob": "interval",
+  "value": "pooled",
+  "iterations": 20000,
+  "fpr": 0.04225,
+  "peeking_fpr": 0.04225,
+  "fpr_negative_share": 0.48757396449704143,
+  "power": 0.61715,
+  "coverage": 0.9072,
+  "effect_exaggeration": 0.25879873368450496
+ },
+ {
+  "case": "z-test/absolute",
+  "knob": "interval",
+  "value": "score",
+  "iterations": 20000,
+  "fpr": 0.04185,
+  "peeking_fpr": 0.04185,
+  "fpr_negative_share": 0.5029868578255675,
+  "power": 0.05255,
+  "coverage": 0.9433,
+  "effect_exaggeration": 0.02094623655913979
+ },
+ {
+  "case": "z-test/relative",
+  "knob": "interval",
+  "value": "score",
+  "iterations": 20000,
+  "fpr": 0.045,
+  "peeking_fpr": 0.045,
+  "fpr_negative_share": 0.5344444444444445,
+  "power": 0.6144,
+  "coverage": 0.9333,
+  "effect_exaggeration": 0.2534825443971295
+ },
+ {
+  "case": "t-test/relative/cv5",
+  "knob": "interval",
+  "value": "delta",
+  "iterations": 20000,
+  "fpr": 0.05005,
+  "peeking_fpr": 0.05005,
+  "fpr_negative_share": 0.6663336663336663,
+  "power": 0.51395,
+  "coverage": 0.94995,
+  "effect_exaggeration": 0.14829183254008307
+ },
+ {
+  "case": "t-test/relative/cv5",
+  "knob": "interval",
+  "value": "fieller",
+  "iterations": 20000,
+  "fpr": 0.05055,
+  "peeking_fpr": 0.05055,
+  "fpr_negative_share": 0.5044510385756676,
+  "power": 0.56965,
+  "coverage": 0.94945,
+  "effect_exaggeration": 0.15367271050487036
+ },
+ {
+  "case": "t-test/relative/cv10",
+  "knob": "interval",
+  "value": "delta",
+  "iterations": 20000,
+  "fpr": 0.0483,
+  "peeking_fpr": 0.0483,
+  "fpr_negative_share": 0.7753623188405797,
+  "power": 0.1329,
+  "coverage": 0.9517,
+  "effect_exaggeration": 0.2732910324354815
+ },
+ {
+  "case": "t-test/relative/cv10",
+  "knob": "interval",
+  "value": "fieller",
+  "iterations": 20000,
+  "fpr": 0.05215,
+  "peeking_fpr": 0.05215,
+  "fpr_negative_share": 0.50143815915628,
+  "power": 0.2042,
+  "coverage": 0.94785,
+  "effect_exaggeration": 0.2946645140208243
+ },
+ {
+  "case": "t-test/guardrail",
+  "knob": "guardrail_correction",
+  "value": "inherit (\u03b1/3)",
+  "iterations": 20000,
+  "fpr": 0.01765,
+  "peeking_fpr": 0.01765,
+  "fpr_negative_share": 0.46175637393767704,
+  "power": null,
+  "coverage": null,
+  "effect_exaggeration": 0.5978174001213866,
+  "alpha": 0.016666666666666666
+ },
+ {
+  "case": "t-test/guardrail",
+  "knob": "guardrail_correction",
+  "value": "none (raw \u03b1)",
+  "iterations": 20000,
+  "fpr": 0.05025,
+  "peeking_fpr": 0.05025,
+  "fpr_negative_share": 0.49651741293532337,
+  "power": null,
+  "coverage": null,
+  "effect_exaggeration": 0.5106468676465599,
+  "alpha": 0.05
+ },
+ {
+  "case": "family of 4 null metrics",
+  "knob": "correction",
+  "value": "bonferroni \u03b1/4",
+  "iterations": 20000,
+  "fwer": 0.04875,
+  "fdr": 0.04875,
+  "any_rejection_rate": 0.04875
+ },
+ {
+  "case": "family of 4 null metrics",
+  "knob": "correction",
+  "value": "holm (raw \u03b1)",
+  "iterations": 20000,
+  "fwer": 0.04875,
+  "fdr": 0.04875,
+  "any_rejection_rate": 0.04875
+ },
+ {
+  "case": "family of 4 null metrics",
+  "knob": "correction",
+  "value": "none (raw \u03b1)",
+  "iterations": 20000,
+  "fwer": 0.18365,
+  "fdr": 0.18365,
+  "any_rejection_rate": 0.18365
+ },
+ {
+  "case": "family of 4, two planted",
+  "knob": "correction",
+  "value": "bonferroni \u03b1/4",
+  "iterations": 20000,
+  "fwer": 0.02475,
+  "fdr": 0.00828333333333335,
+  "any_rejection_rate": 1.0
+ },
+ {
+  "case": "family of 4, two planted",
+  "knob": "correction",
+  "value": "holm (raw \u03b1)",
+  "iterations": 20000,
+  "fwer": 0.05095,
+  "fdr": 0.017316666666666564,
+  "any_rejection_rate": 1.0
+ }
+]

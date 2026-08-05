@@ -757,7 +757,7 @@ for the exit gate — no NTF WP depends on them.
   *permanently*, and should `abk explore` ever carry `--notify`? Nothing in the
   milestone depends on the answer.
 
-### M13 — versioned statistical improvements (bucket B, core) → `0.8.0` 📐 design session done, plan drafted
+### M13 — versioned statistical improvements (bucket B, core) → `0.8.0` ✅ all WPs shipped; the release cut is what remains
 **The design session ran on 2026-08-03** and its output is
 [m13-implementation-plan.md](docs/specs/m13-implementation-plan.md) (+ three
 blind re-derivations and a code audit in
@@ -814,9 +814,31 @@ guardrail α, and — for whoever opts in — `method_config_id`.
 **STAT-1c (guardrails uncorrected), STAT-2 (the false-positive sign instrument),
 STAT-1b (the declared contrast set), STAT-1 (Holm + the claim), STAT-3a (the
 `asymmetric_ci` guard), STAT-3 (the score proportion interval) and STAT-4 (the
-Fieller relative interval) are ✅ shipped**; only STAT-6 (the exit gate + the
-`0.8.0` cut) remains. Baseline
+Fieller relative interval) and **STAT-6 (the exit gate + the batch A/A
+revalidation) are ✅ shipped** — only the `0.8.0` cut remains. Baseline
 goldens stay untouched; new numbers get **new** goldens.
+
+**STAT-6 as built:** the byte-compatibility gate compares against the **released
+`v0.7.0` code**, not against HEAD — two surfaces captured from a real checkout
+(the scaffolded project, and a three-arm five-comparison experiment reaching
+every default M13 touched) reproduce **all 89 persisted rows**, with exactly one
+delta. That delta was a **defect the gate existed to find**:
+`_ab_experiments.contrasts` (STAT-1b) was in the table model and in
+`catalog_record` but not in the catalog writer's field whitelist, so it was
+dropped in silence — and it was declared NOT NULL with no default, a shape
+`ensure_columns` refuses, so every installed project's first `0.8.0` run would
+have failed with a spurious "drop and recreate". Both fixed here. The batch
+revalidation ([record](docs/research/2026-08-m13-revalidation/REPORT.md)) then
+measured every option beside its default at 20 000 iterations **on the same
+placebo draws**: all calibrated, with `interval: score` agreeing with `pooled`
+to the last float on the FPR, the sign split and the power (it rejects the same
+placebos by construction) and differing only in relative-scale coverage — 93.4%
+against 90.6%, nominal 95% — while `delta`'s false positives land below zero 64%
+of the time with its two-sided FPR *and* coverage reading perfectly calibrated:
+the blindness STAT-2 shipped to fix, reproduced end to end. It also
+found a second test that could not fail: under the complete null Holm and
+one-step Bonferroni are the same event, so the "Holm is more powerful" assertion
+was `x >= x`; the claim moved to a planted-effect family where it is measurable.
 
 **STAT-1 as built:** `correction: holm` sits beside `benjamini_hochberg` in the
 one read-time seam (`composed_significance`) — the two differ only in the p-value

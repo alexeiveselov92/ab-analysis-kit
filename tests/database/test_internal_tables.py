@@ -27,8 +27,10 @@ from abkit.database.internal_tables import (
 from abkit.database.internal_tables._results import RESULT_COLUMNS
 from abkit.database.tables import (
     INTERNAL_TABLES,
+    TABLE_EXPERIMENTS,
     TABLE_RESULTS,
     TABLE_TASKS,
+    get_experiments_table_model,
     get_results_table_model,
 )
 from abkit.utils.datetime_utils import now_utc_naive
@@ -150,6 +152,96 @@ class TestSchemaMigration:
         full = backend.get_full_table_name(TABLE_RESULTS, use_internal=True)
         assert backend.ensure_columns(full, get_results_table_model()) == []
         assert not backend.table_exists(TABLE_RESULTS)
+
+
+#: the m13 STAT-1b additive column — the CATALOG's first post-release change
+NEW_CATALOG_COLUMNS = ("contrasts",)
+
+
+def _pre_stat1b_experiments_model() -> TableModel:
+    """``_ab_experiments`` as shipped through 0.7.0."""
+    model = get_experiments_table_model()
+    return TableModel(
+        columns=[col for col in model.columns if col.name not in NEW_CATALOG_COLUMNS],
+        primary_key=model.primary_key,
+        engine=model.engine,
+        order_by=model.order_by,
+        version_column=model.version_column,
+    )
+
+
+class TestCatalogSchemaMigration:
+    """m13 STAT-6: a 0.7.0 ``_ab_experiments`` migrates additively.
+
+    STAT-1b declared the column NOT NULL with no default — a shape
+    ``ensure_columns`` REFUSES — so the first ``0.8.0`` run of every installed
+    project would have died with a drop-and-recreate error, for a column whose
+    own source comment promised it needed no recreate. The default also makes
+    the historical rows honest: before the knob existed every experiment's
+    family WAS ``all_pairs``.
+    """
+
+    def _seed_old_catalog(self, backend) -> None:
+        full = backend.get_full_table_name(TABLE_EXPERIMENTS, use_internal=True)
+        old_model = _pre_stat1b_experiments_model()
+        backend.create_table(full, old_model)
+        row = {
+            col.name: np.array([_catalog_placeholder(col.name)], dtype=object)
+            for col in old_model.columns
+        }
+        backend.insert_batch(full, row)
+
+    def test_ensure_tables_adds_the_column_without_a_recreate(self, backend):
+        self._seed_old_catalog(backend)
+        InternalTablesManager(backend).ensure_tables()
+
+        live = backend.list_columns(TABLE_EXPERIMENTS)
+        for col in NEW_CATALOG_COLUMNS:
+            assert col in live, col
+        # the DEFAULT, not NULL: the column is NOT NULL, and a pre-0.8.0
+        # experiment did compare all pairs
+        assert backend._rows[TABLE_EXPERIMENTS][0]["contrasts"] == "all_pairs"
+
+    def test_the_next_run_writes_the_declared_family(self, backend):
+        """The other half of the same defect: the writer's field whitelist."""
+        self._seed_old_catalog(backend)
+        manager = InternalTablesManager(backend)
+        manager.ensure_tables()
+        record = _catalog_record_for("legacy_exp", contrasts="vs_control")
+        manager.upsert_experiment(record)
+
+        stored = manager.get_experiment("legacy_exp")
+        assert stored is not None and stored["contrasts"] == "vs_control"
+
+    def test_a_field_the_catalog_would_drop_is_refused(self, backend):
+        """A whitelist that silently drops is how STAT-1b's column went unwritten."""
+        self._seed_old_catalog(backend)
+        manager = InternalTablesManager(backend)
+        manager.ensure_tables()
+        record = {**_catalog_record_for("exp"), "invented_later": "x"}
+        with pytest.raises(ValueError, match="would drop"):
+            manager.upsert_experiment(record)
+
+
+def _catalog_placeholder(column: str):
+    if column in ("created_at", "updated_at", "start_ts", "horizon_ts"):
+        return datetime(2024, 7, 1)
+    if column in ("is_actual", "sequential_enabled"):
+        return True
+    if column in ("data_lag_seconds",):
+        return 0
+    if column in ("alpha",):
+        return 0.05
+    return "legacy"
+
+
+def _catalog_record_for(name: str, **overrides):
+    from abkit.database.internal_tables._experiments import _ExperimentsMixin
+
+    record = {field: _catalog_placeholder(field) for field in _ExperimentsMixin._EXPERIMENT_FIELDS}
+    record["experiment"] = name
+    record.update(overrides)
+    return record
 
 
 class TestNextVersionTs:

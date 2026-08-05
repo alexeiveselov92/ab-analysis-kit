@@ -566,6 +566,72 @@ by a special case. Endpoints are the roots of `A·θ² − 2B·θ + C ≤ 0`.
   Fieller against the derivation's predicted `0.5 + φ(z)z²·CV₁√w₁/α` for delta
   (0.66 at CV₁ = 0.05, measured 0.664).
 
+### 4.6 The M13 batch A/A revalidation — as run (M13 STAT-6)
+
+§0 step 4 makes the A/A matrix the arbiter of a deviation, and each of §4.3–§4.5
+recorded its own reading. STAT-6 ran them **as one batch**, every option beside
+the default it does not replace, at 20 000 placebo iterations per cell. The full
+tables, the reproduction command and the raw output are in
+[docs/research/2026-08-m13-revalidation/](../research/2026-08-m13-revalidation/REPORT.md);
+what belongs here is the verdict and the four things the instrument could not
+settle.
+
+**Verdict: every option is calibrated at its declared level, and no default
+moved.** Every knob pair is measured on the SAME placebo draws, so a difference
+between two rows is the estimator and an identical number is exact agreement.
+The mean-method and guardrail cells sit inside the ±3σ Binomial band around
+their nominal α (σ ≈ 0.0015 at 20 000 iterations); the proportion cells sit at
+the placebo design's own slightly conservative level — 0.044, which belongs to
+the fixed-size label permutation on a discrete outcome and not to either
+interval (measured on the same panel with an independent transcription of the
+pooled z: 0.0420 under the fixed-size split, 0.0492 under a per-unit coin flip).
+
+Two readings are worth carrying in this document because they are about the
+*instrument*, not the estimators:
+
+- **`interval: score` is invisible to the FPR column and visible in COVERAGE.**
+  Under identical draws the FPR, the sign split and the power column are
+  identical **to the last digit** for both intervals: by D11's construction
+  `Z(0)` is bit-identical to the pooled z, so the two exclude zero on exactly
+  the same placebos (verified separately on 1 400 tables: zero decision
+  disagreements). What moves is the interval, and on the RELATIVE scale the
+  pooled interval covers the injected lift 90.6% of the time against a nominal
+  95%, while the score interval reaches 93.4%. On the absolute scale the two
+  agree exactly at that table size — the expected shape, since the pooled
+  variance is furthest from the truth on the ratio scale away from the null.
+- **`interval: delta` is invisible to BOTH two-sided columns.** On the same
+  draws: FPR 0.052 vs 0.054, coverage 0.948 vs 0.946 — and 64% of delta's false
+  positives fall below zero at a 5% control-mean CV, 76% at 10%, against the
+  derivation's `0.5 + φ(z)z²·CV₁√w₁/α ≈ 0.659`. This is the case §0.4 exists
+  for: *a calibration that cannot see the change it is asked to certify is worse
+  than none*, and STAT-2's sign column is the answer to it. A secondary finding
+  the design did not predict: Fieller is also more POWERFUL here (0.510 → 0.562
+  at CV 5%, 0.131 → 0.204 at 10%), because — unlike the score interval above —
+  its rejection set genuinely differs, being the absolute comparison's, and does
+  not pay for the denominator's noise twice.
+
+**Where A/A cannot arbitrate (D6), stated rather than swept:**
+
+1. **`contrasts` (STAT-1b)** — the composed sweep composes over METRICS, not arm
+   pairs, so it can neither confirm nor refute the `g/2` level change.
+2. **Holm's power gain** — under the COMPLETE null Holm and one-step Bonferroni
+   are the *same event* (`min p ≤ α/m`; Holm's first step IS the one-step level
+   and no later step is reached), measured identical to the last digit. The gain
+   is only measurable with true effects present, where Holm's family error over
+   the surviving nulls reaches α (0.0510) while the one-step rule stops at half
+   of it (0.0248) — that unspent α is the power it gives up. Both valid; one
+   tight. `FamilyScore` carries no detection rate for planted members, so the
+   gain cannot be stated as a detection difference at all.
+3. **`guardrail_correction` (STAT-1c)** — the knob resolves a LEVEL, and both
+   levels are honoured to within a fifth of a σ. Whether a guardrail *should*
+   be tested at raw α is a directional preference (detecting harm), not a
+   quantity this instrument ranks.
+4. **Overdispersion** outranks every interval choice in §4.4/§4.5 and is out of
+   M13's scope: if randomisation is per unit while the metric counts sessions,
+   every SE understates the truth by a factor no interval construction affects.
+   The A/A permutation *would* see it — it permutes units — which is a case
+   where this instrument is the right one for a question M13 does not ask.
+
 ## 5. CUPED covariate window — DECIDED: fixed lookback (2026-07)
 
 The legacy CUPED covariate uses a **growing** symmetric pre-window. The choice was

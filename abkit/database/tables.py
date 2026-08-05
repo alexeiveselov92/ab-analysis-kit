@@ -65,7 +65,18 @@ def get_experiments_table_model() -> TableModel:
             # indistinguishable from an incomplete run. Added additively
             # (`ensure_columns`), so an existing install picks it up on the next
             # run rather than needing a recreate.
-            ColumnDefinition("contrasts", "String"),  # all_pairs|vs_control
+            # The DEFAULT is what makes "additively" true: the column is not
+            # nullable, and `ensure_columns` REFUSES a NOT-NULL/no-default
+            # addition — so without it an existing install met a hard
+            # drop-and-recreate error on the first 0.8.0 run (m13 STAT-6).
+            # `all_pairs` is also the factual family of every pre-0.8.0 row,
+            # since the knob did not exist before it.
+            # `max_length` is NOT decoration here: MySQL maps an unsized String
+            # to TEXT, and MySQL rejects a literal DEFAULT on TEXT (error 1101),
+            # so the fresh CREATE TABLE would fail outright. Sized ⇒ VARCHAR.
+            ColumnDefinition(
+                "contrasts", "String", default="all_pairs", max_length=32
+            ),  # all_pairs|vs_control
             ColumnDefinition("sequential_enabled", "Bool"),
             ColumnDefinition("sequential_scheme", "String"),
             ColumnDefinition("comparisons", "String"),  # canonical JSON summary

@@ -585,3 +585,39 @@ class TestCatalogIdentifierFolding:
         assert mgr.table_exists("_ab_results", schema="AbkitInternal") is True
         _, params = conn.executed[-1]
         assert params == {"schema": "AbkitInternal", "table": "_ab_results"}
+
+
+class TestDefaultedColumnsAreDialectSafe:
+    """m13 STAT-6: a DEFAULT is only additively migratable if the DDL is legal.
+
+    ``ensure_columns`` refuses a NOT-NULL/no-default addition, so a new
+    non-nullable column must carry a default — and on MySQL an unsized
+    ``String`` maps to ``TEXT``, which **cannot take a literal DEFAULT** (error
+    1101). A fresh ``CREATE TABLE`` would then fail outright on MySQL alone, on
+    a backend this repo has no container for. Derived from the model registry,
+    so the next defaulted string column is covered without editing this test.
+    """
+
+    #: Types that cannot carry a literal DEFAULT, per dialect. PostgreSQL has no
+    #: such restriction; MySQL's is the one that bites, and it is the backend
+    #: this repo cannot run a container for.
+    FORBIDS_LITERAL_DEFAULT = {"mysql": ("TEXT", "BLOB", "JSON"), "postgres": ()}
+
+    def test_no_internal_table_defaults_a_column_whose_type_forbids_it(self, mgr_conn):
+        from abkit.database.tables import INTERNAL_TABLES
+
+        mgr, _conn, backend = mgr_conn
+        forbidden = self.FORBIDS_LITERAL_DEFAULT[backend]
+        checked = 0
+        for factory in INTERNAL_TABLES.values():
+            model = factory()
+            for col in model.columns:
+                if col.default is None:
+                    continue
+                rendered = mgr._render_column(col, in_primary_key=col.name in model.primary_key)
+                assert "DEFAULT" in rendered, rendered
+                native = rendered.upper()
+                for bad in forbidden:
+                    assert bad not in native, f"{col.name}: {rendered}"
+                checked += 1
+        assert checked, "no defaulted column found — has the model registry drifted?"

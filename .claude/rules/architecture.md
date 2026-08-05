@@ -6,7 +6,10 @@
 > `paths.experiments` selection fix), and the cockpit/perf one as `0.6.4`:
 > **UI-1** (the dashboard's YAML editor), **UI-2** (`abk ui`) and **PERF-1**
 > (the additive read path made discoverable; the scaffold flipped to
-> `incremental_reads: true`). All tagged and on PyPI; `[Unreleased]` is empty.
+> `incremental_reads: true`). All tagged and on PyPI.
+> **M13 is code-complete and NOT yet released** — STAT-1c, STAT-2, STAT-1b,
+> STAT-1, STAT-3a, STAT-3, STAT-4 and the STAT-6 exit gate are merged, STAT-5
+> was dropped (D13), and `[Unreleased]` holds them all pending the `0.8.0` cut.
 > M3's WP9 testcontainers hardening deferred to a Docker-equipped environment.
 > **M12 shipped as `0.7.0`** (notifications): NTF-1…NTF-6 are merged and
 > released — the send seam (`abk run --notify`), the
@@ -684,6 +687,70 @@ two-process lock race) is deferred to a Docker-equipped environment.
   the naive `B² − AC` costs a factor of 30 and would cross rel-1e-9 at
   `|z_stat| ≈ 10⁴`. The keeper has a Decimal-referenced gate; the dropped one had
   no test that could justify it, which is why it is gone rather than commented.
+
+### M13 STAT-6 facts an assistant must know (the exit gate)
+
+- **A byte-compatibility gate must compare against the RELEASE, not against
+  HEAD.** `tests/e2e/_m13_baseline.py` runs unmodified in a `v0.7.0` worktree —
+  which is only possible because the scaffold assets and `tests/_helpers/` are
+  byte-identical between the two, a fact the file states and that was *checked*,
+  not assumed. Regenerating the golden from HEAD would make the gate compare
+  HEAD with itself (the M10 window-golden discipline). The comparison is
+  discrete-exact / continuous-at-rel-1e-9 / JSON-parsed **even though the two
+  surfaces are byte-identical on one machine**: byte reproducibility holds only
+  under a fixed BLAS configuration (M7 D13), and CI is not that machine. Rows
+  are ordered by a DISCRETE key for the same reason — sorting by whole-row
+  content would let a last-ULP difference reorder the list and compare
+  mismatched pairs.
+- **Adding a column to `_ab_experiments` is THREE edits, and the catalog writer
+  is the one that gets forgotten.** The model (`tables.py`), the emitter
+  (`ExperimentConfig.catalog_record`), and `_ExperimentsMixin._EXPERIMENT_FIELDS`
+  — whose projection is a **whitelist**, so a missing field is dropped in
+  silence. STAT-1b did the first two; `contrasts` shipped unwritten and the docs
+  describing it were ahead of the code. `upsert_experiment` now refuses a record
+  carrying fields it would drop (the check `save_results` has always made in the
+  other direction), and `test_every_catalog_record_key_is_a_column` is a real
+  three-way EQUALITY — its previous form asserted one containment while its
+  docstring claimed all three.
+- **An additive column must be nullable OR defaulted, and a `String` column is
+  neither by default.** `ensure_columns` refuses a NOT-NULL/no-default addition
+  on every backend, so `ColumnDefinition("contrasts", "String")` would have made
+  the first `0.8.0` run of every installed project fail with a "drop and
+  recreate" instruction — for a column whose own comment promised it needed
+  none. `default="all_pairs"` fixes it and is factually right for historical
+  rows (the knob did not exist before `0.8.0`). The in-memory fake now models
+  DEFAULT read-back, so a test cannot pass against semantics no backend has.
+- **A defaulted `String` column MUST carry `max_length`.** MySQL maps an unsized
+  `String` to `TEXT`, and MySQL rejects a **literal DEFAULT on TEXT** (error
+  1101) — so the fix above would have turned a broken migration into a broken
+  `CREATE TABLE`, on the one backend this repo has no container for. Sized ⇒
+  `VARCHAR(n)` ⇒ legal. PostgreSQL has no such restriction, which is why the
+  gate (`tests/database/test_sql_managers.py::TestDefaultedColumnsAreDialectSafe`)
+  is **dialect-keyed** rather than banning TEXT everywhere, and derives its
+  column list from `INTERNAL_TABLES`.
+- **A complete-null family sweep cannot separate Holm from one-step
+  Bonferroni** — "at least one rejection" is `min p ≤ α/m` under both, since
+  Holm's first step IS the one-step level and no later step is reached
+  (measured identical to the last digit at 20 000 iterations). The power claim
+  is only measurable with true effects present, where Holm's family error over
+  the surviving nulls reaches α and the one-step rule stops at half of it. The
+  exit-gate sketch's own item ("Holm's FWER ≈ α") would not have caught this: a
+  one-step rule satisfies it too.
+- **The new-number goldens anchor on a DIFFERENT ALGORITHM**
+  (`tests/golden/m13_reference.py`): `brentq` on the constrained likelihood and
+  on `|Z| = c` for the score interval, `numpy.roots` for Fieller, the step-down
+  definition for Holm — each case asserted against both the reference and a
+  literal, because a reference living in the test tree can be edited alongside
+  the engine. Boundary tables are deliberately absent: both references are
+  root-finders, valid only where the constrained maximum is interior, and the
+  objective-function KATs in `tests/stats/` are what covers those.
+- **The batch A/A revalidation is a committed, re-runnable artifact**
+  (`docs/research/2026-08-m13-revalidation/`): the script, its raw JSON, and the
+  report. Its two instrument-level readings: `interval: score` is invisible to
+  the FPR column *by construction* and shows up in COVERAGE (relative scale
+  90.7% → 93.3% against a nominal 95%), and `interval: delta` is invisible to
+  BOTH two-sided columns while two thirds of its false positives fall below zero
+  — the blindness STAT-2 exists to fix, reproduced end to end.
 
 ### M7 vectorization facts an assistant must know
 
@@ -1547,7 +1614,9 @@ alias) and **PERF-1** (the additive read path made discoverable; the scaffold
 flipped to `incremental_reads: true`), tagged and published to PyPI.
 One WP = one session =
 one PR; **M7–M12 moved no statistical number** (parity gates + empty
-`ALGORITHM_VERSION` grep); M13/M15 use full change control. Two binding
+`ALGORITHM_VERSION` grep) and **M13 moved no DEFAULT** — its numbers are opt-in,
+the `ALGORITHM_VERSION` grep is still empty (D4), and the byte-compatibility
+gate compares against a real `v0.7.0` checkout; M13/M15 use full change control. Two binding
 inter-milestone contracts: the M8→M9 one (honored — STATE/tail-scan SQL builds
 ONLY through `build_cohort_backend`) and M10's (the planner is reached ONLY
 through `ExperimentConfig.grid()`). Only the second is AST-gated
