@@ -959,13 +959,27 @@ before STAT-3 — D17.) ~5–6 sessions, of which the correction layer (STAT-1c,
 STAT-1b, STAT-2, STAT-1), the guard (STAT-3a) and the proportion interval
 (STAT-3) are done.
 
-### M14 — multi-arm decision layer (bucket B, decisions) → `0.9.0` 📐 contour
+### M14 — multi-arm decision layer (bucket B, decisions) → `0.9.0` 📐 designed
 An explicit `control:` field (or a validated positional convention);
 experiment-level winner rollup on `ExperimentReadout`; treatment-vs-treatment
 verdicts; a cross-arm overview in report/explore/dashboard (the 0.1.x
 multi-arm UX safe wins fold in here). Pair statistics do not change — this is
-the interpretation layer + UI, built on M11's dashboard surface. ~4 WP,
-~4–5 sessions; design session first.
+the interpretation layer + UI, built on M11's dashboard surface.
+
+**The design session ran 2026-08-05** and produced
+[m14-implementation-plan.md](docs/specs/m14-implementation-plan.md) — six WPs
+(DEC-1 `control:` → DEC-2 the decision layer → DEC-3 report / DEC-4 the other
+three surfaces; DEC-5 `validate`/`plan`/SRM, independent; DEC-6 exit gate +
+`0.9.0`), ten decisions, and the posture that makes it verifiable: **M14 moves
+no persisted number, no alpha and no verdict `0.8.0` already issues** — it adds
+verdicts for pairs that had none (treatment-vs-treatment, which exist only
+under `contrasts: all_pairs`) plus a read-time rollup over them, and a two-arm
+experiment stays byte-identical on every surface. The winner claim is "leader +
+tested separation" off existing rows (D1); a simultaneous best-arm procedure
+(MCB) is new statistics and is re-weighed in M15. ~6 WP, ~6 sessions — one over
+the contour, because the audit's supporting items (the `abk validate` N-arm
+placebo, `abk plan` sizing one contrast of many, SRM with no culprit arm) were
+scoped IN.
 
 ### M15 — new methods (bucket C, statistics) → `0.10.0` 📐 contour
 Student-t (Welch–Satterthwaite), BCa bootstrap, Mann-Whitney, cross-fitted
@@ -990,11 +1004,12 @@ and operators point their own Grafana/Metabase/Superset/Lightdash at it. Parked
 items are re-evaluated here (other DBs — REPORT #15). Estimate ~4+ sessions,
 conditional until the design session.
 
-> **M14–M17 have no detailed WP breakdowns yet — each opens with its own
+> **M15–M17 have no detailed WP breakdowns yet — each opens with its own
 > design session** (verification pass → WP breakdown → design doc in
-> `docs/specs/`) before any implementation, exactly like the M7–M13 docs were
+> `docs/specs/`) before any implementation, exactly like the M7–M14 docs were
 > produced. (M13's ran on 2026-08-03 and shipped as
-> [m13-implementation-plan.md](docs/specs/m13-implementation-plan.md).)
+> [m13-implementation-plan.md](docs/specs/m13-implementation-plan.md); M14's on
+> 2026-08-05 as [m14-implementation-plan.md](docs/specs/m14-implementation-plan.md).)
 
 ## Post-baseline hardening (multi-arm UX + stats-core), tiered by version
 

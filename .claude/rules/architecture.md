@@ -1613,7 +1613,16 @@ see the track section in [ROADMAP.md](../../ROADMAP.md);
 [m11](../../docs/specs/m11-implementation-plan.md),
 [m12](../../docs/specs/m12-implementation-plan.md) and
 [m13](../../docs/specs/m13-implementation-plan.md) are all implementation
-records now; M14–M17 are contours, each opens with a design session). The `0.6.x`
+records now; **M14's design session ran 2026-08-05 and its contract is
+[m14-implementation-plan.md](../../docs/specs/m14-implementation-plan.md)** —
+six WPs (DEC-1 the declared `control:` → DEC-2 treatment-pair verdicts + the
+per-metric rollup → DEC-3 the report / DEC-4 dashboard·explore·notify·CLI;
+DEC-5 `validate`/`plan`/SRM, independent; DEC-6 the exit gate + `0.9.0`), under
+the posture that **M14 moves no persisted number, no alpha and no verdict
+`0.8.0` already issues**: the read-time family is built from ROWS, so verdicting
+a treatment pair that is already in it cannot move a threshold, and a two-arm
+experiment stays byte-identical on every surface. M15–M17 are still contours,
+each opening with its own design session). The `0.6.x`
 **PLAN-1/PLAN-2** interstitial is closed (released as `0.6.1`/`0.6.2`; design
 contract: [cli-and-dx.md](../../docs/specs/cli-and-dx.md) "`abk plan` sizing
 gaps"); the second `0.6.x` interstitial is closed too, released as `0.6.4` —
