@@ -11,8 +11,24 @@ stabilization chart), writes them to a clean warehouse table any BI can read, an
 gives you a local cockpit to tune the analysis and a harness to prove your method is
 actually calibrated.
 
-> **Status: `0.7.0` (Alpha) — the latest on PyPI**
-> (milestones **M1–M12** shipped — M12 wired **notifications**: `abk run
+> **Status: `0.8.0` (Alpha) — the latest on PyPI**
+> (milestones **M1–M13** shipped — M13 is the **versioned statistics**
+> milestone: five opt-in options that each buy power or fix an interval, with
+> **no default moved** — a project that changes nothing reproduces `0.7.0` row
+> for row. `correction: holm` is uniformly more powerful than one-step
+> Bonferroni at the same family error rate; `contrasts: vs_control` declares the
+> family you actually decide on, so the divisor is `g−1` instead of `C(g,2)`
+> (≈ +10 points of power at four arms) and the treatment-vs-treatment pairs stop
+> being computed; `guardrail_correction: none` takes a guardrail out of the
+> screening budget entirely; `interval: score` gives proportions an interval
+> that is the inversion of the z-test printed beside it (no more "significant"
+> next to a CI covering zero, and a real answer on empty cells); and
+> `interval: fieller` does the same for the relative lift of the five
+> mean-based methods — the delta interval it replaces has nominal *two-sided*
+> coverage with lopsided tails (1.7% / 3.3% against 2.5% each), and every abkit
+> verdict is a one-sided claim. `abk validate` gained the one column that can
+> tell those two apart: the share of false positives falling **below** zero.
+> M12 wired **notifications**: `abk run
 > --notify` and `abk validate --notify` push what a run just decided to nine
 > channel types (Slack, Telegram, email, webhook, Mattermost, Discord, Teams,
 > Google Chat, ntfy), as six routable signals — the readout verdict, a verdict
@@ -50,10 +66,11 @@ pip install ab-analysis-kit          # Python 3.10+; add a DB extra for real dat
 pip install "ab-analysis-kit[clickhouse]"   # or [postgres] / [mysql] / [all-db]
 ```
 
-(`pip install ab-analysis-kit` gets `0.7.0` — opt-in notifications across nine
-channels, `abk dashboard` with its YAML editor, `abk ui`, CUPED-aware `abk plan`
-sizing, `abk plan --from-history` and the discoverable additive read path all
-included.)
+(`pip install ab-analysis-kit` gets `0.8.0` — the opt-in M13 statistics (Holm,
+the declared contrast set, the score and Fieller intervals, the A/A sign
+column), opt-in notifications across nine channels, `abk dashboard` with its
+YAML editor, `abk ui`, CUPED-aware `abk plan` sizing, `abk plan --from-history`
+and the discoverable additive read path all included.)
 
 `abk --version` and `abk --help` work with no database driver; you can even lint a
 config (`abk run --steps validate`) with no database at all. See the

@@ -757,7 +757,7 @@ for the exit gate — no NTF WP depends on them.
   *permanently*, and should `abk explore` ever carry `--notify`? Nothing in the
   milestone depends on the answer.
 
-### M13 — versioned statistical improvements (bucket B, core) → `0.8.0` ✅ all WPs shipped; the release cut is what remains
+### M13 — versioned statistical improvements (bucket B, core) → `0.8.0` ✅ SHIPPED (STAT-1c, STAT-2, STAT-1b, STAT-1, STAT-3a, STAT-3, STAT-4, STAT-6; released, on PyPI)
 **The design session ran on 2026-08-03** and its output is
 [m13-implementation-plan.md](docs/specs/m13-implementation-plan.md) (+ three
 blind re-derivations and a code audit in
@@ -815,8 +815,8 @@ guardrail α, and — for whoever opts in — `method_config_id`.
 STAT-1b (the declared contrast set), STAT-1 (Holm + the claim), STAT-3a (the
 `asymmetric_ci` guard), STAT-3 (the score proportion interval) and STAT-4 (the
 Fieller relative interval) and **STAT-6 (the exit gate + the batch A/A
-revalidation) are ✅ shipped** — only the `0.8.0` cut remains. Baseline
-goldens stay untouched; new numbers get **new** goldens.
+revalidation) are ✅ shipped**, and the milestone was **released as `0.8.0`**.
+Baseline goldens stay untouched; new numbers get **new** goldens.
 
 **STAT-6 as built:** the byte-compatibility gate compares against the **released
 `v0.7.0` code**, not against HEAD — two surfaces captured from a real checkout
@@ -990,10 +990,11 @@ and operators point their own Grafana/Metabase/Superset/Lightdash at it. Parked
 items are re-evaluated here (other DBs — REPORT #15). Estimate ~4+ sessions,
 conditional until the design session.
 
-> **M13–M17 have no detailed WP breakdowns yet — each opens with its own
+> **M14–M17 have no detailed WP breakdowns yet — each opens with its own
 > design session** (verification pass → WP breakdown → design doc in
-> `docs/specs/`) before any implementation, exactly like the M7–M12 docs were
-> produced.
+> `docs/specs/`) before any implementation, exactly like the M7–M13 docs were
+> produced. (M13's ran on 2026-08-03 and shipped as
+> [m13-implementation-plan.md](docs/specs/m13-implementation-plan.md).)
 
 ## Post-baseline hardening (multi-arm UX + stats-core), tiered by version
 

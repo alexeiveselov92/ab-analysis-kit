@@ -11,7 +11,7 @@ recorded here alongside an `ALGORITHM_VERSION` bump and a
 [`statistics-changes.md`](docs/specs/statistics-changes.md) entry (never a silent
 number change).
 
-## [Unreleased]
+## [0.8.0] - 2026-08-05
 
 ### Fixed
 - **`_ab_experiments.contrasts` is now actually written, and an existing

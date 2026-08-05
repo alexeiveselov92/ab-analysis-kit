@@ -122,10 +122,14 @@ class TestAaFprBudget:
         assert make("sample", {"variant": "g", "value": "v"}).aa_fpr_budget is None
 
     def test_accepts_a_fraction(self):
-        assert make("sample", {"variant": "g", "value": "v"}, aa_fpr_budget=0.08).aa_fpr_budget == 0.08
+        assert (
+            make("sample", {"variant": "g", "value": "v"}, aa_fpr_budget=0.08).aa_fpr_budget == 0.08
+        )
 
     def test_accepts_upper_bound_one(self):
-        assert make("sample", {"variant": "g", "value": "v"}, aa_fpr_budget=1.0).aa_fpr_budget == 1.0
+        assert (
+            make("sample", {"variant": "g", "value": "v"}, aa_fpr_budget=1.0).aa_fpr_budget == 1.0
+        )
 
     @pytest.mark.parametrize("bad", [0.0, -0.1, 1.5])
     def test_rejects_out_of_range(self, bad):
