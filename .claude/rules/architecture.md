@@ -641,6 +641,14 @@ two-process lock race) is deferred to a Docker-equipped environment.
   The effect and the p-value still ride; `readout._informative` already treats
   NULL bounds as a gap. The disclosed cost: such a comparison can reject on the
   absolute scale and not be called a WIN.
+- **An unbounded row is the first row that carries a valid p-value with NULL
+  bounds** — before STAT-4 the two were always NULL together. `_informative` keys
+  on the bounds, so it is skipped; under a COMPUTE-time correction that is right
+  (it cannot exclude zero), but under BH/Holm it also leaves the family and
+  shrinks `m` for its siblings, which is the anti-conservative direction. Pinned
+  as behaviour (`tests/pipeline/test_fieller_interval_end_to_end.py`), not fixed:
+  relaxing `_informative` is a readout-wide semantics change — the stabilization
+  scan reads the same predicate — and is STAT-6's to weigh.
 - **Five causes of missing bounds, five sentences.** H5-undefined denominator,
   H5-unstable, degenerate variance, unbounded (`A ≤ 0`), and EMPTY (`A > 0` with
   no crossing — reachable only through a non-PSD moment triple, i.e. the same

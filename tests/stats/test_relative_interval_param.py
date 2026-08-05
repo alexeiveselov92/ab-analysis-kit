@@ -21,6 +21,7 @@ import pytest
 from abkit.stats import available_methods, create_method, get_method_class
 from abkit.stats.base import RELATIVE_INTERVAL_PARAM
 from abkit.stats.exceptions import MethodParamError
+from abkit.stats.relative_interval import DELTA, FIELLER
 from abkit.stats.samples import (
     PairedSufficientStats,
     RatioSufficientStats,
@@ -72,6 +73,17 @@ def _result(method_name: str, **params):
 
 
 # --- the roster ---------------------------------------------------------------------
+
+
+def test_the_dispatch_vocabulary_is_the_schema_vocabulary() -> None:
+    """Two literals in two modules cannot be held together by a comment.
+
+    A value the schema accepts but the dispatcher does not recognise would take
+    the legacy branch silently — the worst shape available here, since the
+    operator wrote a knob and got the thing they were opting out of.
+    """
+    assert set(RELATIVE_INTERVAL_PARAM.choices or ()) == {DELTA, FIELLER}
+    assert RELATIVE_INTERVAL_PARAM.default == DELTA
 
 
 def test_the_roster_is_exactly_the_mean_methods() -> None:

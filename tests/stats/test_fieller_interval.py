@@ -305,7 +305,13 @@ def test_each_refusal_says_which_cause_fired() -> None:
         mean_num=1.0, var_num=0.01, mean_den=10.0, var_den=0.01, covariance=0.0, **common
     )
     assert "undefined: control (denominator) mean is zero" in undefined.warnings[0]
+    assert math.isnan(undefined.effect)  # no lift exists over a zero baseline
     assert degenerate.warnings == [FIELLER_DEGENERATE_WARNING]
+    # ...but a degenerate VARIANCE kills only the inference, exactly as the delta
+    # branch's `normal_test` does — losing the lift only on the opt-in path would
+    # be a silent asymmetry between the two.
+    assert degenerate.effect == 1.0
+    assert math.isnan(degenerate.left_bound) and math.isnan(degenerate.pvalue)
     assert unbounded.warnings == [FIELLER_UNBOUNDED_WARNING]
     assert bounded.warnings == []
     assert math.isfinite(bounded.left_bound) and math.isfinite(bounded.right_bound)

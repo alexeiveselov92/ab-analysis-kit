@@ -784,6 +784,12 @@ contract, swept over a registry-derived roster).
   boundary. So the planner has disagreed with the shipped DEFAULT all along;
   STAT-3's note ("the two rules differ by O(z²/N)") would have been a false caveat
   here, and now claims a difference in half-widths instead.
+- **One disclosed limitation, handed to STAT-6.** An unbounded row is the first
+  in the project's history to carry a valid p-value with NULL bounds, and
+  `readout._informative` keys on the bounds — so under a READ-TIME scheme it
+  leaves the family and shrinks `m` for its siblings (anti-conservative). Pinned
+  as behaviour rather than fixed, because relaxing `_informative` is a
+  readout-wide semantics change the stabilization scan shares.
 - **Two numerical choices were measured, and one of them lost.** The
   cancellation-free discriminant is 30× better and gets a Decimal-referenced gate
   at `z_stat = 10⁴` (where `B² − AC` reads 6.5e-10, past rel-1e-9). The textbook

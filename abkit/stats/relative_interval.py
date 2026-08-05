@@ -68,9 +68,13 @@ from abkit.stats.effects import (
     relative_delta_effect_array,
 )
 
-#: ``interval`` values this module dispatches on — the choices of
-#: :data:`~abkit.stats.base.RELATIVE_INTERVAL_PARAM`, kept here so the dispatch
-#: and the schema cannot drift apart.
+#: ``interval`` values this module dispatches on. They must stay exactly the
+#: choices of :data:`~abkit.stats.base.RELATIVE_INTERVAL_PARAM` — asserted by
+#: ``test_relative_interval_param.py``, since a comment cannot hold two literals
+#: together across two modules. An unrecognised value takes the LEGACY branch
+#: rather than raising: the spec's ``choices`` is the gate that rejects a typo,
+#: and raising here would turn a stale persisted string into a crashing report
+#: (the m13 STAT-1 rule about unknown correction schemes, same reasoning).
 DELTA = "delta"
 FIELLER = "fieller"
 
@@ -193,11 +197,19 @@ def _fieller_pieces(
     — that is what makes the coherence above an equality rather than an
     approximation, and it is pinned by a test comparing the two branches' p
     with ``==``.
+
+    The two masks are deliberately different, and they mirror the legacy branch
+    exactly: an H5 denominator kills the EFFECT (there is no lift to report over
+    a zero baseline), while a degenerate variance kills only the inference —
+    ``normal_test``'s degenerate return keeps ``estimate.effect`` verbatim, so
+    reporting NaN here would lose a number on the opt-in path that the default
+    path still prints.
     """
     _, z_high = _two_sided_quantiles(alpha)
     with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
         undefined = (mean_den == 0.0) | ~np.isfinite(mean_den)
-        effect = np.where(undefined, np.nan, mean_num / np.where(undefined, 1.0, mean_den))
+        ratio = mean_num / np.where(undefined, 1.0, mean_den)
+        effect = np.where(undefined | ~np.isfinite(ratio), np.nan, ratio)
         usable = (
             np.isfinite(effect)
             & np.isfinite(var_num)
@@ -205,7 +217,6 @@ def _fieller_pieces(
             & np.isfinite(var_den)
             & np.isfinite(covariance)
         )
-        effect = np.where(usable, effect, np.nan)
 
         left, right = fieller_bounds(mean_num, var_num, mean_den, var_den, covariance, z_high)
         left = np.where(usable, left, np.nan)

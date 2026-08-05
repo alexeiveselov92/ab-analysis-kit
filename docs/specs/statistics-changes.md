@@ -522,6 +522,16 @@ by a special case. Endpoints are the roots of `A·θ² − 2B·θ + C ≤ 0`.
   unbounded loses a WIN it would have been given under `delta`, on evidence that
   could not support a lift figure anyway. Measured share of unbounded answers: 0%
   at CV₁ ≤ 0.10, 8.5% at 0.30.
+- **A DISCLOSED limitation the unbounded branch creates.** An unbounded row is
+  the first row in the project's history to carry a **valid p-value with NULL
+  bounds** — before STAT-4 the two were always NULL together. `readout._informative`
+  keys on the bounds, so such a row is skipped: correct under a compute-time
+  correction (it cannot exclude zero), but under a **read-time** scheme (BH/Holm)
+  it also leaves the family, which shrinks `m` for its siblings — the
+  anti-conservative direction. It is pinned as behaviour rather than fixed here,
+  because relaxing `_informative` is a readout-wide semantics change (the
+  stabilization scan reads the same predicate) and belongs to STAT-6, not to the
+  estimator that made it reachable.
 - **An EMPTY confidence set is a distinct sentence.** Reachable only through a
   non-PSD moment triple (`V_ab² > V_aV_b`), which abkit's mixed-ddof convention
   can produce on adversarial data — the same anomaly the delta branch reports as
