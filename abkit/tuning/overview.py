@@ -11,12 +11,17 @@ Nothing here computes a statistic: every verdict is
 
 Row grain is **one experiment** (§3, decided by the maintainer 2026-07-27),
 matching the experiment-scoped open/explore/run buttons. What a row can carry
-is bounded by ``evaluate()``'s contract: ``ExperimentReadout.verdicts`` is
-``[c for c in experiment.comparisons if c.is_main_metric]`` crossed with each
-treatment arm (``abkit/pipeline/readout.py`` ``evaluate``), so a
-secondary/guardrail comparison NEVER produces a ``PairVerdict`` and never
-appears in a row's ``verdicts`` sub-list. Surfacing secondary verdicts
-would mean re-implementing the decision logic — M14 work, not this milestone.
+is bounded by ``evaluate()``'s contract: a ``PairVerdict`` exists only for a
+MAIN comparison (``abkit/pipeline/readout.py`` ``evaluate``), so a
+secondary/guardrail comparison NEVER produces one and never appears in a row's
+``verdicts`` sub-list. Surfacing secondary verdicts would mean re-implementing
+the decision logic — still M14 work, not this milestone.
+
+Since m14 DEC-2 the readout also issues a verdict for every
+treatment-vs-treatment pair, so this module filters to ``role ==
+"vs_control"`` (the ``ship`` list below) rather than relying on the readout
+being control-anchored. DEC-4 replaces the headline with the per-metric rollup
+and opens the expand list deliberately.
 The per-metric **Run** affordance a secondary metric still needs is fed by
 :func:`build_overview_boot_entries`, which lists the configured comparisons
 straight off the config.

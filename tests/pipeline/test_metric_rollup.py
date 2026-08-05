@@ -211,9 +211,17 @@ class TestSeparation:
         assert result.leader == "c"
         assert result.separation == "separated"
 
-    def test_a_missing_treatment_pair_is_not_a_win(self):
-        """No rows for (a, b) — the leader is not shown to be better, so it is
-        undecided, never assumed."""
+    def test_a_missing_treatment_pair_reads_untested_not_co_leaders(self):
+        """No rows for (a, b): the leader is not shown to be better — but the
+        reason is that NOBODY LOOKED, and `co_leaders` asserts the opposite
+        ("we compared them and could not separate them").
+
+        This test asserted `co_leaders` when DEC-2 was first written, which is
+        how the defect shipped past its own suite. It is reachable without any
+        config edit: in a multi-arm experiment the treatment pair holds the two
+        smallest arms, so `insufficient_data` fires there while the control
+        pairs are fine.
+        """
         experiment = make_experiment()
         rows = (
             self._control_wins(experiment)
@@ -223,7 +231,106 @@ class TestSeparation:
         result = rollup(experiment, rows)
         assert result.leader == "a"
         assert result.indistinguishable == ("b",)
+        assert result.separation == "untested"
+        assert "could not be compared" in " | ".join(result.rationale)
+
+    def test_a_demoted_treatment_pair_reads_untested_too(self):
+        """Rows exist but the latest look is demoted — still nobody looked."""
+        experiment = make_experiment()
+        rows = self._control_wins(experiment)
+        for name_1, name_2 in (("a", "b"), ("a", "c"), ("b", "c")):
+            pair_rows = series(experiment, name_1, name_2, effect=-0.1, significant=True)
+            for row in pair_rows:
+                row["insufficient_data"] = True
+            rows += pair_rows
+        result = rollup(experiment, rows)
+        assert result.leader == "a"
+        assert result.separation == "untested"
+        assert set(result.indistinguishable) == {"b", "c"}
+
+    def test_a_pre_horizon_look_is_untested_not_co_leaders(self):
+        """Under fixed CIs every verdict is withheld before the horizon, so an
+        experiment would spend its whole life claiming measured non-separation."""
+        experiment = make_experiment()
+        rows = []
+        for name_1, name_2 in (("control", "a"), ("control", "b"), ("control", "c")):
+            rows += series(experiment, name_1, name_2, effect=0.3, significant=True)
+        for name_1, name_2 in (("a", "b"), ("a", "c"), ("b", "c")):
+            pair_rows = series(experiment, name_1, name_2, effect=-0.1, significant=True)
+            for row in pair_rows:
+                row["is_horizon"] = False
+            rows += pair_rows
+        result = rollup(experiment, rows)
+        assert result.separation == "untested"
+
+    def test_a_pair_decisive_AGAINST_the_leader_is_not_a_win(self):
+        """THE orientation fixture. Every other decisive pair in this file
+        favours the leader, so `== "WIN"`, `== "LOSE"` and
+        `in ("WIN", "LOSE")` all agree — an orientation-BLIND implementation
+        passed all 21 tests under the review's mutation probe.
+
+        Here `a` leads on the control contrast but `b` is ahead of it
+        head-to-head, so the pair `(a, b)` is a WIN *for b*. Reading the word
+        without the orientation would call that "a beat b" and report
+        `separated`.
+        """
+        experiment = make_experiment()
+        rows = (
+            self._control_wins(experiment)
+            # (a, b) stored leader-FIRST: `b` ahead ⇒ WIN, which must NOT count
+            # as the leader winning
+            + series(experiment, "a", "b", effect=0.15, significant=True)
+            + series(experiment, "a", "c", effect=-0.20, significant=True)
+            + series(experiment, "b", "c", effect=-0.30, significant=True)
+        )
+        result = rollup(experiment, rows)
+        assert result.leader == "a"
+        assert result.indistinguishable == ("b",)
         assert result.separation == "co_leaders"
+
+    def test_a_guardrail_between_two_treatments_does_not_move_separation(self):
+        """The review's HIGH finding, pinned. `guardrail_policy: block` caps
+        WIN and never LOSE, so leaving the cap on a treatment pair made the
+        separation claim depend on the ARBITRARY declaration order of the arms:
+        the same fact is a WIN stored one way and a LOSE stored the other.
+
+        Both orderings below carry the identical guardrail regression on the
+        identical pair, and must answer the same.
+        """
+        results = []
+        for arms in (("control", "a", "b", "c"), ("control", "b", "c", "a")):
+            experiment = make_experiment(
+                arms=arms,
+                comparisons=[
+                    {"metric": "revenue", "is_main_metric": True, "method": {"name": "t-test"}},
+                    {
+                        "metric": "latency",
+                        "is_guardrail": True,
+                        "desired_direction": "decrease",
+                        "method": {"name": "t-test"},
+                    },
+                ],
+            )
+            rows = (
+                series(experiment, "control", "a", effect=0.30, significant=True)
+                + series(experiment, "control", "b", effect=0.20, significant=True)
+                + series(experiment, "control", "c", effect=0.10, significant=True)
+            )
+            for name_1, name_2 in experiment.contrast_pairs():
+                if "control" in (name_1, name_2):
+                    continue
+                # `a` ahead of everyone, whichever way the pair is stored
+                ahead = -0.1 if name_1 == "a" else 0.1
+                rows += series(experiment, name_1, name_2, effect=ahead, significant=True)
+            # a latency regression on the a/b treatment pair only
+            g1, g2 = ("a", "b") if arms[1] == "a" else ("b", "a")
+            rows += series(experiment, g1, g2, effect=0.5, significant=True, metric="latency")
+            results.append(rollup(experiment, rows))
+
+        assert {r.leader for r in results} == {"a"}
+        assert {r.separation for r in results} == {"separated"}, [
+            (r.separation, r.indistinguishable) for r in results
+        ]
 
     def test_vs_control_reports_untested_not_separated(self):
         """The knob stays load-bearing: under `contrasts: vs_control` the
@@ -434,3 +541,122 @@ class TestPairRole:
         assert any(v["role"] == role for v in payload["verdicts"])
         assert payload["rollups"][0]["metric"] == "revenue"
         assert "leaders_agree" in payload
+
+
+class TestTheRollupNeverSpeaksOverAGate:
+    """m14 DEC-2 review: a summary must not state a finding where the truth is
+    that nothing was measured. This is the DEC-1 `_srm_from_series` failure
+    mode one level up — a broken assignment reading as an ordinary null."""
+
+    def test_a_failed_srm_gate_is_named_instead_of_no_arm_beat_control(self):
+        experiment = make_experiment()
+        rows = []
+        for arm in ("a", "b", "c"):
+            arm_rows = series(experiment, "control", arm, effect=0.3, significant=True)
+            for row in arm_rows:
+                row["srm_flag"] = True
+                row["decision_blocked"] = True
+                row["srm_pvalue"] = 1e-9
+            rows += arm_rows
+        result = rollup(experiment, rows)
+        assert result.leader is None
+        text = " | ".join(result.rationale)
+        assert "SRM failed" in text
+        # the sentence that would contradict the per-pair cards above it
+        assert "no arm beat control" not in text
+
+    def test_a_pre_horizon_experiment_says_nothing_could_be_judged_yet(self):
+        experiment = make_experiment()
+        rows = []
+        for arm in ("a", "b", "c"):
+            arm_rows = series(experiment, "control", arm, effect=0.3, significant=True)
+            for row in arm_rows:
+                row["is_horizon"] = False
+            rows += arm_rows
+        result = rollup(experiment, rows)
+        assert result.leader is None
+        text = " | ".join(result.rationale)
+        assert "could be judged" in text
+        assert "no arm beat control" not in text
+
+    def test_a_genuine_null_still_says_no_arm_beat_control(self):
+        """The gate-aware wording must not swallow the ordinary case."""
+        experiment = make_experiment()
+        rows = []
+        for arm in ("a", "b", "c"):
+            rows += series(experiment, "control", arm, effect=0.01, significant=False)
+        assert "no arm beat control" in " | ".join(rollup(experiment, rows).rationale)
+
+
+class TestNoSelfContradiction:
+    def test_an_arm_is_never_both_a_loser_and_a_co_leader(self):
+        """Two fields of ONE payload disagreeing is the shape a renderer cannot
+        paper over: the (control, b) card says LOSE while the rollup calls `b`
+        an unresolved co-leader of the arm that beat control."""
+        experiment = make_experiment()
+        rows = (
+            series(experiment, "control", "a", effect=0.30, significant=True)
+            + series(experiment, "control", "b", effect=-0.40, significant=True)
+            + series(experiment, "control", "c", effect=0.10, significant=True)
+            + series(experiment, "a", "c", effect=-0.20, significant=True)
+        )
+        result = rollup(experiment, rows)
+        assert result.leader == "a"
+        assert result.losers == ("b",)
+        assert "b" not in result.indistinguishable
+        assert not set(result.losers) & set(result.indistinguishable)
+
+
+class TestJudgedFlag:
+    """The field that lets the rollup tell "we looked" from "nobody looked"
+    without sniffing rationale strings (the STAT-1 prose-is-not-API rule)."""
+
+    def test_a_decided_pair_is_judged(self):
+        experiment = make_experiment()
+        rows = series(experiment, "control", "a", effect=0.1, significant=True)
+        verdict = [
+            v
+            for v in evaluate(experiment, rows).verdicts
+            if (v.name_1, v.name_2) == ("control", "a")
+        ][0]
+        assert verdict.judged is True
+
+    @pytest.mark.parametrize(
+        "mutate,label",
+        [
+            (lambda row: row.update(is_horizon=False), "pre-horizon"),
+            (lambda row: row.update(srm_flag=True, decision_blocked=True), "srm"),
+            (lambda row: row.update(insufficient_data=True), "demoted"),
+        ],
+    )
+    def test_a_gated_pair_is_not_judged(self, mutate, label):
+        experiment = make_experiment()
+        rows = series(experiment, "control", "a", effect=0.1, significant=True)
+        for row in rows:
+            mutate(row)
+        verdict = [
+            v
+            for v in evaluate(experiment, rows).verdicts
+            if (v.name_1, v.name_2) == ("control", "a")
+        ][0]
+        assert verdict.judged is False, label
+
+    def test_a_pair_with_no_rows_is_not_judged(self):
+        experiment = make_experiment()
+        rows = series(experiment, "control", "a", effect=0.1, significant=True)
+        verdict = [
+            v for v in evaluate(experiment, rows).verdicts if (v.name_1, v.name_2) == ("a", "b")
+        ][0]
+        assert verdict.judged is False
+
+    def test_quiet_but_underpowered_IS_judged(self):
+        """The distinction is "did the rules run", not "was a call made"."""
+        experiment = make_experiment()
+        rows = series(experiment, "control", "a", effect=0.001, significant=False)
+        verdict = [
+            v
+            for v in evaluate(experiment, rows).verdicts
+            if (v.name_1, v.name_2) == ("control", "a")
+        ][0]
+        assert verdict.verdict == "INCONCLUSIVE"
+        assert verdict.judged is True

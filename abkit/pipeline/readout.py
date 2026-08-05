@@ -165,6 +165,18 @@ class PairVerdict:
     #: re-infers. Defaulted so a hand-built verdict (tests, notebooks) is still
     #: a ship decision unless it says otherwise.
     role: PairRole = "vs_control"
+    #: Did the readout actually REACH a decision for this pair, or did a gate
+    #: short-circuit it? ``False`` means no rows, an SRM-flagged cohort, a
+    #: pre-horizon look under a fixed CI, a demoted/degenerate latest row, or
+    #: too few informative cutoffs — i.e. **nobody looked**. ``True`` means the
+    #: significance rules ran, whatever they concluded (a quiet-but-underpowered
+    #: INCONCLUSIVE is judged).
+    #:
+    #: Added by m14 DEC-2 because the rollup has to tell "we compared these two
+    #: arms and could not separate them" from "these two arms were never
+    #: compared", and the only other way to know is to read the `rationale`
+    #: STRINGS — which is how prose becomes API (the STAT-1 rule).
+    judged: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -663,7 +675,18 @@ def evaluate(
     for comparison in main_comparisons:
         for treatment in treatments:
             if (control, treatment) not in declared:
-                continue
+                # Unreachable by construction: `treatments` is `variants` minus
+                # the control and `contrast_pairs()` orients every
+                # control-containing pair control-first under both `contrasts`
+                # values (enumerated over 2-5 arms × every declaration). A
+                # `continue` here would DROP a ship decision in silence and
+                # shift the dashboard's headline to another pair, so it fails
+                # loudly instead (review finding).
+                raise AssertionError(
+                    f"declared contrast set is missing the control pair "
+                    f"({control}, {treatment}) — contrast_pairs() and "
+                    "ExperimentConfig.control disagree"
+                )
             verdicts.append(
                 _pair_verdict(
                     experiment,
@@ -692,12 +715,14 @@ def evaluate(
                 )
             )
 
+    # BEFORE the rollups: a rollup that does not know the cohort is broken
+    # would report "no arm beat control" under a failed SRM gate.
+    srm_flag, srm_pvalue = _srm_from_series(experiment, series)
+
     rollups = tuple(
-        _metric_rollup(comparison, control, treatments, verdicts, bool(treatment_pairs))
+        _metric_rollup(comparison, control, treatments, verdicts, bool(treatment_pairs), srm_flag)
         for comparison in main_comparisons
     )
-
-    srm_flag, srm_pvalue = _srm_from_series(experiment, series)
 
     return ExperimentReadout(
         experiment=experiment.name,
@@ -730,6 +755,7 @@ def _metric_rollup(
     treatments: Sequence[str],
     verdicts: Sequence[PairVerdict],
     has_treatment_pairs: bool,
+    srm_flag: bool,
 ) -> MetricRollup:
     """Compose one main metric's rollup from the verdicts already issued.
 
@@ -766,7 +792,7 @@ def _metric_rollup(
         # Ties break on DECLARATION order (`treatments` is already in it and
         # `max` keeps the first maximal element) — deterministic, and the same
         # convention every other "first declared" default in abkit uses.
-        leader = max(rankable, key=lambda t: desired_sign * float(vs_control[t].effect))
+        leader = max(rankable, key=lambda t: desired_sign * float(vs_control[t].effect or 0.0))
 
     indistinguishable: tuple[str, ...] = ()
     separation: SeparationState
@@ -775,13 +801,31 @@ def _metric_rollup(
         if winners:
             # winners exist but none carries an effect — say which is missing
             rationale.append(f"{len(winners)} arm(s) beat {control} but carry no effect to rank")
+        elif srm_flag:
+            # The safety gate's whole purpose is that no conclusion may be
+            # drawn, so the rollup must not report "no arm beat control" — that
+            # states a finding where the truth is that nothing was measured.
+            # This is the DEC-1 `_srm_from_series` failure mode one level up.
+            rationale.append(
+                f"SRM failed — no arm can be judged against {control} on {metric} "
+                "(effects untrustworthy under a broken cohort)"
+            )
+        elif not any(v.judged for v in vs_control.values()):
+            rationale.append(
+                f"no pair could be judged against {control} on {metric} yet "
+                "(pre-horizon, no results, or every latest look demoted)"
+            )
         else:
             rationale.append(f"no arm beat {control} on {metric}")
-    elif not (others := [t for t in treatments if t != leader]):
-        # ONE treatment: there is no other arm to be separated FROM, so the
-        # claim is vacuously true. Deliberately NOT `untested`, which means "we
-        # could not look" and would invent a gap in the two-arm experiment that
-        # is the whole of `0.8.0`'s world.
+    elif not (others := [t for t in treatments if t != leader and t not in losers]):
+        # No other arm to be separated FROM, so the claim is vacuously true.
+        # Deliberately NOT `untested`, which means "we could not look" and
+        # would invent a gap in the two-arm experiment that is the whole of
+        # `0.8.0`'s world. Arms that LOST to the control are excluded here and
+        # from `indistinguishable`: an arm the baseline beat is not a candidate
+        # for leadership, and listing it as an unresolved co-leader put the
+        # same arm in `losers` and `indistinguishable` of one payload — two
+        # fields of one rollup contradicting each other (review finding).
         separation = "separated"
         rationale.append(f"{leader} beat {control} on {metric}")
     elif not has_treatment_pairs:
@@ -792,19 +836,59 @@ def _metric_rollup(
             "control contrasts, so those rows do not exist)"
         )
     else:
-        undecided = tuple(other for other in others if not _leader_beats(leader, other, pairs))
-        indistinguishable = undecided
-        separation = "separated" if not undecided else "co_leaders"
-        if separation == "separated":
+        # THREE outcomes per arm, not two. "We compared them and could not
+        # separate them" and "they were never compared" are different facts,
+        # and collapsing them is the very thing `no_leader` was added to stop,
+        # one branch over (review finding): a demoted or missing treatment-pair
+        # series was reported as measured non-separation.
+        beaten, undecided, untestable = [], [], []
+        for other in others:
+            pair = pairs.get((other, leader)) or pairs.get((leader, other))
+            if pair is None or not pair.judged:
+                untestable.append(other)
+            elif _leader_beats(leader, other, pairs):
+                beaten.append(other)
+            else:
+                undecided.append(other)
+        indistinguishable = tuple(undecided + untestable)
+        if not indistinguishable:
+            separation = "separated"
             rationale.append(
                 f"{leader} beat {control} on {metric} and is decisively better "
                 f"than every other treatment ({', '.join(others)})"
             )
+        elif untestable:
+            # `untested` outranks `co_leaders` when both apply: claiming "we
+            # looked and could not separate them" about an arm nobody compared
+            # is the stronger lie of the two.
+            separation = "untested"
+            rationale.append(
+                f"{leader} beat {control} on {metric}; separation is unresolved "
+                f"because {', '.join(untestable)} could not be compared against it "
+                "(no rows, demoted, or pre-horizon)"
+                + (f", and it did not separate from {', '.join(undecided)}" if undecided else "")
+            )
         else:
+            separation = "co_leaders"
             rationale.append(
                 f"{leader} beat {control} on {metric}, but is not decisively "
                 f"better than {', '.join(undecided)} — they are co-leaders on "
                 "this metric"
+            )
+        # Fork B (m13 STAT-1): under a read-time scheme the family rule can
+        # withhold a pair the stored interval would have called. Say so, or the
+        # rollup asserts co-leadership with no hint that the CORRECTION, not
+        # the data, is what left the arms unseparated.
+        diverged = [
+            other
+            for other in indistinguishable
+            if (pair := pairs.get((other, leader)) or pairs.get((leader, other))) is not None
+            and pair.family_divergence
+        ]
+        if diverged:
+            caveats.append(
+                f"the family rule, not the data, withheld the comparison against "
+                f"{', '.join(diverged)} — their stored intervals exclude zero"
             )
 
     if losers:
@@ -957,7 +1041,7 @@ def _pair_verdict(
     def build(verdict: VerdictKind, latest: dict | None) -> PairVerdict:
         guardrails = _guardrail_statuses(name_1, name_2, series, guardrail_comparisons)
         verdict, extra_rationale, extra_caveats = _apply_guardrail_policy(
-            experiment, verdict, guardrails
+            experiment, verdict, guardrails, role=role
         )
         rationale.extend(extra_rationale)
         caveats.extend(extra_caveats)
@@ -1045,6 +1129,10 @@ def _pair_verdict(
             guardrails=guardrails,
             family_divergence=family_divergence,
             role=role,
+            # The SAME flag the divergence caveat is gated on, exposed. It is
+            # set immediately before the significance rules run, so "the family
+            # rule was consulted" and "a decision was reached" are one fact.
+            judged=family_consulted,
         )
 
     if not group:
@@ -1239,22 +1327,28 @@ def _pair_verdict(
 
 
 def _guardrail_statuses(
-    control: str,
-    treatment: str,
+    name_1: str,
+    name_2: str,
     series: dict[tuple[str, str, str], list[dict]],
     guardrail_comparisons: list[ComparisonConfig],
 ) -> tuple[GuardrailStatus, ...]:
+    """Each guardrail's regression check for ONE arm pair, oriented name_2 vs name_1.
+
+    Renamed off ``control``/``treatment`` with `_pair_verdict` (m14 DEC-2): it
+    is called for treatment-vs-treatment pairs too, and a parameter called
+    ``control`` holding a treatment is a name this codebase does not keep.
+    """
     statuses: list[GuardrailStatus] = []
     for guardrail in guardrail_comparisons:
-        group = series.get((guardrail.metric, control, treatment), [])
+        group = series.get((guardrail.metric, name_1, name_2), [])
         informative = [row for row in group if _informative(row)]
         desired_sign = 1 if guardrail.desired_direction == "increase" else -1
         if not informative:
             statuses.append(
                 GuardrailStatus(
                     metric=guardrail.metric,
-                    name_1=control,
-                    name_2=treatment,
+                    name_1=name_1,
+                    name_2=name_2,
                     regressed=False,
                     effect=None,
                     desired_direction=guardrail.desired_direction,
@@ -1277,8 +1371,8 @@ def _guardrail_statuses(
         statuses.append(
             GuardrailStatus(
                 metric=guardrail.metric,
-                name_1=control,
-                name_2=treatment,
+                name_1=name_1,
+                name_2=name_2,
                 regressed=regressed,
                 effect=_num(latest.get("effect")),
                 desired_direction=guardrail.desired_direction,
@@ -1291,10 +1385,24 @@ def _apply_guardrail_policy(
     experiment: ExperimentConfig,
     verdict: VerdictKind,
     guardrails: tuple[GuardrailStatus, ...],
+    *,
+    role: PairRole = "vs_control",
 ) -> tuple[VerdictKind, list[str], list[str]]:
     """D5(c), owner-ratified: block caps WIN; warn keeps WIN with a loud caveat.
 
     The regression is always spelled out; LOSE is never upgraded or blocked.
+
+    **The cap does not apply to a treatment pair** (m14 DEC-2, review finding).
+    `guardrail_policy: block` exists to withhold a SHIP decision when the arm
+    would harm users relative to the baseline; a treatment pair is not a ship
+    decision, which is the whole reason `role` exists. Leaving the cap on made
+    the pair's verdict ORIENTATION-DEPENDENT — the cap fires on WIN and never
+    on LOSE, while "the leader is ahead" is a WIN stored one way and a LOSE
+    stored the other — so the rollup's separation claim moved when the arms
+    were merely re-ordered in `variants`. Measured: identical data, identical
+    guardrail regression, `separated` under one declaration order and
+    `co_leaders` under another. The regression still rides on the verdict as a
+    caveat and on its own card; only the CAP is scoped to ship decisions.
     """
     rationale: list[str] = []
     caveats: list[str] = []
@@ -1302,18 +1410,26 @@ def _apply_guardrail_policy(
     if not regressed:
         return verdict, rationale, caveats
     policy = experiment.readout.guardrail_policy
+    caps = verdict == "WIN" and policy == "block" and role == "vs_control"
     for g in regressed:
         effect_str = f"effect {g.effect:+.4g}" if g.effect is not None else "effect unavailable"
         message = (
             f"guardrail {g.metric!r} regressed ({effect_str} against desired "
             f"direction {g.desired_direction!r})"
         )
-        if verdict == "WIN" and policy == "block":
+        if caps:
             rationale.append(f"{message} — WIN withheld (guardrail_policy: block)")
+        elif verdict == "WIN" and role == "treatment_pair":
+            # Say why the cap did NOT fire rather than borrow `warn`'s
+            # sentence, which would name a policy the operator did not set.
+            caveats.append(
+                f"{message} — this pair compares two treatments, so "
+                "guardrail_policy does not withhold its verdict"
+            )
         elif verdict == "WIN":
             caveats.append(f"{message} — verdict kept under guardrail_policy: warn")
         else:
             caveats.append(message)
-    if verdict == "WIN" and policy == "block":
+    if caps:
         return "INCONCLUSIVE", rationale, caveats
     return verdict, rationale, caveats

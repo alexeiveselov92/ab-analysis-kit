@@ -59,8 +59,15 @@ verdict is READ-TIME only, recomputed at render, never persisted):*
   caveat. LOSE is never upgraded or blocked.
 - **Pre-horizon** (rows carry `ci_kind="fixed"` until M5): WIN/LOSE **and
   FLAT** are withheld before `is_horizon` — FLAT is equally a stop decision.
-- **Multi-arm**: one verdict per (main metric × control-vs-treatment pair);
-  no invented scalar aggregate.
+- **Multi-arm**: one verdict per (main metric × **declared arm pair**), each
+  carrying `role: vs_control | treatment_pair` (m14 DEC-2) — a `WIN` on the
+  pair `(B, C)` means "C beat B in the desired direction", never "ship C".
+  Through `0.8.0` only the control-anchored pairs were verdicted; the
+  treatment pairs were charted and never judged. Plus one `MetricRollup` per
+  main metric (leader · separation · losers) and `leaders_agree` across them —
+  a read-time composition over those verdicts, persisted nowhere, and still
+  **no invented scalar aggregate**: the rollup names an arm only when that arm
+  beat the control.
 - **Benjamini-Hochberg** (`correction: benjamini_hochberg`) is applied at
   read time by `readout.py`, per cutoff across the experiment's comparisons —
   compute-time rows deliberately carry the raw alpha.
