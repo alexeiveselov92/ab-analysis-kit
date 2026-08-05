@@ -401,7 +401,14 @@ def dispatch_experiment_signals(
     if not channels:
         return 0
 
-    verdicts = list(readout.verdicts)
+    # m14 DEC-2/D7: per-pair messages stay CONTROL-ANCHORED. A treatment pair
+    # is evidence, not a ship decision, and since DEC-2 the readout issues a
+    # verdict for every declared pair — so without this filter a three-arm
+    # experiment would silently triple its message volume (and mint a dedup
+    # state row per treatment pair) the moment DEC-2 merged. The rollup rides
+    # ON the control-anchored payload in DEC-4; there is no seventh signal
+    # kind.
+    verdicts = [v for v in readout.verdicts if v.role == "vs_control"]
     # NTF-6: which of them are a verdict FLIP, decided here because this is
     # where the previously announced verdict is read. Without the dedup store
     # there is no "previously announced" to compare against, so nothing claims

@@ -1177,3 +1177,42 @@ class TestDeclaredControlInThePayload:
         payload = build_report_payload(self._three_arm("c"), tables)
         pairs = [(p["c"], p["t"]) for m in payload["metrics"] for p in m["pairs"]]
         assert pairs == [("a", "b"), ("c", "a"), ("c", "b")]
+
+
+class TestPayloadStaysControlAnchoredUntilDec3:
+    """m14 DEC-2: the readout judges every declared pair, the PAYLOAD does not
+    carry the treatment pairs yet.
+
+    `report.ts` prints the verdict word with no role chip, and explore's Review
+    mode renders every matching verdict — so a `WIN` on a `B vs C` card would
+    read as a ship recommendation on two surfaces at once. DEC-3 adds `role` to
+    the payload and the chip beside it; this test is what makes that a
+    deliberate commit.
+    """
+
+    @staticmethod
+    def _three_arm():
+        return make_experiment(
+            assignment={
+                "query": "SELECT 1",
+                "variants": ["control", "t1", "t2"],
+                "expected_split": {"control": 0.34, "t1": 0.33, "t2": 0.33},
+            }
+        )
+
+    def test_only_ship_decisions_are_baked(self, tables):
+        experiment = self._three_arm()
+        seed_series(tables, experiment, name_2="t1")
+        seed_series(tables, experiment, name_2="t2")
+        seed_series(tables, experiment, name_1="t1", name_2="t2")
+
+        # the decision layer DID judge it — this is about the payload
+        rows = tables.load_results(experiment.name, "revenue")
+        assert any(v.role == "treatment_pair" for v in evaluate(experiment, rows).verdicts)
+
+        payload = build_report_payload(experiment, tables)
+        pairs = {(v["pair"]["c"], v["pair"]["t"]) for v in payload["verdicts"]}
+        assert pairs == {("control", "t1"), ("control", "t2")}
+        # the pair is still CHARTED — it always was; only the verdict is withheld
+        charted = {(p["c"], p["t"]) for m in payload["metrics"] for p in m["pairs"]}
+        assert ("t1", "t2") in charted

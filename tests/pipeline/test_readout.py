@@ -870,8 +870,14 @@ class TestHolm:
                 rows += make_series(experiment, metric=metric, pvalue=0.007, name_2=treatment)
         readout = evaluate(experiment, rows)
         # m=6 ⇒ first step 0.05/6 = 0.00833 > 0.007 ⇒ every pair rejects; per-pair
-        # families (m=3) would also reject, so pin the DISCRIMINATING case below
-        assert all(v.verdict == "WIN" for v in readout.verdicts)
+        # families (m=3) would also reject, so pin the DISCRIMINATING case below.
+        # Scoped to the ship decisions: since m14 DEC-2 the readout also issues a
+        # verdict for (t1, t2), which this fixture has no rows for. The FAMILY is
+        # unaffected either way — `_build_sig_map` is built from ROWS, not from
+        # verdicts, so a verdict cannot move a threshold.
+        ship = [v for v in readout.verdicts if v.role == "vs_control"]
+        assert len(ship) == 2
+        assert all(v.verdict == "WIN" for v in ship)
 
         borderline = []
         for metric in ("revenue", "sessions", "retention"):
@@ -1038,11 +1044,22 @@ class TestMultiArm:
                 )
                 for d in range(1, 15)
             ]
-        # A treatment-vs-treatment row must not create a verdict.
+        # Since m14 DEC-2 a treatment-vs-treatment row DOES get a verdict — but
+        # it is labelled, and the ship decisions are untouched. Before DEC-2 the
+        # pair was charted and never judged.
         rows.append(make_row(experiment, day=14, name_1="t1", name_2="t2"))
         readout = evaluate(experiment, rows)
-        pairs = {(v.name_1, v.name_2): v.verdict for v in readout.verdicts}
-        assert pairs == {("control", "t1"): "WIN", ("control", "t2"): "LOSE"}
+        ship = {(v.name_1, v.name_2): v.verdict for v in readout.verdicts if v.role == "vs_control"}
+        assert ship == {("control", "t1"): "WIN", ("control", "t2"): "LOSE"}
+        evidence = [v for v in readout.verdicts if v.role == "treatment_pair"]
+        assert [(v.name_1, v.name_2) for v in evidence] == [("t1", "t2")]
+        # ORDER: the ship decisions come first, so `verdicts[0]` still points at
+        # the pair it pointed at in 0.8.0 (the dashboard headline until DEC-4).
+        assert [v.role for v in readout.verdicts] == [
+            "vs_control",
+            "vs_control",
+            "treatment_pair",
+        ]
 
 
 # ── hygiene: orphans, unconfigured metrics, config validation ────────────────
@@ -1436,7 +1453,16 @@ class TestDeclaredControl:
     def test_verdicts_are_issued_against_the_declared_baseline(self):
         experiment = self._three_arm()
         readout = evaluate(experiment, self._declared_rows(experiment))
-        assert [(v.name_1, v.name_2) for v in readout.verdicts] == [("b", "a"), ("b", "c")]
+        ship = [v for v in readout.verdicts if v.role == "vs_control"]
+        assert [(v.name_1, v.name_2) for v in ship] == [("b", "a"), ("b", "c")]
+        # m14 DEC-2: the treatment pair is judged too, and the ship decisions
+        # still come first even though `contrast_pairs()` puts (a, c) second
+        # under this declaration.
+        assert [(v.name_1, v.name_2) for v in readout.verdicts] == [
+            ("b", "a"),
+            ("b", "c"),
+            ("a", "c"),
+        ]
 
     def test_the_srm_gate_stays_loud_under_a_declared_control(self):
         """The silent failure DEC-1 exists to prevent.

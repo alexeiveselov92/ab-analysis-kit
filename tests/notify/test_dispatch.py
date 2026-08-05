@@ -436,6 +436,39 @@ class TestDispatchExperimentSignals:
         assert sorted(label for label, _ in RecordingChannel.sent) == ["a", "a", "b", "b"]
         assert {data.name_2 for _, data in RecordingChannel.sent} == {"t1", "t2"}
 
+    def test_treatment_pairs_never_become_messages(self, tables):
+        """m14 DEC-2/D7. The readout issues a verdict for every declared pair
+        since DEC-2; a message is a SHIP DECISION, so only the control-anchored
+        ones are sent. Without the filter this three-arm experiment would send
+        three messages per channel instead of two — and mint a dedup state row
+        for a pair no operator asked about. The rollup rides on the
+        control-anchored payload in DEC-4; there is no seventh signal kind.
+        """
+        experiment = make_experiment(
+            assignment={
+                "query": "SELECT 1",
+                "variants": ["control", "t1", "t2"],
+                "expected_split": {"control": 0.34, "t1": 0.33, "t2": 0.33},
+            }
+        )
+        seed(tables, experiment, name_2="t1")
+        seed(tables, experiment, name_2="t2")
+        seed(tables, experiment, name_1="t1", name_2="t2")
+
+        # the readout DOES judge the treatment pair — this test is about the
+        # channel, not about the decision layer
+        from abkit.pipeline.readout import evaluate
+
+        rows = tables.load_results(experiment.name, "revenue")
+        assert any(v.role == "treatment_pair" for v in evaluate(experiment, rows).verdicts)
+
+        sent = dispatch(experiment, tables, {"a": channel("a")})
+        assert sent == 2
+        assert {(d.name_1, d.name_2) for _, d in RecordingChannel.sent} == {
+            ("control", "t1"),
+            ("control", "t2"),
+        }
+
     def test_a_raising_channel_never_blocks_the_others(self, tables):
         experiment = make_experiment()
         seed(tables, experiment)

@@ -510,7 +510,16 @@ def _fill_stats(
     # dropping the oldest is not a shorter experiment, it is a truncated
     # stabilization history (module docstring).
     readout = evaluate(experiment, rows, project=project)
-    if not readout.verdicts:
+    # m14 DEC-2: the dashboard stays CONTROL-ANCHORED. Since DEC-2 the readout
+    # also issues treatment-vs-treatment verdicts, and this row cannot yet say
+    # which is which — the expand list would gain unlabelled `B vs C` entries
+    # reading as ship decisions, and the row's safety flag would turn red for a
+    # regression between two treatments, which says nothing about harm relative
+    # to control (DEC-4 decided that flag stays control-anchored; DEC-2 is what
+    # makes the distinction reachable). DEC-4 replaces the headline with the
+    # rollup and opens the list deliberately.
+    ship = [v for v in readout.verdicts if v.role == "vs_control"]
+    if not ship:
         # Unreachable through a validated config (≥1 main comparison and ≥2
         # variants are both enforced), so degrade rather than index blind.
         raise ValueError(
@@ -518,7 +527,7 @@ def _fill_stats(
             "a main comparison and a treatment arm are both required"
         )
 
-    headline = readout.verdicts[0]
+    headline = ship[0]
     row["verdict"] = headline.verdict
     row["effect"] = _num(headline.effect)
     row["ci"] = [_num(headline.left_bound), _num(headline.right_bound)]
@@ -540,7 +549,7 @@ def _fill_stats(
     row["rationale"] = list(headline.rationale)
     row["caveats"] = list(headline.caveats)
     row["guardrail_regressed"] = any(
-        guardrail.regressed for verdict in readout.verdicts for guardrail in verdict.guardrails
+        guardrail.regressed for verdict in ship for guardrail in verdict.guardrails
     )
     # Named `verdicts`, matching ``ExperimentReadout.verdicts`` — deliberately
     # NOT `comparisons`, which is the boot entry's CONFIGURED list. DASH-5
@@ -557,7 +566,7 @@ def _fill_stats(
             "caveats": list(verdict.caveats),
             "guardrail_regressed": any(guardrail.regressed for guardrail in verdict.guardrails),
         }
-        for verdict in readout.verdicts
+        for verdict in ship
     ]
     # The two states `abk clean` exists for are invisible unless the row says
     # so: the report warns about them and this surface is the one an operator

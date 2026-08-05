@@ -119,9 +119,15 @@ class GuardrailStatus:
     desired_direction: str
 
 
+#: What a pair's verdict is ABOUT (m14 DEC-2). ``vs_control`` is a ship
+#: decision; ``treatment_pair`` is evidence about two treatments and says
+#: nothing about either against the baseline.
+PairRole = Literal["vs_control", "treatment_pair"]
+
+
 @dataclass(frozen=True)
 class PairVerdict:
-    """The verdict for one (main-metric comparison × control-vs-treatment pair)."""
+    """The verdict for one (main-metric comparison × declared arm pair)."""
 
     metric: str
     name_1: str
@@ -151,12 +157,66 @@ class PairVerdict:
     #: surface that renders fields (the notification payload) needs the fact
     #: itself, and sniffing it out of a caveat STRING is how prose becomes API.
     family_divergence: bool = False
+    #: m14 DEC-2. A ``WIN`` on the pair ``(B, C)`` means "C beat B in the
+    #: desired direction", NOT "ship C" — and every renderer that prints the
+    #: word needs the distinction as a FIELD. Deriving it at the surface by
+    #: testing ``name_1 == control`` is the STAT-1 `family_divergence` lesson
+    #: inverted: a fact several renderers need is API, not something each
+    #: re-infers. Defaulted so a hand-built verdict (tests, notebooks) is still
+    #: a ship decision unless it says otherwise.
+    role: PairRole = "vs_control"
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
         payload["rationale"] = list(self.rationale)
         payload["caveats"] = list(self.caveats)
         payload["guardrails"] = [asdict(g) for g in self.guardrails]
+        return payload
+
+
+#: How well the leader is separated from the other treatments (m14 DEC-2).
+#:
+#: ``no_leader`` is a FOURTH state the design's table did not have, and it is
+#: not a nicety: with no winning arm the ``indistinguishable`` set is empty,
+#: which would read as ``separated`` — "the leader beat everyone" said of an
+#: experiment that has no leader. Overloading ``untested`` instead would be the
+#: opposite lie, since that word means "we could not look". Most experiments do
+#: not win, so this is the COMMON state, not an edge case.
+SeparationState = Literal["separated", "co_leaders", "untested", "no_leader"]
+
+
+@dataclass(frozen=True)
+class MetricRollup:
+    """One main metric's arm-level summary (m14 DEC-2, D2: one per main metric).
+
+    A read-time composition over the pair verdicts that are already in this
+    readout — it re-derives no statistic and is persisted nowhere (D10, the
+    STAT-1 D12 precedent: a stored copy goes stale the moment a metric is added
+    or the contrast set is narrowed).
+    """
+
+    metric: str
+    #: The arm to ship, or ``None``. Chosen ONLY among treatments whose
+    #: vs-control verdict is ``WIN`` (D6) — "the best point estimate among arms
+    #: that did not beat control" is precisely the uncontrolled claim D1
+    #: refused, and with no winner the rollup names nothing.
+    leader: str | None
+    #: Treatments the leader is NOT decisively better than — read off the
+    #: existing treatment-pair verdicts, tested against EVERY other treatment
+    #: rather than the runner-up (D5).
+    indistinguishable: tuple[str, ...]
+    separation: SeparationState
+    #: Treatments whose vs-control verdict is ``LOSE``.
+    losers: tuple[str, ...]
+    #: Arms whose guardrail regressed AGAINST THE CONTROL.
+    guardrail_regressed: tuple[str, ...]
+    rationale: tuple[str, ...]
+    caveats: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = asdict(self)
+        for key in ("indistinguishable", "losers", "guardrail_regressed", "rationale", "caveats"):
+            payload[key] = list(getattr(self, key))
         return payload
 
 
@@ -169,6 +229,14 @@ class ExperimentReadout:
     srm_pvalue: float | None
     verdicts: tuple[PairVerdict, ...]
     warnings: tuple[str, ...]
+    #: One per main metric, config order (m14 DEC-2). Empty only when the
+    #: experiment declares no main comparison, which the validator forbids.
+    rollups: tuple[MetricRollup, ...] = ()
+    #: Do the per-metric leaders coincide? ``None`` when fewer than two rollups
+    #: name one — there is nothing to agree about. It REPORTS; it never picks,
+    #: because `is_main_metric` is a boolean and there is no declared metric
+    #: priority to break the tie with (D2's rejected option).
+    leaders_agree: bool | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -177,6 +245,8 @@ class ExperimentReadout:
             "srm_pvalue": self.srm_pvalue,
             "verdicts": [v.to_dict() for v in self.verdicts],
             "warnings": list(self.warnings),
+            "rollups": [r.to_dict() for r in self.rollups],
+            "leaders_agree": self.leaders_agree,
         }
 
 
@@ -577,9 +647,23 @@ def evaluate(
     main_comparisons = [c for c in experiment.comparisons if c.is_main_metric]
     guardrail_comparisons = [c for c in experiment.comparisons if c.is_guardrail]
 
+    # Treatment pairs exist only under `contrasts: all_pairs` — under
+    # `vs_control` they were never computed, so there is nothing to verdict and
+    # the knob stays load-bearing (it shows up as the rollup's `untested`).
+    declared = set(experiment.contrast_pairs())
+    treatment_pairs = tuple(pair for pair in experiment.contrast_pairs() if control not in pair)
+
+    # ORDER IS LOAD-BEARING: every control-anchored verdict first, in the exact
+    # sequence 0.8.0 emitted them, then the treatment pairs. So the 0.8.0
+    # verdict list is a literal PREFIX of this one — which keeps
+    # `verdicts[0]` (the dashboard headline until DEC-4) pointing at the same
+    # pair it always did, including when a declared control puts a treatment
+    # pair first in `contrast_pairs()`.
     verdicts: list[PairVerdict] = []
     for comparison in main_comparisons:
         for treatment in treatments:
+            if (control, treatment) not in declared:
+                continue
             verdicts.append(
                 _pair_verdict(
                     experiment,
@@ -592,6 +676,26 @@ def evaluate(
                     correction,
                 )
             )
+    for comparison in main_comparisons:
+        for name_1, name_2 in treatment_pairs:
+            verdicts.append(
+                _pair_verdict(
+                    experiment,
+                    comparison,
+                    name_1,
+                    name_2,
+                    series,
+                    sig_map,
+                    guardrail_comparisons,
+                    correction,
+                    role="treatment_pair",
+                )
+            )
+
+    rollups = tuple(
+        _metric_rollup(comparison, control, treatments, verdicts, bool(treatment_pairs))
+        for comparison in main_comparisons
+    )
 
     srm_flag, srm_pvalue = _srm_from_series(experiment, series)
 
@@ -601,7 +705,161 @@ def evaluate(
         srm_pvalue=srm_pvalue,
         verdicts=tuple(verdicts),
         warnings=tuple(warnings),
+        rollups=rollups,
+        leaders_agree=_leaders_agree(rollups),
     )
+
+
+def _leaders_agree(rollups: Sequence[MetricRollup]) -> bool | None:
+    """Do the main metrics' leaders coincide? ``None`` = nothing to agree about.
+
+    Counted over the rollups that NAME a leader, not over all of them: a metric
+    with no winning arm has no opinion, and letting it read as disagreement
+    would raise the chip on the most ordinary experiment there is. Fewer than
+    two opinions ⇒ ``None``.
+    """
+    named = [r.leader for r in rollups if r.leader is not None]
+    if len(named) < 2:
+        return None
+    return len(set(named)) == 1
+
+
+def _metric_rollup(
+    comparison: ComparisonConfig,
+    control: str,
+    treatments: Sequence[str],
+    verdicts: Sequence[PairVerdict],
+    has_treatment_pairs: bool,
+) -> MetricRollup:
+    """Compose one main metric's rollup from the verdicts already issued.
+
+    Nothing here recomputes a statistic: every input is a `PairVerdict` this
+    same `evaluate()` call produced, so the rollup cannot disagree with the
+    cards rendered beside it.
+    """
+    metric = comparison.metric
+    mine = [v for v in verdicts if v.metric == metric]
+    vs_control = {v.name_2: v for v in mine if v.role == "vs_control"}
+    pairs = {(v.name_1, v.name_2): v for v in mine if v.role == "treatment_pair"}
+
+    rationale: list[str] = []
+    caveats: list[str] = []
+
+    winners = [t for t in treatments if (v := vs_control.get(t)) is not None and v.verdict == "WIN"]
+    losers = tuple(
+        t for t in treatments if (v := vs_control.get(t)) is not None and v.verdict == "LOSE"
+    )
+    guardrail_regressed = tuple(
+        t
+        for t in treatments
+        if (v := vs_control.get(t)) is not None and any(g.regressed for g in v.guardrails)
+    )
+
+    # D6: rank ONLY the winners, and only those carrying an effect. A WIN
+    # without one is unreachable through `_pair_verdict` (WIN needs
+    # significance, which needs an informative row), but ranking `None` would
+    # raise rather than degrade, and a readout may not crash on a row shape.
+    desired_sign = 1 if comparison.desired_direction == "increase" else -1
+    rankable = [t for t in winners if vs_control[t].effect is not None]
+    leader: str | None = None
+    if rankable:
+        # Ties break on DECLARATION order (`treatments` is already in it and
+        # `max` keeps the first maximal element) — deterministic, and the same
+        # convention every other "first declared" default in abkit uses.
+        leader = max(rankable, key=lambda t: desired_sign * float(vs_control[t].effect))
+
+    indistinguishable: tuple[str, ...] = ()
+    separation: SeparationState
+    if leader is None:
+        separation = "no_leader"
+        if winners:
+            # winners exist but none carries an effect — say which is missing
+            rationale.append(f"{len(winners)} arm(s) beat {control} but carry no effect to rank")
+        else:
+            rationale.append(f"no arm beat {control} on {metric}")
+    elif not (others := [t for t in treatments if t != leader]):
+        # ONE treatment: there is no other arm to be separated FROM, so the
+        # claim is vacuously true. Deliberately NOT `untested`, which means "we
+        # could not look" and would invent a gap in the two-arm experiment that
+        # is the whole of `0.8.0`'s world.
+        separation = "separated"
+        rationale.append(f"{leader} beat {control} on {metric}")
+    elif not has_treatment_pairs:
+        separation = "untested"
+        rationale.append(
+            f"{leader} beat {control} on {metric}; the treatments were not compared "
+            "against each other (`contrasts: vs_control` declares only the "
+            "control contrasts, so those rows do not exist)"
+        )
+    else:
+        undecided = tuple(other for other in others if not _leader_beats(leader, other, pairs))
+        indistinguishable = undecided
+        separation = "separated" if not undecided else "co_leaders"
+        if separation == "separated":
+            rationale.append(
+                f"{leader} beat {control} on {metric} and is decisively better "
+                f"than every other treatment ({', '.join(others)})"
+            )
+        else:
+            rationale.append(
+                f"{leader} beat {control} on {metric}, but is not decisively "
+                f"better than {', '.join(undecided)} — they are co-leaders on "
+                "this metric"
+            )
+
+    if losers:
+        rationale.append(f"{', '.join(losers)} lost to {control}")
+    if guardrail_regressed:
+        caveats.append(
+            f"guardrail regression against {control} on: {', '.join(guardrail_regressed)}"
+        )
+
+    return MetricRollup(
+        metric=metric,
+        leader=leader,
+        indistinguishable=indistinguishable,
+        separation=separation,
+        losers=losers,
+        guardrail_regressed=guardrail_regressed,
+        rationale=tuple(rationale),
+        caveats=tuple(caveats),
+    )
+
+
+def _leader_beats(
+    leader: str,
+    other: str,
+    pairs: dict[tuple[str, str], PairVerdict],
+) -> bool:
+    """Is *leader* DECISIVELY better than *other* on this metric?
+
+    D5's rule, written once. Two halves, and both matter:
+
+    * **The pair's own verdict decides, not its raw significance.** ``WIN`` and
+      ``LOSE`` are what this readout was willing to CALL for that pair — they
+      already carry the SRM gate, the pre-horizon refusal, the demotion gate,
+      the stabilization scan and the family rule. Reading `significant` instead
+      would invent a second, looser decision rule for a pair whose verdict is
+      sitting right there, which is exactly the two-transcriptions hazard D5's
+      rule 3 warns about. (The design phrased the predicate as "significant AND
+      the re-oriented sign matches"; the verdict word is that conjunction plus
+      the gates.)
+    * **Orientation decides which word means what.** ``effect`` is always
+      ``name_2`` against ``name_1``, and for a treatment pair the leader can be
+      either element. Stored as ``(other, leader)`` a ``WIN`` means the leader
+      came out ahead; stored as ``(leader, other)`` the same fact is a ``LOSE``.
+      A missing pair (a demoted series, rows not yet computed) is not a win.
+
+    Note what this function deliberately does NOT take: ``desired_direction``.
+    ``_pair_verdict`` has already resolved the word against it, so applying it
+    a second time here would flip the answer twice on a ``decrease`` metric —
+    and a parameter that exists only to be ignored is an invitation to use it.
+    """
+    if (verdict := pairs.get((other, leader))) is not None:
+        return verdict.verdict == "WIN"
+    if (verdict := pairs.get((leader, other))) is not None:
+        return verdict.verdict == "LOSE"
+    return False
 
 
 def _filter_rows(
@@ -665,15 +923,29 @@ def _filter_rows(
 def _pair_verdict(
     experiment: ExperimentConfig,
     comparison: ComparisonConfig,
-    control: str,
-    treatment: str,
+    name_1: str,
+    name_2: str,
     series: dict[tuple[str, str, str], list[dict]],
     sig_map: dict[_RowKey, _Sig],
     guardrail_comparisons: list[ComparisonConfig],
     correction: str,
+    role: PairRole = "vs_control",
 ) -> PairVerdict:
+    """The verdict for ONE declared arm pair, oriented ``name_2`` against ``name_1``.
+
+    The arms were called ``control``/``treatment`` until m14 DEC-2, which is
+    when the function started being called for treatment-vs-treatment pairs
+    too. **Not one line of the decision logic changed** — it never needed the
+    first arm to be the baseline: every gate (SRM, pre-horizon, demotion, the
+    stabilization scan, sign consistency against ``desired_direction``, the
+    guardrail policy) is a statement about the pair it is handed. Only the
+    parameter NAMES were wrong for the general case, and a parameter called
+    ``control`` holding a treatment is the kind of name this codebase does not
+    keep. ``role`` rides onto the result so a renderer never has to re-infer
+    what the pair is about.
+    """
     metric = comparison.metric
-    group = series.get((metric, control, treatment), [])
+    group = series.get((metric, name_1, name_2), [])
     rationale: list[str] = []
     caveats: list[str] = []
     #: has the family rule actually been consulted for this pair? Every earlier
@@ -683,7 +955,7 @@ def _pair_verdict(
     family_consulted = False
 
     def build(verdict: VerdictKind, latest: dict | None) -> PairVerdict:
-        guardrails = _guardrail_statuses(control, treatment, series, guardrail_comparisons)
+        guardrails = _guardrail_statuses(name_1, name_2, series, guardrail_comparisons)
         verdict, extra_rationale, extra_caveats = _apply_guardrail_policy(
             experiment, verdict, guardrails
         )
@@ -753,8 +1025,8 @@ def _pair_verdict(
         mde_value, _ = pair_mde(latest) if latest else (None, None)
         return PairVerdict(
             metric=metric,
-            name_1=control,
-            name_2=treatment,
+            name_1=name_1,
+            name_2=name_2,
             verdict=verdict,
             rationale=tuple(rationale),
             caveats=tuple(caveats),
@@ -772,6 +1044,7 @@ def _pair_verdict(
             weekly_cycle_pct=weekly_cycle_pct,
             guardrails=guardrails,
             family_divergence=family_divergence,
+            role=role,
         )
 
     if not group:

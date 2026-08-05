@@ -531,7 +531,14 @@ def build_report_payload(
         # The M4 shape (fpr, peeking_fpr, headline, matrix_rows, report_link) fills
         # in without a payload v-bump (§5.3; every field renderer-side optional).
         "calibration": calibration,
-        "verdicts": [_verdict_to_payload(v) for v in readout.verdicts],
+        # m14 DEC-2: control-anchored only, for now. The readout issues a
+        # verdict for every declared pair since DEC-2, but the renderers cannot
+        # yet SAY which is which — `report.ts` prints the word alone, so a
+        # `WIN` on a `B vs C` card would read as a ship recommendation, and
+        # explore's Review mode renders every matching verdict, so it would
+        # inherit the same misreading for free. DEC-3 adds `role` to the payload
+        # and the role chip beside it; that is the commit that opens this up.
+        "verdicts": [_verdict_to_payload(v) for v in readout.verdicts if v.role == "vs_control"],
         "metrics": metrics,
         "look": {"n": len(informative_cutoffs), "planned": len(grid)},
         # injected by the explore server at serve time; null in a baked report
