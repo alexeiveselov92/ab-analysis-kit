@@ -464,7 +464,8 @@ Two neighbouring gaps stay where they are, on purpose: a **power formula for
 ratio metrics / bootstrap methods** is a statistical addition under full change
 control (M13 design session, or M15 with the new methods — `abk plan` refuses
 them today rather than inventing math, D10), and **multi-arm sizing** (the
-planner sizes the first declared pair only) belongs to M14's decision layer.
+planner sizes one contrast only — since M14 DEC-1 the control against the first
+declared treatment) belongs to M14's decision layer (DEC-5).
 
 ### Interstitial — the cockpit's next gaps + the incremental default ✅ SHIPPED (`0.6.4`) → `0.6.x`
 Added 2026-08-02 (maintainer request, in conversation). Like the PLAN
@@ -959,8 +960,8 @@ before STAT-3 — D17.) ~5–6 sessions, of which the correction layer (STAT-1c,
 STAT-1b, STAT-2, STAT-1), the guard (STAT-3a) and the proportion interval
 (STAT-3) are done.
 
-### M14 — multi-arm decision layer (bucket B, decisions) → `0.9.0` 📐 designed
-An explicit `control:` field (or a validated positional convention);
+### M14 — multi-arm decision layer (bucket B, decisions) → `0.9.0` 🚧 in progress
+An explicit `control:` field (✅ **shipped — DEC-1**);
 experiment-level winner rollup on `ExperimentReadout`; treatment-vs-treatment
 verdicts; a cross-arm overview in report/explore/dashboard (the 0.1.x
 multi-arm UX safe wins fold in here). Pair statistics do not change — this is
@@ -980,6 +981,21 @@ tested separation" off existing rows (D1); a simultaneous best-arm procedure
 the contour, because the audit's supporting items (the `abk validate` N-arm
 placebo, `abk plan` sizing one contrast of many, SRM with no culprit arm) were
 scoped IN.
+
+**Progress.** ✅ **DEC-1** — `assignment.control`, the declared baseline:
+`ExperimentConfig.control` / `.treatments` is the one resolver (AST-gated,
+`tests/config/test_control_is_the_only_entry.py`), `contrast_pairs()` orients
+every pair containing the control as `(control, other)` without changing the
+family size, all seven positional sites reroute, `_ab_experiments.control` is
+added additively, and config-lint warns about the re-orientation an experiment
+with existing rows pays for. No default moves — the orientation is a no-op by
+construction under the positional default. As-built deltas: a third resolver
+member (`control_reorients_pairs`), one shared `UNDECLARED_PAIR_CAUSES` string
+replacing four surface-local copies of the cause list, a `control` key in the
+report payload so the report/explore headers stop claiming "first = control",
+and two review-found repairs beyond the plan — the catalog-migration gate had
+gone blind to its own class of defect, and the inherited `--full-refresh --to
+<horizon>` advice was off by one look. ⬜ DEC-2 next.
 
 ### M15 — new methods (bucket C, statistics) → `0.10.0` 📐 contour
 Student-t (Welch–Satterthwaite), BCa bootstrap, Mann-Whitney, cross-fitted
@@ -1046,8 +1062,8 @@ A/A revalidation).
     Welch–Satterthwaite, BCa bootstrap, cross-fitted CUPED/CUPAC, cluster-robust SE are the
     same items already named under v2 below — promote per demand.)*
   - Multi-arm decision layer: **experiment-level winner rollup** on `ExperimentReadout` +
-    treatment-vs-treatment verdicts + a cross-arm overview; an explicit **`control:`** field
-    (or validate the positional convention).
+    treatment-vs-treatment verdicts + a cross-arm overview (M14, in progress); the explicit
+    **`control:`** field ✅ shipped in M14 DEC-1.
 - **v2 / bets:** incremental Chan-merge cumulative recompute (the real warehouse-cost lever;
   see below); drop-`statsmodels` scipy reimplementation (or `[power]` optional extra);
   bootstrap `PCG64→SFC64`.

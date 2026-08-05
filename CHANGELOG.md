@@ -11,6 +11,70 @@ recorded here alongside an `ALGORITHM_VERSION` bump and a
 [`statistics-changes.md`](docs/specs/statistics-changes.md) entry (never a silent
 number change).
 
+## [Unreleased]
+
+### Added
+- **`assignment.control` — the declared baseline arm** (M14 DEC-1). Optional and
+  validated to be one of `assignment.variants`; unset, the control is the first
+  declared variant exactly as through `0.8.0`. There is deliberately **no
+  project-level default**: the baseline a surface measures against must not
+  depend on whether that surface resolved a `ProjectConfig`.
+  **Nothing moves for an experiment that does not declare it** — no
+  `ALGORITHM_VERSION` was bumped, no alpha and no verdict changed, and the
+  re-orientation below is a **no-op by construction** under the default, since
+  `itertools.combinations` already emits `variants[0]` first in every pair that
+  contains it. `abk init` does not scaffold the field.
+  `ExperimentConfig.control` / `.treatments` is the ONE resolver (the
+  `grid()` / `contrast_pairs()` / `build_cohort_backend` family), AST-gated by
+  `tests/config/test_control_is_the_only_entry.py`: seven sites had spelled the
+  convention, and one of them — `readout._srm_from_series` — failed *silently*,
+  every series lookup missing so a broken assignment read healthy.
+- **`_ab_experiments.control`** (`Nullable(String)`) records the RESOLVED
+  baseline for BI — which arm every `_ab_results.effect` is measured against.
+  Added **additively**: an existing install picks it up on its next run with no
+  recreate. Nullable rather than defaulted because no literal default can be
+  right for a per-experiment variant name (and `ensure_columns` refuses a
+  NOT-NULL/no-default addition — the `0.8.0` `contrasts` lesson, whose entry is
+  directly below). **NULL means exactly one thing: a row written before
+  `0.9.0`.**
+- The report and `abk explore` headers now name the baseline arm
+  (`control: <name>`) when it is not the first, instead of the unconditional
+  `first = control` — a sentence that was a tautology until an arm could be
+  declared, and that would otherwise have named `a` as the baseline directly
+  above pair blocks reading "c vs a". Payloads baked before `0.9.0`, and every
+  experiment whose control IS the first arm, render exactly as before.
+
+### Changed
+- **Declaring a NON-FIRST control on a running experiment re-bases it**, and
+  `abk run --steps validate` warns with all four consequences: the pairs
+  containing it are stored as `(control, other)`, so their previously persisted
+  rows leave the declared contrast set and every read surface drops them
+  loudly; the effect is measured against the other arm — the negation of the
+  old number on the **absolute** scale, but **not** on the **relative** scale,
+  where the denominator swaps arms too (`(m₂−m₁)/m₁` becomes `(m₁−m₂)/m₂`);
+  the next **plain `abk run` recomputes the whole series** (no `--full-refresh`
+  needed — no look carries the re-oriented pair, so the anti-join re-plans
+  everything), and until it does the read-time correction families are built
+  from the surviving rows only, so a verdict read in between can be looser than
+  the one that settles; and the previous orientation's rows are **never
+  deleted**, so raw SQL over `_ab_results` sees both orientations of that pair
+  (join `_ab_experiments.control` to tell them apart). The family SIZE — and
+  therefore the alpha divisor — is untouched: a declaration re-orients pairs, it
+  never adds or removes one.
+- The "rows outside the declared contrast set" warning now names **three**
+  causes (a renamed arm, `contrasts: vs_control`, and a re-orienting
+  `assignment.control`) from one shared string, instead of four surface-local
+  copies of a two-cause list.
+
+### Fixed
+- The dashboard's stale-pair note advised `abk run --full-refresh --from
+  <start> --to <horizon>`, which leaves the horizon look un-rewritten: `--to` is
+  **exclusive** on `end_ts` and since `0.5.0` the horizon cutoff's `end_ts`
+  **is** `horizon_ts`. It now says to pass a bound past the horizon, in UTC (the
+  `--from`/`--to` bounds are parsed naive and compared against naive-UTC
+  `end_ts`, while the YAML window is local — so the off-by-one bit on some
+  timezones and not others).
+
 ## [0.8.0] - 2026-08-05
 
 ### Fixed

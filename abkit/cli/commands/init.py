@@ -182,7 +182,7 @@ timezone: UTC
 
 assignment:                 # READ-ONLY exposure source — abkit never randomizes
   query_file: sql/example_assignment.sql
-  variants: [control, treatment]        # FIRST is control (name_1)
+  variants: [control, treatment]        # FIRST is control (name_1) unless `control:` says otherwise
   expected_split: {control: 0.5, treatment: 0.5}   # drives the SRM gate
   # cohort_copy:            # opt-in: persist an incremental, append-only
   #   enabled: true         # _ab_exposures copy instead of re-reading the

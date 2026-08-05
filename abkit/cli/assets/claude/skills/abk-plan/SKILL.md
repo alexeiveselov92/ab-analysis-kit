@@ -146,8 +146,9 @@ accepted only on a comparison whose method actually applies a covariate.
   the daily series early is peeking — if they want to stop early, enable
   `sequential: {enabled: true}` (opt-in, off by default), and validate calibration
   with the **`abk-validate`** skill before trusting verdicts.
-- **Multi-arm note:** for >2 variants, sizing is shown for the first contrast
-  (`variants[0]` vs `variants[1]`) only; the other pairs share the same alpha.
+- **Multi-arm note:** for >2 variants, sizing is shown for one contrast only —
+  the control (`assignment.control`, default the first declared variant) against
+  the first declared treatment; the other pairs share the same alpha.
 
 `abk plan` is planning-only. Sizing (required-N / MDE / power) is the core; **runtime /
 ASN** ship alongside it. If the user asks "how long", `abk plan` reports **runtime**

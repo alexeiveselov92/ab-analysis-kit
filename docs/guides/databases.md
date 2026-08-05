@@ -180,7 +180,7 @@ The internal state, in the internal location (architecture §6):
 
 | Table | Role |
 |---|---|
-| `_ab_experiments` | experiment catalog (name, window, status) |
+| `_ab_experiments` | experiment catalog (name, window, status, control arm) |
 | `_ab_exposures` | per-unit assignment copy (unit, variant, exposure_ts, stratum) — **read-only, and optional**: only created/populated when `assignment.cohort_copy.enabled: true` (an opt-in incremental copy). By default abkit never persists this table — it joins the live assignment source on every read instead, so don't build a dashboard that assumes it exists. The SRM gate itself always measures the live validated source, not this table. |
 | `_ab_unit_state` | cumulative per-unit moments (the scalability substrate) |
 | `_ab_results` | the clean BI contract — one cumulative row per (experiment, metric, pair, method, cutoff) |

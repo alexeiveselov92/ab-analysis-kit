@@ -68,7 +68,8 @@ timezone: UTC                    # interprets bare-date edges + the day lattice 
 assignment:                      # READ-ONLY exposure source — abkit never randomizes
   query_file: sql/assignment.sql # or inline `query:` — exactly one, never both
   added_filters: ""              # optional extra SQL fragment (must start with AND)
-  variants: [control, treatment] # FIRST is control (name_1); >= 2, unique
+  variants: [control, treatment] # the FIRST is control (name_1) unless `control:` says otherwise
+  # control: control             # OPTIONAL: which arm is the baseline (default: variants[0])
   expected_split: {control: 0.5, treatment: 0.5}   # per variant, sum to 1.0; drives SRM
   # cohort_copy: {enabled: true} # opt-in persisted _ab_exposures copy (default OFF — see below)
 
@@ -218,8 +219,35 @@ incrementally-updated copy into `_ab_exposures` instead.
   packaged cohort WHERE clause. If set, it must start with `AND`. This is the
   only escape hatch for extra conditions.
 - **`variants`** (required) — the arm names. At least two, unique, non-empty,
-  within the key budget. **The first variant is control (`name_1`)**; every
-  later variant is compared against it.
+  within the key budget. **The first variant is the control (`name_1`)** unless
+  `control` names another arm.
+- **`control`** (optional) — which arm is the baseline. Must be one of
+  `variants`; unset, it is the first declared variant, exactly as through
+  `0.8.0`. There is no project-level default: the baseline a surface measures
+  against must not depend on whether that surface resolved a project config.
+
+  Declaring the first variant is the default written out and changes nothing.
+  Declaring a **different** arm on a running experiment does four things, and
+  `abk run --steps validate` warns about all of them:
+
+  1. every pair containing it is stored as `(control, other)`, so the rows
+     persisted under the previous orientation leave the declared contrast set
+     and every read surface drops them with a warning;
+  2. the re-oriented pair's effect is measured against the other arm — on the
+     absolute scale the negation of the old number, but **on the relative scale
+     it is not**, because the denominator swaps arms too (`(m₂−m₁)/m₁` becomes
+     `(m₁−m₂)/m₂`). `test_type: relative` is the common configuration, so do
+     not expect a chart to simply mirror;
+  3. the next plain `abk run` recomputes the whole series — no `--full-refresh`
+     needed, since no look carries the re-oriented pair. Until it does, the
+     read-time correction families are built from the surviving rows only, so a
+     verdict read in between can be looser than the one that settles;
+  4. the previous orientation's rows are never deleted. abkit's own surfaces
+     drop them; raw SQL over `_ab_results` sees both orientations (join
+     `_ab_experiments.control` to tell them apart).
+
+  Prefer reordering `variants` over declaring a non-first control on an
+  experiment that has already produced rows.
 - **`expected_split`** (required) — the expected assigned share per arm. One
   entry per variant, each a fraction strictly in `(0, 1)`, summing to `1.0`. It
   is the input to the **SRM gate**.
@@ -349,7 +377,8 @@ covariate (declarative-config §3). Units absent from the pre-period default to
   (declarative-config §6.1).
 - **`contrasts`** (optional, experiment level) — `all_pairs` (default: every
   variant pair is compared and corrected for) or `vs_control` (only the `g−1`
-  contrasts against the **first declared variant**). Declaring the narrower
+  contrasts against the **control arm** — `assignment.control`, defaulting to
+  the first declared variant). Declaring the narrower
   family multiplies every tier's alpha by `g/2` — ≈ +10 points of power at four
   arms — because you stop paying for treatment-vs-treatment comparisons you
   never make. Under `vs_control` those pairs are *not computed at all*: they
@@ -414,9 +443,10 @@ interactively, open the cockpit with [`abk explore`](explore.md).
 
 ## Known multi-arm limitations
 
-`variants` accepts any number `>= 2` — the first is control, and abkit computes
-a full control-vs-treatment comparison for every later variant (declarative-config
-§2). A 3+-arm experiment runs end to end: the pipeline computes every pair, the
+`variants` accepts any number `>= 2` — the control is the first declared variant
+unless `assignment.control` names another, and abkit computes a full comparison
+for every DECLARED contrast: every pair under `all_pairs`, the
+control-vs-treatment ones under `vs_control` (declarative-config §2). A 3+-arm experiment runs end to end: the pipeline computes every pair, the
 readout renders a verdict for each, and [`abk explore`](explore.md)'s Review mode
 shows one line per pair. A few adjacent surfaces are honestly not (yet)
 k-arm-aware, though:
@@ -427,8 +457,11 @@ k-arm-aware, though:
   calls; there is no invented "best arm" scalar that picks a winner across pairs
   (that rollup is a named future item, M14 — see [Reading a
   readout](reading-a-readout.md#the-verdict)).
-- **`abk plan` sizes off the first declared pair only.** Required-N / achievable
-  MDE / achieved power is computed for control-vs-first-treatment; every other
+- **`abk plan` sizes off one contrast only** — the control against the FIRST
+  declared treatment. (Deliberately not `contrast_pairs()[0]`: with a control
+  declared late in `variants` that entry is a treatment-vs-treatment pair, which
+  carries no baseline moments.) Required-N / achievable
+  MDE / achieved power is computed for that pair; every other
   pair rides the same alpha and sample size rather than being sized
   independently. The plan output says so in an explicit warning line (see
   [Plan](plan.md#multi-arm-experiments)).
