@@ -13,6 +13,7 @@ from abkit.pipeline.enrich import rows_for_cutoff
 from abkit.pipeline.readout import (
     ExperimentReadout,
     GuardrailStatus,
+    MetricRollup,
     PairVerdict,
 )
 from abkit.pipeline.readout import (
@@ -22,6 +23,7 @@ from abkit.pipeline.readout import (
 __all__ = [
     "AnalyzeError",
     "ExperimentReadout",
+    "MetricRollup",
     "GuardrailStatus",
     "PairOutcome",
     "PairVerdict",

@@ -852,6 +852,81 @@ two-process lock race) is deferred to a Docker-equipped environment.
   control that IS the first arm) and prints `control: <name>` otherwise, so the
   two-arm byte-identity claim survives.
 
+### M14 DEC-2 facts an assistant must know (the decision layer)
+
+- **`evaluate()` verdicts every DECLARED pair, and `PairVerdict.role` says
+  which is which.** `vs_control` is a ship decision; `treatment_pair` is
+  evidence about two treatments and says nothing about either against the
+  baseline. A `WIN` on `(B, C)` means "C beat B in the desired direction",
+  never "ship C" — and the distinction is a FIELD because three renderers need
+  it (the STAT-1 `family_divergence` lesson: a fact several surfaces need is
+  API, not something each re-infers from `name_1 == control`).
+- **`_pair_verdict` is reused with ZERO decision-logic changes** — it never
+  needed the first arm to be the baseline. Its parameters were renamed
+  `control`/`treatment` → `name_1`/`name_2` (and `_guardrail_statuses`'s with
+  them), because a parameter called `control` holding a treatment is a name
+  this codebase does not keep.
+- **Verdict ORDER is load-bearing.** Every control-anchored verdict comes
+  first, in the exact sequence `0.8.0` emitted them, then the treatment pairs —
+  so the `0.8.0` list is a literal PREFIX. That is what keeps `verdicts[0]`
+  (the dashboard headline until DEC-4) on the same pair even when a declared
+  `assignment.control` puts a treatment pair FIRST in `contrast_pairs()`.
+- **The read-time family does not move, structurally.** `_build_sig_map` is
+  built from ROWS, and the treatment-pair rows were already in it under
+  `all_pairs` — so verdicting a row already in the family cannot move a
+  threshold. Verified by diffing `evaluate()` against a live `main` module
+  across 8 configurations: every control-anchored verdict identical field for
+  field, `rationale` and `caveats` strings included.
+- **THREE surfaces had to be held control-anchored in the same WP**
+  (`notify/dispatch.py`, `reporting/builder.py`, `tuning/overview.py`). All
+  three iterate `readout.verdicts` unconditionally, so without the filter a
+  three-arm experiment would have tripled its notification volume (and minted
+  dedup state rows for pairs nobody asked about) and rendered a `WIN` on a
+  `B vs C` card as a ship recommendation — on the report AND in explore's
+  Review mode, which renders every matching verdict. Their own pre-existing
+  tests caught it: 10 failures in exactly those three places.
+- **`guardrail_policy: block` does not cap a treatment pair**, and the reason
+  is not taste. The cap fires on WIN and never on LOSE, while "B is ahead of C"
+  is a WIN stored one way and a LOSE stored the other — so leaving it on made
+  the rollup's separation claim depend on the ARBITRARY declaration order of
+  the arms. Measured: identical data and an identical guardrail regression gave
+  `separated` under one `variants` order and `co_leaders` under another.
+- **`_leader_beats` reads the VERDICT WORD, not raw significance** — the word
+  already carries the SRM gate, the pre-horizon refusal, the demotion gate, the
+  stabilization scan and the family rule, so re-deriving from signs would be a
+  second, looser decision rule for a pair whose verdict is sitting right there.
+  It takes no `desired_direction`: `_pair_verdict` has already resolved the
+  word against it, and applying it twice flips the answer on a `decrease`
+  metric.
+- **The rollup classifies each other arm into THREE states, not two**: beaten,
+  undecided (we looked, they did not separate) and **untestable** (no rows, a
+  demoted latest look, or pre-horizon). Collapsing the last two reported
+  measured non-separation about a pair nobody compared — reachable with no
+  config edit, since the treatment pair holds the two smallest arms and demotes
+  first. `untested` outranks `co_leaders` when both apply.
+- **`PairVerdict.judged` is what makes that possible.** It is the same flag the
+  Fork B caveat is gated on (`family_consulted` — set immediately before the
+  significance rules run), exposed: "the rules ran", whatever they concluded. A
+  quiet-but-underpowered INCONCLUSIVE is judged; an SRM-gated one is not. The
+  alternative was reading `rationale` STRINGS, which is how prose becomes API.
+- **`separation` has a FOURTH state, `no_leader`**, which the design's table did
+  not have. Without it the commonest experiment in the world — nobody won —
+  reads `separated`, because `indistinguishable` is empty. `untested` would be
+  the opposite lie.
+- **A rollup never speaks over a gate.** Under a failed SRM gate it names the
+  gate instead of reporting "no arm beat control"; pre-horizon it says nothing
+  could be judged yet. That is the DEC-1 `_srm_from_series` failure mode one
+  level up — a broken assignment reading as an ordinary null result.
+- **`losers` and `indistinguishable` are disjoint by construction.** An arm the
+  baseline beat is not a candidate for leadership, and listing it as an
+  unresolved co-leader put the same arm in both fields of one payload — two
+  fields of one rollup contradicting each other, which no renderer can paper
+  over.
+- **The unreachable control-pair guard RAISES.** `(control, treatment)` is
+  always in `contrast_pairs()` (enumerated over 2–5 arms × every declaration ×
+  both `contrasts` values), so a `continue` there would drop a ship decision in
+  silence and shift the dashboard's headline to another pair.
+
 ### M7 vectorization facts an assistant must know
 
 - **`score_cell` and `sweep_family` are dispatchers** on
@@ -1714,8 +1789,8 @@ see the track section in [ROADMAP.md](../../ROADMAP.md);
 [m13](../../docs/specs/m13-implementation-plan.md) are all implementation
 records now; **M14 is IN PROGRESS against its contract
 [m14-implementation-plan.md](../../docs/specs/m14-implementation-plan.md)** —
-six WPs (✅ DEC-1 the declared `control:` → DEC-2 treatment-pair verdicts + the
-per-metric rollup → DEC-3 the report / DEC-4 dashboard·explore·notify·CLI;
+six WPs (✅ DEC-1 the declared `control:` → ✅ DEC-2 treatment-pair verdicts +
+the per-metric rollup → DEC-3 the report / DEC-4 dashboard·explore·notify·CLI;
 DEC-5 `validate`/`plan`/SRM, independent; DEC-6 the exit gate + `0.9.0`), under
 the posture that **M14 moves no persisted number, no alpha and no verdict
 `0.8.0` already issues**: the read-time family is built from ROWS, so verdicting

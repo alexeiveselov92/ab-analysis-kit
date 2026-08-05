@@ -44,7 +44,44 @@ number change).
   above pair blocks reading "c vs a". Payloads baked before `0.9.0`, and every
   experiment whose control IS the first arm, render exactly as before.
 
+- **Treatment-vs-treatment pairs get verdicts, and every main metric gets a
+  rollup** (M14 DEC-2). `readout.evaluate()` now issues a `PairVerdict` for
+  every DECLARED arm pair, not only the control-anchored ones, and each carries
+  `role: vs_control | treatment_pair` — a `WIN` on the pair `(B, C)` means "C
+  beat B in the desired direction", **never** "ship C", and the distinction is
+  a FIELD so no renderer has to re-infer it. Treatment pairs exist only under
+  `contrasts: all_pairs`; under `vs_control` those rows were never computed and
+  nothing changes.
+  `ExperimentReadout` gains `rollups` (one `MetricRollup` per main metric:
+  `leader` · `indistinguishable` · `separation` · `losers` ·
+  `guardrail_regressed`) and `leaders_agree`. The leader is chosen **only among
+  arms that beat the control**, and separation is tested against **every** other
+  treatment rather than the runner-up — "L beat the runner-up" is a comparison
+  selected by the data, and it leaves K−2 comparisons unexamined while sounding
+  conclusive. The rollup re-derives no statistic and is **persisted nowhere**.
+  `PairVerdict` also gains `judged`: did the readout reach a decision, or did a
+  gate (no rows, SRM, pre-horizon, demotion) short-circuit it — the field that
+  lets a summary tell "we compared these arms and could not separate them" from
+  "these arms were never compared".
+  **No verdict `0.8.0` already issued moved**: every control-anchored
+  `PairVerdict` is reproduced field for field (`rationale` and `caveats`
+  strings included), the read-time correction family is built from ROWS and is
+  untouched, the alphas are untouched, and a two-arm experiment is unchanged on
+  every surface. The report, the dashboard and notifications stay
+  control-anchored for now — a `WIN` card on a `B vs C` block with no role chip
+  would read as a ship recommendation, so DEC-3/DEC-4 open those surfaces
+  deliberately.
+
 ### Changed
+- **`guardrail_policy: block` no longer caps a treatment-vs-treatment verdict**
+  (M14 DEC-2). The cap exists to withhold a SHIP decision when an arm would
+  harm users relative to the baseline, and a treatment pair is not one. Leaving
+  it on made the pair's verdict orientation-dependent — the cap fires on WIN
+  and never on LOSE, while "B is ahead of C" is a WIN stored one way and a LOSE
+  stored the other — so a metric's separation claim moved when the arms were
+  merely re-ordered in `variants`. The regression still rides on the verdict as
+  a caveat and on its own card; only the CAP is scoped to ship decisions. No
+  control-anchored verdict is affected.
 - **Declaring a NON-FIRST control on a running experiment re-bases it**, and
   `abk run --steps validate` warns with all four consequences: the pairs
   containing it are stored as `(control, other)`, so their previously persisted

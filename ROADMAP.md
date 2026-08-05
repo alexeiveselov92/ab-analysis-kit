@@ -989,13 +989,21 @@ every pair containing the control as `(control, other)` without changing the
 family size, all seven positional sites reroute, `_ab_experiments.control` is
 added additively, and config-lint warns about the re-orientation an experiment
 with existing rows pays for. No default moves — the orientation is a no-op by
-construction under the positional default. As-built deltas: a third resolver
+construction under the positional default. ✅ **DEC-2** — the decision layer:
+`evaluate()` verdicts every DECLARED pair (each carrying
+`role: vs_control | treatment_pair`) and composes one `MetricRollup` per main
+metric — leader among WINNING arms only, separation tested against EVERY other
+treatment, plus `leaders_agree`. No verdict `0.8.0` issued moved (proved by
+diffing against a live `main` module across 8 configurations), the read-time
+family is built from ROWS and is untouched, and the report / dashboard /
+notification surfaces are held control-anchored so DEC-3 and DEC-4 open them
+deliberately. ⬜ DEC-3 next. As-built deltas: a third resolver
 member (`control_reorients_pairs`), one shared `UNDECLARED_PAIR_CAUSES` string
 replacing four surface-local copies of the cause list, a `control` key in the
 report payload so the report/explore headers stop claiming "first = control",
 and two review-found repairs beyond the plan — the catalog-migration gate had
 gone blind to its own class of defect, and the inherited `--full-refresh --to
-<horizon>` advice was off by one look. ⬜ DEC-2 next.
+<horizon>` advice was off by one look. ✅ DEC-2 shipped (below).
 
 ### M15 — new methods (bucket C, statistics) → `0.10.0` 📐 contour
 Student-t (Welch–Satterthwaite), BCa bootstrap, Mann-Whitney, cross-fitted

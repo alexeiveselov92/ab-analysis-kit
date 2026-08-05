@@ -11,12 +11,17 @@ Nothing here computes a statistic: every verdict is
 
 Row grain is **one experiment** (§3, decided by the maintainer 2026-07-27),
 matching the experiment-scoped open/explore/run buttons. What a row can carry
-is bounded by ``evaluate()``'s contract: ``ExperimentReadout.verdicts`` is
-``[c for c in experiment.comparisons if c.is_main_metric]`` crossed with each
-treatment arm (``abkit/pipeline/readout.py`` ``evaluate``), so a
-secondary/guardrail comparison NEVER produces a ``PairVerdict`` and never
-appears in a row's ``verdicts`` sub-list. Surfacing secondary verdicts
-would mean re-implementing the decision logic — M14 work, not this milestone.
+is bounded by ``evaluate()``'s contract: a ``PairVerdict`` exists only for a
+MAIN comparison (``abkit/pipeline/readout.py`` ``evaluate``), so a
+secondary/guardrail comparison NEVER produces one and never appears in a row's
+``verdicts`` sub-list. Surfacing secondary verdicts would mean re-implementing
+the decision logic — still M14 work, not this milestone.
+
+Since m14 DEC-2 the readout also issues a verdict for every
+treatment-vs-treatment pair, so this module filters to ``role ==
+"vs_control"`` (the ``ship`` list below) rather than relying on the readout
+being control-anchored. DEC-4 replaces the headline with the per-metric rollup
+and opens the expand list deliberately.
 The per-metric **Run** affordance a secondary metric still needs is fed by
 :func:`build_overview_boot_entries`, which lists the configured comparisons
 straight off the config.
@@ -510,7 +515,16 @@ def _fill_stats(
     # dropping the oldest is not a shorter experiment, it is a truncated
     # stabilization history (module docstring).
     readout = evaluate(experiment, rows, project=project)
-    if not readout.verdicts:
+    # m14 DEC-2: the dashboard stays CONTROL-ANCHORED. Since DEC-2 the readout
+    # also issues treatment-vs-treatment verdicts, and this row cannot yet say
+    # which is which — the expand list would gain unlabelled `B vs C` entries
+    # reading as ship decisions, and the row's safety flag would turn red for a
+    # regression between two treatments, which says nothing about harm relative
+    # to control (DEC-4 decided that flag stays control-anchored; DEC-2 is what
+    # makes the distinction reachable). DEC-4 replaces the headline with the
+    # rollup and opens the list deliberately.
+    ship = [v for v in readout.verdicts if v.role == "vs_control"]
+    if not ship:
         # Unreachable through a validated config (≥1 main comparison and ≥2
         # variants are both enforced), so degrade rather than index blind.
         raise ValueError(
@@ -518,7 +532,7 @@ def _fill_stats(
             "a main comparison and a treatment arm are both required"
         )
 
-    headline = readout.verdicts[0]
+    headline = ship[0]
     row["verdict"] = headline.verdict
     row["effect"] = _num(headline.effect)
     row["ci"] = [_num(headline.left_bound), _num(headline.right_bound)]
@@ -540,7 +554,7 @@ def _fill_stats(
     row["rationale"] = list(headline.rationale)
     row["caveats"] = list(headline.caveats)
     row["guardrail_regressed"] = any(
-        guardrail.regressed for verdict in readout.verdicts for guardrail in verdict.guardrails
+        guardrail.regressed for verdict in ship for guardrail in verdict.guardrails
     )
     # Named `verdicts`, matching ``ExperimentReadout.verdicts`` — deliberately
     # NOT `comparisons`, which is the boot entry's CONFIGURED list. DASH-5
@@ -557,7 +571,7 @@ def _fill_stats(
             "caveats": list(verdict.caveats),
             "guardrail_regressed": any(guardrail.regressed for guardrail in verdict.guardrails),
         }
-        for verdict in readout.verdicts
+        for verdict in ship
     ]
     # The two states `abk clean` exists for are invisible unless the row says
     # so: the report warns about them and this surface is the one an operator

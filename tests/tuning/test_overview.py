@@ -1565,3 +1565,70 @@ class TestModuleContract:
         ):
             assert name in package.__all__
             assert hasattr(package, name)
+
+
+class TestControlAnchoredUntilDec4:
+    """m14 DEC-2: the row stays control-anchored while the readout widens.
+
+    DEC-4 replaces the headline with the rollup and opens the expand list; this
+    class is what makes that a DELIBERATE commit rather than something that
+    happened when DEC-2 merged.
+    """
+
+    @staticmethod
+    def _three_arm():
+        return make_experiment(
+            assignment={
+                "query": "SELECT 1",
+                "variants": ["control", "t1", "t2"],
+                "expected_split": {"control": 0.34, "t1": 0.33, "t2": 0.33},
+            }
+        )
+
+    def test_the_expand_list_holds_only_ship_decisions(self, tables):
+        experiment = self._three_arm()
+        seed_series(tables, experiment, name_2="t1")
+        seed_series(tables, experiment, name_2="t2")
+        seed_series(tables, experiment, name_1="t1", name_2="t2")
+
+        row = row_for(tables, experiment)
+        pairs = {(v["pair"]["c"], v["pair"]["t"]) for v in row["verdicts"]}
+        assert pairs == {("control", "t1"), ("control", "t2")}
+
+    def test_a_regression_between_two_treatments_does_not_redden_the_row(self, tables):
+        """DEC-4's decision, reachable for the first time here: a guardrail
+        regression BETWEEN TREATMENTS says nothing about harm relative to
+        control, and the row's flag is the experiment's safety light. The
+        treatment pair keeps its own status on its own card.
+        """
+        experiment = make_experiment(
+            assignment={
+                "query": "SELECT 1",
+                "variants": ["control", "t1", "t2"],
+                "expected_split": {"control": 0.34, "t1": 0.33, "t2": 0.33},
+            },
+            comparisons=[
+                {"metric": "revenue", "is_main_metric": True, "method": {"name": "t-test"}},
+                {
+                    "metric": "latency",
+                    "is_guardrail": True,
+                    "desired_direction": "decrease",
+                    "method": {"name": "t-test"},
+                },
+            ],
+        )
+        seed_series(tables, experiment, name_2="t1")
+        seed_series(tables, experiment, name_2="t2")
+        seed_series(tables, experiment, name_1="t1", name_2="t2")
+        # harm on the TREATMENT PAIR only: latency up (a `decrease` guardrail)
+        seed_series(
+            tables,
+            experiment,
+            metric="latency",
+            name_1="t1",
+            name_2="t2",
+            effect=0.5,
+            left_bound=0.3,
+            right_bound=0.7,
+        )
+        assert row_for(tables, experiment)["guardrail_regressed"] is False

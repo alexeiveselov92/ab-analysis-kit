@@ -300,6 +300,66 @@ is no declared priority, and inventing one is D2's rejected option.
 `PairVerdict` `0.8.0` already issues, field for field, including `rationale`
 and `caveats` strings. Adding candidates to a rollup must not reword a verdict.
 
+#### DEC-2 as built ✅
+
+Shipped as specified, and the "what must not change" leg was verified early
+rather than at DEC-6: `evaluate()` was diffed against a live `main` module
+across eight configurations (2/3/4 arms; positional and declared non-first
+control; `correction` ∈ none/bonferroni/BH/Holm; both `contrasts` values; with
+and without a guardrail) and every control-anchored verdict matched field for
+field. Seven deltas.
+
+1. **`separation` has a FOURTH state, `no_leader`.** The design's table has
+   three, and with no winning arm `indistinguishable` is empty — which would
+   read as `separated`, i.e. "the leader beat everyone" said of an experiment
+   with no leader. `untested` would be the opposite lie ("we could not look").
+   Most experiments do not win, so this is the common state.
+2. **Each other arm is classified into THREE states, not two** — beaten,
+   undecided, and **untestable**. The spec's `untested` covers "`vs_control`,
+   **or the rows are missing/demoted**"; the first draft implemented only the
+   first half, so a missing or demoted treatment-pair series was reported as
+   `co_leaders` — a positive claim of *measured* non-separation where nothing
+   was measured. Reachable with no config edit (the treatment pair holds the
+   two smallest arms and demotes first). `untested` outranks `co_leaders` when
+   both apply.
+3. **`PairVerdict.judged`**, the field delta 2 needs: did the readout reach a
+   decision, or did a gate short-circuit it? It is the SAME flag the Fork B
+   caveat is gated on (`family_consulted`), exposed — no new plumbing. The
+   alternative was reading `rationale` strings, which is how prose becomes API.
+4. **`guardrail_policy: block` no longer caps a treatment pair.** The cap fires
+   on WIN and never on LOSE, while "B is ahead of C" is a WIN stored one way
+   and a LOSE stored the other — so the rollup's separation claim depended on
+   the ARBITRARY declaration order of the arms. Measured: identical data and an
+   identical guardrail regression gave `separated` under one `variants` order
+   and `co_leaders` under another. The cap is now scoped to ship decisions,
+   which is what `guardrail_policy` was always about.
+5. **`_leader_beats` reads the verdict WORD, not `significant` + a re-derived
+   sign** (the design's phrasing). The word is that conjunction PLUS the SRM
+   gate, the pre-horizon refusal, the demotion gate and the stabilization scan;
+   re-deriving would be a second, looser decision rule for a pair whose verdict
+   is sitting right there. Delta 4 is what makes the substitution safe — with
+   the cap on, the word was orientation-asymmetric and the substitution was
+   not merely conservative.
+6. **The rollup never speaks over a gate**, and `losers` is disjoint from
+   `indistinguishable`. Under a failed SRM gate the rollup named the gate
+   instead of reporting "no arm beat control" (the DEC-1 `_srm_from_series`
+   failure mode one level up); and an arm could otherwise appear in both
+   `losers` and `indistinguishable` of one payload.
+7. **Three surfaces were held control-anchored in this WP**, not in DEC-3/DEC-4.
+   `notify/dispatch.py`, `reporting/builder.py` and `tuning/overview.py` all
+   iterate `readout.verdicts` unconditionally, so merging DEC-2 alone would
+   have tripled a three-arm experiment's notification volume and rendered
+   unlabelled `B vs C` ship recommendations on the report and in explore's
+   Review mode. Their own pre-existing tests caught it (10 failures in exactly
+   those three places), and the holds are now pinned so DEC-3/DEC-4 open each
+   surface deliberately.
+
+**Review note for DEC-3/DEC-4.** The orientation half of `_leader_beats` was
+initially untested: every decisive treatment pair in the first fixture set
+favoured the leader, so an orientation-BLIND implementation passed all 21
+tests. Any new rule about pair direction needs a fixture where the pair is
+decisive AGAINST the leader.
+
 ---
 
 ### DEC-3 — the report: a card per declared pair, an overview per metric
