@@ -391,7 +391,7 @@ path) to `_ab_results` from one source of truth. It is upserted once per run
 | `expected_split` | `String` | Canonical JSON object. |
 | `alpha` | `Nullable(Float64)` | Effective alpha. |
 | `correction` | `Nullable(String)` | Correction method. |
-| `contrasts` | `String` | `all_pairs` \| `vs_control` — the family the alphas were divided by (m13 STAT-1b). `all_pairs` divides by `C(variants, 2)`, `vs_control` by `variants − 1` and writes only the control-vs-treatment pairs, so deriving the divisor from `variants` alone is wrong for a `vs_control` experiment. |
+| `contrasts` | `String` | `all_pairs` \| `vs_control` — the family the alphas were divided by (m13 STAT-1b). `all_pairs` divides by `C(variants, 2)`, `vs_control` by `variants − 1` and writes only the control-vs-treatment pairs, so deriving the divisor from `variants` alone is wrong for a `vs_control` experiment. Added additively in `0.8.0` with `DEFAULT 'all_pairs'`, which is what every pre-`0.8.0` experiment's family was — an upgraded install picks it up on the next run, with no recreate. |
 | `sequential_enabled` | `Bool` | Sequential opt-in flag. |
 | `sequential_scheme` | `String` | Sequential scheme name. |
 | `comparisons` | `String` | Canonical JSON comparison summary. |

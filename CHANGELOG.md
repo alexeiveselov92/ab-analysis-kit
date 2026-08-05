@@ -13,7 +13,52 @@ number change).
 
 ## [Unreleased]
 
+### Fixed
+- **`_ab_experiments.contrasts` is now actually written, and an existing
+  install can migrate to it** (M13 STAT-6, found by the milestone exit gate).
+  STAT-1b added the column to the table model and emitted it from
+  `catalog_record`, but `_EXPERIMENT_FIELDS` — the catalog writer's field
+  whitelist — never learned it, so the value was dropped in silence and BI could
+  not tell a `vs_control` family from an incomplete run, which is the one thing
+  the column exists for. The column was also declared NOT NULL with no default,
+  a shape `ensure_columns` **refuses**: the first `0.8.0` run of any already
+  installed project would have failed with a "drop and recreate" error for a
+  column whose own comment promised it needed none. It now carries
+  `DEFAULT 'all_pairs'` — additively migratable, and factually right for every
+  pre-`0.8.0` row, since the knob did not exist before it — **sized**, because
+  MySQL maps an unsized `String` to `TEXT` and rejects a literal DEFAULT on it
+  (error 1101), which would have replaced a broken migration with a broken
+  `CREATE TABLE` on that backend alone. `upsert_experiment`
+  additionally **refuses a record with fields it would drop**, the check
+  `save_results` has always made in the other direction.
+
 ### Added
+- **STAT-6 — the M13 exit gate** (`tests/e2e/test_m13_exit_gate.py`), plus the
+  batch A/A revalidation the change-control process owes every deviation
+  ([docs/research/2026-08-m13-revalidation/](docs/research/2026-08-m13-revalidation/REPORT.md)).
+  The milestone's №1 assertion is asserted against the **released** code rather
+  than against itself: two surfaces captured from a `v0.7.0` checkout — the
+  scaffolded project as shipped, and a three-arm five-comparison experiment that
+  reaches every default M13 touched — reproduce here row for row (discrete
+  columns exactly, continuous at rel-1e-9, JSON payload columns parsed first),
+  and the ONLY delta across all 89 persisted rows is the one added catalog
+  column above. The gate also pins that opting into an interval param forks
+  `method_config_id` while `correction: holm` re-decides the series in place,
+  that narrowing the contrast set loosens the level without forking anything,
+  and that no method bumped its `ALGORITHM_VERSION`. New goldens for the new
+  numbers (`tests/golden/test_golden_m13_new_numbers.py`) anchor each estimator
+  on an **independent** reference — `brentq` on the constrained likelihood for
+  the score interval, `numpy.roots` for Fieller, the step-down definition for
+  Holm — beside a literal pinned at rel-1e-9.
+
+  The revalidation measures every knob pair on the SAME placebo draws, which is
+  what makes its headline readable: `interval: score` agrees with `pooled` **to
+  the last float** on the FPR, the sign split and the power — `Z(0)` is the
+  pooled z by construction, so they reject the same placebos — and differs only
+  in relative-scale coverage, 93.4% against 90.6% (nominal 95%). `interval:
+  delta`, by contrast, matches Fieller on both two-sided columns while 64% of
+  its false positives fall below zero at a 5% control-mean CV (76% at 10%):
+  the blindness STAT-2 shipped to fix, reproduced end to end.
 - **STAT-4 — `interval: fieller`: the relative lift interval becomes the
   inversion of the test it already runs** (M13). **Opt-in and no default moves** —
   `interval` is a new identity-flagged param on the five mean-based closed-form

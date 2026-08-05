@@ -29,12 +29,25 @@ def _null_members(k: int, alpha: float, n_cutoffs: int = 1):
     return [
         FamilyMember(
             metric=f"m{i}",
-            panel=normal_panel(n_units=3000, n_cutoffs=n_cutoffs, seed=100 + i, mu=50.0, sigma=10.0),
+            panel=normal_panel(
+                n_units=3000, n_cutoffs=n_cutoffs, seed=100 + i, mu=50.0, sigma=10.0
+            ),
             method=_ttest(alpha),
             alpha=alpha,
             planted=False,
         )
         for i in range(k)
+    ]
+
+
+def _planted_members(k: int, alpha: float, *, planted: int):
+    """The same family with the first ``planted`` members carrying a true effect."""
+    members = _null_members(k, alpha)
+    return [
+        FamilyMember(
+            metric=m.metric, panel=m.panel, method=m.method, alpha=m.alpha, planted=i < planted
+        )
+        for i, m in enumerate(members)
     ]
 
 
@@ -67,24 +80,61 @@ def test_null_holm_controls_fwer_near_nominal():
     rate sits at α — the same anchor BH gets, for a stronger reason. Members carry
     the RAW alpha (a read-time scheme resolves no compute-time level)."""
     members = _null_members(4, ALPHA)
-    s = sweep_family(
-        members, correction="holm", iterations=5000, share_a=0.5, seed_parts=("holm",)
-    )
+    s = sweep_family(members, correction="holm", iterations=5000, share_a=0.5, seed_parts=("holm",))
     assert 0.035 < s.fwer < 0.068  # the same Binomial band as Bonferroni-at-α/K
     assert s.fwer == pytest.approx(s.fdr, abs=1e-12)  # complete null ⇒ every rejection false
 
 
-def test_holm_rejects_at_least_as_often_as_one_step_bonferroni():
-    """The power claim, measured rather than argued: over the SAME placebo draws,
-    Holm's rejection rate is never below the α/K rule's."""
+def test_under_the_complete_null_holm_and_one_step_bonferroni_are_the_SAME_event():
+    """m13 STAT-6: this identity is why the old form of the test below could not fail.
+
+    "At least one rejection" is ``min p ≤ α/m`` under BOTH rules when every
+    hypothesis is true — Holm's first step IS the one-step level, and no later
+    step is reached. The historical assertion here was ``holm >= bonferroni``
+    over two complete-null sweeps, i.e. ``x >= x``: measured identical to the
+    last digit at 20 000 iterations. Pinned as the EQUALITY it is, so the power
+    claim has to be made where it is actually measurable (below).
+    """
     holm = sweep_family(
         _null_members(4, ALPHA), correction="holm", iterations=2000, share_a=0.5, seed_parts=("h",)
     )
     bonf = sweep_family(
-        _null_members(4, ALPHA / 4), correction="bonferroni", iterations=2000, share_a=0.5,
+        _null_members(4, ALPHA / 4),
+        correction="bonferroni",
+        iterations=2000,
+        share_a=0.5,
         seed_parts=("h",),
     )
-    assert holm.any_rejection_rate >= bonf.any_rejection_rate
+    assert holm.any_rejection_rate == pytest.approx(bonf.any_rejection_rate, abs=1e-12)
+
+
+def test_with_true_effects_present_holm_spends_the_whole_alpha_and_bonferroni_does_not():
+    """The power claim, where the instrument can see it.
+
+    Two of the four metrics carry a planted effect. Holm removes them at its
+    first steps and tests the two surviving nulls at levels that reach α, so its
+    family error over those nulls sits AT the nominal — while the one-step α/K
+    rule stays near α/2, and that unspent budget is exactly the power it gives
+    up. Both are valid; only one is tight.
+    """
+    holm = sweep_family(
+        _planted_members(4, ALPHA, planted=2),
+        correction="holm",
+        iterations=4000,
+        share_a=0.5,
+        seed_parts=("hp",),
+        inject_effect=1.2,
+    )
+    bonf = sweep_family(
+        _planted_members(4, ALPHA / 4, planted=2),
+        correction="bonferroni",
+        iterations=4000,
+        share_a=0.5,
+        seed_parts=("hp",),
+        inject_effect=1.2,
+    )
+    assert 0.038 < holm.fwer < 0.065, holm.fwer  # ±3σ of α at 4000 iterations
+    assert bonf.fwer < holm.fwer - 0.015, (bonf.fwer, holm.fwer)
 
 
 def test_two_tier_members_are_within_the_nominal_family_budget():
@@ -160,7 +210,9 @@ def test_sequential_off_by_default_leaves_no_peeking_columns():
     """The shipped single-look family (``sequential`` unset) computes ONLY ``fwer``/``fdr``
     — the peeking pair is absent (None), never zero-filled, so the M5 byte-shape holds."""
     members = _null_members(3, ALPHA / 3, n_cutoffs=8)
-    s = sweep_family(members, correction="bonferroni", iterations=500, share_a=0.5, seed_parts=("q",))
+    s = sweep_family(
+        members, correction="bonferroni", iterations=500, share_a=0.5, seed_parts=("q",)
+    )
     assert s.fwer is not None  # the single-look family still measured
     assert s.fwer_peeking is None and s.fdr_peeking is None
     assert s.fwer_sequential is None and s.fdr_sequential is None
@@ -175,7 +227,11 @@ def test_sequential_composed_peeking_hazard_recovers_to_control():
     ``fwer`` is unchanged from the fixed sweep."""
     members = _null_members(3, ALPHA / 3, n_cutoffs=8)  # Bonferroni α/3 ⇒ composed ≈ α
     s = sweep_family(
-        members, correction="bonferroni", iterations=2000, share_a=0.5, seed_parts=("seq",),
+        members,
+        correction="bonferroni",
+        iterations=2000,
+        share_a=0.5,
+        seed_parts=("seq",),
         sequential=True,
     )
     assert s.fwer_peeking is not None and s.fwer_sequential is not None
@@ -200,8 +256,12 @@ def test_sequential_bh_peeking_pair_also_recovers():
     FDR inflates and the always-valid twin returns to control."""
     members = _null_members(3, ALPHA, n_cutoffs=8)  # BH members carry the RAW alpha
     s = sweep_family(
-        members, correction="benjamini_hochberg", iterations=2000, share_a=0.5,
-        seed_parts=("seqbh",), sequential=True,
+        members,
+        correction="benjamini_hochberg",
+        iterations=2000,
+        share_a=0.5,
+        seed_parts=("seqbh",),
+        sequential=True,
     )
     assert s.fdr_peeking is not None and s.fdr_sequential is not None
     assert s.fdr_peeking > 2 * ALPHA  # peeking inflates the BH family FDR
@@ -224,10 +284,16 @@ def test_sequential_ineligible_member_is_a_full_gap_and_twin_uses_the_eligible_m
         ALPHA / 2,
     )
     s = sweep_family(
-        [tt, boot], correction="bonferroni", iterations=300, share_a=0.5,
-        seed_parts=("mix",), sequential=True,
+        [tt, boot],
+        correction="bonferroni",
+        iterations=300,
+        share_a=0.5,
+        seed_parts=("mix",),
+        sequential=True,
     )
-    assert s.fwer_peeking is not None and s.fwer_sequential is not None  # eligible t-test drives both
+    assert (
+        s.fwer_peeking is not None and s.fwer_sequential is not None
+    )  # eligible t-test drives both
     # the bootstrap member is a full gap, disclosed honestly — no false "rides in the hazard" claim
     assert any("boot" in w and "scored in 0" in w for w in s.warnings)
     assert not any("no always-valid option" in w for w in s.warnings)
@@ -235,12 +301,20 @@ def test_sequential_ineligible_member_is_a_full_gap_and_twin_uses_the_eligible_m
 
 def test_sequential_deterministic_same_seed_parts():
     a = sweep_family(
-        _null_members(2, ALPHA / 2, n_cutoffs=6), correction="bonferroni", iterations=800,
-        share_a=0.5, seed_parts=("sd",), sequential=True,
+        _null_members(2, ALPHA / 2, n_cutoffs=6),
+        correction="bonferroni",
+        iterations=800,
+        share_a=0.5,
+        seed_parts=("sd",),
+        sequential=True,
     )
     b = sweep_family(
-        _null_members(2, ALPHA / 2, n_cutoffs=6), correction="bonferroni", iterations=800,
-        share_a=0.5, seed_parts=("sd",), sequential=True,
+        _null_members(2, ALPHA / 2, n_cutoffs=6),
+        correction="bonferroni",
+        iterations=800,
+        share_a=0.5,
+        seed_parts=("sd",),
+        sequential=True,
     )
     assert a.fwer_peeking == b.fwer_peeking and a.fwer_sequential == b.fwer_sequential
 

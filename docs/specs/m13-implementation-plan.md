@@ -1,7 +1,13 @@
 # M13 Implementation Plan — versioned statistical improvements → `0.8.0`
 
-> **STATUS: DRAFT (2026-08-03), no longer blocked.** Written in the M13 design
-> session. Inputs: the maintainer's four sign-offs (§3); three blind
+> **STATUS: IMPLEMENTED (2026-08-05).** Every WP is shipped — STAT-1c, STAT-2,
+> STAT-1b, STAT-1, STAT-3a, STAT-3, STAT-4 and the STAT-6 exit gate; STAT-5 was
+> dropped by D13. This file is now an **implementation record** (the m9–m12
+> shape): the per-WP "as built" blocks are what the build learned, and they are
+> authoritative where they contradict the design below.
+>
+> *Originally written as:* **DRAFT (2026-08-03), no longer blocked.** Written in
+> the M13 design session. Inputs: the maintainer's four sign-offs (§3); three blind
 > re-derivations produced under `statistics-changes.md` §0 step 3 — the relative
 > effect, the multiplicity layer, and the proportion interval (which absorbed the
 > pooled-vs-unpooled question); and a code audit whose every claim is anchored to
@@ -818,9 +824,63 @@ see either.
 If it ships anyway, it ships as hygiene with the "not A/A-arbitrable" limitation
 written into `statistics-changes.md`.
 
-### STAT-6 — batch A/A revalidation + the exit gate
+### STAT-6 — batch A/A revalidation + the exit gate ✅ SHIPPED
 
 **Depends on:** all of the above.
+
+**As built** (`tests/e2e/test_m13_exit_gate.py`,
+`tests/golden/test_golden_m13_new_numbers.py`,
+[the revalidation record](../research/2026-08-m13-revalidation/REPORT.md)) —
+the four things the build added to the §4 sketch:
+
+- **The byte-compatibility gate compares against the RELEASE, not against
+  itself.** `tests/e2e/_m13_baseline.py` captures two surfaces from a `v0.7.0`
+  checkout — the scaffolded project as shipped, and a three-arm five-comparison
+  experiment reaching every default M13 touched — and the same file runs
+  unmodified in both trees, because the scaffold assets and the test helpers are
+  byte-identical between the two (checked, not assumed). This is the M10
+  window-golden discipline; a golden captured from HEAD would have proved
+  nothing. The result: **all 89 persisted rows identical**, with exactly one
+  delta, and that delta was a defect (below).
+- **The gate found a shipped defect in STAT-1b, which is what an exit gate is
+  for.** `_ab_experiments.contrasts` was in the table model and in
+  `catalog_record` but not in `_EXPERIMENT_FIELDS`, the catalog writer's
+  whitelist — so it was dropped in silence, and the docs describing the column
+  were ahead of the code. Worse, it was declared NOT NULL with **no default**,
+  which `ensure_columns` refuses: every already-installed project's first
+  `0.8.0` run would have died with a "drop and recreate" instruction for a
+  column whose own source comment promised none was needed. Fixed with
+  `DEFAULT 'all_pairs'` (factually right for every pre-`0.8.0` row — the knob
+  did not exist) **and `max_length=32`**, because MySQL maps an unsized `String`
+  to `TEXT` and rejects a literal DEFAULT on it — the naive fix would have
+  swapped a broken migration for a broken `CREATE TABLE` on the one backend
+  this repo cannot run a container for. Plus a real three-way lockstep gate
+  (the previous one's docstring claimed all three sides while its assertion
+  checked one direction of one), a dialect-keyed DDL gate derived from
+  `INTERNAL_TABLES`, and a symmetric extra-field refusal in `upsert_experiment`
+  — the check `save_results` has always made.
+- **The new goldens anchor on an INDEPENDENT algorithm, per the STAT-3 lesson.**
+  `tests/golden/m13_reference.py` recomputes the score interval with `brentq` on
+  the constrained likelihood and on `|Z| = c`, Fieller with `numpy.roots`, and
+  Holm from the step-down definition; every case is asserted against both that
+  reference and a literal. They agree with the engine to ~1e-15 relative — six
+  orders inside the house tolerance. Boundary tables are deliberately excluded:
+  both references are root-finders and are valid only where the constrained
+  maximum is interior, which is exactly what the objective-function KATs in
+  `tests/stats/` exist to cover.
+- **The revalidation found a second test that could not fail.**
+  `test_holm_rejects_at_least_as_often_as_one_step_bonferroni` compared two
+  COMPLETE-null sweeps, where the two rules are the same event (`min p ≤ α/m`)
+  — measured identical to the last digit. It is now pinned as the equality it
+  is, and the power claim moved to a planted-effect family where it can be
+  measured (Holm's family error over the surviving nulls reaches α while the
+  one-step rule stops at half of it). §4's item 4 as stated could not have
+  caught this: it asked for Holm's FWER ≈ α, which a one-step rule also
+  satisfies.
+
+Item 5 of §4 (the sign split matching the derivation) landed as measured:
+0.666 against the predicted 0.659 for `delta`, 0.504 for `fieller`, with both
+estimators' FPR **and two-sided coverage** reading calibrated.
 
 ## 2. Dependency graph
 

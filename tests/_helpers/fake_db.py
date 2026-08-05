@@ -349,9 +349,11 @@ class FakeDatabaseManager(BaseDatabaseManager):
     def _add_column(self, table_name: str, column: ColumnDefinition) -> None:
         bare = self._bare(table_name)
         self._columns.setdefault(bare, []).append(column.name)
-        # SQL semantics: existing rows read the new column back as NULL.
+        # SQL semantics: existing rows read the new column back as NULL — or as
+        # the DEFAULT when the addition declares one, which is the only shape
+        # `ensure_columns` accepts for a NOT-NULL column (m13 STAT-6).
         for row in self._rows.get(bare, []):
-            row.setdefault(column.name, None)
+            row.setdefault(column.name, column.default)
 
     def insert_batch(
         self, table_name: str, data: dict[str, np.ndarray], conflict_strategy: str = "ignore"

@@ -35,6 +35,7 @@ class _ExperimentsMixin(_InternalTablesBase):
         "expected_split",
         "alpha",
         "correction",
+        "contrasts",
         "sequential_enabled",
         "sequential_scheme",
         "comparisons",
@@ -51,6 +52,20 @@ class _ExperimentsMixin(_InternalTablesBase):
         missing = [f for f in self._EXPERIMENT_FIELDS if f not in record]
         if missing:
             raise ValueError(f"experiment record is missing fields: {missing}")
+        # ...and the other direction, which `save_results` has always checked
+        # and this writer did not: the projection below is a whitelist, so a
+        # field added to `catalog_record` but not here was DROPPED in silence.
+        # That is how m13 STAT-1b shipped a `contrasts` column the catalog
+        # never wrote (found by the STAT-6 gate) — BI would have read the
+        # type default for every experiment and been unable to tell a narrowed
+        # family from an incomplete run, which is the one thing it was added
+        # for.
+        extra = [f for f in record if f not in self._EXPERIMENT_FIELDS]
+        if extra:
+            raise ValueError(
+                f"experiment record has fields the catalog would drop: {extra} "
+                "(add them to _EXPERIMENT_FIELDS and to the table model)"
+            )
 
         existing = self.get_experiment(record["experiment"])
         now = now_utc_naive()
