@@ -21,18 +21,23 @@ from typing import Any
 
 import numpy as np
 
-from abkit.stats.base import TEST_TYPE_PARAM, BaseMethod, require_pair_type, suffstats_columns
+from abkit.stats.base import (
+    RELATIVE_INTERVAL_PARAM,
+    TEST_TYPE_PARAM,
+    BaseMethod,
+    require_pair_type,
+    suffstats_columns,
+)
 from abkit.stats.effects import (
     BatchEffectResult,
     EffectEstimate,
     FloatArray,
     normal_test,
     normal_test_array,
-    relative_delta_effect,
-    relative_delta_effect_array,
 )
 from abkit.stats.exceptions import SampleValidationError
 from abkit.stats.registry import register
+from abkit.stats.relative_interval import relative_normal_test, relative_normal_test_array
 from abkit.stats.result import TestResult
 from abkit.stats.samples import PairedSufficientStats, Sample
 
@@ -93,7 +98,7 @@ class PairedTTest(BasePairedMethod):
     name = "paired-t-test"
     is_paired = True
     supports_vectorized = True
-    param_specs = (TEST_TYPE_PARAM,)
+    param_specs = (TEST_TYPE_PARAM, RELATIVE_INTERVAL_PARAM)
 
     def from_suffstats(self, stats_1: PairedSufficientStats, stats_2: None = None) -> TestResult:
         joint = self._as_joint(stats_1, stats_2)
@@ -108,17 +113,20 @@ class PairedTTest(BasePairedMethod):
         difference_mean_var = moments.linear_var0(weights_diff) / n
 
         if self.test_type == "absolute":
-            estimate = EffectEstimate(effect=difference_mean, var=difference_mean_var)
+            test = normal_test(
+                EffectEstimate(effect=difference_mean, var=difference_mean_var), self.alpha
+            )
         else:
-            estimate = relative_delta_effect(
+            test = relative_normal_test(
                 mean_num=difference_mean,
                 var_num=difference_mean_var,
                 mean_den=mean_1,
                 var_den=moments.linear_var0(weights_y1) / n,
                 # np.cov parity (ddof=1): −cov(y2−y1, y1)/n — baseline fact #1.
                 covariance=-moments.linear_cov1(weights_diff, weights_y1) / n,
+                alpha=self.alpha,
+                interval=str(self.params["interval"]),
             )
-        test = normal_test(estimate, self.alpha)
 
         index_y1 = moments.index("y1")
         index_y2 = moments.index("y2")
@@ -176,14 +184,15 @@ class PairedTTest(BasePairedMethod):
             if self.test_type == "absolute":
                 effect: FloatArray = difference_mean
                 var: FloatArray = difference_mean_var
-            else:
-                effect, var = relative_delta_effect_array(
-                    mean_num=difference_mean,
-                    var_num=difference_mean_var,
-                    mean_den=mean_y1,
-                    var_den=(m2_y1 / n) / n,
-                    # np.cov parity (ddof=1): −cov(y2−y1, y1)/n — baseline fact #1;
-                    # w_diff·C·w_y1ᵀ = c_y1y2 − m2_y1.
-                    covariance=-((c_y1y2 - m2_y1) / (n - 1.0)) / n,
-                )
-        return normal_test_array(effect, var, self.alpha)
+                return normal_test_array(effect, var, self.alpha)
+            return relative_normal_test_array(
+                mean_num=difference_mean,
+                var_num=difference_mean_var,
+                mean_den=mean_y1,
+                var_den=(m2_y1 / n) / n,
+                # np.cov parity (ddof=1): −cov(y2−y1, y1)/n — baseline fact #1;
+                # w_diff·C·w_y1ᵀ = c_y1y2 − m2_y1.
+                covariance=-((c_y1y2 - m2_y1) / (n - 1.0)) / n,
+                alpha=self.alpha,
+                interval=str(self.params["interval"]),
+            )

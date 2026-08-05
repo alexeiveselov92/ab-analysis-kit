@@ -140,9 +140,17 @@ def test_a_non_method_is_refused() -> None:
 
 
 #: Every configuration that legitimately builds an asymmetric interval, as
-#: ``(method, param, value)``. STAT-3 put the first entry here; anything else the
-#: roster below discovers is an unrecorded deviation.
-DECLARED_ASYMMETRIC = {("z-test", "interval", "score")}
+#: ``(method, param, value)``. STAT-3 put the first entry here, STAT-4 the five
+#: Fieller ones; anything else the roster below discovers is an unrecorded
+#: deviation. Each is recorded in ``docs/specs/statistics-changes.md`` (§4.4, §4.5).
+DECLARED_ASYMMETRIC = {
+    ("z-test", "interval", "score"),
+    ("t-test", "interval", "fieller"),
+    ("cuped-t-test", "interval", "fieller"),
+    ("paired-t-test", "interval", "fieller"),
+    ("paired-cuped-t-test", "interval", "fieller"),
+    ("ratio-delta", "interval", "fieller"),
+}
 
 
 def test_no_method_declares_a_symmetric_ci_and_then_builds_an_asymmetric_one() -> None:

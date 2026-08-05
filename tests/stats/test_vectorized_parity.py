@@ -104,11 +104,25 @@ def ttest_rows(rng: np.random.Generator) -> dict[str, np.ndarray]:
     return {"n_1": n_1, "mean_1": mean_1, "m2_1": m2_1, "n_2": n_2, "mean_2": mean_2, "m2_2": m2_2}
 
 
-@pytest.mark.parametrize("test_type", ["absolute", "relative"])
-def test_ttest_parity(test_type: str) -> None:
+#: The estimand × interval pairs a mean method must reproduce row-for-row.
+#: ``fieller`` exists only for the ratio estimand (it is refused beside
+#: ``absolute``), so the axes are swept as a LIST of legal pairs rather than as a
+#: product with a skip — a skipped case is a test that cannot fail.
+MEAN_INTERVALS = [("absolute", "delta"), ("relative", "delta"), ("relative", "fieller")]
+
+
+def _mean_params(test_type: str, interval: str, **extra) -> dict:
+    params = {"test_type": test_type, **extra}
+    if interval != "delta":
+        params["interval"] = interval
+    return params
+
+
+@pytest.mark.parametrize("test_type,interval", MEAN_INTERVALS)
+def test_ttest_parity(test_type: str, interval: str) -> None:
     rows = ttest_rows(np.random.default_rng(SEED))
     method = create_method(
-        "t-test", alpha=0.05, params={"test_type": test_type, "calculate_mde": False}
+        "t-test", alpha=0.05, params=_mean_params(test_type, interval, calculate_mde=False)
     )
     batch = method.from_suffstats_array(
         {"n": rows["n_1"], "mean": rows["mean_1"], "m2": rows["m2_1"]},
@@ -189,11 +203,11 @@ def cuped_rows(rng: np.random.Generator) -> dict[str, np.ndarray]:
     return columns
 
 
-@pytest.mark.parametrize("test_type", ["absolute", "relative"])
-def test_cuped_ttest_parity(test_type: str) -> None:
+@pytest.mark.parametrize("test_type,interval", MEAN_INTERVALS)
+def test_cuped_ttest_parity(test_type: str, interval: str) -> None:
     rows = cuped_rows(np.random.default_rng(SEED + 2))
     method = create_method(
-        "cuped-t-test", alpha=0.05, params={"test_type": test_type, "calculate_mde": False}
+        "cuped-t-test", alpha=0.05, params=_mean_params(test_type, interval, calculate_mde=False)
     )
     batch = method.from_suffstats_array(
         {key: rows[f"{key}_1"] for key in ("n", "mean", "m2", "cov_mean", "cov_m2", "cross_c")},
@@ -251,10 +265,10 @@ def ratio_rows(rng: np.random.Generator) -> dict[str, np.ndarray]:
     return columns
 
 
-@pytest.mark.parametrize("test_type", ["absolute", "relative"])
-def test_ratio_delta_parity(test_type: str) -> None:
+@pytest.mark.parametrize("test_type,interval", MEAN_INTERVALS)
+def test_ratio_delta_parity(test_type: str, interval: str) -> None:
     rows = ratio_rows(np.random.default_rng(SEED + 3))
-    method = create_method("ratio-delta", alpha=0.05, params={"test_type": test_type})
+    method = create_method("ratio-delta", alpha=0.05, params=_mean_params(test_type, interval))
     keys = ("n", "mean_num", "m2_num", "mean_den", "m2_den", "c_nd")
     batch = method.from_suffstats_array(
         {key: rows[f"{key}_1"] for key in keys}, {key: rows[f"{key}_2"] for key in keys}
@@ -356,10 +370,10 @@ def paired_joint(rows: dict[str, np.ndarray], i: int) -> PairedSufficientStats:
     return PairedSufficientStats(moments)
 
 
-@pytest.mark.parametrize("test_type", ["absolute", "relative"])
-def test_paired_ttest_parity(test_type: str) -> None:
+@pytest.mark.parametrize("test_type,interval", MEAN_INTERVALS)
+def test_paired_ttest_parity(test_type: str, interval: str) -> None:
     rows = paired_rows(np.random.default_rng(SEED + 4))
-    method = create_method("paired-t-test", alpha=0.05, params={"test_type": test_type})
+    method = create_method("paired-t-test", alpha=0.05, params=_mean_params(test_type, interval))
     batch = method.from_suffstats_array(rows)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", AbkitStatsWarning)

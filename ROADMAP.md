@@ -801,15 +801,21 @@ loosens α for the screening metrics remaining in it.
 Net effect on numbers: **the FWER item moves none** (the claim is fixed and Holm
 is added read-time; neither the gate nor a halved budget ships), the proportion
 interval moves **no p-value** (Farrington–Manning form is bit-identical to
-today's pooled z at δ=0), and the relative-effect fix moves **no verdict**
-(Fieller's rejection set at θ=0 equals today's). What moves is interval
-endpoints, guardrail α, and — for whoever opts in — `method_config_id`.
+today's pooled z at δ=0), and the relative-effect fix moves **no default**.
+*Corrected at build time:* D10's "Fieller changes no verdict" was true of
+replacing the **shortcut**, which is what the z-test had and what STAT-3 already
+answered; the MEAN methods carry the **delta** interval, whose rejection set does
+differ — so under `interval: fieller` the relative p-value deliberately becomes
+the absolute comparison's, which is what makes the interval and the p-value one
+decision. What moves is interval endpoints, the opted-in relative p-value,
+guardrail α, and — for whoever opts in — `method_config_id`.
 
 5 WP (uniform ddof dropped), ordered by value rather than dependency —
 **STAT-1c (guardrails uncorrected), STAT-2 (the false-positive sign instrument),
 STAT-1b (the declared contrast set), STAT-1 (Holm + the claim), STAT-3a (the
-`asymmetric_ci` guard) and STAT-3 (the score proportion interval) are ✅
-shipped**; STAT-4 (Fieller) remains. Baseline
+`asymmetric_ci` guard), STAT-3 (the score proportion interval) and STAT-4 (the
+Fieller relative interval) are ✅ shipped**; only STAT-6 (the exit gate + the
+`0.8.0` cut) remains. Baseline
 goldens stay untouched; new numbers get **new** goldens.
 
 **STAT-1 as built:** `correction: holm` sits beside `benjamini_hochberg` in the
@@ -889,6 +895,34 @@ enumeration of who reads that flag has to be checked rather than recalled** — 
 design's "five class-level readers" was right about the five and silently wrong
 about the three instance-level readers inside `abk validate`, which were the ones
 that mattered.
+
+**STAT-4 as built:** `interval: delta | fieller` on the five MEAN methods —
+opt-in, identity-bearing, no default moved. The scope shifted at build time: the
+contour said "the relative-z covariance term", but STAT-3 had already answered
+that for the z-test (its ratio-scale score interval is the exact analogue rather
+than a normal-theory approximation of Fieller), so what remained was
+`t-test`/`cuped-t-test`/`ratio-delta` and the paired pair. The defect it closes
+is **one-sided**, and getting that right is the whole value: delta's two-sided
+coverage is nominal — so the A/A matrix's own FPR column reads 0.0498 against
+Fieller's 0.0499 — while its *tails* are 0.0168/0.0327 at a control-mean CV of 5%
+and 0.0083/0.0393 at 10%, **independent of the true effect**. Every abkit verdict
+is a one-sided claim, so the directional error rate runs at up to 1.6× the
+configured one, and an A/A run measures that faithfully and still reports
+"calibrated". STAT-2's sign column is the instrument that separates them (0.664
+measured against the derivation's predicted 0.659) — the WP it was shipped a
+milestone early for. Three deltas the design did not have. The relative p-value
+**deliberately becomes the absolute comparison's, bit-for-bit**, which is what
+makes the interval and the p-value one decision; an unbounded answer (`g ≥ 1`) is
+reported as **missing bounds** with the effect and p-value still on the row —
+Gleser–Hwang says a procedure with guaranteed coverage must sometimes decline,
+and the disclosed cost is that such a comparison can reject on the absolute scale
+without being called a WIN. And the capability flag moved onto the `ParamSpec`
+(`asymmetric_values`, plus its sibling `relative_only`), so the whole STAT-3a
+consequence set — the level-2 config error, `abk validate`'s omitted always-valid
+column, explore's α-tier gap, the `[low, high]` chip — followed with **no new
+surface code**. One design sub-task turned out to be already paid: explore's Tier
+α, which STAT-4 was told it must fix, is exactly the twelfth entry point STAT-3a
+found and guarded a WP earlier.
 
 **The sequential question is answered (D14):** the confidence sequence *does*
 extend to score intervals — the always-valid rule is a standardised test with a

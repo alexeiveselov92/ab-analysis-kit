@@ -140,8 +140,8 @@ not a name check. The widening works by inverting the symmetric fixed CI to reco
 |---|---|
 | `t-test`, `paired-t-test`, `z-test`\*, `cuped-t-test`, `paired-cuped-t-test`, `ratio-delta` | `bootstrap`, `paired-bootstrap`, `poisson-bootstrap`, `paired-poisson-bootstrap`, `post-normed-bootstrap`, `paired-post-normed-bootstrap` |
 
-\* `z-test` **except** with `interval: score`, whose interval is asymmetric — see
-below.
+\* `z-test` **except** with `interval: score`, and the mean methods **except**
+with `interval: fieller` — both of those intervals are asymmetric, see below.
 
 Bootstrap methods report an **asymmetric percentile CI**, so the SE is not
 recoverable by inversion and the transform cannot apply. If you set
@@ -155,18 +155,19 @@ The symmetry this relies on is **checked, not assumed**. A method may declare
 abkit would recover an SE by inverting a CI then refuses with a clear error instead
 of widening a number that is not a standard error.
 
-One shipped configuration declares it: **`z-test` with `interval: score`** (the
-Miettinen–Nurminen proportion interval — see
-[compute methods](compute-methods.md)). Setting it alongside `sequential.enabled` is
-a **config error naming both settings**, not a silent downgrade: the always-valid
-transform recovers the standard error by inverting the CI width, which for a score
-interval would produce a confident-looking number that is not a standard error.
-Pick one — the legacy interval, or the fixed-horizon mode.
+Two shipped configurations declare it, both of them inverted-test intervals (see
+[compute methods](compute-methods.md)): **`z-test` with `interval: score`** (the
+Miettinen–Nurminen proportion interval) and **the mean methods with
+`interval: fieller`** (the relative-lift interval). Setting either alongside
+`sequential.enabled` is a **config error naming both settings**, not a silent
+downgrade: the always-valid transform recovers the standard error by inverting the
+CI width, which for an asymmetric interval would produce a confident-looking number
+that is not a standard error. Pick one — the legacy interval, or the fixed-horizon
+mode.
 
-(The confidence sequence *can* be built on a score interval, by substituting its
-critical value inside the root-find the interval already performs rather than by
-widening a finished interval. That is a future extension, not a limitation of the
-interval.)
+(The confidence sequence *can* be built on either, by substituting its critical
+value inside the root-find the interval already performs rather than by widening a
+finished interval. That is a future extension, not a limitation of the interval.)
 
 ## Toggling re-plans the whole series (self-invalidation)
 

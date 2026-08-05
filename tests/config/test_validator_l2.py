@@ -422,3 +422,36 @@ class TestAsymmetricIntervalVersusTheSequentialMode:
         assert get_method_class("z-test").asymmetric_ci is False
         report = run_l2(self.experiment_with("score", True), [self.fraction_metric()])
         assert not report.ok
+
+    def experiment_with_fieller(self, interval, sequential):
+        """m13 STAT-4: the same contradiction, on a VALUE metric.
+
+        The gate reads ``method.asymmetric_ci`` and never a method name, so a
+        second asymmetric estimator must be covered without touching the
+        validator. This leg is what proves that — it would fail if the rule had
+        been written against ``interval == "score"``.
+        """
+        return make_experiment(
+            sequential={"enabled": sequential},
+            comparisons=[
+                {
+                    "metric": "arpu",
+                    "is_main_metric": True,
+                    "method": {
+                        "name": "t-test",
+                        "params": {"test_type": "relative", "interval": interval},
+                    },
+                }
+            ],
+        )
+
+    def test_a_fieller_interval_under_the_sequential_mode_is_the_same_error(self):
+        report = run_l2(self.experiment_with_fieller("fieller", True), [make_metric()])
+        assert not report.ok
+        message = "\n".join(report.errors)
+        assert "asymmetric" in message and "sequential.enabled" in message
+
+    def test_each_fieller_half_alone_is_fine(self):
+        for interval, sequential in (("fieller", False), ("delta", True), ("delta", False)):
+            report = run_l2(self.experiment_with_fieller(interval, sequential), [make_metric()])
+            assert report.ok, (interval, sequential, report.errors)

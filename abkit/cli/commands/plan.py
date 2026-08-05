@@ -379,9 +379,10 @@ def _plan_comparison(
     notes: list[str] = []
     if asymmetric_ci:
         notes.append(
-            "sizing uses the normal (Wald) power formula while the analysis will "
-            "invert the score statistic — the two rules differ by O(z²/N), so read "
-            "the MDE as the planning figure, not as the boundary the readout applies"
+            "sizing uses the normal (Wald) power formula while this comparison's "
+            "interval inverts a score-type statistic — the two half-widths differ by "
+            "O(z²/N), so read the MDE as the planning figure rather than as the "
+            "interval the readout will print"
         )
     moments = _resolve_moments(experiment, comparison, kind, override, tables, notes, history)
     if moments is None:

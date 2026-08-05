@@ -14,6 +14,63 @@ number change).
 ## [Unreleased]
 
 ### Added
+- **STAT-4 — `interval: fieller`: the relative lift interval becomes the
+  inversion of the test it already runs** (M13). **Opt-in and no default moves** —
+  `interval` is a new identity-flagged param on the five mean-based closed-form
+  methods (`t-test`, `cuped-t-test`, `paired-t-test`, `paired-cuped-t-test`,
+  `ratio-delta`) whose default `delta` is the legacy branch byte-for-byte, and no
+  `ALGORITHM_VERSION` was bumped. `z-test` is deliberately not among them: STAT-3's
+  ratio-scale score interval is the exact analogue for proportions. Full deviation
+  record: [statistics-changes.md §4.5](docs/specs/statistics-changes.md).
+
+  **The defect it closes, and why nothing had caught it.** The relative branch
+  reports `θ̂ ± z·SE` with the variance taken at the observed lift — a Wald
+  interval, and therefore a *different test* from the p-value printed beside it:
+  "the lift is 0" and "the difference is 0" are one hypothesis, and a report could
+  carry "significant" next to a lift interval covering zero. Worse, its two-sided
+  coverage is nominal while its **tails are not**: measured over 200k draws, the
+  interval misses low 1.68% of the time and high 3.27% at a control-mean CV of 5%
+  (0.83%/3.93% at 10%), against 2.5% bought on each side. Every abkit verdict —
+  WIN, LOSE — is a **one-sided** claim, so the directional error rate is up to 1.6×
+  the configured one. The imbalance depends on the denominator's noise and not on
+  the true effect, which is why an A/A run measures the live experiment's error
+  faithfully **and still reports "calibrated"**: both estimators' A/A
+  false-positive RATES agree to the third decimal (0.0498 vs 0.0499). The column
+  that tells them apart is STAT-2's `fpr_negative_share` — 0.66 for delta against
+  the derivation's predicted 0.659, 0.50 for Fieller.
+
+  **What ships.** `{θ : (a − θ·b)² ≤ z²(V_a − 2θV_ab + θ²V_b)}` over exactly the
+  five moments the delta path already had, so CUPED — whose numerator is adjusted
+  and whose denominator is not — is covered by the same code rather than a special
+  case. **Under `fieller` the relative p-value IS the absolute comparison's,
+  bit-for-bit**, which is what makes "the interval excludes zero" and "p < α" one
+  event by construction. The reported lift does not change. Both one-sided error
+  rates land on 2.5% at every control-mean CV up to 10%.
+
+  **The honest cost, stated rather than hidden.** When the control mean is not
+  clearly distinguishable from zero (`z²·Var(m̂₁)/m̂₁² ≥ 1`), **no bounded lift
+  interval exists at that level** — a theorem (Gleser–Hwang 1987), not an
+  implementation limit: a procedure with guaranteed coverage must sometimes decline,
+  and delta's always-finite interval is why *its* guaranteed coverage is zero. abkit
+  then reports the effect and the p-value with **empty bounds** and a warning naming
+  the reason, and the readout treats such a row as a gap — so a comparison can
+  reject on the absolute scale and still not be called a WIN. It fires on 0% of
+  draws at a control-mean CV of 10% and 8.5% at 30%. An *empty* confidence set (a
+  non-PSD moment triple, i.e. the mixed-ddof anomaly the delta branch reports as a
+  negative variance) gets its own sentence: five causes of missing bounds, five
+  messages.
+
+  **Consequences.** The interval is asymmetric, so it inherits every STAT-3a
+  refusal with no new surface code — `sequential: {enabled: true}` beside it is a
+  level-2 config error naming both knobs (also at the explore knob and its Apply
+  seam), `abk validate` scores the fixed columns and omits the always-valid one,
+  explore's α tier answers with a gap, and every surface renders `[low, high]`
+  rather than `±`. Writing `interval: fieller` beside `test_type: absolute` is a
+  **construction error**, not a silent no-op: it would compute nothing and still
+  fork `method_config_id`. And `abk plan`'s Wald sizing turns out to be *closer*
+  under Fieller than under the shipped default — `get_ttest_mde`'s relative branch
+  is the null-variance rule, which is Fieller's own rejection boundary — so its
+  caveat now claims a difference in half-widths rather than in decision rules.
 - **STAT-3 — `interval: score`: the z-test's confidence interval becomes the
   inversion of the test it already runs** (M13, Miettinen–Nurminen in its
   Farrington–Manning form). **Opt-in, and no p-value moves** — `interval` is a

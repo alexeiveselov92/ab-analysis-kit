@@ -79,6 +79,30 @@ def test_score_cell_scores_the_fixed_columns_and_omits_the_sequential_one(vector
 
 
 @pytest.mark.parametrize("vectorized", [True, False])
+def test_a_REAL_asymmetric_configuration_degrades_the_same_way(vectorized: bool):
+    """The same degradation, reached through a shipped config instead of a setattr.
+
+    Until m13 STAT-4 the only asymmetric method was ``z-test`` + ``interval:
+    score``, whose input kind is ``fraction`` and so cannot use these normal
+    panels — which is why the probes above flip the attribute by hand. ``t-test``
+    + ``interval: fieller`` is a real configuration on THIS panel, so the gate is
+    now exercised end to end: if the flag ever stopped reaching the bound
+    instance, the setattr probes would keep passing and this one would not.
+    """
+    panel = normal_panel(n_units=1200, n_cutoffs=2, seed=7)
+    method = MethodConfig(
+        name="t-test", params={"test_type": "relative", "interval": "fieller"}
+    ).bind(alpha=ALPHA)
+    method.supports_vectorized = vectorized  # type: ignore[misc]
+    assert method.asymmetric_ci is True
+
+    score = score_cell(panel, method, iterations=50, seed_parts=("aa", "x"))
+    assert score.fpr is not None
+    assert score.fpr_sequential is None
+    assert "asymmetric" in " ".join(score.warnings)
+
+
+@pytest.mark.parametrize("vectorized", [True, False])
 def test_the_skipped_column_says_WHY_and_not_the_other_reason(vectorized: bool):
     """ "τ² could not be anchored (degenerate horizon)" is true of a degenerate panel
     and false here — nothing was anchored because nothing was attempted. Two engines

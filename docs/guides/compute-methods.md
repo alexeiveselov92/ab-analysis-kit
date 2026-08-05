@@ -101,8 +101,9 @@ Closed-form estimators (normal / t approximation), golden-tested at relative
 | `power` | `t-test`, `z-test`, `cuped-t-test` | `0.8` | target power for the MDE solve (must be in `(0, 1)`) |
 | `covariate_lookback` | `cuped-t-test`, `paired-cuped-t-test` | — | pre-period covariate window, e.g. `14d` — **identity-bearing** |
 | `interval` | `z-test` | `pooled` | confidence-interval construction: `pooled` (legacy) or `score` — **identity-bearing** |
+| `interval` | `t-test`, `cuped-t-test`, `ratio-delta`, the paired variants | `delta` | how the **relative** interval is built: `delta` (legacy) or `fieller` — **identity-bearing** |
 
-`ratio-delta` and the paired variants take only `test_type`.
+`ratio-delta` and the paired variants take `test_type` and `interval`.
 
 ### `interval: score` — a proportion interval that is valid away from zero
 
@@ -149,6 +150,52 @@ warning: the precision of a lift is governed by **conversions**, not traffic
 (`z·√(1/x₁ + 1/x₂)`), so ten times the users at a tenth of the rate buys nothing.
 The interval is still reported — the warning tells you not to read it as a
 measurement.
+
+### `interval: fieller` — a lift interval that agrees with its own p-value
+
+The mean-based methods report a relative lift as `θ̂ ± z·SE`, with the SE computed
+at the observed lift. It is a valid interval, but it is a **different test** from
+the p-value beside it: "the lift is 0" and "the difference is 0" are one
+hypothesis, and a Wald interval on the ratio can contain 0 while the difference
+test rejects. Two things follow, and the second is the practical one:
+
+- your report can say "significant" and show a lift interval covering zero;
+- the two-sided coverage is right while the **tails are not**. Measured: at a
+  control-mean CV of 5% the interval misses low 1.7% of the time and high 3.3% —
+  against 2.5% bought on each side. Every abkit verdict (WIN, LOSE) is a
+  *one-sided* claim, so the error rate you actually run at is up to 1.6× the one
+  you configured. It does not depend on the true effect, which is why an A/A run
+  cannot see it.
+
+`interval: fieller` inverts the test at every candidate lift instead of only at
+the observed one:
+
+```yaml
+method: {name: t-test, params: {test_type: relative, interval: fieller}}
+```
+
+- **the lift interval and the p-value become one decision** — under `fieller` the
+  relative p-value *is* the absolute comparison's, so "the interval excludes zero"
+  and "p < α" cannot disagree;
+- both one-sided error rates land on 2.5%, at every control-mean CV;
+- the reported lift itself does not change — only the bounds and the p-value;
+- the interval is **asymmetric** about the estimate: report it as `[low, high]`,
+  never as `±`.
+
+The honest cost: when your control mean is not clearly different from zero, **no
+bounded lift interval exists at that confidence level** (this is a theorem, not an
+implementation limit — a procedure with guaranteed coverage must sometimes decline).
+abkit then reports the effect and the p-value with **empty bounds** and a warning
+naming the reason, where the legacy branch would have printed a finite interval it
+could not stand behind. In that state the readout treats the row as a gap, so a
+comparison can be significant on the absolute scale and still not be called a WIN.
+In practice this never fires on a well-powered metric (0% of draws at a
+control-mean CV of 10%; 8.5% at 30%).
+
+Like `interval: score`, it is **identity-bearing** (switching starts a new result
+series), it cannot be combined with `sequential: {enabled: true}`, and it is only
+meaningful for `test_type: relative` — writing it beside `absolute` is a config
+error rather than a silent no-op, because it would fork your series for nothing.
 
 ### CUPED — variance reduction with no extra SQL
 
@@ -251,11 +298,12 @@ sequential leaves them fixed-horizon and the readout still withholds
 WIN / LOSE / FLAT before the horizon. If you need valid early stopping, choose a
 parametric method.
 
-The same requirement rules out `z-test` with `interval: score` — its interval is
-asymmetric too. That combination is a **config error** naming both settings, not a
+The same requirement rules out the two inverted-test intervals — `z-test` with
+`interval: score` and the mean methods with `interval: fieller` — because both are
+asymmetric. Either combination is a **config error** naming both settings, not a
 silent downgrade: the transform recovers the standard error by inverting the CI
-width, which for a score interval would produce a confident-looking number that is
-not a standard error.
+width, which for an asymmetric interval would produce a confident-looking number
+that is not a standard error.
 
 ## Quarantined branches
 

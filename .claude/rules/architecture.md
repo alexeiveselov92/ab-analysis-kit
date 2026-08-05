@@ -608,6 +608,75 @@ two-process lock race) is deferred to a Docker-equipped environment.
   — a warning is a persisted cell, and `0.8.0`'s byte-compatibility claim covers the
   whole row, not just the numbers in it.
 
+### M13 STAT-4 facts an assistant must know (the Fieller relative interval)
+
+- **`interval: delta | fieller` is one shared `ParamSpec` adopted by FIVE methods**
+  (`t-test`, `cuped-t-test`, `paired-t-test`, `paired-cuped-t-test`, `ratio-delta`)
+  and dispatched in ONE place — `stats/relative_interval.py`'s
+  `relative_normal_test` / `relative_normal_test_array`, which replaced the
+  `relative_delta_effect` + `normal_test` pair each method used to compose itself.
+  `z-test` is deliberately NOT an adopter: STAT-3's ratio-scale score interval is
+  the exact analogue for proportions, and Fieller would be a normal-theory
+  approximation of it. The roster is DERIVED from the registry in the test, so a
+  sixth adopter cannot go untested.
+- **The p-value moves under `fieller`, and that is the change.** It becomes the
+  ABSOLUTE comparison's p-value bit-for-bit (same expression, same operand order —
+  the test asserts `==`), because "θ = 0" and "μ₂ − μ₁ = 0" are one hypothesis and
+  Fieller inverts that test: `0 ∈ set ⟺ C ≤ 0 ⟺ |a| ≤ z√V_a`. Keeping the Wald p
+  beside an inverted-test interval would have rebuilt the incoherence the WP
+  removes. The reported LIFT is untouched — Fieller's `R̂·g/(1−g)` centre shift
+  belongs to the confidence set's geometry, not to the estimator.
+- **The defect delta has is ONE-SIDED, and that is why STAT-2 shipped first.**
+  Two-sided coverage is nominal (0.0495) while the tails are 0.0168/0.0327 at a
+  control-mean CV of 5% — and every abkit verdict is a one-sided claim. The
+  imbalance does not depend on the true effect, so an A/A run at the null measures
+  the live experiment's error faithfully **and still reports "calibrated"**: the
+  FPR column reads 0.0498 for delta and 0.0499 for Fieller. `fpr_negative_share`
+  is the column that can tell them apart (0.66 vs 0.50, matching the derivation's
+  `0.5 + φ(z)z²·CV₁√w₁/α` to 0.005).
+- **An unbounded answer is reported as MISSING BOUNDS, never as a wide interval.**
+  `g = z²V̂_b/b² ≥ 1` means no bounded confidence set for a ratio exists at that
+  level (Gleser–Hwang: guaranteed coverage *requires* unbounded sets with positive
+  probability, so delta's always-finite interval has guaranteed coverage zero).
+  The effect and the p-value still ride; `readout._informative` already treats
+  NULL bounds as a gap. The disclosed cost: such a comparison can reject on the
+  absolute scale and not be called a WIN.
+- **Five causes of missing bounds, five sentences.** H5-undefined denominator,
+  H5-unstable, degenerate variance, unbounded (`A ≤ 0`), and EMPTY (`A > 0` with
+  no crossing — reachable only through a non-PSD moment triple, i.e. the same
+  mixed-ddof anomaly `normal_test` reports as a negative variance). The
+  unbounded-vs-empty split is decided through the exported
+  `relative_interval.leading_coefficient`, never by re-deriving `b² − z²V_b` at
+  the call site.
+- **`interval: fieller` beside `test_type: absolute` is REFUSED at construction.**
+  Declared on the spec (`ParamSpec.relative_only`) and enforced once in
+  `BaseMethod._validate_shared_params`. The param is identity-bearing, so an inert
+  acceptance would fork `method_config_id` and split a published series for no
+  numeric reason — the STAT-1b silent-no-op failure in miniature.
+- **`ParamSpec.asymmetric_values` is where `asymmetric_ci` now comes from.** STAT-3
+  resolved the flag in `ZTest.__init__`; with a second param-switched interval
+  across five classes that becomes five copies of a knob-dependent fact.
+  `BaseMethod.__init__` folds every spec's declaration into the bound instance, so
+  the whole STAT-3a surface (level-2 config error, `abk validate`'s omitted
+  sequential column, explore's α-tier gap, the `[low, high]` chip) follows with
+  **no new surface code** — verified by adding a real-config leg to
+  `tests/validate/test_asymmetric_ci_refusal.py`, whose earlier probes could only
+  `setattr` the flag because no value method could declare it.
+- **`abk plan`'s sizing is CLOSER under Fieller, not further.**
+  `get_ttest_mde`'s relative branch sizes the absolute difference and divides by
+  the control mean — the null-variance rule, which is Fieller's own rejection
+  boundary. So the planner has disagreed with the DEFAULT all along. The
+  asymmetric-interval note therefore claims a difference in **half-widths**
+  (`O(z²/N)`, true for both inverted intervals) rather than "the two rules
+  differ", which was never true for Fieller.
+- **The textbook `s = B + sign(B)√disc` root pairing is deliberately NOT used**,
+  and the discriminant's cancellation-free form deliberately IS. Both were
+  measured: the pairing buys nothing (2.3e-15 vs 3.3e-15 relative to the interval
+  width, and it is the worse of the two in three of four probed regimes), while
+  the naive `B² − AC` costs a factor of 30 and would cross rel-1e-9 at
+  `|z_stat| ≈ 10⁴`. The keeper has a Decimal-referenced gate; the dropped one had
+  no test that could justify it, which is why it is gone rather than commented.
+
 ### M7 vectorization facts an assistant must know
 
 - **`score_cell` and `sweep_family` are dispatchers** on

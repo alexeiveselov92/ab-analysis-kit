@@ -68,6 +68,7 @@ variants):
 | `power` | `0.8` | target power for the MDE solve |
 | `covariate_lookback` | — | **CUPED only**: pre-period window, e.g. `14d`. IDENTITY-BEARING |
 | `interval` | `pooled` | **`z-test` only**: `pooled` (legacy) \| `score`. IDENTITY-BEARING |
+| `interval` | `delta` | **mean methods**: `delta` (legacy) \| `fieller` — the RELATIVE interval. IDENTITY-BEARING |
 
 `interval: score` swaps the z-test's interval for the inversion of the test it
 already runs (Miettinen–Nurminen). **P-values do not change** — the statistic at
@@ -86,6 +87,25 @@ symmetric interval. `abk validate` still scores such a metric: it simply has no
 always-valid column, exactly like a bootstrap method. On a relative metric with
 few CONVERSIONS (not few users — the precision law reads counts) the row carries a
 "weakly identified" warning; the interval is still reported.
+
+`interval: fieller` (m13 STAT-4) does the same thing for the mean methods'
+RELATIVE branch: it inverts the test at every candidate lift instead of building
+`θ̂ ± z·SE` at the observed one. Here the p-value DOES move — under `fieller` the
+relative p-value is the ABSOLUTE comparison's, which is the point: "the lift is 0"
+and "the difference is 0" are one hypothesis, and the legacy branch gives them two
+answers that can disagree in a report. The reported lift is unchanged. What it
+fixes is one-sided: delta's two-sided coverage is nominal while its TAILS are
+0.017/0.033 at a control-mean CV of 5% (0.008/0.039 at 10%), and every verdict
+(WIN/LOSE) is a one-sided claim — so the real directional error rate is up to 1.6×
+the configured one, at every true effect, which is why an A/A run cannot see it.
+The honest cost: when the control mean is not clearly different from zero, NO
+bounded lift interval exists at that level (a theorem, not a limit), and abkit
+reports the effect and p-value with EMPTY bounds plus a warning rather than a
+finite interval it cannot stand behind — the readout then treats the row as a gap,
+so such a comparison is not called a WIN. Same three constraints as `score`:
+identity-bearing, incompatible with `sequential: {enabled: true}`, and — because
+it only governs the relative branch — writing it beside `test_type: absolute` is a
+config ERROR, not a silent no-op (it would fork the series for nothing).
 
 CUPED needs **no extra SQL**: with `covariate_lookback` set, abkit re-renders the
 same metric query over the pre-period window (exposure filter dropped) and uses
@@ -163,9 +183,10 @@ fixed-horizon, and the readout still withholds WIN/LOSE AND FLAT before the
 horizon. If
 you need peeking-valid early reads, choose a parametric method.
 
-`z-test` with `interval: score` is the one parametric exception, and it fails
-LOUDLY rather than silently: its interval is asymmetric too, so the pair is a
-config ERROR naming both settings. See `experiments.md` for the toggle and
+The two inverted-test intervals are the parametric exceptions, and they fail
+LOUDLY rather than silently: `z-test` with `interval: score` and the mean methods
+with `interval: fieller` are both asymmetric, so either pair is a config ERROR
+naming both settings. See `experiments.md` for the toggle and
 `overview.md` for why peeking matters.
 
 ## Quarantined branches (raise, never silently substitute)
