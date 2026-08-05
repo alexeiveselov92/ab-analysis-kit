@@ -54,8 +54,9 @@ sources, in this order — and the plan line always names the one it used:
    `assignment.added_filters` narrows the real cohort, a population read cannot apply
    it, and the line says that too. Strictly better than a hand-typed guess, strictly
    worse than a pilot run.
-3. **Persisted** — the most recent *usable* `_ab_results` row for the
-   control/first-treatment pair (labeled `persisted @ <ts>` in the output). This
+3. **Persisted** — the most recent *usable* `_ab_results` row for the control
+   (`assignment.control`, default the first declared variant) against the first
+   declared treatment (labeled `persisted @ <ts>` in the output). This
    requires at least one `abk run` to have landed. Rows flagged as
    insufficient-data or with a null value are skipped; the latest data-rich look
    wins.
@@ -192,9 +193,11 @@ Things worth reading closely:
 
 ### Multi-arm experiments
 
-For an experiment with more than two arms, sizing is shown for the **first-pair
-contrast only** (the other pairs share the same alpha). The plan says so explicitly
-in a warning line.
+For an experiment with more than two arms, sizing is shown for the **control vs
+first-treatment contrast only** (the other pairs share the same alpha). The plan
+says so explicitly in a warning line, naming both arms. It is deliberately not
+`contrast_pairs()[0]`: with a control declared late in `variants` that entry is a
+treatment-vs-treatment pair, which carries no baseline moments.
 
 ### The peeking warning
 

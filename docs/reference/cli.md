@@ -467,7 +467,8 @@ abk plan [--select <exp>]... [--metric <m>] [--mde PCT] [--power P] [--alpha A] 
 Reports required sample size, achievable MDE, and achieved power **at the effective
 two-tier alpha**, plus the projected look count and cost shape, per comparison.
 Baseline per-arm moments come from the latest persisted `_ab_results` row for the
-control / first-treatment pair; a `--baseline` override sizes an experiment with no
+control arm (`assignment.control`, default the first declared variant) against the
+first declared treatment; a `--baseline` override sizes an experiment with no
 persisted data. The override format is `<metric>:mean=..,std=..,n=..[,corr=..]` for a sample
 metric and `<metric>:prop=..,n=..` for a fraction metric.
 

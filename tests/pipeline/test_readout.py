@@ -1404,3 +1404,87 @@ class TestSrmSummary:
         # the full set it sees the failing horizon row
         assert srm_summary(experiment, rows[:5]) == (False, pytest.approx(0.8))
         assert srm_summary(experiment, rows) == (True, pytest.approx(1e-6))
+
+
+class TestDeclaredControl:
+    """m14 DEC-1: the readout reads ``experiment.control``, not ``variants[0]``.
+
+    Three arms with the control declared in the MIDDLE — the shape that
+    separates a real fix from a no-op. Under ``all_pairs`` the declared family
+    is ``(b, a), (a, c), (b, c)``, so the positional resolution these tests
+    replace would have looked up ``(a, b)`` (which does not exist) and
+    ``(a, c)`` (which does, and is healthy).
+    """
+
+    @staticmethod
+    def _three_arm() -> ExperimentConfig:
+        return make_experiment(
+            assignment={
+                "query": "SELECT 1",
+                "variants": ["a", "b", "c"],
+                "control": "b",
+                "expected_split": {"a": 1 / 3, "b": 1 / 3, "c": 1 / 3},
+            }
+        )
+
+    def _declared_rows(self, experiment, **overrides):
+        rows = []
+        for name_1, name_2 in experiment.contrast_pairs():
+            rows += make_series(experiment, name_1=name_1, name_2=name_2, **overrides)
+        return rows
+
+    def test_verdicts_are_issued_against_the_declared_baseline(self):
+        experiment = self._three_arm()
+        readout = evaluate(experiment, self._declared_rows(experiment))
+        assert [(v.name_1, v.name_2) for v in readout.verdicts] == [("b", "a"), ("b", "c")]
+
+    def test_the_srm_gate_stays_loud_under_a_declared_control(self):
+        """The silent failure DEC-1 exists to prevent.
+
+        Only the pairs containing the declared control carry the failing SRM
+        flag; the treatment pair ``(a, c)`` is healthy. A positional lookup
+        misses ``(a, b)`` entirely and finds ``(a, c)`` healthy, so it reports
+        ``srm_flag=False, srm_pvalue=0.8`` — a broken assignment reading fine.
+        """
+        experiment = self._three_arm()
+        rows = []
+        for name_1, name_2 in experiment.contrast_pairs():
+            broken = name_1 == "b" or name_2 == "b"
+            rows += make_series(
+                experiment,
+                name_1=name_1,
+                name_2=name_2,
+                srm_flag=broken,
+                decision_blocked=broken,
+                srm_pvalue=1e-6 if broken else 0.8,
+            )
+        readout = evaluate(experiment, rows)
+        assert readout.srm_flag is True
+        assert readout.srm_pvalue == pytest.approx(1e-6)
+
+    def test_rows_in_the_old_orientation_are_dropped_before_the_srm_rollup(self):
+        """Declaring a non-first control re-orients pairs, so rows persisted
+        under the previous orientation leave the declared set — the STAT-1b
+        stale-pair path, reached by a new cause.
+
+        The stale series is built HOSTILE (a failing SRM gate) on purpose. With
+        healthy stale rows the ``srm_flag is False`` assertion could not fail —
+        every row in the fixture carries ``make_row``'s default — and a test
+        that cannot fail is worse than no test. As written it says the real
+        thing: an undeclared pair does not reach the experiment-level rollup,
+        in EITHER direction.
+        """
+        experiment = self._three_arm()
+        stale = make_series(
+            experiment,
+            name_1="a",
+            name_2="b",
+            srm_flag=True,
+            decision_blocked=True,
+            srm_pvalue=1e-9,
+        )
+        readout = evaluate(experiment, self._declared_rows(experiment) + stale)
+        assert any("outside the declared contrast set" in w for w in readout.warnings)
+        assert any("assignment.control" in w for w in readout.warnings), readout.warnings
+        assert readout.srm_flag is False
+        assert readout.srm_pvalue == pytest.approx(0.8)

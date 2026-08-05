@@ -50,8 +50,15 @@ Gather from the user:
   `assignment.query_file:` (or inline `assignment.query:`). Mirror the scaffold's
   `sql/example_assignment.sql`: select the `unit_key`, `variant`, `exposure_ts`,
   and end the WHERE with `{{ ab_added_filters }}`.
-- `variants:` — the arm names. **The FIRST is the control** (name_1); effects are
-  measured against it.
+- `variants:` — the arm names. **The FIRST is the control** (name_1) unless
+  `control:` names another arm; effects are measured against it.
+- `control:` — OPTIONAL. Which arm is the baseline; must be one of `variants`.
+  Leave it out unless the operator asks: the positional default is right for
+  almost every experiment, and **prefer reordering `variants` over declaring a
+  non-first control on an experiment that already has rows** — a declaration
+  re-orients every pair containing that arm, strands those pairs' persisted
+  rows, and re-bases the effect (on the relative scale it does NOT merely flip
+  sign, because the denominator swaps arms too).
 - `expected_split:` — the intended share per variant; must name every variant
   and sum to 1.0. **This drives the SRM gate** — set it to the real intended
   allocation, not a guess.
@@ -155,7 +162,7 @@ interval_anchor: midnight   # midnight (default) | start | an explicit timestamp
 
 assignment:
   query_file: sql/checkout_button_color_assignment.sql
-  variants: [control, treatment]                    # FIRST is control
+  variants: [control, treatment]                    # the FIRST is control unless `control:` says otherwise
   expected_split: {control: 0.5, treatment: 0.5}    # drives SRM
 
 alpha: 0.05
@@ -181,7 +188,8 @@ Fix every reported error before declaring done. Re-check:
 
 - [ ] `name` unique across experiments AND metrics; matches the filename.
 - [ ] `assignment` has one of `query`/`query_file`, ≥2 unique variants, and an
-      `expected_split` naming every variant that sums to 1.0.
+      `expected_split` naming every variant that sums to 1.0; if `control:` is
+      set, it is one of `variants`.
 - [ ] Every `comparisons[].metric` references a metric file that exists.
 - [ ] Exactly ≥1 comparison sets `is_main_metric: true`; no main+guardrail clash.
 - [ ] Each method name is registered and its params instantiate (no quarantined

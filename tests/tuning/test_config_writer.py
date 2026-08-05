@@ -494,3 +494,41 @@ class TestArchiveAccumulation:
         )
         live = discover_config_files(path.parent)
         assert live == [path]  # .history is invisible to discovery
+
+
+class TestDeclaredControlSurvivesApply:
+    """m14 DEC-1 trap (a): Apply re-emits the PARSED document.
+
+    A field Apply does not know about survives only because it re-emits the
+    whole merged body rather than a whitelist of keys — which is a property of
+    the seam, not a promise anyone had written down. ``control:`` decides which
+    arm every effect is measured against, so losing it silently in a knob edit
+    would re-base a live experiment's numbers.
+    """
+
+    YAML = EXPERIMENT_YAML.replace(
+        "  variants: [control, treatment]\n",
+        "  variants: [control, treatment, challenger]\n  control: challenger\n",
+    ).replace(
+        "expected_split: {control: 0.5, treatment: 0.5}",
+        "expected_split: {control: 0.34, treatment: 0.33, challenger: 0.33}",
+    )
+
+    def test_the_control_key_round_trips(self, tmp_path):
+        path = tmp_path / "experiments" / "exp_apply.yml"
+        path.parent.mkdir()
+        path.write_text(self.YAML, encoding="utf-8")
+
+        before = ExperimentConfig.from_yaml_file(path)
+        assert before.control == "challenger"
+
+        apply(
+            root=tmp_path,
+            path=path,
+            comparisons=[TunedComparison("arpu", params={"test_type": "absolute"})],
+        )
+
+        after = ExperimentConfig.from_yaml_file(path)
+        assert after.assignment.control == "challenger"
+        assert after.control == "challenger"
+        assert after.contrast_pairs() == before.contrast_pairs()

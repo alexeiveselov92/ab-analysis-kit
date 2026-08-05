@@ -73,7 +73,9 @@ assignment:                      # READ-ONLY exposure source (abkit does not ran
     batch_interval: 1d           # closed-interval batch step of the copy loop
     batch_intervals_per_round_trip: 30   # intervals per load round trip (interval count, not rows)
     maturity_delay: 0            # ignore source rows younger than now() - maturity_delay (0 = none)
-  variants: [control, treatment] # name_1 = first = control; name_2 = treatment
+  variants: [control, treatment] # name_1 = the control; name_2 = treatment
+  control: control               # OPTIONAL (m14 DEC-1): which arm is the baseline
+                                 # (default: the first declared variant)
   expected_split: {control: 0.5, treatment: 0.5}   # drives the SRM chi-square gate
 
 alpha: 0.05                      # experiment-level significance (see §6 — inspectable)
@@ -291,11 +293,12 @@ math.
 | `all_pairs` (**default**) | every variant pair — the pre-`0.8.0` behaviour | `C(g,2) × metrics` |
 | `vs_control` | the `g−1` many-to-one contrasts against the control arm | `(g−1) × metrics` |
 
-The **control is the first declared variant** (`assignment.variants[0]`), the
-positional convention `name_1`, the readout's verdicts and the SRM rollup
-already use (statistics-baseline §5). M14's explicit `control:` field will
-replace that resolution in one place; the family declaration does not wait for
-it (D15) — they are different declarations.
+The **control is `assignment.control` when declared, else the first declared
+variant** — resolved in exactly ONE place, `ExperimentConfig.control` (m14
+DEC-1, §6.3), which this factory, the readout's verdicts and the SRM rollup all
+read. STAT-1b ratified the positional convention and DEC-1 replaced the
+resolution; the family declaration deliberately did not wait for it (D15) —
+they are different declarations.
 
 **It is one declaration with two halves.** Under `vs_control` the
 treatment-vs-treatment pairs are also **not computed**: no `_ab_results` rows,
@@ -344,17 +347,95 @@ Notes:
   rows into an existing series; `abk run --full-refresh` re-homogenises it, and
   `_ab_aa_runs` rows keyed on the old effective alpha read `alpha_mismatch`
   until `abk validate` re-runs them.
-- Rows already written for a pair the narrowed family no longer claims are
-  **ignored loudly** by every read surface (report, dashboard, notifications) —
-  the same path a renamed arm takes. `abk clean` does **not** remove them (it
-  prunes series by `method_config_id`); `abk run --full-refresh` does, because
-  it deletes the window before rewriting the declared pairs.
+- Rows already written for a pair the declared family no longer claims are
+  **ignored loudly** by every read surface (report, dashboard, notifications).
+  There are now **three** causes and they share one sentence
+  (`experiment_config.UNDECLARED_PAIR_CAUSES`, since four surfaces each carried
+  their own copy of the list): a renamed arm, a family narrowed to
+  `vs_control`, and — since m14 DEC-1 — a declared `control:` that re-orients
+  `(name_1, name_2)`. `abk clean` does **not** remove them (it prunes series by
+  `method_config_id`); `abk run --full-refresh` does, because it deletes the
+  window before rewriting the declared pairs — but note its `--to` bound is
+  **exclusive** on `end_ts`, and since m10 the horizon cutoff's `end_ts` **is**
+  `horizon_ts`, so `--to <horizon>` leaves the horizon look untouched. Pass a
+  bound past the horizon (the bounds are parsed naive and compared against
+  naive-UTC `end_ts`, while the YAML window is local).
 - `contrasts` is deliberately **not** part of the m9 state identity: it changes
   which pairs are compared, never which units/days are materialised — the same
   reasoning that keeps `interval_anchor` out (m10).
 - `_ab_experiments.contrasts` records the family for BI (added additively, so an
   existing install picks it up on its next run): without it a join would
   re-derive `C(variants, 2)` and land on a divisor no `_ab_results` row carries.
+
+### 6.3 `assignment.control` — the declared baseline (m14 DEC-1)
+
+`assignment.control` is an **optional** variant name; unset, the control is the
+first declared variant, exactly as it was through `0.8.0`. It is validated at
+level 1 to be one of `assignment.variants`, with a message naming both the
+rejected value and the declared list (the realistic mistake is an arm renamed
+on one line and not the other).
+
+There is deliberately **no project-level default** — STAT-1b D16's reason, and
+it binds harder here: the baseline a surface measures against must never depend
+on whether that surface happened to resolve a `ProjectConfig`.
+
+**One resolver, AST-gated.** `ExperimentConfig.control` (and `.treatments`, the
+non-control arms in *declaration order* — not a `variants[1:]` slice, which
+would drop the arms preceding a mid-list control from every verdict) is the one
+place the convention is resolved, the fourth member of the family that already
+holds `grid()` (m10), `contrast_pairs()` (m13) and `build_cohort_backend` (m8).
+`tests/config/test_control_is_the_only_entry.py` forbids `variants[0]`,
+`variants[1]` and `variants[1:]` anywhere under `abkit/` outside it.
+
+The gate is its own work package because **seven** sites spelled the convention
+and they do not fail alike: the family factory would pick the wrong pairs (the
+wrong alphas), `readout.evaluate` would verdict against the wrong baseline,
+`abk plan` would size against the wrong arm, `abk validate` would calibrate at
+the wrong split ratio — and `readout._srm_from_series` would fail **silently**,
+because every `(metric, control, treatment)` series lookup misses and a miss is
+indistinguishable there from "no rows yet", so a broken assignment reads
+healthy. A knob that reaches none of its call sites is the m10
+`interval_anchor` failure; a knob whose missed call site turns a safety gate
+quiet is worse.
+
+**What a declaration moves, and what it does not.** `contrast_pairs()`
+*orients* every pair containing the control as `(control, other)`; it never
+adds or removes one, so the family size — and therefore the alpha divisor — is
+untouched. Under the default the orientation is a **no-op by construction**:
+`itertools.combinations` already emits `variants[0]` first in every pair that
+contains it, so a `0.8.0` experiment reproduces row for row.
+
+Declaring a **non-first** control on a running experiment is the one case with
+consequences, and config-lint warns about all of them:
+
+- the pairs containing it change `(name_1, name_2)`, so their persisted rows
+  leave the declared set (the third cause above);
+- the re-oriented pair's effect is measured against the other arm — on the
+  absolute scale the **negation** of the old number, but on the **relative
+  scale it is not**, because the denominator swaps arms too: `(m₂−m₁)/m₁`
+  becomes `(m₁−m₂)/m₂`. `test_type: relative` is the common configuration, so
+  an operator comparing an old chart against a new one will not find the sign
+  flip they were promised;
+- the next **plain `abk run` recomputes the whole series** — no
+  `--full-refresh` needed, because no look carries the re-oriented pair and the
+  anti-join is complete at *(cutoff × declared pair)*. Until it does, the
+  read-time correction families are built from the surviving rows only, so a
+  verdict read in between can be looser than the one that settles;
+- the previous orientation's rows are **never deleted**. abkit's own surfaces
+  drop them with a warning, but raw SQL over `_ab_results` sees BOTH
+  orientations of that pair — join `_ab_experiments.control` to tell them apart.
+
+`control` is deliberately **not** part of the m9 state identity (it moves which
+pairs are compared, never which units or days are materialised — the
+`interval_anchor` and `contrasts` precedent), and `_ab_experiments.control`
+records the **resolved** baseline for BI. That column is `Nullable` rather than
+defaulted: `ensure_columns` refuses a NOT-NULL/no-default addition (m13 STAT-6)
+and no literal default could be right for a per-experiment variant name, so
+NULL means exactly one thing — a row written before `0.9.0`.
+
+The scaffold (`abk init`) does **not** write `control:`: an optional field
+whose default is right is noise in a starter config (the `contrasts`
+precedent).
   (`guardrail_correction` from STAT-1c is still absent from that catalog — a
   known gap, and the per-row `alpha` remains the authority in both cases.)
 - Writing `contrasts:` under the project's `statistics:` block is a **loud

@@ -41,6 +41,12 @@ TOP_LEVEL_KEYS = {
     "cadence_seconds",
     "tz",
     "arms",
+    # m14 DEC-1: the resolved baseline arm. Additive for the same reason as
+    # `contrasts` below, and it exists because the header's "first = control"
+    # sentence stopped being a tautology the moment a control could be
+    # declared — with `control: c` on [a, b, c] the pair blocks read "c vs a"
+    # under a header naming `a`.
+    "control",
     # m13 STAT-1b: which of the C(g,2) pairs the experiment claims. Additive,
     # so no PAYLOAD_VERSION bump (the WP3 precedent) — the renderer types it
     # optional and an older baked payload still loads.
@@ -1146,3 +1152,28 @@ class TestSrmObservedSourceModes:
             experiment, tables, manager=_UntouchableManager(), project_root=None
         )
         assert payload["srm"]["observed"] == {"control": 2, "treatment": 2}
+
+
+class TestDeclaredControlInThePayload:
+    """m14 DEC-1: the page must be able to name the baseline it charts."""
+
+    @staticmethod
+    def _three_arm(control=None):
+        assignment = {
+            "query": "SELECT 1",
+            "variants": ["a", "b", "c"],
+            "expected_split": {"a": 1 / 3, "b": 1 / 3, "c": 1 / 3},
+        }
+        if control is not None:
+            assignment["control"] = control
+        return make_experiment(assignment=assignment)
+
+    def test_the_resolved_control_is_baked(self, tables):
+        assert build_report_payload(self._three_arm(), tables)["control"] == "a"
+        assert build_report_payload(self._three_arm("c"), tables)["control"] == "c"
+
+    def test_every_pair_block_puts_the_control_first(self, tables):
+        """The claim the header's baseline line has to agree with."""
+        payload = build_report_payload(self._three_arm("c"), tables)
+        pairs = [(p["c"], p["t"]) for m in payload["metrics"] for p in m["pairs"]]
+        assert pairs == [("a", "b"), ("c", "a"), ("c", "b")]

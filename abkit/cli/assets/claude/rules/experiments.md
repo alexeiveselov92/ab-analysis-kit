@@ -34,7 +34,9 @@ timezone: UTC                    # interprets bare-date edges, the `midnight` an
 assignment:                      # READ-ONLY exposure source — abkit never randomizes
   query_file: sql/assignment.sql # or inline `query:` (exactly one, never both)
   added_filters: ""              # optional extra SQL fragment (must start with AND)
-  variants: [control, treatment] # FIRST is control (name_1); >= 2, unique
+  variants: [control, treatment] # the FIRST is control (name_1) unless `control:` says otherwise
+  # control: control             # OPTIONAL: which arm is the baseline (default: variants[0]);
+                                 # must be one of `variants`
   expected_split: {control: 0.5, treatment: 0.5}   # must cover every variant, sum to 1.0; drives SRM
   # cohort_copy:                 # opt-in (default OFF): persist an incremental,
   #   enabled: true              # append-only _ab_exposures copy instead of
@@ -46,7 +48,8 @@ alpha: 0.05                      # experiment-level significance (unset -> proje
 correction: bonferroni           # none | bonferroni | benjamini_hochberg | holm (unset -> project default)
 # contrasts: vs_control          # all_pairs (default) | vs_control — the family this experiment
                                  # CLAIMS: vs_control compares only the g-1 treatments against the
-                                 # first declared variant, divides alpha by g-1 instead of C(g,2)
+                                 # CONTROL arm (assignment.control, default the first declared
+                                 # variant), divides alpha by g-1 instead of C(g,2)
                                  # (≈ +10 points of power at 4 arms), and does NOT compute the
                                  # treatment-vs-treatment pairs at all
 sequential: {enabled: false, scheme: always_valid}   # opt-in peeking-safe CIs (default OFF)
@@ -83,9 +86,25 @@ comparisons:                     # required — each binds one library metric to
 
 ## Variants, split & SRM
 
-- `assignment.variants` lists the arm names; **the first is control (`name_1`)**.
-  Every subsequent variant is compared against it. Names must be unique, non-empty,
-  and within the storage key budget.
+- `assignment.variants` lists the arm names; **the first is the control
+  (`name_1`)** unless `assignment.control` names another. Names must be unique,
+  non-empty, and within the storage key budget.
+- `assignment.control` (optional) declares the baseline arm — the one every
+  `effect` is measured against and the one the SRM rollup keys its series on.
+  Unset, it is the first declared variant, exactly as through `0.8.0`; there is
+  no project-level default. Declaring the first variant changes nothing.
+  Declaring a **different** arm on an experiment that already has rows
+  re-orients every pair containing it to `(control, other)`, so: those pairs'
+  persisted rows leave the declared contrast set and are dropped loudly; the
+  effect is re-based against the other arm — the negation of the old number on
+  the absolute scale, but **NOT** on the relative scale, where the denominator
+  swaps arms too (`(m2-m1)/m1` becomes `(m1-m2)/m2`); the next plain `abk run`
+  recomputes the whole series (no `--full-refresh` needed, since no look
+  carries the re-oriented pair); and the old orientation's rows are never
+  deleted, so raw SQL over `_ab_results` sees both (join
+  `_ab_experiments.control`). **Prefer reordering `variants` to declaring a
+  non-first control on a running experiment.** `abk run --steps validate` warns
+  about all of it.
 - `expected_split` is the *assigned* share per arm (fractions in `(0,1)` that sum
   to `1.0`, one entry per variant). It is the input to the **SRM gate**: a
   chi-square test (anytime-valid multinomial below `1d` cadence) comparing observed

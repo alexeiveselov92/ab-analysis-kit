@@ -222,7 +222,21 @@ double-escape hazard open), not here.
                                   // start/horizon are grid facts, always real
   cadence_seconds,             // min cadence step (sub-day detection: < 86400)
   tz,                          // experiment timezone (IANA)
-  arms: [..],                  // variant names, config order; first = control
+  arms: [..],                  // variant names, config order. The first is the
+                               // control ONLY when `control` below is absent or
+                               // equal to it (m14 DEC-1)
+  control,                     // m14 DEC-1: the RESOLVED baseline arm — what
+                               // every effect on the page is measured against,
+                               // and name_1 of every pair containing it. The
+                               // header's "first = control" sentence was a
+                               // tautology until an arm could be declared; both
+                               // renderers keep it when it is still TRUE and
+                               // print "control: <name>" otherwise, so a two-arm
+                               // and every default experiment renders exactly as
+                               // in 0.8.0. Optional — absent in a pre-0.9.0 bake
+  contrasts,                   // m13 STAT-1b: 'all_pairs' | 'vs_control' — the
+                               // family the per-row alphas were divided by.
+                               // Optional; an older baked payload omits it
   srm: {flag, pvalue|null,     // CURRENT experiment health, window-INDEPENDENT
                                // (§6 "SRM loud"): flag/pvalue from the latest
                                // persisted row overall (not the latest charted
@@ -253,8 +267,14 @@ double-escape hazard open), not here.
                                // alpha: latest stored row alpha — what actually ran
              query|null,       // metric_query deduped to ONE entry per metric;
                                // metric_rendered_query NEVER enters the payload
-             pairs: [{c, t,    // all combinations(arms, 2), config order, always
-                               // present (series may be empty)
+             pairs: [{c, t,    // the DECLARED contrast set
+                               // (ExperimentConfig.contrast_pairs()), config
+                               // order, always present (series may be empty):
+                               // every combinations(arms, 2) pair under
+                               // `all_pairs`, only the g-1 control pairs under
+                               // `vs_control` (m13 STAT-1b). Every pair that
+                               // CONTAINS the control has it in `c` (m14 DEC-1);
+                               // a treatment-vs-treatment pair does not
                       series: [{t, ed, e, lo, hi, p, rj, s1, s2,
                                 v1, v2, sd1, sd2, cv1, cv2, mde, hz, blk, ins}],
                                // terse point keys: t ms-epoch; ed elapsed_days

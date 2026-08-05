@@ -124,7 +124,7 @@ stay visible — but inference (`pvalue`, `effect`, bounds, `reject`) is withhel
 | `method_name` | `String` | Registered method (e.g. `t-test`, `cuped-t-test`, `ratio-delta`). |
 | `method_params` | `String` | Canonical JSON of the method params (single `json_dumps_sorted` path — exact-string BI filters never split a series). |
 | `method_config_id` | `String` | Stable hash of method + identity params; the series key. |
-| `name_1`, `name_2` | `String` | The variant pair (control vs treatment). |
+| `name_1`, `name_2` | `String` | The variant pair. For a pair containing the control, `name_1` **is** the control (`_ab_experiments.control`); a treatment-vs-treatment pair (`contrasts: all_pairs`, 3+ arms) has a treatment in `name_1`. Since m14 DEC-1 a declared `assignment.control` can re-orient a pair, and the previous orientation's rows are never deleted — so both `(a,b)` and `(b,a)` can coexist. Join `_ab_experiments.control` to tell the live orientation from the abandoned one. |
 
 ### Window
 
@@ -388,6 +388,7 @@ path) to `_ab_results` from one source of truth. It is upserted once per run
 | `data_lag_seconds` | `Int64` | Completeness watermark lag. |
 | `timezone` | `String` | Experiment timezone. |
 | `variants` | `String` | Canonical JSON array (config order). |
+| `control` | `Nullable(String)` | The RESOLVED baseline arm — which arm every `effect` in `_ab_results` is measured against, and the value `name_1` carries for every control-containing pair (m14 DEC-1). Always written when the experiment runs, whether or not `assignment.control` was declared, so BI never re-derives the positional convention from the `variants` JSON. Added additively in `0.9.0`, **nullable rather than defaulted** — no literal default could be right for a per-experiment variant name, and `ensure_columns` refuses a NOT-NULL/no-default addition. NULL therefore means exactly one thing: a row written before `0.9.0`. |
 | `expected_split` | `String` | Canonical JSON object. |
 | `alpha` | `Nullable(Float64)` | Effective alpha. |
 | `correction` | `Nullable(String)` | Correction method. |

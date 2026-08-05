@@ -905,3 +905,85 @@ def test_plan_refuses_a_comparison_whose_method_params_are_rejected():
         history=None,
     )
     assert plan.refused is not None and "method params rejected" in plan.refused
+
+
+class TestDeclaredControlReachesTheSizing:
+    """m14 DEC-1, behaviourally.
+
+    The AST gate proves no positional SHAPE survives under ``abkit/``; it
+    cannot prove the arm the sizing actually uses. The review's mutation probe
+    reverted all four ``plan.py`` sites to ``list(variants)[0]`` — a subscript
+    the first gate could not see — and every test in this file stayed green.
+    These assertions are what would have gone red.
+
+    Three arms with the control declared LAST and an UNEVEN split, so the
+    positional answer and the declared one differ numerically, not just by
+    label.
+    """
+
+    @staticmethod
+    def _experiment(control=None):
+        from abkit.config.experiment_config import ExperimentConfig as EC
+
+        assignment = {
+            "query": "SELECT 1",
+            "variants": ["a", "b", "c"],
+            "expected_split": {"a": 0.2, "b": 0.4, "c": 0.4},
+        }
+        if control is not None:
+            assignment["control"] = control
+        return EC.model_validate(
+            {
+                "name": "three_arm_control",
+                "start_ts": "2024-07-01",
+                "horizon_ts": "2024-07-15",
+                "unit_key": "user_id",
+                "assignment": assignment,
+                "comparisons": [
+                    {"metric": "cr", "is_main_metric": True, "method": {"name": "z-test"}}
+                ],
+            }
+        )
+
+    def test_the_allocation_ratio_is_treatment_over_the_declared_control(self):
+        """``_plan_ratio`` feeds required-N. Positional gives split[b]/split[a]
+        = 2.0 where the declared answer is split[a]/split[c] = 0.5 — a 4× error
+        in the allocation the planner sizes for."""
+        from abkit.cli.commands.plan import _plan_ratio
+
+        assert _plan_ratio(self._experiment()) == pytest.approx(0.4 / 0.2)
+        assert _plan_ratio(self._experiment(control="c")) == pytest.approx(0.2 / 0.4)
+
+    def test_the_arrival_rate_splits_to_the_declared_control_share(self):
+        """Runtime is sized off the CONTROL arm's share of traffic. Positional
+        reads 20% where the declared control has 40% — runtime overstated ~2×."""
+        from abkit.cli.commands.plan import _resolve_arrival_rate
+
+        # the override branch needs no warehouse: tables/manager/root/grid unused
+        positional, note = _resolve_arrival_rate(self._experiment(), 1000.0, None, None, None, None)
+        assert positional == pytest.approx(200.0)
+        assert "20% control" in note
+
+        declared, note = _resolve_arrival_rate(
+            self._experiment(control="c"), 1000.0, None, None, None, None
+        )
+        assert declared == pytest.approx(400.0)
+        assert "40% control" in note
+
+    def test_the_multi_arm_warning_names_the_declared_pair(self, capsys):
+        from abkit.cli.commands.plan import _emit_plan, _plan_comparison
+        from abkit.config.project_config import ProjectConfig
+
+        exp = self._experiment(control="c")
+        project = ProjectConfig.model_validate({"name": "p", "default_profile": "dev"})
+        alphas = TwoTierAlphas(
+            alpha=0.05, groups_count=3, metrics_count=0, main=0.0167, secondary=None
+        )
+        plan = _plan_comparison(
+            exp, exp.comparisons[0], alphas, 0.8, 0.05, {"prop": 0.1, "n": 10000}, tables=None
+        )
+        grid = exp.grid()
+        _emit_plan(exp, project, alphas, 0.8, len(grid), grid, 42, [plan])
+        out = capsys.readouterr().out
+        assert "c vs a contrast only" in out
+        assert "a vs b contrast only" not in out

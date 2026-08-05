@@ -153,23 +153,32 @@ class TestByteCompatibility:
             surface["_ab_results"], golden["multi_arm"]["_ab_results"], "multi_arm/_ab_results"
         )
 
-    def test_the_only_catalog_delta_is_the_declared_family(self, golden):
-        """``_ab_experiments`` grew exactly one column, and it is POPULATED.
+    def test_the_catalog_deltas_are_declared_and_populated(self, golden):
+        """Every ``_ab_experiments`` column added since ``0.7.0`` is POPULATED.
 
         STAT-1b declared ``contrasts`` in the model and emitted it from
         ``catalog_record``, but ``_EXPERIMENT_FIELDS`` — the writer's whitelist —
         never learned it, so the column shipped empty. Comparing against the
         released catalog row is what surfaced that: the whole point of the
         column is that BI can tell a narrowed family from an incomplete run.
+
+        ``control`` (m14 DEC-1) is the second, and it is added HERE rather than
+        in a new gate on purpose: this test is the only place that compares the
+        catalog against a real released row, so it is the only place a
+        whitelist omission is visible at all. The populated-value assertions
+        below are what make it more than a column-name diff.
         """
         surface = capture_scaffold_surface()
         assert_rows_match(
             surface["_ab_experiments"],
             golden["scaffold"]["_ab_experiments"],
             "scaffold/_ab_experiments",
-            added={"contrasts"},
+            added={"contrasts", "control"},
         )
         assert surface["_ab_experiments"][0]["contrasts"] == "all_pairs"
+        # the RESOLVED baseline, written even though the scaffold declares no
+        # `control:` — NULL would send BI back to re-deriving the convention
+        assert surface["_ab_experiments"][0]["control"] == "control"
 
 
 class TestOptingInForksTheSeriesButTheSchemeDoesNot:

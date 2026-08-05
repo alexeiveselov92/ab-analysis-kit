@@ -59,6 +59,7 @@ import type {
   SeriesPoint,
   VerdictBlock,
 } from '../shared/payload';
+import { baselineNote } from '../shared/payload';
 import { makeBrandLockup } from '../shared/logo';
 
 // ----------------------------------------------------------------------------
@@ -178,7 +179,7 @@ function buildHeader(payload: ReportPayload): HTMLElement {
         } pairs claimed)`
       : '';
   h.appendChild(
-    el('div', 'abk-arms', `arms: ${payload.arms.join(' vs ')} · first = control${family}`),
+    el('div', 'abk-arms', `arms: ${payload.arms.join(' vs ')} · ${baselineNote(payload)}${family}`),
   );
 
   const chips = el('div', 'abk-chips');

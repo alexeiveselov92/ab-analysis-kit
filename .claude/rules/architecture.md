@@ -58,7 +58,10 @@ abkit/
                          #   (cutoffs = anchor + k·cadence, kept after start_ts);
                          #   reachable ONLY via ExperimentConfig.grid() (AST gate)
   config/                # ✅ M2: project/profile/experiment/metric/method models,
-                         #   validator L1+L2 (§8 matrix), discovery/selector
+                         #   validator L1+L2 (§8 matrix), discovery/selector;
+                         #   ✅ M14 DEC-1: assignment.control + the ONE baseline
+                         #   resolver ExperimentConfig.control/.treatments
+                         #   (AST gate) + UNDECLARED_PAIR_CAUSES
   database/              # ✅ M2: generic CH/PG/MySQL managers + try_acquire_lock
     internal_tables/     #   + the greenfield _ab_* schema & mixins (see below)
   loaders/               # ✅ M2: query_template (ab_* built-ins, StrictUndefined,
@@ -405,10 +408,11 @@ two-process lock race) is deferred to a Docker-equipped environment.
   test_contrast_set.py` exists to make either half-implementation fail, and
   every fixture in it uses **3+ arms** (at two arms `C(2,2) = 1 = g−1` and every
   assertion would pass against a no-op).
-- **The control is the first declared variant** — the positional convention
-  `name_1`, the readout's verdicts and the SRM rollup already use. D15: the
-  family declaration and M14's `control:` field are different declarations, so
-  this did not wait for M14.
+- **The control is `ExperimentConfig.control`** — `assignment.control` when
+  declared, else the first declared variant (m14 DEC-1, facts below). STAT-1b
+  ratified the positional convention and DEC-1 replaced the resolution; D15: the
+  family declaration and the `control:` field are different declarations, so
+  STAT-1b did not wait for M14.
 - **No project-level default, deliberately** (D16). The family a surface reads
   must never depend on whether that surface resolved one, so the factory takes
   no `ProjectConfig` — unlike `correction`/`guardrail_correction`, which are
@@ -752,6 +756,101 @@ two-process lock race) is deferred to a Docker-equipped environment.
   90.7% → 93.3% against a nominal 95%), and `interval: delta` is invisible to
   BOTH two-sided columns while two thirds of its false positives fall below zero
   — the blindness STAT-2 exists to fix, reproduced end to end.
+
+### M14 DEC-1 facts an assistant must know (the declared baseline)
+
+- **`ExperimentConfig.control` is THE baseline resolver** — the fourth member of
+  the family that holds `grid()` (m10), `contrast_pairs()` (m13 STAT-1b) and
+  `build_cohort_backend` (m8). AST-gated by
+  `tests/config/test_control_is_the_only_entry.py`, which forbids `variants[0]`,
+  `variants[1]` **and** `variants[1:]` anywhere under `abkit/` outside the one
+  allowed module, scope-checked to two members (`control` and
+  `control_reorients_pairs`, the predicate that answers "did a declaration move
+  the baseline off the convention?" and cannot be written without the same
+  subscript).
+- **Why it is its own WP.** Seven sites spelled the convention and they do not
+  fail alike: the family factory picks the wrong pairs (silently the wrong
+  alphas), `readout.evaluate` verdicts against the wrong baseline, `abk plan`
+  sizes against the wrong arm, `validate/runner._share_a` calibrates at the
+  wrong split ratio — and **`readout._srm_from_series` fails SILENTLY**, because
+  every `(metric, control, treatment)` series lookup misses and a miss is
+  indistinguishable there from "no rows yet": `srm_flag=False,
+  srm_pvalue=None`, a broken assignment reading healthy. A knob that reaches
+  none of its call sites is the m10 `interval_anchor` failure; a knob whose
+  missed call site turns a **safety gate quiet** is worse.
+- **`treatments` is declaration order with the control REMOVED, not
+  `variants[1:]`.** With a mid-list control the arms *before* it are treatments
+  too, and a slice would drop them from every verdict the readout issues.
+- **`contrast_pairs()` ORIENTS; it never adds or removes.** The family size —
+  and therefore the alpha divisor — is untouched, which is what makes M14's
+  "no alpha moves" posture structural rather than hopeful. Under the default the
+  orientation is a **no-op by construction**: `combinations` over unique
+  variants already emits `variants[0]` first in every pair containing it, and
+  can never emit it second.
+- **An AST gate that models a SHAPE needs a behavioural test beside it.** The
+  review's mutation probe reverted five call sites to `list(variants)[0]` — a
+  subscript over a Call, invisible to the first draft of the walk — and 312
+  tests stayed green. The walk now matches any subscripted expression
+  *mentioning* `variants`, and `plan`/`validate`/`test-report` each got an
+  assertion that a 3-arm experiment with a declared control sizes, splits and
+  labels against the declared arm.
+- **The gate's own allowlist was wrong in the same way.** Its first draft
+  excused `variants[1]` as "indexing a treatment, which is DEC-1-neutral" — a
+  premise true only while the control sits at index 0. Declare `control: b` on
+  `[a, b, c]` and `variants[1]` **is** the control. It is forbidden now; the
+  first treatment is `treatments[0]`.
+- **A declared NON-FIRST control re-bases a running experiment**, and the
+  level-2 warning carries all four halves: the re-oriented pairs' rows leave the
+  declared set; the effect is the negation of the old number on the ABSOLUTE
+  scale but **not** on the RELATIVE one (the denominator swaps arms too —
+  `(m₂−m₁)/m₁` becomes `(m₁−m₂)/m₂`, and `test_type: relative` is the common
+  configuration); the next **plain `abk run`** recomputes the whole series
+  because no look carries the re-oriented pair (`--full-refresh` is not needed,
+  and until that run the read-time families are built from the surviving rows
+  only, so an interim verdict can be looser than the one that settles); and the
+  old orientation's rows are **never deleted** — abkit's surfaces drop them,
+  raw SQL over `_ab_results` sees both.
+- **`--full-refresh --to <horizon>` leaves the horizon look behind.** `--to` is
+  EXCLUSIVE on `end_ts` and since m10 the horizon cutoff's `end_ts` IS
+  `horizon_ts`; the bounds are parsed naive and compared against naive-UTC
+  `end_ts` while the YAML window is local, so the off-by-one bites on some
+  timezones and not others. Inherited from STAT-1b's dashboard note and
+  corrected here.
+- **`UNDECLARED_PAIR_CAUSES` is one shared string** (`config/experiment_config.py`),
+  because FOUR surfaces (readout, report, dashboard overview, explore session)
+  each carried their own copy of the cause list and DEC-1 added a third cause. A
+  cause list wrong on three surfaces out of four sends the operator hunting a
+  rename that never happened.
+- **The catalog column writes the RESOLVED control**, not the declared field:
+  the question "which arm are these effects measured against" has an answer for
+  every experiment, and writing NULL for the positional default would make BI
+  re-derive the convention from the `variants` JSON — the re-derivation
+  `contrasts` was added to stop. NULL therefore means one thing only: a row
+  written before `0.9.0`. `Nullable` rather than defaulted because
+  `ensure_columns` refuses a NOT-NULL/no-default addition (STAT-6) and no
+  literal default fits a per-experiment variant name.
+- **The catalog-migration gate had gone blind to its own class of defect.**
+  `_pre_stat1b_experiments_model` derives "0.7.0" as *the current model minus a
+  hand-maintained set*, so a column missing from that set is already present in
+  the supposedly-old table and its migration is never exercised — measured:
+  with `control` absent from the set, declaring it NOT-NULL/no-default (the
+  exact shape STAT-1b shipped, which would kill every install's first run) left
+  775 tests and the m13 exit gate green. The set is now
+  `POST_0_7_0_CATALOG_COLUMNS`, **a WP that adds a catalog column must extend
+  it**, and a new test asserts the seeded model is a strict subset of the
+  current one.
+- **`control` stays OUT of the m9 state identity** — it moves which pairs are
+  compared, never which units or days are materialised (the `interval_anchor`
+  and `contrasts` precedent) — and out of the `abk init` scaffold (an optional
+  field whose default is right is noise in a starter config).
+- **The report and explore headers had a sentence that DEC-1 turned into a
+  lie.** Both printed `first = control` beside the arms line; with `control: c`
+  on `[a, b, c]` that names `a` as the baseline directly above pair blocks
+  reading "c vs a". The payload now carries `control`, and one shared
+  `baselineNote()` in `web/src/shared/payload.ts` keeps the old sentence
+  whenever it is still TRUE (an absent key — every pre-`0.9.0` bake — or a
+  control that IS the first arm) and prints `control: <name>` otherwise, so the
+  two-arm byte-identity claim survives.
 
 ### M7 vectorization facts an assistant must know
 
@@ -1613,9 +1712,9 @@ see the track section in [ROADMAP.md](../../ROADMAP.md);
 [m11](../../docs/specs/m11-implementation-plan.md),
 [m12](../../docs/specs/m12-implementation-plan.md) and
 [m13](../../docs/specs/m13-implementation-plan.md) are all implementation
-records now; **M14's design session ran 2026-08-05 and its contract is
+records now; **M14 is IN PROGRESS against its contract
 [m14-implementation-plan.md](../../docs/specs/m14-implementation-plan.md)** —
-six WPs (DEC-1 the declared `control:` → DEC-2 treatment-pair verdicts + the
+six WPs (✅ DEC-1 the declared `control:` → DEC-2 treatment-pair verdicts + the
 per-metric rollup → DEC-3 the report / DEC-4 dashboard·explore·notify·CLI;
 DEC-5 `validate`/`plan`/SRM, independent; DEC-6 the exit gate + `0.9.0`), under
 the posture that **M14 moves no persisted number, no alpha and no verdict
@@ -1637,11 +1736,15 @@ the `ALGORITHM_VERSION` grep is still empty (D4), and the byte-compatibility
 gate compares against a real `v0.7.0` checkout; M13/M15 use full change control. Two binding
 inter-milestone contracts: the M8→M9 one (honored — STATE/tail-scan SQL builds
 ONLY through `build_cohort_backend`) and M10's (the planner is reached ONLY
-through `ExperimentConfig.grid()`). Only the second is AST-gated
-(`tests/core/test_grid_factory_is_the_only_entry.py`); the cohort-factory
-contract is still honor-system, which is exactly the shape that let a
-decorative knob reach none of eight call sites — a gate for it is a named
-follow-up.
+through `ExperimentConfig.grid()`). **THREE factories are AST-gated now** —
+`grid()` (`tests/core/test_grid_factory_is_the_only_entry.py`),
+`contrast_pairs()` (`tests/config/test_contrast_pairs_is_the_only_entry.py`) and
+`ExperimentConfig.control` (`tests/config/test_control_is_the_only_entry.py`);
+the cohort-factory contract is still honor-system, which is exactly the shape
+that let a decorative knob reach none of eight call sites — a gate for it is a
+named follow-up. A shape gate is necessary and not sufficient: DEC-1's review
+reverted five call sites with a wrapper the walk could not see and the gate
+stayed green, so each rerouted surface owes a behavioural assertion too.
 Read before coding:
 
 - The M5 as-built + the math → [m5-implementation-plan.md](../../docs/specs/m5-implementation-plan.md),

@@ -223,6 +223,29 @@ def validate_experiment_level2(
     report = ValidationReport()
     where = f"experiment '{experiment.name}'" + (f" ({experiment_path})" if experiment_path else "")
 
+    # ── the declared baseline (m14 DEC-1) ──────────────────────────────────
+    # Only a control that is NOT the first declared variant re-orients pairs;
+    # `control:` naming variants[0] is the positional default written out, and
+    # warning about it would train the operator to ignore the line.
+    if experiment.control_reorients_pairs:
+        report.warnings.append(
+            f"{where}: assignment.control '{experiment.control}' is not the first "
+            f"declared variant, so every pair containing it is stored as "
+            f"('{experiment.control}', other) and the re-oriented pair's effect "
+            "is measured against the other arm — on the ABSOLUTE scale that is "
+            "the negation of the old number, but on the RELATIVE scale it is "
+            "NOT, because the denominator swaps arms too ((m2−m1)/m1 becomes "
+            "(m1−m2)/m2). The next plain `abk run` recomputes the WHOLE series "
+            "(no --full-refresh: no look carries the re-oriented pair, so every "
+            "cutoff re-plans); until it does, the read-time correction families "
+            "are built from the surviving rows only, so a verdict read now can "
+            "be looser than the one that will settle. The previous "
+            "orientation's rows are never deleted — abkit's own surfaces drop "
+            "them with a warning, but raw SQL over _ab_results sees BOTH "
+            "orientations of that pair (join _ab_experiments.control to tell "
+            "them apart)."
+        )
+
     # ── reference integrity + per-comparison method/metric rules ────────────
     for comparison in experiment.comparisons:
         label = f"{where}, comparison '{comparison.metric}'"

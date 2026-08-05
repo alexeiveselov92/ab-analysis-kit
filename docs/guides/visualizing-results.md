@@ -163,7 +163,7 @@ the columns you'll reach for most:
 |---|---|
 | `experiment`, `metric`, `method_config_id` | series identity — always group/filter by all three |
 | `is_main_metric`, `is_guardrail` | metric tier (drives the two-tier alpha and the verdict) |
-| `name_1`, `name_2` | control arm, treatment arm |
+| `name_1`, `name_2` | The variant pair. For a pair containing the control, `name_1` **is** the control (`_ab_experiments.control`); a treatment-vs-treatment pair — which exists only under `contrasts: all_pairs` with 3+ arms — has a treatment in `name_1`. Testing `name_1 = _ab_experiments.control` is how a query separates ship-decision rows from treatment-vs-treatment ones. |
 | `start_ts`, `end_ts`, `elapsed_days`, `is_horizon` | the cumulative window; `end_ts` is the cutoff key, `is_horizon` marks the planned decision cutoff |
 | `effect`, `left_bound`, `right_bound`, `ci_length`, `ci_kind` | the estimate + CI; `ci_kind` is `fixed` or `always_valid` |
 | `pvalue`, `alpha`, `reject` | test result; `alpha` is the effective threshold this row was tested at; `reject` is the **per-comparison** flag (`pvalue < alpha`) — under a read-time correction (`benjamini_hochberg`, `holm`) the composed family decision is the readout's and is not stored |

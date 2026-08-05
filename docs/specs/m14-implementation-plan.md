@@ -31,10 +31,10 @@ in the decision / presentation layer.**
 | 1. explore Review shows only the first treatment's verdict | **shipped** — M7 WP0 (`.find` → `.filter`, [explore.ts:1568](../../web/src/explore/explore.ts#L1568)) |
 | 4. main-tier `metrics_count=1` FWER inflation | **shipped** — M13 STAT-1; the defect was in the CLAIM, no number moved ([statistics-changes.md §4.3](statistics-changes.md)) |
 | 8. Bonferroni pays `C(N,2)` for a vs-control design | **shipped** — M13 STAT-1b, `contrasts: vs_control` |
-| 11. control is a positional convention with no field | **half** — STAT-1b *ratified* the convention ("the control is the first declared variant"); the field is D15's explicit hand-off to M14 |
+| 11. control is a positional convention with no field | **shipped** — M14 DEC-1, `assignment.control` + the one AST-gated resolver `ExperimentConfig.control` |
 | 2. no experiment-level winner / rollup | **live** — `ExperimentReadout` has no field for one ([readout.py:160](../../abkit/pipeline/readout.py#L160)) |
 | 3. treatment-vs-treatment charted but never verdicted | **live** — `evaluate` loops `treatments = variants[1:]` against the control only ([readout.py:565](../../abkit/pipeline/readout.py#L565)); `verdictFor` returns null for the pair ([report.ts:618](../../web/src/report/report.ts#L618)) |
-| 5. `abk plan` sizes `variants[0]` vs `variants[1]` | **live**, warns ([plan.py:913](../../abkit/cli/commands/plan.py#L913)) |
+| 5. `abk plan` sizes ONE contrast of many | **live**, warns; since DEC-1 the pair is the declared control vs the first declared treatment, and the warning names both arms (DEC-5 owns the rest) |
 | 6. `abk validate` collapses N arms into a two-arm placebo | **live**, undisclosed ([runner.py:118](../../abkit/validate/runner.py#L118)) |
 | 7. `abk run --report` prints unlabeled verdict words | **live** — `" · ".join(verdicts)` ([run.py:153](../../abkit/cli/commands/run.py#L153)) |
 | 10/13/14/15. `activePair` reset, no pair selector, no SRM culprit, flat picker | **live** (cosmetic tier) |
@@ -168,6 +168,71 @@ non-control reason (there may be none — the audit found none).
 path, not Apply). (b) The scaffold should **not** write `control:` — an
 optional field whose default is right is noise in a starter config, and the
 STAT-1b `contrasts` precedent left the scaffold alone.
+
+#### DEC-1 as built ✅
+
+Shipped as specified — both traps held (Apply round-trips the key, pinned;
+the scaffold writes nothing) — with six deltas the plan did not have. Four are
+consequences of the build, two came out of the adversarial review.
+
+1. **A third resolver member.** `control_reorients_pairs` answers "did a
+   declaration move the baseline off the convention?", which is the level-2
+   warning's condition and cannot be written without the very `variants[0]`
+   subscript the AST gate forbids. It lives beside the resolver, and the gate's
+   scope check allows exactly those two members.
+2. **`UNDECLARED_PAIR_CAUSES`, one shared string.** DEC-1 adds a THIRD cause to
+   the "rows outside the declared contrast set" warning, and four surfaces
+   (readout, report, dashboard overview, explore session) each carried their own
+   copy of the two-cause list. A cause list wrong on three surfaces out of four
+   sends the operator hunting a rename that never happened.
+3. **A `control` key in the report payload.** The report and explore headers
+   printed `first = control` beside the arms line — a tautology until DEC-1, and
+   a lie after it: with `control: c` on `[a, b, c]` it names `a` as the baseline
+   directly above pair blocks reading "c vs a". One shared `baselineNote()` in
+   `web/src/shared/payload.ts` keeps the old sentence whenever it is still TRUE
+   (an absent key — every pre-`0.9.0` bake — or a control that IS the first arm)
+   and prints `control: <name>` otherwise, so §0.2's two-arm byte-identity claim
+   survives. This is a DEC-3/DEC-4 surface touched early because DEC-1 is what
+   falsified the sentence.
+4. **The catalog writes the RESOLVED control**, not the declared field (the plan
+   said "NULL = not declared, positional"). The column answers "which arm are
+   these effects measured against", which has an answer for every experiment;
+   NULL for the positional default would make BI re-derive the convention from
+   the `variants` JSON — the re-derivation `contrasts` exists to stop. NULL now
+   means one thing only: a row written before `0.9.0`.
+5. **(Review) A shape gate is necessary and not sufficient.** The review's
+   mutation probe reverted five call sites to `list(variants)[0]` — a subscript
+   over a Call, invisible to the first draft of the walk — and 312 tests stayed
+   green. The walk now matches any subscripted expression *mentioning*
+   `variants`, and `plan` (×2), `validate/runner._share_a` and `test-report`
+   each gained a behavioural assertion. The gate's own allowlist had the same
+   defect in miniature: it excused `variants[1]` as "a treatment, DEC-1-neutral",
+   a premise true only while the control sits at index 0.
+6. **(Review) Two repairs outside DEC-1's scope, both reachable through it.**
+   The catalog-migration gate derives "0.7.0" as *the current model minus a
+   hand-maintained set*, so a column missing from that set is already in the
+   supposedly-old table and its migration is never exercised — measured: with
+   `control` absent, declaring it NOT-NULL/no-default (STAT-1b's exact shipped
+   shape, which would kill every install's first run) left 775 tests and the m13
+   exit gate green. And the inherited `--full-refresh --from … --to <horizon>`
+   advice leaves the horizon look un-rewritten (`--to` is EXCLUSIVE on `end_ts`,
+   and since m10 the horizon cutoff's `end_ts` IS `horizon_ts`; the bounds are
+   parsed naive against naive-UTC `end_ts` while the YAML window is local, so it
+   half-works per timezone). For the DEC-1 cause the flag is not needed at all —
+   no look carries the re-oriented pair, so a plain `abk run` re-plans the whole
+   series.
+
+**Hand-offs the review surfaced, recorded rather than fixed here:**
+
+- **DEC-5.** `validate/run_id.cell_hash` excludes `share_a`, so declaring a
+  control with an uneven split re-runs the placebo at a different ratio while
+  still matching a previously stored green calibration row. Pre-existing for
+  `expected_split`; DEC-1 adds a second field with the property.
+- **DEC-3.** `builder.py` orders pair blocks by `contrast_pairs()`, so with a
+  late-declared control under `all_pairs` the FIRST block is a
+  treatment-vs-treatment pair, for which `report.ts`'s `verdictFor` returns
+  null. Pre-DEC-1 the first block was always control-vs-treatment. Presentation
+  only — and DEC-2 gives those pairs verdicts anyway.
 
 ---
 

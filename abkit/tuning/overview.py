@@ -105,7 +105,7 @@ from typing import Any
 
 import numpy as np
 
-from abkit.config.experiment_config import ExperimentConfig
+from abkit.config.experiment_config import UNDECLARED_PAIR_CAUSES, ExperimentConfig
 from abkit.config.project_config import ProjectConfig
 from abkit.database.internal_tables import InternalTablesManager
 from abkit.database.internal_tables._tasks import DEFAULT_PROCESS_TYPE, DEFAULT_SCOPE
@@ -434,11 +434,18 @@ def _declared_pair_warning(experiment: ExperimentConfig, dropped: int) -> tuple[
     """
     if dropped <= 0:
         return ()
+    # `--to` is EXCLUSIVE on end_ts (`delete_results`, `pending_cutoffs`) and
+    # since m10 the horizon cutoff's end_ts EQUALS horizon_ts, so `--to
+    # <horizon>` leaves the horizon look — the most-read row of the series —
+    # un-rewritten. The bounds are also parsed naive and compared against
+    # naive-UTC end_ts while the YAML window is local, so the off-by-one bites
+    # on some timezones and not others. Say "past the horizon" rather than
+    # print an instruction that half-works (m14 DEC-1 review).
     return (
         f"{experiment.name}: ignored {dropped} persisted rows for variant pairs "
-        "outside the declared contrast set (renamed arms, or `contrasts: "
-        "vs_control`?) — `abk run --full-refresh --from <start> --to <horizon>` "
-        "rewrites that window without them",
+        f"outside the declared contrast set ({UNDECLARED_PAIR_CAUSES}) — "
+        "`abk run --full-refresh --from <start> --to <one cadence step PAST "
+        "the horizon, in UTC>` rewrites that window without them",
     )
 
 

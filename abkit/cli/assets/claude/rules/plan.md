@@ -94,8 +94,9 @@ than crashing the plan.
 └─ looks: 14 planned · cadence 1d · horizon 2024-07-15 · ~28 _ab_results rows/full-refresh
 ```
 
-For a **>2-arm** experiment, sizing is shown for the first-pair contrast only
-(the other pairs share the same alpha) — the plan says so. If the look count
+For a **>2-arm** experiment, sizing is shown for the control vs first-treatment
+contrast only (the other pairs share the same alpha) — the plan says so, naming
+both arms. If the look count
 exceeds `warn_looks` without `sequential.enabled`, it warns that peeking inflates
 the false-positive rate (enable sequential or coarsen the cadence).
 

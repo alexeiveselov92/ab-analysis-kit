@@ -337,3 +337,28 @@ test('an over-budget composed family is flagged critical', () => {
   assert.ok(band.querySelector('.abk-cal-fpr-over'), 'the FWER stat is coloured critical');
   assert.match(band.textContent, /12\.0%/);
 });
+
+test('the arms line names the baseline arm when a control is declared (m14 DEC-1)', () => {
+  // absent `control` — every payload baked before 0.9.0 — keeps the old
+  // sentence, so an existing report renders byte-identically
+  const { mount: legacy } = renderInJsdom(makePayload());
+  assert.match(legacy.querySelector('.abk-arms').textContent, /first = control/);
+
+  // a control that IS the first arm is the positional default written out:
+  // same sentence, because it is still true
+  const positional = makePayload();
+  positional.arms = ['a', 'b', 'c'];
+  positional.control = 'a';
+  const { mount: def } = renderInJsdom(positional);
+  assert.match(def.querySelector('.abk-arms').textContent, /first = control/);
+
+  // a declared non-first control: the old sentence would name `a` as the
+  // baseline directly above pair blocks reading "c vs a"
+  const declared = makePayload();
+  declared.arms = ['a', 'b', 'c'];
+  declared.control = 'c';
+  const { mount } = renderInJsdom(declared);
+  const line = mount.querySelector('.abk-arms').textContent;
+  assert.match(line, /control: c/);
+  assert.ok(!/first = control/.test(line), line);
+});
