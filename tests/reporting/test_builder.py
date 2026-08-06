@@ -54,6 +54,11 @@ TOP_LEVEL_KEYS = {
     "srm",
     "calibration",
     "verdicts",
+    # m14 DEC-3: the read-time arm-level summary (one per main metric) and
+    # whether the per-metric leaders coincide. Additive like the two above —
+    # the renderer types both optional, so a 0.8.0 bake still loads.
+    "rollups",
+    "leaders_agree",
     "metrics",
     "look",
     "endpoints",
@@ -970,9 +975,19 @@ class TestOrderingAndBudget:
                 ("control", "t2"),
                 ("t1", "t2"),
             ]
+        # m14 DEC-3: the treatment pair joins the list, and the ORDER is the
+        # readout's — every ship decision first, in the sequence 0.8.0 emitted,
+        # so that list stays a literal PREFIX of this one. A renderer that took
+        # `verdicts[0]` as the headline still lands on the same pair.
         assert [(v["pair"]["c"], v["pair"]["t"]) for v in payload["verdicts"]] == [
             ("control", "t1"),
             ("control", "t2"),
+            ("t1", "t2"),
+        ]
+        assert [v["role"] for v in payload["verdicts"]] == [
+            "vs_control",
+            "vs_control",
+            "treatment_pair",
         ]
 
     def test_byte_stable_across_builds(self, tables):
@@ -1179,40 +1194,132 @@ class TestDeclaredControlInThePayload:
         assert pairs == [("a", "b"), ("c", "a"), ("c", "b")]
 
 
-class TestPayloadStaysControlAnchoredUntilDec3:
-    """m14 DEC-2: the readout judges every declared pair, the PAYLOAD does not
-    carry the treatment pairs yet.
+class TestTheDecisionLayerReachesThePayload:
+    """m14 DEC-3: every declared pair is baked with its `role`, and the
+    read-time rollup rides beside it.
 
-    `report.ts` prints the verdict word with no role chip, and explore's Review
-    mode renders every matching verdict — so a `WIN` on a `B vs C` card would
-    read as a ship recommendation on two surfaces at once. DEC-3 adds `role` to
-    the payload and the chip beside it; this test is what makes that a
-    deliberate commit.
+    DEC-2 judged every declared pair but the payload carried only the ship
+    decisions, because no renderer could yet SAY which was which — a `WIN` on a
+    `B vs C` card reads as a ship recommendation. `role` is what opens it.
     """
 
+    #: an inconclusive pair: the interval covers zero, so nothing separates
+    UNDECIDED = {
+        "effect": 0.01,
+        "pvalue": 0.42,
+        "left_bound": -0.05,
+        "right_bound": 0.07,
+        "ci_length": 0.12,
+        "reject": False,
+    }
+
     @staticmethod
-    def _three_arm():
+    def _three_arm(**overrides):
         return make_experiment(
             assignment={
                 "query": "SELECT 1",
                 "variants": ["control", "t1", "t2"],
                 "expected_split": {"control": 0.34, "t1": 0.33, "t2": 0.33},
-            }
+            },
+            **overrides,
         )
 
-    def test_only_ship_decisions_are_baked(self, tables):
+    def test_every_declared_pair_is_baked_with_its_role(self, tables):
         experiment = self._three_arm()
         seed_series(tables, experiment, name_2="t1")
         seed_series(tables, experiment, name_2="t2")
         seed_series(tables, experiment, name_1="t1", name_2="t2")
 
-        # the decision layer DID judge it — this is about the payload
-        rows = tables.load_results(experiment.name, "revenue")
-        assert any(v.role == "treatment_pair" for v in evaluate(experiment, rows).verdicts)
+        payload = build_report_payload(experiment, tables)
+        roles = {(v["pair"]["c"], v["pair"]["t"]): v["role"] for v in payload["verdicts"]}
+        assert roles == {
+            ("control", "t1"): "vs_control",
+            ("control", "t2"): "vs_control",
+            ("t1", "t2"): "treatment_pair",
+        }
+        # the readout's order survives the bake: ship decisions first, so the
+        # 0.8.0 list is a literal PREFIX and `verdicts[0]` still names the same
+        # pair (the dashboard headline until DEC-4)
+        assert [v["role"] for v in payload["verdicts"]][:2] == ["vs_control"] * 2
+
+    def test_the_rollup_names_the_leader_and_its_separation(self, tables):
+        """A clean leader that cannot be separated from the runner-up.
+
+        The LAST-declared arm is the leader on purpose: with the best effect on
+        `t1` the assertion would also pass against an implementation that
+        simply took the first winning arm, since ties break on declaration
+        order. A fixture whose two candidate orderings agree cannot see that.
+        """
+        experiment = self._three_arm()
+        # t2 is ahead of t1 against the control, but the two are not
+        # distinguishable from EACH OTHER — the co_leaders shape (D5)
+        seed_series(tables, experiment, name_2="t1", effect=0.10, left_bound=0.05, right_bound=0.15)
+        seed_series(tables, experiment, name_2="t2", effect=0.20, left_bound=0.15, right_bound=0.25)
+        seed_series(tables, experiment, name_1="t1", name_2="t2", **self.UNDECIDED)
 
         payload = build_report_payload(experiment, tables)
-        pairs = {(v["pair"]["c"], v["pair"]["t"]) for v in payload["verdicts"]}
-        assert pairs == {("control", "t1"), ("control", "t2")}
-        # the pair is still CHARTED — it always was; only the verdict is withheld
-        charted = {(p["c"], p["t"]) for m in payload["metrics"] for p in m["pairs"]}
-        assert ("t1", "t2") in charted
+        (rollup,) = payload["rollups"]
+        assert rollup["metric"] == "revenue"
+        assert rollup["leader"] == "t2"
+        assert rollup["indistinguishable"] == ["t1"]
+        assert rollup["separation"] == "co_leaders"
+        assert rollup["losers"] == []
+        assert rollup["rationale"]  # the readout's own voice, rendered verbatim
+        # one main metric ⇒ nothing to agree about
+        assert payload["leaders_agree"] is None
+
+    def test_leaders_agree_is_reported_across_main_metrics(self, tables):
+        """Two main metrics, two different winners — the disagreement chip."""
+        experiment = self._three_arm(
+            comparisons=[
+                {"metric": "revenue", "is_main_metric": True, "method": {"name": "t-test"}},
+                {"metric": "orders", "is_main_metric": True, "method": {"name": "t-test"}},
+            ]
+        )
+        for metric, (best, worst) in (("revenue", ("t1", "t2")), ("orders", ("t2", "t1"))):
+            seed_series(
+                tables,
+                experiment,
+                metric=metric,
+                name_2=best,
+                effect=0.2,
+                left_bound=0.15,
+                right_bound=0.25,
+            )
+            seed_series(
+                tables,
+                experiment,
+                metric=metric,
+                name_2=worst,
+                effect=0.1,
+                left_bound=0.05,
+                right_bound=0.15,
+            )
+            seed_series(
+                tables, experiment, metric=metric, name_1="t1", name_2="t2", **self.UNDECIDED
+            )
+
+        payload = build_report_payload(experiment, tables)
+        assert [(r["metric"], r["leader"]) for r in payload["rollups"]] == [
+            ("revenue", "t1"),
+            ("orders", "t2"),
+        ]
+        assert payload["leaders_agree"] is False
+
+    def test_two_arms_bake_no_treatment_pair_and_a_single_candidate_rollup(self, tables):
+        """§0.2 point 3, at the payload: two arms reproduce `0.8.0`.
+
+        The rollup EXISTS (a uniform payload shape) but has one candidate and no
+        opinion to disagree with, and no verdict the report renders is new — so
+        every cross-arm affordance the renderer draws stays unreachable here.
+        """
+        experiment = make_experiment()
+        seed_series(tables, experiment)
+
+        payload = build_report_payload(experiment, tables)
+        assert [v["role"] for v in payload["verdicts"]] == ["vs_control"]
+        (rollup,) = payload["rollups"]
+        assert rollup["leader"] == "treatment"
+        assert rollup["indistinguishable"] == []
+        assert rollup["separation"] == "separated"
+        assert payload["leaders_agree"] is None

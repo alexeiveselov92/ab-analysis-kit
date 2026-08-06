@@ -323,7 +323,12 @@ re-orientation an experiment with existing rows pays for. **✅ DEC-2** shipped
 the decision layer — a verdict for every declared pair behind the new
 `PairVerdict.role`, and a `MetricRollup` per main metric whose leader is chosen
 only among arms that beat the control and whose separation is tested against
-every other treatment, not the runner-up**; M15–M17 (new methods, owned
+every other treatment, not the runner-up. **✅ DEC-3** put it on the report:
+the payload carries every declared pair plus the rollups, and the page grows a
+role chip, a cross-arm overview and a pair selector — all gated at 3+ arms, so a
+two-arm readout renders the DOM `0.8.0` rendered. Opening the payload opened
+THREE readers, so `abk explore` and the `abk run --report` summary line hold at
+control-anchored (one shared `ship_decisions`) until DEC-4**; M15–M17 (new methods, owned
 randomization, app integration) stay contours, design-session-first. The
 track section in [ROADMAP.md](ROADMAP.md) is the map;
 [m7](docs/specs/m7-implementation-plan.md),
@@ -353,7 +358,7 @@ spec before writing code:
 | The A/A FPR matrix (`abk validate`) | [docs/specs/aa-false-positive-matrix.md](docs/specs/aa-false-positive-matrix.md) |
 | CLI, explore cockpit, init-claude, Prefect, docs | [docs/specs/cli-and-dx.md](docs/specs/cli-and-dx.md) |
 | `abk dashboard` — the launcher discipline, the row shape, the job routes | [docs/specs/m11-implementation-plan.md](docs/specs/m11-implementation-plan.md) |
-| **The multi-arm decision layer being built now** (✅ `control:`, ✅ treatment-pair verdicts + the rollup; next: the surfaces) | [docs/specs/m14-implementation-plan.md](docs/specs/m14-implementation-plan.md) |
+| **The multi-arm decision layer being built now** (✅ `control:`, ✅ the verdicts + the rollup, ✅ the report; next: dashboard·explore·notify·CLI) | [docs/specs/m14-implementation-plan.md](docs/specs/m14-implementation-plan.md) |
 | **What must be true before/after each milestone** | [docs/specs/quorum-review.md](docs/specs/quorum-review.md) (the must-fix gate) |
 
 The master plan in Russian: [docs/ru/project-initiation-spec.md](docs/ru/project-initiation-spec.md).

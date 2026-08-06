@@ -1566,7 +1566,13 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
       // a metric can carry MORE THAN ONE VerdictBlock — one per declared
       // control-vs-treatment pair (3+ arm experiments produce 2+ pairs per
       // metric); render every matching pair's verdict as its own line, never
-      // just the first (WP0 — the multi-arm Review-mode drop bug)
+      // just the first (WP0 — the multi-arm Review-mode drop bug).
+      // What keeps "control-vs-treatment" true here is a SERVER-side filter:
+      // since m14 DEC-3 the report payload carries a verdict for every declared
+      // pair, and `abkit/tuning/payload.py` filters the cockpit's copy back to
+      // the ship decisions — because this line prints the verdict WORD alone,
+      // and "WIN (B vs C)" would read as a ship recommendation. DEC-4 adds the
+      // role label plus the rollup line and drops that filter together.
       const metricVerdicts = payload.verdicts.filter((v) => v.metric === name);
       for (const verdict of metricVerdicts) {
         rowWrap.appendChild(

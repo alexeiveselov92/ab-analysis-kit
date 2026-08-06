@@ -23,10 +23,13 @@ verdict updates without recomputing anything.
 
 ## The verdict
 
-Each readout carries **one verdict per (main metric × control-vs-treatment pair)**
-— there is no invented scalar that aggregates metrics or arms
+Each readout carries **one verdict per (main metric × DECLARED arm pair)** — there
+is no invented scalar that aggregates *metrics*
 (`data-contract-and-reporting.md §1`). A three-arm experiment with one main metric
-produces two verdicts: control-vs-B and control-vs-C. Guardrail and secondary
+produces three verdicts under the default `contrasts: all_pairs`: the two ship
+decisions control-vs-B and control-vs-C, plus B-vs-C, which is **evidence about two
+treatments and not a ship decision** — see [Multi-arm: who won?](#multi-arm-who-won)
+below. Guardrail and secondary
 metrics do not get their own verdict; they *modify* the main-metric verdict (see
 [Guardrails](#guardrails-can-block-a-win) below).
 
@@ -52,6 +55,41 @@ WIN vs LOSE is decided by the sign of `effect` against the comparison's
 direction is a WIN; the same magnitude the wrong way is a LOSE. `desired_direction`
 is a read-time verdict input, set per comparison in the experiment YAML — see
 [experiments](experiments.md).
+
+## Multi-arm: who won?
+
+With three or more arms the readout answers two different questions, and the
+report keeps them visually apart because confusing them is how an arm gets
+shipped on the wrong evidence.
+
+**Ship decisions vs evidence.** A verdict whose first arm is the control is a
+**ship decision**. A verdict between two treatments carries a *not a ship
+decision* chip and lives in a collapsed "arm-vs-arm evidence" group below them: a
+`WIN` on `B vs C` means *C came out ahead of B*, which says nothing about either
+against the baseline. Those pairs exist only under the default
+`contrasts: all_pairs`; `contrasts: vs_control` never computes them.
+
+**The cross-arm overview** sits above each main metric's charts and states, in
+the readout's own words:
+
+| It says | It means |
+|---|---|
+| **leader: X** | X beat the control, and among the arms that did, X has the best effect in the metric's desired direction. Arms that did **not** beat the control are never ranked — "best of the ones that lost" is not a finding. |
+| **no leader** | No arm beat the control — the most common outcome — *or* nothing could be judged yet (pre-horizon, no rows) *or* the SRM gate failed. The sentence below the heading says which; the overview never reports "nobody won" when the truth is that nothing was measured. |
+| **separated** | The leader is decisively better than **every** other treatment, not merely the runner-up. |
+| **co-leaders** | The leader beat the control but did not separate from the arms listed beside it. Ship on other grounds, or run longer. |
+| **separation untested** | Some arm could not be compared against the leader at all — `contrasts: vs_control` declared no such pair, or its rows are missing or demoted. Not the same as "we looked and they tied". |
+| **main metrics name DIFFERENT leaders** | Two main metrics disagree about which arm to ship. abkit reports the disagreement and deliberately does not break the tie: there is no declared metric priority for it to use. |
+
+The arm table beside it lists effect · CI · verdict · n per arm in **declaration
+order** — the leader is named by its chip, not by the row order, so the table
+never implies a ranking the statistics do not support. An arm the leader could
+not be separated from is tagged `not separated` rather than `co-leader`, because
+that tag also covers arms nobody was able to compare.
+
+**The pair selector** above the charts opens the control-anchored pairs by
+default; tick a box to add a treatment pair. Printing the page reveals every
+pair regardless.
 
 ## The effect and its CI band
 
@@ -219,9 +257,12 @@ alpha (any significant harm flags, no stabilization required, and deliberately
 correction-independent so BH can't un-flag a real harm). A regressed guardrail then
 applies your `readout.guardrail_policy` (`readout.py` `_apply_guardrail_policy`):
 
-- **`block`** (default) — a WIN is capped at **INCONCLUSIVE** with a rationale
-  naming the regressed guardrail. You shipped a win that broke something you said
-  you'd protect; abkit refuses to bless it.
+- **`block`** (default) — a **ship decision's** WIN is capped at **INCONCLUSIVE**
+  with a rationale naming the regressed guardrail. You shipped a win that broke
+  something you said you'd protect; abkit refuses to bless it. A
+  treatment-vs-treatment verdict is **not** capped: it is not a ship decision, and
+  capping it made the answer depend on which of the two arms you happened to
+  declare first (the cap fires on WIN and never on LOSE).
 - **`warn`** — the WIN stands, but with a **mandatory loud caveat** naming the
   regression.
 - A **LOSE is never upgraded or blocked** by a guardrail — bad news is always

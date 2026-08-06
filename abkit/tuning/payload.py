@@ -3,7 +3,9 @@
 Thin by design (the donor's series/window logic is superseded by the WP2
 builder + the WP4 engine): the report payload rides verbatim — the report
 renderer ignores unknown keys, the explore client reads the ``explore`` block
-— extended with the knob surfaces auto-derived from ``param_specs`` (D12),
+— with ONE exception since m14 DEC-3, ``verdicts``, which is filtered back to
+the ship decisions until DEC-4 teaches Review mode to label a role (see the
+comment at the filter). Extended with the knob surfaces from ``param_specs`` (D12),
 the per-metric initial calibration state (D3), the session-cache facts, and
 the endpoint slots a server injects post-bind (``None`` in the static
 ``--no-serve`` page — the client's preview-badge substrate, D3 gating).
@@ -17,6 +19,7 @@ from typing import Any, get_args
 import numpy as np
 
 from abkit.config.experiment_config import CorrectionKind
+from abkit.reporting.builder import ship_decisions
 from abkit.tuning.recompute import RecomputeEngine, find_calibration, resolve_fpr_budget
 from abkit.tuning.session import ExploreSession
 from abkit.utils.datetime_utils import to_naive_utc
@@ -100,6 +103,14 @@ def build_explore_payload(
         else project.statistics.guardrail_correction
     )
     payload = dict(report_payload)
+    # m14 DEC-3 hold, opened by DEC-4. The report payload rides VERBATIM, and
+    # since DEC-3 its `verdicts` list carries treatment-vs-treatment pairs.
+    # Review mode renders every verdict whose metric matches (M7 WP0's
+    # `.find` → `.filter`) and prints the word alone, so a `WIN` on `B vs C`
+    # would read here as a ship recommendation — the misreading `role` exists to
+    # stop, on the one surface that cannot yet say it. `rollups` rides along
+    # unrendered; DEC-4 adds the Review line and drops this filter together.
+    payload["verdicts"] = ship_decisions(report_payload.get("verdicts", []))
     payload["explore"] = {
         "metrics": metrics,
         "default_metric": default_metric,

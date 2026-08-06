@@ -112,8 +112,13 @@ export function makePayload(overrides = {}) {
  * A 3-arm variant of makePayload: control + two treatments, with the main
  * metric ("revenue") carrying TWO VerdictBlocks — one per declared
  * control-vs-treatment pair (control-vs-treatment, control-vs-treatment_b).
- * `abkit/pipeline/readout.py` verdicts control-vs-EACH-arm (never
- * treatment-vs-treatment), so this is the realistic multi-arm shape.
+ *
+ * Control-anchored on purpose, and since m14 DEC-3 that is a statement about
+ * the SURFACE rather than about the readout: the readout verdicts every
+ * declared pair, but `abkit/tuning/payload.py` filters the cockpit's copy back
+ * to the ship decisions until DEC-4 gives Review mode a role label. So this is
+ * exactly the shape `abk explore` still receives — see
+ * `makeMultiArmDecisionPayload` for what the REPORT bakes.
  *
  * Regression fixture for the WP0 Review-mode bug: `payload.verdicts` holds
  * one block per (metric, pair); a naive `.find` on metric name alone renders
@@ -164,6 +169,83 @@ export function makeThreeArmPayload(overrides = {}) {
           ...base.metrics[0].pairs,
           { c: 'control', t: 'treatment_b', series: seriesB, diag: null },
           { c: 'treatment', t: 'treatment_b', series: seriesB, diag: null },
+        ],
+      },
+    ],
+    ...overrides,
+  };
+}
+
+/**
+ * The m14 DEC-3 report shape: every DECLARED pair carries a verdict with its
+ * `role`, and the read-time rollup rides beside them.
+ *
+ * `treatment_b` is the leader although `treatment` is declared FIRST — a
+ * fixture whose declaration order and effect ranking agree cannot tell the
+ * rollup's answer from "the first winning arm", and the same blindness is what
+ * DEC-2's review found in its own first fixture set.
+ * @param {Partial<import('../src/shared/payload').ReportPayload>} [overrides]
+ * @returns {import('../src/shared/payload').ReportPayload}
+ */
+export function makeMultiArmDecisionPayload(overrides = {}) {
+  const base = makeThreeArmPayload();
+  const [vsTreatment] = base.verdicts;
+  // s1 differs from s2 on purpose: with makePoint's default 1000 on both, an
+  // arm table that read the TREATMENT's size for the baseline row would pass
+  const seriesB = Array.from({ length: 14 }, (_, i) =>
+    makePoint(i + 1, { e: 0.16, lo: 0.11, hi: 0.21, s1: 1100, s2: 900 }),
+  );
+  const pairSeries = Array.from({ length: 14 }, (_, i) =>
+    makePoint(i + 1, { e: 0.05, lo: -0.02, hi: 0.12, p: 0.21, rj: 0 }),
+  );
+  const controlSeries = Array.from({ length: 14 }, (_, i) => makePoint(i + 1, { s1: 1100 }));
+  return {
+    ...base,
+    verdicts: [
+      { ...vsTreatment, role: 'vs_control' },
+      {
+        ...vsTreatment,
+        pair: { c: 'control', t: 'treatment_b' },
+        role: 'vs_control',
+        effect: 0.16,
+        lo: 0.11,
+        hi: 0.21,
+      },
+      {
+        ...vsTreatment,
+        pair: { c: 'treatment', t: 'treatment_b' },
+        role: 'treatment_pair',
+        verdict: 'INCONCLUSIVE',
+        significant: false,
+        rationale: ['CI covers zero at the latest look'],
+        effect: 0.05,
+        pvalue: 0.21,
+        lo: -0.02,
+        hi: 0.12,
+      },
+    ],
+    rollups: [
+      {
+        metric: 'revenue',
+        leader: 'treatment_b',
+        indistinguishable: ['treatment'],
+        separation: 'co_leaders',
+        losers: [],
+        guardrail_regressed: [],
+        rationale: [
+          'treatment_b beat control on revenue, but is not decisively better than treatment — they are co-leaders on this metric',
+        ],
+        caveats: [],
+      },
+    ],
+    leaders_agree: null,
+    metrics: [
+      {
+        ...base.metrics[0],
+        pairs: [
+          { ...base.metrics[0].pairs[0], series: controlSeries },
+          { c: 'control', t: 'treatment_b', series: seriesB, diag: null },
+          { c: 'treatment', t: 'treatment_b', series: pairSeries, diag: null },
         ],
       },
     ],

@@ -9,7 +9,10 @@ results:
   writes one offline HTML file per experiment (baked payload + inline JS): the
   variant means and lift, the effect + CI **stabilization chart**, MDE/power,
   p-value-vs-alpha, the SRM panel, and the WIN/LOSE/FLAT/INCONCLUSIVE verdict
-  with its rationale. No BI tool, no SQL. See [HTML reports](#html-reports).
+  with its rationale. At 3+ arms it also carries the decision layer — a
+  cross-arm overview naming the leader and its separation, a card per declared
+  pair (arm-vs-arm ones labelled *not a ship decision*), and a pair selector.
+  No BI tool, no SQL. See [HTML reports](#html-reports).
 - **Your own BI / dashboarding tool** — for shared dashboards and custom
   panels, point **any** BI tool at the results table and chart it with plain
   SQL (Grafana, Lightdash, Metabase, Superset, Redash, or a `clickhouse-client`

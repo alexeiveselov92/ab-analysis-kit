@@ -175,3 +175,62 @@ class TestReportGuards:
         result = runner.invoke(cli, ["run", "--report", "one.html"])
         assert result.exit_code != 0
         assert "names one file" in result.output
+
+
+class TestTheSummaryLineStaysControlAnchored:
+    """m14 DEC-3 hold, opened by DEC-4.
+
+    Since DEC-3 the payload carries a verdict for every declared pair. This
+    line joins the bare WORDS, so a treatment-pair verdict would read as a
+    third ship decision — "WIN · FLAT · LOSE" where the last is one treatment
+    against another. DEC-4 replaces the line with labeled verdicts and drops
+    the filter; until then this test is what makes that a deliberate commit.
+    """
+
+    @staticmethod
+    def _payload(*roles: str) -> dict:
+        words = ["WIN", "FLAT", "LOSE", "INCONCLUSIVE"]
+        return {
+            "verdicts": [
+                {"verdict": word, "role": role} for word, role in zip(words, roles, strict=False)
+            ]
+        }
+
+    def test_treatment_pairs_are_left_off_the_line(self):
+        from abkit.cli.commands.run import _verdict_note
+
+        note = _verdict_note(self._payload("vs_control", "vs_control", "treatment_pair"))
+        assert note == "WIN · FLAT"
+
+    def test_a_pre_0_9_0_payload_has_no_role_and_is_all_ship_decisions(self):
+        """Every list baked before 0.9.0 is control-anchored by construction —
+        a missing key must not silence the line."""
+        from abkit.cli.commands.run import _verdict_note
+
+        assert (
+            _verdict_note({"verdicts": [{"verdict": "WIN"}, {"verdict": "LOSE"}]}) == "WIN · LOSE"
+        )
+
+    def test_the_printed_line_actually_goes_through_the_hold(self, scaffolded, monkeypatch):
+        """The helper is only a hold if the surface still CALLS it.
+
+        Reverting `_emit_experiment_report` to the pre-DEC-3 inline join —
+        the exact leak this WP declares it prevents — left every test above
+        green, because they all call `_verdict_note` directly. This one reads
+        the terminal.
+        """
+        import abkit.cli.commands.run as run_mod
+
+        monkeypatch.setattr(run_mod, "_verdict_note", lambda payload: "HELD-BY-THE-SEAM")
+        result = runner.invoke(cli, ["run", "--select", EXP, "--report"])
+        assert result.exit_code == 0, result.output
+        report_line = next(line for line in result.output.splitlines() if "Report →" in line)
+        assert "HELD-BY-THE-SEAM" in report_line
+
+    def test_an_experiment_with_only_treatment_pairs_says_so(self):
+        """Unreachable through `evaluate` (a declared pair set always contains
+        the control pairs), but the empty-list branch must not print an empty
+        parenthetical if it ever is."""
+        from abkit.cli.commands.run import _verdict_note
+
+        assert _verdict_note(self._payload("treatment_pair")) == "no verdicts yet"

@@ -90,6 +90,17 @@ profile's `internal_database` / `internal_schema`, separate from the
   legitimately differ from the interval shown beside it, and says so in a
   caveat. Also **blocked** (SRM) and
   **insufficient data**. The main metric drives it; guardrails check regression.
+- **role** — what a verdict is ABOUT. `vs_control` is a **ship decision**;
+  `treatment_pair` is EVIDENCE about two treatments, so a `WIN` on `(B, C)` means
+  "C came out ahead of B" and says nothing about either against the baseline —
+  never read it as "ship C". Those pairs exist only under `contrasts: all_pairs`.
+- **rollup** — the per-main-metric arm summary the readout composes at read time
+  (never stored): **leader** (the best-effect arm AMONG THOSE THAT BEAT THE
+  CONTROL — arms that lost are never ranked), **separation** (`separated` /
+  `co_leaders` / `untested` / `no_leader`, where `no_leader` also covers "the SRM
+  gate failed" and "nothing could be judged yet" — read the rationale for which),
+  plus **leaders_agree** when two main metrics name different arms. abkit reports
+  the disagreement and does not break the tie: no metric priority is declared.
 - **SRM (sample-ratio-mismatch)** — a χ² gate (anytime-valid multinomial below 1d
   cadence): observed arm split ≠ expected split ⇒ randomization/cohort is broken.
   A **hard, blocking** gate — check it before trusting any effect.

@@ -32,12 +32,13 @@ in the decision / presentation layer.**
 | 4. main-tier `metrics_count=1` FWER inflation | **shipped** — M13 STAT-1; the defect was in the CLAIM, no number moved ([statistics-changes.md §4.3](statistics-changes.md)) |
 | 8. Bonferroni pays `C(N,2)` for a vs-control design | **shipped** — M13 STAT-1b, `contrasts: vs_control` |
 | 11. control is a positional convention with no field | **shipped** — M14 DEC-1, `assignment.control` + the one AST-gated resolver `ExperimentConfig.control` |
-| 2. no experiment-level winner / rollup | **live** — `ExperimentReadout` has no field for one ([readout.py:160](../../abkit/pipeline/readout.py#L160)) |
-| 3. treatment-vs-treatment charted but never verdicted | **live** — `evaluate` loops `treatments = variants[1:]` against the control only ([readout.py:565](../../abkit/pipeline/readout.py#L565)); `verdictFor` returns null for the pair ([report.ts:618](../../web/src/report/report.ts#L618)) |
+| 2. no experiment-level winner / rollup | **shipped** — M14 DEC-2 composes `ExperimentReadout.rollups`, DEC-3 renders it as the report's cross-arm overview |
+| 3. treatment-vs-treatment charted but never verdicted | **shipped** — M14 DEC-2 verdicts every declared pair (`role: treatment_pair`), DEC-3 renders it behind a *not a ship decision* chip |
 | 5. `abk plan` sizes ONE contrast of many | **live**, warns; since DEC-1 the pair is the declared control vs the first declared treatment, and the warning names both arms (DEC-5 owns the rest) |
 | 6. `abk validate` collapses N arms into a two-arm placebo | **live**, undisclosed ([runner.py:118](../../abkit/validate/runner.py#L118)) |
 | 7. `abk run --report` prints unlabeled verdict words | **live** — `" · ".join(verdicts)` ([run.py:153](../../abkit/cli/commands/run.py#L153)) |
-| 10/13/14/15. `activePair` reset, no pair selector, no SRM culprit, flat picker | **live** (cosmetic tier) |
+| 13. no pair selector; blocks grow C(N,2)/metric | **shipped** — M14 DEC-3 (`buildPairPicker`, 3+ arms) |
+| 10/14/15. `activePair` reset, no SRM culprit, flat picker | **live** (cosmetic tier) |
 
 **One surface the audit could not know about, because it did not exist yet:**
 the M11 dashboard takes `readout.verdicts[0]` as the experiment's headline
@@ -70,7 +71,11 @@ exit-gate leg (§4):
    and equals `|contrast_pairs()| × metrics_count`. M14 moves none of its three
    inputs: a declared `control:` re-*orients* pairs, it does not add or remove
    any, and it changes neither the arm count nor the `contrasts` family (D3).
-3. **A two-arm experiment is byte-identical on every surface.** With two arms
+3. **A two-arm experiment is byte-identical on every surface** — amended by
+   DEC-3 as built to *the rendered DOM is identical and every `0.8.0` payload
+   field reproduces*, because the payload legitimately gains keys and the
+   report's injected stylesheet grows, so the baked FILE differs on a correct
+   implementation. DEC-6's gate must be written against the amended form. With two arms
    there is no treatment-vs-treatment pair and the rollup has exactly one
    candidate, so the payload, the report, the dashboard row, the messages and
    the CLI text must reproduce `0.8.0` field for field — measured against a real
@@ -362,7 +367,7 @@ decisive AGAINST the leader.
 
 ---
 
-### DEC-3 — the report: a card per declared pair, an overview per metric
+### DEC-3 — the report: a card per declared pair, an overview per metric ✅
 
 **Payload.** `_verdict_to_payload` gains `role`; the payload gains `rollups`
 and `leaders_agree`. Terse-key discipline holds (`web/src/shared/payload.ts` in
@@ -387,6 +392,112 @@ build` → commit the regenerated `abkit/reporting/assets/report.js` in the SAME
 PR. **No new hex**: the leader/co-leader chips reuse the existing verdict tokens
 (`docs/design/brand-tokens.md`) — M12 NTF-2's rule, where a notice reused the
 SRM token rather than minting a sixth colour.
+
+#### DEC-3 as built ✅
+
+Shipped as specified. Five deltas, four of them about the fact the plan states
+in one line and the build had to spend a WP on: **opening the payload opens
+every reader of it, not the renderer the WP is named after.**
+
+1. **The payload has THREE consumers, and two of them are not ready.** DEC-2's
+   lesson (`readout.verdicts` is iterated unconditionally by three surfaces) is
+   here one level down: `payload["verdicts"]` is read by `report.ts`, by
+   `abkit/tuning/payload.py` — which rides the report payload VERBATIM into the
+   cockpit, where Review mode renders every matching verdict and prints the word
+   alone — and by `cli/commands/run.py`, which joins the bare words onto the
+   `Report →` line. Merging the payload change alone would have shipped
+   "`WIN · FLAT · LOSE`" with the third word about one treatment against
+   another, and an unlabeled `B vs C` line in explore: the exact misreading
+   `role` exists to stop, on two surfaces at once. Both now hold at
+   control-anchored until DEC-4 opens them deliberately.
+2. **The hold is ONE function, `builder.ship_decisions`**, not two inline
+   filters. Four copies of a knob-dependent set is the STAT-1b failure
+   (`combinations(variants, 2)` in four modules); two copies of a
+   role-dependent one is the same shape, and DEC-4 deletes one call site each
+   rather than hunting for predicates. An absent `role` reads as a ship
+   decision — every payload baked before `0.9.0` is control-anchored by
+   construction. `_verdict_note` was extracted from `_emit_experiment_report`
+   so the CLI half of the hold has something to test that does not write a file.
+3. **Every cross-arm affordance is gated at 3+ arms, and `leaders_agree` is
+   why the gate is not decorative.** With two main metrics and two arms both
+   rollups name the same single treatment, so `leaders_agree` is `true` and the
+   chip would appear on a page `0.8.0` rendered without one — §0.2 point 3
+   broken by an agreement that is a tautology. The overview, the selector, the
+   evidence group and the chip are all suppressed at two arms; the role chip is
+   suppressed for `vs_control` at any arm count.
+4. **The arm table does not rank.** `desired_direction` is deliberately absent
+   from the payload, so a renderer sorting by effect would have to guess which
+   end of the scale is good and would put the leader last on a `decrease`
+   metric. The table stays in declaration order and the LEADER is named by the
+   rollup's own chip — the DEC-2 rule that the direction is resolved once, in
+   the readout, applied to the surface that displays it. `n` per arm is the
+   latest cutoff of that arm's control-anchored pair, i.e. the same row the
+   verdict beside it came from.
+5. **The evidence group needed its own class.** Nesting a second `abk-verdicts`
+   inside the collapsed group made `.abk-verdicts > .abk-verdict` match the
+   arm-vs-arm cards too — the one selector that must never be ambiguous is "the
+   ship decisions", and its first form silently matched three cards where two
+   were meant. Caught by the smoke test, not by review.
+
+**What the review changed** (four lenses; every finding below was reproduced
+before it was fixed):
+
+6. **The renderer had re-transcribed a decision the readout words itself.** A
+   static `SEPARATION_LABEL` mapped `no_leader` to "no arm beat the control" —
+   but that state has THREE readouts, and the readout words each differently
+   precisely because a rollup must not speak over a gate (DEC-2 delta 6). Under
+   a failed SRM gate the chip stated a measured finding one line above "effects
+   untrustworthy under a broken cohort", and *every* pre-horizon 3-arm
+   experiment — the default state of the surface — read as "no arm beat the
+   control". The chip now NAMES THE STATE and is suppressed entirely when there
+   is no leader; the claim is the rationale's, three lines below.
+7. **The arm table called untestable arms co-leaders.** `indistinguishable`
+   merges "compared and undecided" with "could not be compared" (the split
+   DEC-2 added its `untestable` state for), so tagging its members `co-leader`
+   asserted measured parity about a pair nobody measured — reachable with no
+   config edit, since the treatment pair holds the two smallest arms and demotes
+   first. The tag is `not separated`, true of both. *Named limitation:* the
+   payload cannot express the split, so a surface that needs it will have to
+   divide `MetricRollup.indistinguishable` in a later WP.
+8. **The pair selector hid exactly the blocks with data in DEC-1's documented
+   window.** A declared non-first control re-orients the pairs, so until the
+   next run the control-anchored blocks are present-but-EMPTY while the old
+   treatment pairs hold the whole series — and an orientation-only default
+   opened three "no cutoffs yet" boxes and hid three real charts, a page worse
+   than `0.8.0`'s. The default now falls back to whatever has a series.
+9. **The re-fit-on-reveal was unfalsifiable.** jsdom has no 2D context, so every
+   chart in the suite takes the fallback path and the `charts` list is empty:
+   deleting the loop left the suite green while every revealed chart would have
+   stayed blank. The suite now has one harness that stubs the context and a
+   layout where a canvas under a `hidden` ancestor measures zero.
+10. **The CLI hold was pinned at the helper, not at the surface.** Reverting
+    `_emit_experiment_report` to the pre-DEC-3 inline join — the exact leak —
+    left all fifteen tests green, because they called `_verdict_note` directly.
+    The DEC-1 lesson restated: a seam owes a behavioural assertion at the
+    surface, not only at the seam.
+11. **A printed report lost the collapsed charts.** `hidden` blocks do not print
+    and a closed `<details>` prints as its summary, so a 3-arm PDF would have
+    dropped the arm-vs-arm charts and cards `0.8.0` put on paper. An
+    `@media print` rule reveals both; the interactive default is about
+    scrolling, not about what the document contains.
+
+**A wording correction to §0.2 point 3, for DEC-6 to write its gate against.**
+"Byte-identical" is false as literally worded for the report and always was
+going to be: the payload gains keys and the injected stylesheet grows, so the
+baked HTML differs. What holds — and what was measured here, rendering the same
+two-arm payload through the `main` bundle and this one — is that **the rendered
+DOM is character-for-character identical and every `0.8.0` payload field
+reproduces**. DEC-6's leg must be written that way or it will fail on a correct
+implementation.
+
+Test posture: the payload tests use a fixture where the LAST-declared arm is
+the leader (declaration order and effect ranking disagree), because DEC-2's
+review found its own first fixture set blind for exactly the opposite reason;
+both holds were mutation-probed, and the explore fixture is shaped to fail
+against three WRONG filters (keep-the-first, metric-scoped, and the positional
+`pair.c == variants[0]`, which inverts under a declared late control), not
+merely to pass against the right one; and the two-arm no-affordance assertion
+is the §0.2 leg, proven to bite by removing the 3+ arm gate.
 
 ---
 
