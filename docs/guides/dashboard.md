@@ -30,8 +30,13 @@ tags, status, timezone, window, configured comparisons), so a project with a
 hundred experiments does not wait on a hundred queries. The client then fills
 the rows, **three at a time**, one `GET /api/stats/<experiment>` each.
 
-Each filled row carries the **headline** comparison's state — the same headline
-the readout picks:
+Each filled row carries the **headline** comparison's state. At two arms that is
+the one ship decision. At **three or more** it is the first declared main
+metric's **leader** — the arm that beat the control with the best effect in the
+desired direction (m14 DEC-4) — falling back to the first declared treatment
+when no arm beat the control. Through `0.8.0` the row showed the first declared
+treatment unconditionally, which at 3+ arms presented an arbitrary arm as the
+experiment's result.
 
 | Cell | Meaning |
 |---|---|
@@ -52,11 +57,23 @@ readout marks:
   `insufficient_data` flag of that look, not a re-derived guess.
 - **SRM** — the red gate: the observed arm split does not match the expected
   one. Fix the assignment before trusting any effect on that row.
+- **→ arm** — the **leader chip** at 3+ arms: the arm this metric says to ship.
+  Hover for the readout's own sentence. Absent when no arm beat the control.
+- **leaders split** — two main metrics name different arms. abkit reports the
+  disagreement and deliberately does not break the tie: there is no declared
+  metric priority for it to use. Hover for each metric's leader.
 - **locked** — an `abk run` currently holds this experiment's pipeline lock.
 - **error** — that row failed to build (a warehouse hiccup, an orphaned method
   config). It is *that row's* error: the other rows still fill.
 
-Expand a row (the `▸` toggle) for the full per-pair readout, the facts line
+The **guardrail** chip is deliberately control-anchored: it fires when a
+guardrail regressed against the *control*, never when one treatment regressed
+against another — which says nothing about whether the experiment harms users.
+
+Expand a row (the `▸` toggle) for every DECLARED pair — the ship decisions plus,
+under `contrasts: all_pairs`, the arm-vs-arm comparisons, each tagged **`arm vs
+arm`** because a `WIN` there means "this arm came out ahead of that one", not
+"ship it" — the facts line
 (SRM p, last look, timezone, lock state), the per-metric Run buttons, the
 maintenance buttons, and the YAML editor.
 

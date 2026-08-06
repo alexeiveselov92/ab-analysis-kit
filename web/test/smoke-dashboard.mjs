@@ -1124,3 +1124,66 @@ test('main metrics naming different leaders raise a split chip', async () => {
   assert.match(chip.title, /orders: t1/);
   dom.window.close();
 });
+
+test('a vs_control experiment still gets its leader chip', async () => {
+  // `contrasts: vs_control` computes no arm-vs-arm pair at all, so a gate that
+  // looked for a `treatment_pair` verdict was blind to it — and the row would
+  // move its cells to the leader while rendering nothing that says which arm
+  // they belong to. That is the defect DEC-4 exists to remove.
+  const vsControl = makeMultiArmRow('dash_exp', {
+    verdicts: makeMultiArmRow('dash_exp').verdicts.filter((v) => v.role === 'vs_control'),
+  });
+  const { mount, dom } = renderInJsdom(makeDashboardPayload(), {
+    fetchImpl: fakeFetch(
+      defaultHandler({ '/api/stats/dash_exp': () => ({ status: 200, json: vsControl }) }),
+    ).impl,
+  });
+  await until(() => chipFor(mount, 'dash_exp').textContent === 'WIN', 1000);
+
+  assert.ok(!vsControl.verdicts.some((v) => v.role === 'treatment_pair'), 'fixture precondition');
+  assert.match(mount.querySelector('.abk-badge-leader').textContent, /t2/);
+  dom.window.close();
+});
+
+test('the leader chip names a separation that is not decisive', async () => {
+  const undecided = makeMultiArmRow('dash_exp', {
+    separation: 'co_leaders',
+    rollups: [
+      { metric: 'revenue', leader: 't2', indistinguishable: ['t1'], separation: 'co_leaders',
+        losers: [], guardrail_regressed: [],
+        rationale: ['t2 beat control; it did not separate from t1'], caveats: [] },
+    ],
+  });
+  const { mount, dom } = renderInJsdom(makeDashboardPayload(), {
+    fetchImpl: fakeFetch(
+      defaultHandler({ '/api/stats/dash_exp': () => ({ status: 200, json: undecided }) }),
+    ).impl,
+  });
+  await until(() => chipFor(mount, 'dash_exp').textContent === 'WIN', 1000);
+
+  assert.match(mount.querySelector('.abk-badge-leader').textContent, /co-leaders/);
+  dom.window.close();
+});
+
+test('an arm the control beat is visible without expanding', async () => {
+  const harmed = makeMultiArmRow('dash_exp', {
+    rollups: [
+      { metric: 'revenue', leader: 't2', indistinguishable: [], separation: 'separated',
+        losers: ['t1'], guardrail_regressed: [],
+        rationale: ['t2 beat control on revenue'], caveats: [] },
+    ],
+  });
+  const { mount, dom } = renderInJsdom(makeDashboardPayload(), {
+    fetchImpl: fakeFetch(
+      defaultHandler({ '/api/stats/dash_exp': () => ({ status: 200, json: harmed }) }),
+    ).impl,
+  });
+  await until(() => chipFor(mount, 'dash_exp').textContent === 'WIN', 1000);
+
+  const chip = [...mount.querySelectorAll('.abk-badge-guardrail')].find((b) =>
+    /lost/.test(b.textContent),
+  );
+  assert.ok(chip, 'a green headline must not hide an arm that is harming users');
+  assert.match(chip.title, /revenue: t1/);
+  dom.window.close();
+});

@@ -114,14 +114,17 @@ def _verdict_note(payload: dict) -> str:
     verdict on every DECLARED pair, so joining them unlabeled would have added
     "WIN" for one treatment against another to a line read as ship decisions.
 
-    So: the SHIP decisions carry their arm (``WIN treatment_b``) and the
-    arm-vs-arm verdicts stay OFF this line entirely — they are evidence, and a
-    one-line summary is the wrong place to explain the distinction. At 3+ arms
-    the leader replaces the list, because "which arm do I ship" is the question
-    the line is being read for; the per-pair words are on the page it points at.
+    So at 3+ arms the ROLLUP replaces the list: one entry per main metric,
+    naming the leader or saying there is none. Listing the per-pair words
+    instead does not survive contact with a legal config — with two main
+    metrics the same arm appears twice with contradictory verdicts and nothing
+    says which metric each belongs to (`ship_decisions` is metric-blind), and
+    at five arms the line runs past 160 characters. "Which arm do I ship" is
+    the question this line is read for; the per-pair words are on the page it
+    points at. A split between metrics is NAMED rather than left for the reader
+    to spot, the way the report raises a chip for it.
 
-    A two-arm line is `0.8.0`'s to the character: one ship decision whose
-    treatment is the only one, so the arm suffix is dropped.
+    A two-arm line is `0.8.0`'s to the character: the bare verdict words.
     """
     from abkit.reporting.builder import ship_decisions
 
@@ -131,12 +134,17 @@ def _verdict_note(payload: dict) -> str:
     if len(payload.get("arms", [])) <= 2:
         return " · ".join(str(v["verdict"]) for v in ship)
 
-    words = " · ".join(f"{v['verdict']} {v['pair']['t']}" for v in ship)
-    leaders = [r for r in payload.get("rollups", []) if r.get("leader")]
-    if not leaders:
-        return words
-    named = ", ".join(f"{r['leader']} ({r['metric']})" for r in leaders)
-    return f"{words} · leader: {named}"
+    rollups = payload.get("rollups", [])
+    if not rollups:
+        # a pre-`0.9.0` bake replayed by a newer CLI — no rollup to name, so
+        # fall back to the labelled words rather than saying nothing
+        return " · ".join(f"{v['verdict']} {v['pair']['t']}" for v in ship)
+
+    named = ", ".join(f"{r['metric']}: {r['leader'] or 'no leader'}" for r in rollups)
+    note = f"leader — {named}"
+    if payload.get("leaders_agree") is False:
+        note += " (metrics disagree)"
+    return note
 
 
 def _emit_experiment_report(

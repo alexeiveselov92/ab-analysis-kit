@@ -106,9 +106,11 @@ class TestShouldAnnounce:
         ), "'we could not compare them' → 'they are tied' is also a changed decision"
 
     def test_a_pre_0_9_0_state_row_does_not_re_announce_on_upgrade(self):
-        """The stored value is NULL for every row written before `0.9.0`, and a
-        readout with no rollup signs as ``None`` — so the first `0.9.0` run of a
-        quiet project stays quiet."""
+        """The row stored NULL because `0.8.0` had no rollup term, and EVERY
+        `0.9.0` readout signs a non-null one — so a naive comparison makes the
+        first upgraded run re-announce every comparison in the project, most of
+        them with a message textually identical to the last one delivered. The
+        term is dropped for exactly the rows that predate it."""
         announced = {
             "last_verdict": "FLAT",
             "last_srm_flag": False,
@@ -116,7 +118,25 @@ class TestShouldAnnounce:
             "last_rollup": None,
         }
 
-        assert not should_announce(announced, "FLAT", False, rollup_signature(None, None))
+        assert not should_announce(announced, "FLAT", False, rollup_signature(None, "no_leader"))
+        assert not should_announce(
+            announced, "FLAT", False, rollup_signature("b", "separated")
+        ), "a rollup the stored row could not have carried is not, by itself, news"
+        # …and the other two terms still work over such a row
+        assert should_announce(announced, "WIN", False, rollup_signature("b", "separated"))
+
+    def test_the_leader_is_only_in_the_key_when_the_rollup_separated_it(self):
+        """`leader` is a raw argmax — the one dedup term the stabilization scan
+        does not smooth. Under `co_leaders` the rollup is SAYING the arms are
+        indistinguishable, so recording which of them polled higher flips the
+        key on about half the runs of a genuinely tied pair: a message every
+        run, the exact failure NTF-3 exists to prevent."""
+        assert rollup_signature("b", "co_leaders") == rollup_signature("c", "co_leaders")
+        assert rollup_signature("b", "untested") == rollup_signature("c", "untested")
+        # …while a decisive flip is still news
+        assert rollup_signature("b", "separated") != rollup_signature("c", "separated")
+        # …and so is becoming decisive
+        assert rollup_signature("b", "separated") != rollup_signature("b", "co_leaders")
 
     def test_a_two_arm_rollup_cannot_move_without_the_verdict_moving(self):
         """The §0.2 leg. With one treatment the leader is that arm iff it WON

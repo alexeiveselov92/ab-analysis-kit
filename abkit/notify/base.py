@@ -80,6 +80,11 @@ class ReadoutData:
     #: treatment "leader: treatment" restates the verdict word beside it.
     leader: str | None = None
     separation: str | None = None
+    #: The rollup's OWN first sentence, carried so a channel never has to
+    #: synthesize prose for the no-leader case: that state covers "nobody beat
+    #: the control", "nothing could be judged yet" and "the SRM gate failed",
+    #: and the readout words each differently on purpose (m14 DEC-2 delta 6).
+    rollup_rationale: str | None = None
     #: How many arms the experiment declares. The renderers' one gate for the
     #: DEC-4 line, so a two-arm message is `0.8.0`'s to the character.
     arm_count: int = 2
@@ -269,7 +274,14 @@ class BaseChannel(ABC):
         # separation, since a leader nobody could separate from its rivals is a
         # weaker recommendation than one that is decisively ahead.
         rollup_display = ""
-        if readout.arm_count > 2 and readout.kind == "readout":
+        # The WHOLE block is silent under a failed SRM gate, not just its
+        # no-leader half. `srm_flag` is the experiment-wide gate while a
+        # verdict is judged on its own pair's latest row, so a leader CAN be
+        # named while the gate is red — and `abk run --metric` makes that
+        # reachable, one main metric advancing into a broken cutoff while
+        # another sits on a healthy earlier look. The message would then read
+        # "results withheld" and, one line down, which arm to ship.
+        if readout.arm_count > 2 and readout.kind == "readout" and not readout.srm_flag:
             if readout.leader is not None:
                 rollup_display = f"Leader on {readout.metric}: {readout.leader}"
                 if readout.separation == "separated":
@@ -278,12 +290,14 @@ class BaseChannel(ABC):
                     rollup_display += " — not separated from every other arm"
                 elif readout.separation == "untested":
                     rollup_display += " — separation untested"
-            elif readout.separation == "no_leader" and not readout.srm_flag:
-                # deliberately silent under a failed SRM gate: the gate line
-                # above already says the effects are untrustworthy, and "no arm
-                # beat the control" beside it would report a measured finding
-                # where nothing was measurable (the DEC-3 renderer lesson)
-                rollup_display = f"No arm beat the control on {readout.metric} yet"
+            elif readout.rollup_rationale:
+                # The readout's OWN sentence, verbatim (the DEC-3 rule). A
+                # renderer that synthesised prose from `no_leader` would collapse
+                # three different facts — nobody won, nothing has been judged
+                # yet, the gate failed — into "no arm beat the control", which is
+                # a measured finding asserted where nothing was measured. That is
+                # the ordinary state of every young 3-arm experiment.
+                rollup_display = readout.rollup_rationale
         rollup_line = f"{rollup_display}\n" if rollup_display else ""
 
         dashboard_url = readout.dashboard_url or ""

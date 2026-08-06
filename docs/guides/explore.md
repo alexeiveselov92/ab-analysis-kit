@@ -105,6 +105,21 @@ and re-seed the knobs), and **Review** (mark guardrail vs primary, confirm the
 decision). A fourth entry, **Segment** (heterogeneous effects), appears in the
 rail but is **inert** — it is deferred (D9, ROADMAP) and does nothing yet.
 
+At three or more arms Review also carries the decision layer (m14 DEC-4): a
+**rollup line** per metric naming the leader and whether it separated from the
+other treatments — or the readout's own sentence when no arm won — and an
+**`arm vs arm`** tag on every treatment-vs-treatment verdict, because a `WIN`
+there is evidence about two arms and not a recommendation to ship either.
+
+> **Review's verdicts are as of page build, not live.** Every chart on the page
+> follows a knob turn; these do not. They are the readout baked into the payload
+> when `abk explore` started, which is what keeps them the same decision the
+> report and the dashboard show. Re-run `abk run` and reopen the cockpit to move
+> them.
+
+The **pair selector** above the charts remembers its choice per metric, so
+comparing one arm pair across metrics no longer means re-picking it each time.
+
 ## Live recompute — one source of math truth
 
 Every knob change recomputes through the **Python `from_suffstats` /

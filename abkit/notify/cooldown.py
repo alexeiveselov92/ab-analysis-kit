@@ -25,6 +25,7 @@ from typing import Any
 EMPTY_STATE: dict[str, Any] = {
     "last_verdict": None,
     "last_srm_flag": False,
+    "last_rollup": None,
     "last_notified_at": None,
     "notify_count": 0,
 }
@@ -33,13 +34,26 @@ EMPTY_STATE: dict[str, Any] = {
 def rollup_signature(leader: str | None, separation: str | None) -> str | None:
     """The decision-layer half of the signature (m14 DEC-4).
 
-    ``None`` — never a string — for a readout that carries no rollup, so a
-    pre-`0.9.0` state row (whose stored value is NULL) compares equal to a
-    fresh one and does not re-announce every comparison on upgrade.
+    **The leader is in the signature only when the rollup SEPARATED it**, and
+    that is not a simplification — it is the difference between a decision and
+    a coin flip. `leader` is a raw argmax over point estimates, the one dedup
+    term the readout's stabilization scan does not smooth; under `co_leaders`
+    the rollup is *saying these arms are indistinguishable*, so recording which
+    of them happened to poll higher makes the key flip on about half of all runs
+    for genuinely tied arms — a message every run, which is exactly what NTF-3
+    exists to prevent. Under `separated` the ordering is a claim the readout
+    stands behind, and a flip from B to C there is the ship decision changing.
+
+    ``None`` for a readout with no rollup at all. Reachable only from a caller
+    that has none to offer — every `evaluate()` readout carries one per main
+    comparison — so it is the "this term does not apply" value rather than a
+    state the pipeline produces.
     """
     if leader is None and separation is None:
         return None
-    return f"{leader or ''}|{separation or ''}"
+    if separation != "separated":
+        return f"|{separation or ''}"
+    return f"{leader or ''}|{separation}"
 
 
 def announcement_signature(
@@ -82,17 +96,28 @@ def should_announce(
     A never-announced comparison (``last_verdict is None``,
     ``notify_count == 0``) always announces: its first readout is news.
     """
-    current = announcement_signature(verdict, srm_flag, rollup)
-    previous = announcement_signature(
-        state.get("last_verdict"),
-        bool(state.get("last_srm_flag", False)),
-        state.get("last_rollup"),
-    )
     if not state.get("notify_count"):
         # Nothing was ever delivered for this comparison. Do not compare
         # signatures: a first verdict that happens to be None-vs-None would
         # otherwise read as "unchanged" and never announce at all.
         return True
+
+    # A row announced BEFORE `0.9.0` stored no rollup, and every readout since
+    # carries one — so comparing the two would make the first `0.9.0` run
+    # re-announce every comparison in the project, most of them with a message
+    # textually identical to the one already delivered. The term is dropped for
+    # exactly those rows; the NEXT announcement writes one and dedup resumes at
+    # full strength. (An announced row can never have signed `None` itself: the
+    # only `None` producer is a caller with no rollup, and the verdict path
+    # always has one.)
+    previous_rollup = state.get("last_rollup")
+    compare_rollup = previous_rollup is not None
+    current = announcement_signature(verdict, srm_flag, rollup if compare_rollup else None)
+    previous = announcement_signature(
+        state.get("last_verdict"),
+        bool(state.get("last_srm_flag", False)),
+        previous_rollup,
+    )
     return current != previous
 
 

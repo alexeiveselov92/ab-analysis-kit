@@ -1664,6 +1664,12 @@ class TestTheHeadlineIsTheRollup:
         assert row["effect"] == pytest.approx(0.30), "the cells are the LEADER's, not t1's"
         assert row["ci"] == [pytest.approx(0.24), pytest.approx(0.36)]
         assert row["separation"] == "separated"
+        # EVERY cell follows the headline, not just the glanceable three: a
+        # sparkline still drawn from t1 would contradict the number above it,
+        # and the demotion chip would fire on t1's look while the row reports
+        # t2's verdict. Both survived every existing test (review finding).
+        assert [value for _, value in row["spark"]] == [pytest.approx(0.30)] * 14
+        assert row["insufficient"] is False
 
     def test_with_no_leader_the_first_declared_treatment_still_answers(self, tables):
         """Nobody beat the control — the common case. There is nothing to
@@ -1695,8 +1701,12 @@ class TestTheHeadlineIsTheRollup:
         row = row_for(tables, experiment)
 
         assert row["leader"] is None
+        # the HEADLINE CELLS are the first declared treatment's — the previous
+        # form of this assertion compared the row's rationale against a key the
+        # expand entry does not have, so it read `x == x` (review finding)
         assert row["verdicts"][0]["pair"] == {"c": "control", "t": "t1"}
-        assert row["rationale"] == row["verdicts"][0].get("rationale", row["rationale"])
+        assert row["effect"] == pytest.approx(0.01)
+        assert [value for _, value in row["spark"]] == [pytest.approx(0.01)] * 14
 
     def test_the_expand_list_carries_every_declared_pair_with_its_role(self, tables):
         experiment = self._three_arm()

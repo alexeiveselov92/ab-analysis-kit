@@ -258,6 +258,9 @@ def readout_data_from_verdict(
     rollup = _rollup_for(readout, verdict.metric)
     leader = None if rollup is None else rollup.leader
     separation = None if rollup is None else rollup.separation
+    rollup_rationale = None
+    if rollup is not None and rollup.rationale:
+        rollup_rationale = rollup.rationale[0]
     n_1, n_2 = _pair_sizes(verdict, rows)
     mentions = list(experiment.notify.mentions) if experiment.notify is not None else []
     return ReadoutData(
@@ -288,6 +291,7 @@ def readout_data_from_verdict(
         # an identical-looking message arrive twice with no explanation.
         leader=leader,
         separation=separation,
+        rollup_rationale=rollup_rationale,
         arm_count=len(experiment.assignment.variants),
         n_1=n_1,
         n_2=n_2,

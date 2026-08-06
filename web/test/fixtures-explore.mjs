@@ -159,6 +159,46 @@ export function makeExplorePayload(overrides = {}) {
 }
 
 /**
+ * The m14 DEC-4 cockpit shape: every DECLARED pair rides into explore (the
+ * DEC-3 hold is released), each with its `role`, and the rollup beside them.
+ * The leader is the LAST declared arm — a fixture whose declaration order and
+ * effect ranking agree cannot tell a rollup from "the first winner".
+ * @param {Partial<import('../src/shared/payload').ReportPayload>} [overrides]
+ * @returns {any}
+ */
+export function makeDecisionExplorePayload(overrides = {}) {
+  const base = makeThreeArmExplorePayload();
+  const [first] = base.verdicts;
+  return {
+    ...base,
+    verdicts: [
+      { ...first, role: 'vs_control' },
+      { ...first, pair: { c: 'control', t: 'treatment_b' }, role: 'vs_control' },
+      {
+        ...first,
+        pair: { c: 'treatment', t: 'treatment_b' },
+        role: 'treatment_pair',
+        verdict: 'INCONCLUSIVE',
+      },
+    ],
+    rollups: [
+      {
+        metric: 'revenue',
+        leader: 'treatment_b',
+        indistinguishable: ['treatment'],
+        separation: 'co_leaders',
+        losers: [],
+        guardrail_regressed: [],
+        rationale: ['treatment_b beat control on revenue; it did not separate from treatment'],
+        caveats: [],
+      },
+    ],
+    leaders_agree: null,
+    ...overrides,
+  };
+}
+
+/**
  * A 3-arm variant of makeExplorePayload — control + two treatments, riding
  * `makeThreeArmPayload`'s two VerdictBlocks for the "revenue" metric
  * verbatim. WP0 Review-mode regression fixture (see makeThreeArmPayload).

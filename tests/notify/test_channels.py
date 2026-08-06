@@ -70,12 +70,21 @@ def _channel_of_type(channel_type: str):
 
 
 def _render_text(channel, readout) -> str:
-    """Everything the reader could see, whatever shape the channel posts in."""
+    """What the reader ACTUALLY receives, whatever shape the channel posts in.
+
+    Deliberately NOT the context dict. `build_context` computes every display
+    string for every channel, so folding it in made this helper's assertions
+    satisfiable by the context alone: deleting Telegram's render of the decision
+    line left the whole roster green (review finding). Each channel is rendered
+    through its own outermost pure builder instead.
+    """
     import json as _json
 
-    ctx = channel.build_context(readout)
-    body = channel.build_payload(readout) if hasattr(channel, "build_payload") else None
-    return _json.dumps(body, default=str) + "\n" + _json.dumps(ctx, default=str)
+    for attr in ("build_payload", "_build_html_message", "_build_html_body"):
+        builder = getattr(channel, attr, None)
+        if builder is not None:
+            return _json.dumps(builder(readout), default=str)
+    return channel.format_message(readout)
 
 
 # ── verdict presentation ───────────────────────────────────────────────────────
@@ -925,8 +934,51 @@ class TestTheDecisionLineReachesEveryChannel:
 
         assert ctx["rollup_display"] == ""
 
-    def test_no_leader_is_reported_when_the_cohort_is_healthy(self):
+    def test_the_no_leader_line_is_the_READOUTS_OWN_sentence(self):
+        """`no_leader` covers three different facts — nobody won, nothing has
+        been judged yet, the gate failed — and the readout words each one
+        differently on purpose. A channel that synthesized prose from the state
+        would assert a measured finding where nothing was measured, which is the
+        ordinary condition of every young three-arm experiment."""
         channel = WebhookChannel("http://x")
-        ctx = channel.build_context(_readout(arm_count=3, leader=None, separation="no_leader"))
 
-        assert "No arm beat the control" in ctx["rollup_display"]
+        won_nothing = channel.build_context(
+            _readout(
+                arm_count=3,
+                leader=None,
+                separation="no_leader",
+                rollup_rationale="no arm beat control on signup_cr",
+            )
+        )
+        assert won_nothing["rollup_display"] == "no arm beat control on signup_cr"
+
+        too_early = channel.build_context(
+            _readout(
+                arm_count=3,
+                leader=None,
+                separation="no_leader",
+                rollup_rationale="no pair could be judged against control yet (pre-horizon)",
+            )
+        )
+        assert "pre-horizon" in too_early["rollup_display"]
+        assert "beat" not in too_early["rollup_display"], "no finding is asserted"
+
+    def test_a_leader_is_not_recommended_under_a_failed_srm_gate(self):
+        """`srm_flag` is the EXPERIMENT-wide gate while a verdict is judged on
+        its own pair's latest row, so a leader can be named while the gate is
+        red — reachable with `abk run --metric`, one metric advancing into a
+        broken cutoff while another sits on a healthy earlier look. The message
+        would read "results withheld" and, one line down, which arm to ship."""
+        channel = WebhookChannel("http://x")
+        ctx = channel.build_context(
+            _readout(
+                arm_count=3,
+                leader="treatment_b",
+                separation="separated",
+                srm_flag=True,
+                srm_pvalue=1e-9,
+            )
+        )
+
+        assert ctx["rollup_display"] == ""
+        assert "SRM gate FAILED" in ctx["srm_display"]

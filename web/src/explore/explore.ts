@@ -58,7 +58,13 @@ import {
   scoredRuns,
   token,
 } from '../shared/chart';
-import type { MetricBlock, PairBlock, ReportPayload, SeriesPoint } from '../shared/payload';
+import type {
+  MetricBlock,
+  PairBlock,
+  ReportPayload,
+  SeparationState,
+  SeriesPoint,
+} from '../shared/payload';
 import { baselineNote } from '../shared/payload';
 import { makeBrandLockup } from '../shared/logo';
 import type {
@@ -617,8 +623,14 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
       : metricNames[0] || null;
   // m14 DEC-4 (audit gap 10): the pair selection is remembered PER METRIC.
   // It used to reset to 0 on every metric switch, so comparing one arm pair
-  // across metrics meant re-picking it each time — and with a declared control
-  // the pair at index 0 is not even the same comparison on two metrics.
+  // across metrics meant re-picking it each time.
+  //
+  // Remembering the INDEX is equivalent to remembering the pair, and that is an
+  // invariant rather than a coincidence: `builder.py` computes
+  // `experiment.contrast_pairs()` ONCE per experiment and hands the same
+  // ordered list to every metric entry, so index i is the same `(c, t)` on
+  // every metric of one payload. The clamp below defends that invariant rather
+  // than an observed shape — today no metric can have a shorter pair list.
   const activePairByMetric = new Map<string, number>();
   const pairIndexFor = (metric: string | null): number =>
     metric === null ? 0 : (activePairByMetric.get(metric) ?? 0);
@@ -1523,12 +1535,15 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
   }
 
   // ---- Review mode (D9: guardrail/primary marking only) ---------------------------
-  /** m14 DEC-4. Every label names the STATE; the claim is the readout's, which
- * is why `no_leader` never appears here — with no leader the rationale is
- * rendered verbatim instead. */
-const SEPARATION_WORD: Record<string, string> = {
-  separated: 'separated from every other arm',
-  co_leaders: 'not separated from every other arm',
+  /** m14 DEC-4. The SAME words the report's chip uses (`report.ts`
+ * SEPARATION_LABEL) — a rule spelled differently per surface is a rule an
+ * operator cannot learn once (the m13 STAT-3 lesson). Typed on the union so a
+ * fifth state is a COMPILE error rather than a chip rendering the raw enum
+ * token; `no_leader` is present for exhaustiveness and rendered nowhere,
+ * because with no leader the readout's own sentence is shown instead. */
+const SEPARATION_WORD: Record<SeparationState, string> = {
+  separated: 'separated',
+  co_leaders: 'co-leaders',
   untested: 'separation untested',
   no_leader: 'no leader',
 };
@@ -1541,6 +1556,19 @@ function buildReviewGroup(): void {
         'abk-ctl-note',
         'mark each comparison\'s role — flips ride into Apply and re-tier the bonferroni ' +
           'budget (all calibration re-keys conservatively)',
+      ),
+    );
+    // Review is the ONE panel where a live knob and a stale readout sit inches
+    // apart: the role checkboxes below re-tier alphas and fire a recompute,
+    // while the verdicts and the rollup are baked into the payload at page
+    // build. Since DEC-4 the stale content includes a RECOMMENDATION ("leader:
+    // b"), so the comment in the code is no longer enough — the page says it.
+    reviewGroup.appendChild(
+      el(
+        'div',
+        'abk-ctl-note',
+        'verdicts and the rollup below are as of page build — knobs do not move ' +
+          'them; re-run `abk run` to re-decide',
       ),
     );
     for (const name of metricNames) {
@@ -1608,8 +1636,17 @@ function buildReviewGroup(): void {
         const leaderText =
           rollup.leader === null
             ? rollup.rationale[0] ?? `no leader on ${name} yet`
-            : `leader: ${rollup.leader} — ${SEPARATION_WORD[rollup.separation] ?? rollup.separation}`;
+            : `leader: ${rollup.leader} — ${SEPARATION_WORD[rollup.separation]}`;
         rowWrap.appendChild(el('div', 'abk-review-rollup', leaderText));
+        // The rationale carries what the chip cannot: WHICH arms could not be
+        // compared, or which the leader did not separate from. The report
+        // renders it under its own chip for the same reason; dropping it here
+        // would make explore the lossy surface for the same rollup.
+        if (rollup.leader !== null) {
+          for (const line of rollup.rationale) {
+            rowWrap.appendChild(el('div', 'abk-review-rationale', line));
+          }
+        }
       }
       for (const verdict of metricVerdicts) {
         const ship = (verdict.role ?? 'vs_control') === 'vs_control';
@@ -2767,8 +2804,9 @@ function injectStyle(): void {
 .${ROOT_CLASS} .abk-review-verdict{margin-top:5px;font:600 10.5px var(--abk-mono);color:var(--abk-ink-2);}
 .${ROOT_CLASS} .abk-verdict-win{color:var(--abk-good-text);}
 .${ROOT_CLASS} .abk-verdict-lose{color:var(--abk-st-critical);}
-.${ROOT_CLASS} .abk-review-rollup{margin-top:6px;font:600 10.5px var(--abk-mono);color:var(--abk-ink-1);}
-.${ROOT_CLASS} .abk-review-role{margin-left:6px;padding:0 4px;border:1px solid var(--abk-line);border-radius:3px;font:500 9.5px var(--abk-mono);color:var(--abk-ink-2);}
+.${ROOT_CLASS} .abk-review-rollup{margin-top:6px;font:600 10.5px var(--abk-mono);color:var(--abk-ink);}
+.${ROOT_CLASS} .abk-review-rationale{margin-top:2px;font:400 10px var(--abk-mono);color:var(--abk-ink-2);}
+.${ROOT_CLASS} .abk-review-role{margin-left:6px;padding:0 4px;border:1px solid var(--abk-border);border-radius:3px;font:500 9.5px var(--abk-mono);color:var(--abk-ink-2);}
 /* rail foot ---------------------------------------------------------------------------- */
 .${ROOT_CLASS} .abk-railfoot{flex:none;border-top:1px solid var(--abk-border);padding:10px 14px;}
 .${ROOT_CLASS} .abk-cfg-toggle{font:600 10.5px var(--abk-mono);color:var(--abk-muted);cursor:pointer;
