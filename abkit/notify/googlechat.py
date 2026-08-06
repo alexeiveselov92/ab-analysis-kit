@@ -65,6 +65,7 @@ class GoogleChatChannel(BaseChannel):
                 ctx["srm_display"],
                 ctx["weekly_cycle_display"],
                 ctx["family_divergence_display"],
+                ctx["rollup_display"],
             ):
                 if extra:
                     lines.append(html.escape(extra))

@@ -27,6 +27,7 @@ import {
   makeJobSummary,
   makeJobsReply,
   makeManyEntries,
+  makeMultiArmRow,
   makeRow,
 } from './fixtures-dashboard.mjs';
 
@@ -1054,4 +1055,135 @@ test('a re-render tears the previous page down (no double pollers)', async () =>
   await sleep(1600); // past the busy cadence, far short of the idle one
   const added = calls.filter((p) => p === '/api/jobs').length - before;
   assert.equal(added, 0, 'the abandoned page must not still be polling');
+});
+
+// ── m14 DEC-4: the decision layer on the row ──────────────────────────────────
+
+test('a three-arm row names the leader and labels the arm-vs-arm evidence', async () => {
+  const { mount, dom } = renderInJsdom(makeDashboardPayload(), {
+    fetchImpl: fakeFetch(
+      defaultHandler({
+        '/api/stats/dash_exp': () => ({ status: 200, json: makeMultiArmRow('dash_exp') }),
+      }),
+    ).impl,
+  });
+  await until(() => chipFor(mount, 'dash_exp').textContent === 'WIN', 1000);
+
+  // the row's own cells are the LEADER's, not the first declared treatment's
+  const leader = mount.querySelector('.abk-badge-leader');
+  assert.ok(leader, 'leader chip present at three arms');
+  assert.match(leader.textContent, /t2/);
+
+  // expand: every declared pair is listed, and only the arm-vs-arm one is tagged
+  mount.querySelector('.abk-disclose').click();
+  const pairs = [...mount.querySelectorAll('.abk-pair')];
+  assert.equal(pairs.length, 3);
+  const tagged = pairs.filter((p) => p.querySelector('.abk-pair-role'));
+  assert.equal(tagged.length, 1, 'exactly the treatment pair carries the role tag');
+  assert.match(tagged[0].textContent, /t1 vs t2/);
+  assert.match(tagged[0].querySelector('.abk-pair-role').textContent, /arm vs arm/);
+  dom.window.close();
+});
+
+test('a two-arm row grows no leader chip', async () => {
+  // With one treatment "→ treatment" only restates the WIN beside it, so the
+  // row is the one `0.8.0` rendered — even though `leader` IS in the payload.
+  const { mount, dom } = renderInJsdom(makeDashboardPayload(), {
+    fetchImpl: fakeFetch(defaultHandler()).impl,
+  });
+  await until(() => chipFor(mount, 'dash_exp').textContent === 'WIN', 1000);
+
+  assert.equal(mount.querySelector('.abk-badge-leader'), null);
+  mount.querySelector('.abk-disclose').click();
+  assert.equal(mount.querySelector('.abk-pair-role'), null, 'nothing to label at two arms');
+  dom.window.close();
+});
+
+test('main metrics naming different leaders raise a split chip', async () => {
+  const split = makeMultiArmRow('dash_exp', {
+    leaders_agree: false,
+    rollups: [
+      { metric: 'revenue', leader: 't2', indistinguishable: [], separation: 'separated',
+        losers: [], guardrail_regressed: [], rationale: ['t2 beat control'], caveats: [] },
+      { metric: 'orders', leader: 't1', indistinguishable: [], separation: 'separated',
+        losers: [], guardrail_regressed: [], rationale: ['t1 beat control'], caveats: [] },
+    ],
+  });
+  const { mount, dom } = renderInJsdom(makeDashboardPayload(), {
+    fetchImpl: fakeFetch(
+      defaultHandler({ '/api/stats/dash_exp': () => ({ status: 200, json: split }) }),
+    ).impl,
+  });
+  await until(() => chipFor(mount, 'dash_exp').textContent === 'WIN', 1000);
+
+  const chip = [...mount.querySelectorAll('.abk-badge-caveat')].find((b) =>
+    /leaders split/.test(b.textContent),
+  );
+  assert.ok(chip, 'the disagreement is REPORTED — the dashboard never breaks the tie');
+  assert.match(chip.title, /revenue: t2/);
+  assert.match(chip.title, /orders: t1/);
+  dom.window.close();
+});
+
+test('a vs_control experiment still gets its leader chip', async () => {
+  // `contrasts: vs_control` computes no arm-vs-arm pair at all, so a gate that
+  // looked for a `treatment_pair` verdict was blind to it — and the row would
+  // move its cells to the leader while rendering nothing that says which arm
+  // they belong to. That is the defect DEC-4 exists to remove.
+  const vsControl = makeMultiArmRow('dash_exp', {
+    verdicts: makeMultiArmRow('dash_exp').verdicts.filter((v) => v.role === 'vs_control'),
+  });
+  const { mount, dom } = renderInJsdom(makeDashboardPayload(), {
+    fetchImpl: fakeFetch(
+      defaultHandler({ '/api/stats/dash_exp': () => ({ status: 200, json: vsControl }) }),
+    ).impl,
+  });
+  await until(() => chipFor(mount, 'dash_exp').textContent === 'WIN', 1000);
+
+  assert.ok(!vsControl.verdicts.some((v) => v.role === 'treatment_pair'), 'fixture precondition');
+  assert.match(mount.querySelector('.abk-badge-leader').textContent, /t2/);
+  dom.window.close();
+});
+
+test('the leader chip names a separation that is not decisive', async () => {
+  const undecided = makeMultiArmRow('dash_exp', {
+    separation: 'co_leaders',
+    rollups: [
+      { metric: 'revenue', leader: 't2', indistinguishable: ['t1'], separation: 'co_leaders',
+        losers: [], guardrail_regressed: [],
+        rationale: ['t2 beat control; it did not separate from t1'], caveats: [] },
+    ],
+  });
+  const { mount, dom } = renderInJsdom(makeDashboardPayload(), {
+    fetchImpl: fakeFetch(
+      defaultHandler({ '/api/stats/dash_exp': () => ({ status: 200, json: undecided }) }),
+    ).impl,
+  });
+  await until(() => chipFor(mount, 'dash_exp').textContent === 'WIN', 1000);
+
+  assert.match(mount.querySelector('.abk-badge-leader').textContent, /co-leaders/);
+  dom.window.close();
+});
+
+test('an arm the control beat is visible without expanding', async () => {
+  const harmed = makeMultiArmRow('dash_exp', {
+    rollups: [
+      { metric: 'revenue', leader: 't2', indistinguishable: [], separation: 'separated',
+        losers: ['t1'], guardrail_regressed: [],
+        rationale: ['t2 beat control on revenue'], caveats: [] },
+    ],
+  });
+  const { mount, dom } = renderInJsdom(makeDashboardPayload(), {
+    fetchImpl: fakeFetch(
+      defaultHandler({ '/api/stats/dash_exp': () => ({ status: 200, json: harmed }) }),
+    ).impl,
+  });
+  await until(() => chipFor(mount, 'dash_exp').textContent === 'WIN', 1000);
+
+  const chip = [...mount.querySelectorAll('.abk-badge-guardrail')].find((b) =>
+    /lost/.test(b.textContent),
+  );
+  assert.ok(chip, 'a green headline must not hide an arm that is harming users');
+  assert.match(chip.title, /revenue: t1/);
+  dom.window.close();
 });

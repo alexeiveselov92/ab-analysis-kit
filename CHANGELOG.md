@@ -14,6 +14,34 @@ number change).
 ## [Unreleased]
 
 ### Added
+- **Every surface reads the decision layer** (M14 DEC-4). The `abk dashboard`
+  row's headline is the **first declared main metric's rollup leader** — through
+  `0.8.0` it was `verdicts[0]`, the first declared *treatment*, so a three-arm
+  experiment presented an arbitrary arm as its result on the project-level
+  cockpit. The row gains `leader`, `separation`, `rollups` and `leaders_agree`,
+  a `→ arm` chip carrying the separation qualifier, a `leaders split` chip when
+  two main metrics name different arms, an `N lost` chip, and an expand list of
+  every DECLARED pair with `arm vs arm` tags. Config order stays the METRIC
+  convention (D2 refused to invent a metric priority). `abk explore`'s Review
+  mode gains a per-metric rollup line, the same tags, and a pair selector that
+  **remembers its choice per metric** (audit gap 10) — with an on-page note that
+  these verdicts are as of page build, not live under a knob turn. The
+  `abk run --report` line names the leader per main metric instead of joining
+  bare verdict words (audit gap 7). Notifications stay **control-anchored by
+  decision** (D7 — no seventh signal kind, no per-treatment-pair message); the
+  rollup rides on the payload and all nine channels render a
+  `Leader on <metric>: <arm>` line at 3+ arms, suppressed under a failed SRM
+  gate. **A two-arm experiment is unchanged on every one of them.**
+- **`_ab_notify_states.last_rollup`** (`Nullable(String)`, M14 DEC-4) — the
+  third term of the dedup signature, because at three arms the leader can flip
+  from B to C with every verdict word unchanged and the changed ship decision
+  would go unannounced. Added additively; **NULL means a row written before
+  `0.9.0`, and such rows drop the term** so the first upgraded run does not
+  re-announce every comparison in the project. The leader enters the key only
+  when the rollup **separated** it — under `co_leaders` the rollup is saying the
+  arms are indistinguishable, and keying on which polled higher would send a
+  message every run for a genuinely tied pair.
+
 - **`assignment.control` — the declared baseline arm** (M14 DEC-1). Optional and
   validated to be one of `assignment.variants`; unset, the control is the first
   declared variant exactly as through `0.8.0`. There is deliberately **no
@@ -70,8 +98,9 @@ number change).
   every surface. The report, the dashboard and notifications stay
   control-anchored for now — a `WIN` card on a `B vs C` block with no role chip
   would read as a ship recommendation, so DEC-3/DEC-4 open those surfaces
-  deliberately. (DEC-3, below, opened the report; the dashboard, notifications,
-  `abk explore` and the `abk run --report` summary line are still held.)
+  deliberately. (DEC-3 opened the report and DEC-4 the dashboard row, `abk
+  explore` and the CLI line; notifications stay control-anchored by decision —
+  D7, the rollup rides as FIELDS rather than as extra messages.)
 
 - **The HTML report shows the decision layer** (M14 DEC-3). The baked payload
   now carries a verdict for **every declared arm pair**, each with its `role`,
@@ -95,11 +124,17 @@ number change).
   The arm table deliberately does **not** re-rank the arms: `desired_direction`
   is resolved once, in the readout, and a renderer sorting by effect would put
   the leader last on a `decrease` metric.
-  `abk explore`'s Review mode and the `abk run --report` summary line stay
-  control-anchored until DEC-4 (one shared `reporting.builder.ship_decisions`),
-  since both print the verdict word with nothing beside it.
+  `abk explore`'s Review mode and the `abk run --report` summary line stayed
+  control-anchored for one WP (one shared `reporting.builder.ship_decisions`),
+  since both printed the verdict word with nothing beside it; DEC-4 released
+  both.
 
 ### Changed
+- **The dashboard row's `guardrail_regressed` flag is ORed over the SHIP
+  decisions only** (M14 DEC-4). A guardrail regression between two treatments
+  says nothing about whether the experiment harms users relative to control,
+  which is the one question that red flag answers; the treatment pair keeps its
+  own status on its own line. At two arms both readings coincide.
 - **`guardrail_policy: block` no longer caps a treatment-vs-treatment verdict**
   (M14 DEC-2). The cap exists to withhold a SHIP decision when an arm would
   harm users relative to the baseline, and a treatment pair is not one. Leaving

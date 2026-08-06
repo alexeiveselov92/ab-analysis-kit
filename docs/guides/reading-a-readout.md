@@ -6,12 +6,16 @@ guide teaches you to read one correctly — the verdict, the effect and its
 confidence band, how significance is judged against the row's effective alpha, and
 the three gates (SRM, insufficient data, and the horizon) that can withhold a call.
 
-You see readouts in three places, all built from the same numbers:
+You see readouts in five places, all built from the same numbers — one
+`readout.evaluate()` call, never a re-derivation, so no two of them can disagree
+about the same experiment:
 
 - **`abk run --report`** — a self-contained HTML file per experiment, shareable
   with stakeholders (`data-contract-and-reporting.md §5.2`).
 - **[`abk explore`](explore.md)** — the live cockpit, where the same verdict rides
   over the stabilization chart.
+- **[`abk dashboard`](dashboard.md)** — one row per experiment, headline first.
+- **[Notifications](notification-channels.md)** — `abk run --notify`.
 - **Your own BI**, pointed at the `_ab_results` warehouse table.
 
 One thing to know up front: **the verdict is computed at read time, never stored.**
@@ -90,6 +94,20 @@ that tag also covers arms nobody was able to compare.
 **The pair selector** above the charts opens the control-anchored pairs by
 default; tick a box to add a treatment pair. Printing the page reveals every
 pair regardless.
+
+**Where each surface says it.** The vocabulary above is the same everywhere; only
+the room it has differs:
+
+| Surface | The decision layer, as it appears |
+|---|---|
+| `abk run --report` | the cross-arm overview: leader, separation, the arm table, and a card per declared pair |
+| `abk dashboard` | the row's headline IS the leader's pair; a `→ arm` chip, a `leaders split` chip, and `arm vs arm` tags in the expand list |
+| `abk explore` (Review) | a rollup line per metric plus `arm vs arm` tags — **as of page build**, not live under a knob turn |
+| Notifications | a `Leader on <metric>: <arm> — …` line on the message; only ship decisions are ever announced |
+| `abk run --report`'s terminal line | `WIN treatment_b · FLAT treatment_c · leader: treatment_b (revenue)` |
+
+At two arms none of them appears: with one treatment "leader" only restates the
+verdict word beside it.
 
 ## The effect and its CI band
 

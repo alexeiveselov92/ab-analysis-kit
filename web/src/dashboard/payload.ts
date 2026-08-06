@@ -69,15 +69,31 @@ export interface DashboardPayload {
 // GET /api/stats/<experiment> — one row, lazily fetched (DASH-2)
 // ----------------------------------------------------------------------------
 
-/** One (main metric × treatment arm) verdict inside a row's `verdicts`. */
+/** One (main metric × DECLARED arm pair) verdict inside a row's `verdicts`. */
 export interface RowVerdict {
   metric: string;
   /** the report payload's arm vocabulary: control / treatment */
   pair: { c: string; t: string };
   verdict: string;
+  /** m14 DEC-4. `vs_control` is a ship decision; `treatment_pair` is evidence
+   * about two treatments and says nothing about either against the baseline.
+   * Absent on a pre-`0.9.0` server, whose list is control-anchored anyway. */
+  role?: 'vs_control' | 'treatment_pair';
   effect: number | null;
   caveats: string[];
   guardrail_regressed: boolean;
+}
+
+/** One main metric's arm-level summary (m14 DEC-2), as the row carries it. */
+export interface RowRollup {
+  metric: string;
+  leader: string | null;
+  indistinguishable: string[];
+  separation: 'separated' | 'co_leaders' | 'untested' | 'no_leader';
+  losers: string[];
+  guardrail_regressed: string[];
+  rationale: string[];
+  caveats: string[];
 }
 
 /**
@@ -126,6 +142,15 @@ export interface ExperimentRow {
   /** ≤160 `[ms-epoch, mean effect | null]` buckets over the window */
   spark: Array<[number, number | null]>;
   verdicts: RowVerdict[];
+  /** m14 DEC-4: the HEADLINE metric's leader and separation — the same scope
+   * as `rationale`/`caveats` above, so every top-level cell describes one
+   * thing. `null` on a pre-`0.9.0` server and whenever no arm beat control. */
+  leader: string | null;
+  separation: RowRollup['separation'] | null;
+  /** every main metric's rollup, config order */
+  rollups: RowRollup[];
+  /** do the per-metric leaders coincide? `null` = fewer than two name one */
+  leaders_agree: boolean | null;
   warnings: string[];
   /** `"<ExcType>: <message>"` when this ONE row degraded; null otherwise */
   error: string | null;

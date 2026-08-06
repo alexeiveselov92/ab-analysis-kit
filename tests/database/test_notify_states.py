@@ -51,6 +51,19 @@ class TestSchema:
         assert model.get_column("last_srm_flag") is not None
         assert not model.get_column("last_srm_flag").nullable
 
+    def test_the_rollup_column_is_additively_migratable(self):
+        """m14 DEC-4 adds `last_rollup` to a table `0.7.0` already ships, so an
+        installed project meets it through `ensure_columns` — which REFUSES a
+        NOT-NULL/no-default addition (m13 STAT-6, where exactly that shape
+        would have killed the first `0.8.0` run of every install). Nullable is
+        also the honest value: a row written before `0.9.0` announced no rollup.
+        """
+        column = get_notify_states_table_model().get_column("last_rollup")
+
+        assert column is not None
+        assert column.nullable, "ensure_columns refuses a NOT-NULL column with no default"
+        assert column.default is None
+
     def test_no_recovery_column_leaked_in_from_the_donor(self):
         """abkit has no recovery concept — a verdict flipping back is just
         another flip."""
@@ -65,6 +78,7 @@ class TestRoundTrip:
 
         assert state == {
             "last_verdict": None,
+            "last_rollup": None,
             "last_srm_flag": False,
             "last_notified_at": None,
             "notify_count": 0,

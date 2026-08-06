@@ -63,6 +63,7 @@ import type {
   JobSnapshot,
   JobSummary,
   JobsReply,
+  RowRollup,
   SelectionReply,
   SourceReply,
   SpawnReply,
@@ -112,6 +113,17 @@ comparisons:
     is_main_metric: true
     method: {name: t-test}
 `;
+
+/** m14 DEC-4: the leader chip's qualifier. `separated` adds nothing — it is the
+ * unqualified recommendation — while the other three states each weaken it, and
+ * a chip that read `→ t2` in all four cases would hide the difference. Typed on
+ * the union so a fifth state is a compile error. */
+const SEPARATION_SUFFIX: Record<RowRollup['separation'], string> = {
+  separated: '',
+  co_leaders: ' (co-leaders)',
+  untested: ' (untested)',
+  no_leader: '',
+};
 
 function el(tag: string, cls?: string, text?: string): HTMLElement {
   const e = document.createElement(tag);
@@ -1266,6 +1278,11 @@ function render(payload: DashboardPayload, mount: HTMLElement): void {
           line.appendChild(
             el('span', 'abk-pair-name', `${verdict.metric}: ${verdict.pair.c} vs ${verdict.pair.t}`),
           );
+          // m14 DEC-4: an arm-vs-arm verdict is EVIDENCE. Unlabelled, a `WIN`
+          // on `t1 vs t2` in this list reads as a third ship decision.
+          if ((verdict.role ?? 'vs_control') !== 'vs_control') {
+            line.appendChild(el('span', 'abk-pair-role', 'arm vs arm'));
+          }
           line.appendChild(el('span', 'abk-pair-effect', dash(verdict.effect, fmtSigned)));
           if (verdict.guardrail_regressed) {
             line.appendChild(el('span', 'abk-badge-guardrail', 'guardrail regressed'));
@@ -1435,6 +1452,54 @@ function render(payload: DashboardPayload, mount: HTMLElement): void {
         setNote(note, note === '' ? '' : classes.slice(1).join(' '));
       }
 
+      // m14 DEC-4. The leader chip is the row's answer to "which arm", which
+      // the verdict word alone cannot give at 3+ arms.
+      //
+      // The gate counts DISTINCT TREATMENTS among the ship decisions, not
+      // treatment-pair verdicts: under `contrasts: vs_control` (a shipped
+      // `0.8.0` option) a three-arm experiment computes no arm-vs-arm pair at
+      // all, so a `role === 'treatment_pair'` test is false — and the row would
+      // move its cells from the first treatment to the leader while rendering
+      // nothing that says which arm they belong to. That is the exact defect
+      // DEC-4 exists to remove, left in place for one config. The report and
+      // the CLI both gate on the ARM COUNT, and this is the row's equivalent:
+      // every treatment gets a ship verdict per main metric, so the count is
+      // exact and config-independent.
+      const multiArm =
+        new Set(
+          row.verdicts
+            .filter((v) => (v.role ?? 'vs_control') === 'vs_control')
+            .map((v) => v.pair.t),
+        ).size > 1;
+      if (multiArm && row.leader !== null) {
+        // The separation QUALIFIER rides in the chip, not only in its tooltip:
+        // a leader that beat the control but did not separate from the other
+        // treatments is a materially weaker recommendation than one that did,
+        // and `→ t2` alone reads the same in both cases.
+        const qualifier = SEPARATION_SUFFIX[row.separation ?? 'separated'] ?? '';
+        const badge = el('span', 'abk-badge-leader', `→ ${row.leader}${qualifier}`);
+        badge.title = row.rollups.find((r) => r.leader === row.leader)?.rationale.join('\n') ?? '';
+        badges.appendChild(badge);
+      }
+      // An arm the baseline BEAT is only visible after expanding, and a row
+      // whose headline is a WIN would otherwise look uniformly good while one
+      // treatment is actively harming users.
+      const losers = row.rollups.reduce((n, r) => n + r.losers.length, 0);
+      if (multiArm && losers > 0) {
+        const badge = el('span', 'abk-badge-guardrail', `${losers} lost`);
+        badge.title = row.rollups
+          .filter((r) => r.losers.length > 0)
+          .map((r) => `${r.metric}: ${r.losers.join(', ')}`)
+          .join('\n');
+        badges.appendChild(badge);
+      }
+      if (row.leaders_agree === false) {
+        const badge = el('span', 'abk-badge-caveat', 'leaders split');
+        badge.title = row.rollups
+          .map((r) => `${r.metric}: ${r.leader ?? 'no leader'}`)
+          .join('\n');
+        badges.appendChild(badge);
+      }
       if (row.guardrail_regressed) {
         badges.appendChild(el('span', 'abk-badge-guardrail', 'guardrail'));
       }
@@ -1701,6 +1766,10 @@ function injectStyle(): void {
   border:1px solid var(--abk-st-warn);color:var(--abk-ink-2);cursor:help;}
 .${ROOT_CLASS} .abk-badge-lock{font:600 9.5px var(--abk-mono);padding:1px 6px;border-radius:7px;
   border:1px solid var(--abk-border);color:var(--abk-muted);cursor:help;}
+.${ROOT_CLASS} .abk-badge-leader{font:600 9.5px var(--abk-mono);padding:1px 6px;border-radius:7px;
+  border:1px solid var(--abk-explore-accent);color:var(--abk-explore-accent);cursor:help;}
+.${ROOT_CLASS} .abk-pair-role{margin-left:6px;font:500 9px var(--abk-mono);padding:0 4px;
+  border:1px solid var(--abk-border);border-radius:3px;color:var(--abk-muted);}
 /* row note / message / detail ----------------------------------------------- */
 .${ROOT_CLASS} .abk-row-note{font:11px var(--abk-mono);padding:0 12px 7px 44px;
   color:var(--abk-ink-2);}

@@ -58,7 +58,13 @@ import {
   scoredRuns,
   token,
 } from '../shared/chart';
-import type { MetricBlock, PairBlock, ReportPayload, SeriesPoint } from '../shared/payload';
+import type {
+  MetricBlock,
+  PairBlock,
+  ReportPayload,
+  SeparationState,
+  SeriesPoint,
+} from '../shared/payload';
 import { baselineNote } from '../shared/payload';
 import { makeBrandLockup } from '../shared/logo';
 import type {
@@ -615,6 +621,19 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
     payload.explore.default_metric !== null && metricNames.includes(payload.explore.default_metric)
       ? payload.explore.default_metric
       : metricNames[0] || null;
+  // m14 DEC-4 (audit gap 10): the pair selection is remembered PER METRIC.
+  // It used to reset to 0 on every metric switch, so comparing one arm pair
+  // across metrics meant re-picking it each time.
+  //
+  // Remembering the INDEX is equivalent to remembering the pair, and that is an
+  // invariant rather than a coincidence: `builder.py` computes
+  // `experiment.contrast_pairs()` ONCE per experiment and hands the same
+  // ordered list to every metric entry, so index i is the same `(c, t)` on
+  // every metric of one payload. The clamp below defends that invariant rather
+  // than an observed shape — today no metric can have a shorter pair list.
+  const activePairByMetric = new Map<string, number>();
+  const pairIndexFor = (metric: string | null): number =>
+    metric === null ? 0 : (activePairByMetric.get(metric) ?? 0);
   let activePair = 0;
 
   const roles = new Map<string, RoleState>();
@@ -1441,6 +1460,7 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
         String(activePair),
         (v) => {
           activePair = Number(v);
+          if (activeMetric !== null) activePairByMetric.set(activeMetric, activePair);
           rebuildNotes();
           rebuildChart();
           const reply = lastReply.get(activeMetric as string);
@@ -1469,7 +1489,12 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
     controller = null;
     spinner.classList.remove('on');
     activeMetric = name;
-    activePair = 0;
+    // remembered, not reset — and clamped, because a metric with fewer
+    // declared pairs must not inherit an index it has no block for
+    activePair = Math.min(
+      pairIndexFor(name),
+      Math.max(0, ((metricBlocks.get(name) as MetricBlock).pairs.length || 1) - 1),
+    );
     reloadBar.style.display = 'none'; // UI only — pending flags are per metric
     buildTopCommon();
     buildKnobControls();
@@ -1510,7 +1535,20 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
   }
 
   // ---- Review mode (D9: guardrail/primary marking only) ---------------------------
-  function buildReviewGroup(): void {
+  /** m14 DEC-4. The SAME words the report's chip uses (`report.ts`
+ * SEPARATION_LABEL) — a rule spelled differently per surface is a rule an
+ * operator cannot learn once (the m13 STAT-3 lesson). Typed on the union so a
+ * fifth state is a COMPILE error rather than a chip rendering the raw enum
+ * token; `no_leader` is present for exhaustiveness and rendered nowhere,
+ * because with no leader the readout's own sentence is shown instead. */
+const SEPARATION_WORD: Record<SeparationState, string> = {
+  separated: 'separated',
+  co_leaders: 'co-leaders',
+  untested: 'separation untested',
+  no_leader: 'no leader',
+};
+
+function buildReviewGroup(): void {
     reviewGroup.textContent = '';
     reviewGroup.appendChild(
       el(
@@ -1518,6 +1556,19 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
         'abk-ctl-note',
         'mark each comparison\'s role — flips ride into Apply and re-tier the bonferroni ' +
           'budget (all calibration re-keys conservatively)',
+      ),
+    );
+    // Review is the ONE panel where a live knob and a stale readout sit inches
+    // apart: the role checkboxes below re-tier alphas and fire a recompute,
+    // while the verdicts and the rollup are baked into the payload at page
+    // build. Since DEC-4 the stale content includes a RECOMMENDATION ("leader:
+    // b"), so the comment in the code is no longer enough — the page says it.
+    reviewGroup.appendChild(
+      el(
+        'div',
+        'abk-ctl-note',
+        'verdicts and the rollup below are as of page build — knobs do not move ' +
+          'them; re-run `abk run` to re-decide',
       ),
     );
     for (const name of metricNames) {
@@ -1563,25 +1614,49 @@ function render(payload: ExplorePayload, mount: HTMLElement): void {
       checks.appendChild(mainCtl.row);
       checks.appendChild(guardCtl.row);
       rowWrap.appendChild(checks);
-      // a metric can carry MORE THAN ONE VerdictBlock — one per declared
-      // control-vs-treatment pair (3+ arm experiments produce 2+ pairs per
-      // metric); render every matching pair's verdict as its own line, never
-      // just the first (WP0 — the multi-arm Review-mode drop bug).
-      // What keeps "control-vs-treatment" true here is a SERVER-side filter:
-      // since m14 DEC-3 the report payload carries a verdict for every declared
-      // pair, and `abkit/tuning/payload.py` filters the cockpit's copy back to
-      // the ship decisions — because this line prints the verdict WORD alone,
-      // and "WIN (B vs C)" would read as a ship recommendation. DEC-4 adds the
-      // role label plus the rollup line and drops that filter together.
+      // A metric can carry MORE THAN ONE VerdictBlock — one per DECLARED pair;
+      // render each as its own line, never just the first (WP0 — the multi-arm
+      // Review-mode drop bug).
+      //
+      // These verdicts are BAKED, not live: the report payload rides into the
+      // explore payload at page build (`abkit/tuning/payload.py`), so unlike
+      // every chart on this page they do NOT follow a knob turn. A rollup that
+      // looked live but was as-of page build would be the worse trap of the
+      // two, which is why the group says so on the page as well.
+      //
+      // Since m14 DEC-4 the list includes arm-vs-arm pairs, and each one is
+      // LABELLED: "WIN (b vs c)" alone reads as a ship recommendation for c.
       const metricVerdicts = payload.verdicts.filter((v) => v.metric === name);
+      const rollup = (payload.rollups ?? []).find((r) => r.metric === name);
+      if (rollup && payload.arms.length > 2) {
+        // With no leader the readout's own sentence carries it — the state
+        // covers "nobody won", a failed SRM gate and "nothing judged yet", and
+        // a renderer that re-worded them would speak over a gate (the DEC-3
+        // lesson). With a leader the chip NAMES the separation state.
+        const leaderText =
+          rollup.leader === null
+            ? rollup.rationale[0] ?? `no leader on ${name} yet`
+            : `leader: ${rollup.leader} — ${SEPARATION_WORD[rollup.separation]}`;
+        rowWrap.appendChild(el('div', 'abk-review-rollup', leaderText));
+        // The rationale carries what the chip cannot: WHICH arms could not be
+        // compared, or which the leader did not separate from. The report
+        // renders it under its own chip for the same reason; dropping it here
+        // would make explore the lossy surface for the same rollup.
+        if (rollup.leader !== null) {
+          for (const line of rollup.rationale) {
+            rowWrap.appendChild(el('div', 'abk-review-rationale', line));
+          }
+        }
+      }
       for (const verdict of metricVerdicts) {
-        rowWrap.appendChild(
-          el(
-            'div',
-            `abk-review-verdict abk-verdict-${verdict.verdict.toLowerCase()}`,
-            `${verdict.verdict} (${verdict.pair.c} vs ${verdict.pair.t})`,
-          ),
+        const ship = (verdict.role ?? 'vs_control') === 'vs_control';
+        const line = el(
+          'div',
+          `abk-review-verdict abk-verdict-${verdict.verdict.toLowerCase()}`,
+          `${verdict.verdict} (${verdict.pair.c} vs ${verdict.pair.t})`,
         );
+        if (!ship) line.appendChild(el('span', 'abk-review-role', 'arm vs arm'));
+        rowWrap.appendChild(line);
       }
       reviewGroup.appendChild(rowWrap);
     }
@@ -2729,6 +2804,9 @@ function injectStyle(): void {
 .${ROOT_CLASS} .abk-review-verdict{margin-top:5px;font:600 10.5px var(--abk-mono);color:var(--abk-ink-2);}
 .${ROOT_CLASS} .abk-verdict-win{color:var(--abk-good-text);}
 .${ROOT_CLASS} .abk-verdict-lose{color:var(--abk-st-critical);}
+.${ROOT_CLASS} .abk-review-rollup{margin-top:6px;font:600 10.5px var(--abk-mono);color:var(--abk-ink);}
+.${ROOT_CLASS} .abk-review-rationale{margin-top:2px;font:400 10px var(--abk-mono);color:var(--abk-ink-2);}
+.${ROOT_CLASS} .abk-review-role{margin-left:6px;padding:0 4px;border:1px solid var(--abk-border);border-radius:3px;font:500 9.5px var(--abk-mono);color:var(--abk-ink-2);}
 /* rail foot ---------------------------------------------------------------------------- */
 .${ROOT_CLASS} .abk-railfoot{flex:none;border-top:1px solid var(--abk-border);padding:10px 14px;}
 .${ROOT_CLASS} .abk-cfg-toggle{font:600 10.5px var(--abk-mono);color:var(--abk-muted);cursor:pointer;

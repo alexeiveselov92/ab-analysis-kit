@@ -410,10 +410,13 @@ every hour. Nothing reads it except the notification dispatcher — it is not pa
 of the BI contract and no number in it is a statistic.
 
 The dedup rule it serves: **a change always sends, an unchanged value never
-re-sends.** "Value" is the pair `(last_verdict, last_srm_flag)`, not the verdict
-word alone — a pair that is already INCONCLUSIVE (the normal state before the
-horizon) keeps that exact word when its sample-ratio gate breaks, and deduping
-on the word would swallow the SRM alarm.
+re-sends.** "Value" is the triple `(last_verdict, last_srm_flag, last_rollup)`,
+not the verdict word alone — a pair that is already INCONCLUSIVE (the normal
+state before the horizon) keeps that exact word when its sample-ratio gate
+breaks, and deduping on the word would swallow the SRM alarm. The third term is
+the same argument one arm-count up (m14 DEC-4): at three arms the metric's
+leader can flip from B to C with every verdict word unchanged, and the changed
+ship decision would go unannounced.
 
 A row is written **only after a channel accepted the message**. If every channel
 was down, nothing is recorded and the next run tries again — an announcement
@@ -438,6 +441,7 @@ row. These are also the only kinds `notify.cooldown_seconds` applies to.
 | `method_config_id` | `String` | In the key on purpose: a re-tuned comparison is a different measurement, so it starts a fresh announcement history instead of inheriting the old method's. |
 | `last_verdict` | `Nullable(String)` | The verdict last announced — or, on a sentinel notice row, the condition's signature (`""` once it cleared). |
 | `last_srm_flag` | `Bool` | Whether that message carried a failed SRM gate. |
+| `last_rollup` | `Nullable(String)` | The metric rollup last announced — `"<leader>\|<separation>"` — or NULL when the readout carried none (m14 DEC-4). NULL is what a rollup-free readout signs as AND what every pre-`0.9.0` row holds, so the two compare equal and upgrading does not re-announce every comparison in the project. Added additively, nullable rather than defaulted. Always NULL on a sentinel notice row. Cannot move a two-arm project, where the leader and its separation are both functions of the verdict word already in the signature. |
 | `last_notified_at` | `Nullable(DateTime64(3,'UTC'))` | When it was delivered. |
 | `notify_count` | `Int32` | How many messages this comparison has produced. |
 | `updated_at` | `DateTime64(3,'UTC')` | Version column. |

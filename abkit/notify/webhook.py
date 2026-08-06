@@ -83,6 +83,8 @@ class WebhookChannel(BaseChannel):
                 lines.append(ctx["weekly_cycle_display"])
             if ctx["family_divergence_display"]:
                 lines.append(ctx["family_divergence_display"])
+            if ctx["rollup_display"]:
+                lines.append(ctx["rollup_display"])
         link_parts = []
         if readout.dashboard_url:
             link_parts.append(self._link(readout.dashboard_url, "Open report"))

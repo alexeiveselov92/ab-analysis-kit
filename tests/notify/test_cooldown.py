@@ -20,6 +20,7 @@ from abkit.notify.cooldown import (
     announcement_signature,
     is_in_cooldown,
     recurring_signature,
+    rollup_signature,
     should_announce,
     should_announce_recurring,
 )
@@ -80,9 +81,79 @@ class TestShouldAnnounce:
 
         assert should_announce(previous, None, False) is True
 
-    def test_the_signature_is_the_pair(self):
-        assert announcement_signature("WIN", False) == ("WIN", False)
+    def test_the_signature_is_the_triple(self):
+        assert announcement_signature("WIN", False) == ("WIN", False, None)
         assert announcement_signature("WIN", True) != announcement_signature("WIN", False)
+
+    def test_a_leader_flip_announces_although_every_word_is_unchanged(self):
+        """m14 DEC-4. At three arms the ship decision can change with no verdict
+        moving: B stops being the arm to ship and C starts. Without the rollup
+        term the message is deduped away and nobody is told — NTF-3's own
+        "deduping on the verdict word alone" trap, one arm-count up."""
+        announced = {
+            "last_verdict": "WIN",
+            "last_srm_flag": False,
+            "notify_count": 1,
+            "last_rollup": rollup_signature("b", "separated"),
+        }
+
+        assert not should_announce(
+            announced, "WIN", False, rollup_signature("b", "separated")
+        ), "nothing moved"
+        assert should_announce(announced, "WIN", False, rollup_signature("c", "separated"))
+        assert should_announce(
+            announced, "WIN", False, rollup_signature("b", "co_leaders")
+        ), "'we could not compare them' → 'they are tied' is also a changed decision"
+
+    def test_a_pre_0_9_0_state_row_does_not_re_announce_on_upgrade(self):
+        """The row stored NULL because `0.8.0` had no rollup term, and EVERY
+        `0.9.0` readout signs a non-null one — so a naive comparison makes the
+        first upgraded run re-announce every comparison in the project, most of
+        them with a message textually identical to the last one delivered. The
+        term is dropped for exactly the rows that predate it."""
+        announced = {
+            "last_verdict": "FLAT",
+            "last_srm_flag": False,
+            "notify_count": 3,
+            "last_rollup": None,
+        }
+
+        assert not should_announce(announced, "FLAT", False, rollup_signature(None, "no_leader"))
+        assert not should_announce(
+            announced, "FLAT", False, rollup_signature("b", "separated")
+        ), "a rollup the stored row could not have carried is not, by itself, news"
+        # …and the other two terms still work over such a row
+        assert should_announce(announced, "WIN", False, rollup_signature("b", "separated"))
+
+    def test_the_leader_is_only_in_the_key_when_the_rollup_separated_it(self):
+        """`leader` is a raw argmax — the one dedup term the stabilization scan
+        does not smooth. Under `co_leaders` the rollup is SAYING the arms are
+        indistinguishable, so recording which of them polled higher flips the
+        key on about half the runs of a genuinely tied pair: a message every
+        run, the exact failure NTF-3 exists to prevent."""
+        assert rollup_signature("b", "co_leaders") == rollup_signature("c", "co_leaders")
+        assert rollup_signature("b", "untested") == rollup_signature("c", "untested")
+        # …while a decisive flip is still news
+        assert rollup_signature("b", "separated") != rollup_signature("c", "separated")
+        # …and so is becoming decisive
+        assert rollup_signature("b", "separated") != rollup_signature("b", "co_leaders")
+
+    def test_a_two_arm_rollup_cannot_move_without_the_verdict_moving(self):
+        """The §0.2 leg. With one treatment the leader is that arm iff it WON
+        and the separation follows, so the rollup term is a function of the word
+        already in the signature — it can add a message but never a NEW one."""
+        won = rollup_signature("treatment", "separated")
+        lost = rollup_signature(None, "no_leader")
+        announced = {
+            "last_verdict": "WIN",
+            "last_srm_flag": False,
+            "notify_count": 1,
+            "last_rollup": won,
+        }
+
+        assert not should_announce(announced, "WIN", False, won)
+        # the only way the rollup differs is the word differing too
+        assert should_announce(announced, "FLAT", False, lost)
 
 
 class TestRecurringSignature:

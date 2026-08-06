@@ -83,8 +83,8 @@ abkit/
                          #   analyze, enrich, _types; worker pool;
                          #   ✅ M9 WP3: state (the write-only STATE stage)
   reporting/             # ✅ M3: builder (the §5.3 terse payload + verdicts;
-                         #   ✅ M14 DEC-3: ship_decisions — the control-anchored
-                         #   filter both held payload consumers import),
+                         #   ✅ M14 DEC-3: ship_decisions — the ship-decision
+                         #   filter; since DEC-4 its one caller is the CLI line),
     assets/report.js     #   html_report (hardened bake), the committed bundle;
                          #   ✅ M4: calibration.py (the payload calibration block)
   tuning/                # ✅ M3: session (bounded Tier-S cache), recompute
@@ -870,9 +870,12 @@ two-process lock race) is deferred to a Docker-equipped environment.
   this codebase does not keep.
 - **Verdict ORDER is load-bearing.** Every control-anchored verdict comes
   first, in the exact sequence `0.8.0` emitted them, then the treatment pairs —
-  so the `0.8.0` list is a literal PREFIX. That is what keeps `verdicts[0]`
-  (the dashboard headline until DEC-4) on the same pair even when a declared
-  `assignment.control` puts a treatment pair FIRST in `contrast_pairs()`.
+  so the `0.8.0` list is a literal PREFIX. That is what keeps `verdicts[0]` on
+  the same pair even when a declared `assignment.control` puts a treatment pair
+  FIRST in `contrast_pairs()`. Since DEC-4 that is no longer the dashboard
+  headline, but the order is load-bearing twice over: `ship_decisions` yields a
+  literal `0.8.0` prefix, and `_headline_verdict` falls back to `ship[0]` when
+  no arm won.
 - **The read-time family does not move, structurally.** `_build_sig_map` is
   built from ROWS, and the treatment-pair rows were already in it under
   `all_pairs` — so verdicting a row already in the family cannot move a
@@ -887,11 +890,13 @@ two-process lock race) is deferred to a Docker-equipped environment.
   `B vs C` card as a ship recommendation — on the report AND in explore's
   Review mode, which renders every matching verdict. Their own pre-existing
   tests caught it: 10 failures in exactly those three places.
-  **DEC-3 released the `reporting/builder.py` one** — do not re-add a filter
-  there, it would silently undo the WP. The hold moved DOWN one level, to the
-  two consumers of the baked payload that print the word alone
-  (`tuning/payload.py`, `cli/commands/run.py`); `notify` and `overview` still
-  filter `PairVerdict` OBJECTS off the readout and are DEC-4's to open.
+  **DEC-3 released the `reporting/builder.py` one and DEC-4 released the rest**
+  — do not re-add a filter in either place, it would silently undo the WP.
+  What survives is not a hold: `overview.py` still narrows to ship decisions for
+  the HEADLINE candidates and the row's `guardrail_regressed` OR (a regression
+  between two treatments says nothing about harm relative to control), and
+  `notify/dispatch.py`'s filter is permanent under D7 — a treatment pair is
+  evidence, and a three-arm experiment must not triple its message volume.
 - **`guardrail_policy: block` does not cap a treatment pair**, and the reason
   is not taste. The cap fires on WIN and never on LOSE, while "B is ahead of C"
   is a WIN stored one way and a LOSE stored the other — so leaving it on made
@@ -997,6 +1002,69 @@ two-process lock race) is deferred to a Docker-equipped environment.
   reach paper, and before DEC-3 nothing on the page could hide a CHART — an
   `@media print` rule reveals both, because the interactive default is about
   scrolling, not about what the document contains.
+
+### M14 DEC-4 facts an assistant must know (the other surfaces)
+
+- **The dashboard headline is a ROLLUP, and the pair behind it is the leader's
+  own vs-control verdict.** `readout.verdicts[0]` is dead as a headline — at
+  three arms it presented an arbitrary arm as the experiment's result on the
+  project-level cockpit. Config order stays the METRIC convention (D2 refused to
+  invent a metric priority, so no "worst-of" rule across metrics is available);
+  what changed is which ARM inside that metric answers. Every stat cell follows
+  it, the sparkline and the demotion chip included — the mutation that left them
+  on `ship[0]` survived 769 tests before the review.
+- **The row's multi-arm gate counts DISTINCT TREATMENTS among the ship
+  decisions.** Testing for a `treatment_pair` verdict is WRONG: under
+  `contrasts: vs_control` no such pair is ever computed, so a three-arm row
+  would move its cells to the leader while rendering nothing that says which arm
+  they belong to. The report and the CLI gate on `arms.length`; the row has no
+  arm count, and the treatment count is the exact, config-independent
+  equivalent.
+- **`guardrail_regressed` stays ORed over the SHIP decisions only**, and
+  `leader`/`separation` on the row describe the HEADLINE metric — the same
+  scope as `rationale`/`caveats`, so every top-level cell talks about one thing.
+  `rollups` carries the rest.
+- **The dedup signature is a TRIPLE now**, and both halves of the third term are
+  deliberate. `rollup_signature` includes the LEADER only when the rollup
+  `separated` it: the leader is a raw argmax, the one term the stabilization
+  scan does not smooth, so under `co_leaders` — where the rollup is *saying the
+  arms are indistinguishable* — keying on which polled higher flips the
+  signature on about half the runs of a genuinely tied pair.
+- **A state row written before `0.9.0` DROPS the term.** Every `0.9.0` readout
+  signs a non-null rollup and every stored row holds NULL, so a naive comparison
+  makes the first upgraded run re-announce 100% of the dedup population, most of
+  it textually identical to what was already delivered. The next announcement
+  writes a signature and dedup resumes at full strength.
+- **`arm_count` gates the channel line and lives on the payload**, so all nine
+  channels get it from `build_context()` — the NTF-4 rule that content comes
+  from `build_context`, never from a donor-shaped alert object, paying off
+  again. `rollup_rationale` rides too, because `no_leader` covers three facts
+  and a channel that synthesized prose for it said "No arm beat the control" to
+  every young three-arm experiment. The whole line is suppressed under a failed
+  SRM gate: `srm_flag` is the experiment-wide gate while a verdict is judged on
+  its own pair's latest row, so a leader CAN be named while the gate is red.
+- **The rollup on a message is the verdict's OWN metric** (`_rollup_for`), never
+  the experiment's first — a message about `orders` carrying `revenue`'s leader
+  would name an arm the reader cannot find in the numbers beside it.
+- **Explore's verdicts and rollup are BAKED** — the report payload rides into
+  the explore payload at page build, so they do not follow a knob turn while
+  every chart on the page does. Review is the one panel where a live knob and a
+  stale recommendation sit inches apart, so the PAGE says so, not just the
+  source. `tuning/payload.py` must never re-acquire a `ship_decisions` filter.
+- **Remembering the pair-selector INDEX is remembering the pair.** `builder.py`
+  computes `contrast_pairs()` once per experiment and hands the same ordered
+  list to every metric entry, so index i is the same `(c, t)` everywhere in one
+  payload. The clamp on metric switch defends that invariant, not an observed
+  shape.
+- **The CLI line is the rollup, not the words.** Per-pair verdicts with an arm
+  suffix do not survive a legal config: `ship_decisions` is metric-blind, so at
+  two main metrics the same arm prints twice with contradictory verdicts, and at
+  five arms the line passes 160 characters.
+- **A `var(--abk-*)` reference nothing defines is invisible to every other
+  gate**, and in a SHORTHAND it drops the whole property rather than one colour
+  — the `arm vs arm` pill lost its box that way. `tests/tuning/
+  test_brand_token_references.py` is the gate; two invented tokens shipped in
+  one WP before it existed.
 
 ### M7 vectorization facts an assistant must know
 
@@ -1564,7 +1632,8 @@ two-process lock race) is deferred to a Docker-equipped environment.
   `signal_kinds_for()` answers `("readout", "srm")` for an SRM-failed readout
   and delivery asks "does ANY kind pass both filters", so a channel accepting
   both still receives exactly one message.
-- **NTF-3: the dedup signature is `(verdict, srm_flag)`, and it lives in
+- **NTF-3: the dedup signature is `(verdict, srm_flag)` — a TRIPLE since m14
+  DEC-4, which appends the rollup identity — and it lives in
   `_ab_notify_states`.** `notify/cooldown.py` is the pure rule (no DB, no
   config): a change always announces, an unchanged value never re-announces
   (D2). Deduping on the verdict WORD alone is the trap — a pre-horizon pair says
@@ -1861,8 +1930,8 @@ see the track section in [ROADMAP.md](../../ROADMAP.md);
 records now; **M14 is IN PROGRESS against its contract
 [m14-implementation-plan.md](../../docs/specs/m14-implementation-plan.md)** —
 six WPs (✅ DEC-1 the declared `control:` → ✅ DEC-2 treatment-pair verdicts +
-the per-metric rollup → ✅ DEC-3 the report / DEC-4 dashboard·explore·notify·CLI
-— where explore and the `abk run --report` line are DEC-3 holds it releases;
+the per-metric rollup → ✅ DEC-3 the report → ✅ DEC-4
+dashboard·explore·notify·CLI;
 DEC-5 `validate`/`plan`/SRM, independent; DEC-6 the exit gate + `0.9.0`), under
 the posture that **M14 moves no persisted number, no alpha and no verdict
 `0.8.0` already issues**: the read-time family is built from ROWS, so verdicting

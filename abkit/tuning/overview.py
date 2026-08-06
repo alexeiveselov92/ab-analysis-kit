@@ -17,11 +17,16 @@ secondary/guardrail comparison NEVER produces one and never appears in a row's
 ``verdicts`` sub-list. Surfacing secondary verdicts would mean re-implementing
 the decision logic — still M14 work, not this milestone.
 
-Since m14 DEC-2 the readout also issues a verdict for every
-treatment-vs-treatment pair, so this module filters to ``role ==
-"vs_control"`` (the ``ship`` list below) rather than relying on the readout
-being control-anchored. DEC-4 replaces the headline with the per-metric rollup
-and opens the expand list deliberately.
+Since m14 DEC-4 the row carries the whole decision layer. The **headline** is
+the first declared main metric's rollup and the pair behind it is that rollup's
+LEADER — through `0.8.0` it was ``verdicts[0]``, i.e. the first declared
+treatment, which on a three-arm experiment presented an arbitrary arm as the
+experiment's result. The expand list carries every DECLARED pair with its
+``role``, so an arm-vs-arm entry can be labelled rather than read as a ship
+recommendation. Two things stay control-anchored on purpose: the row's
+``guardrail_regressed`` flag (a regression between two treatments says nothing
+about harm relative to control) and the notifications this dashboard never
+sends.
 The per-metric **Run** affordance a secondary metric still needs is fed by
 :func:`build_overview_boot_entries`, which lists the configured comparisons
 straight off the config.
@@ -121,7 +126,13 @@ from abkit.database.internal_tables._tasks import DEFAULT_PROCESS_TYPE, DEFAULT_
 # ``bool(value)``, this one is ``bool(int(value))``) could disagree with the
 # readout on a driver that hands back a ``"0"`` string — the row's chip would
 # then contradict the rationale printed beside it.
-from abkit.pipeline.readout import PairVerdict, _flag, evaluate, srm_summary
+from abkit.pipeline.readout import (
+    MetricRollup,
+    PairVerdict,
+    _flag,
+    evaluate,
+    srm_summary,
+)
 from abkit.tuning.payload import _ms
 from abkit.utils.datetime_utils import now_utc_naive, to_naive_utc
 
@@ -325,6 +336,14 @@ def _empty_row(name: str) -> dict[str, Any]:
         "last_end_ts": None,
         "spark": [],
         "verdicts": [],
+        # m14 DEC-4: the decision layer. `leader`/`separation` describe the
+        # HEADLINE metric (they explain the cells beside them, the
+        # rationale/caveats convention); `rollups` carries every main metric's
+        # and `leaders_agree` reports whether they point at one arm.
+        "leader": None,
+        "separation": None,
+        "rollups": [],
+        "leaders_agree": None,
         "warnings": [],
         "error": None,
     }
@@ -387,6 +406,35 @@ def _pair_rows(
     ]
     picked.sort(key=lambda row: row["end_ts"])
     return picked[-MAX_STAT_POINTS:]
+
+
+def _headline_verdict(ship: Sequence[PairVerdict], rollup: MetricRollup | None) -> PairVerdict:
+    """Which ship decision the row's stat cells are read off (m14 DEC-4).
+
+    The rollup names an ARM, not a comparison, so the row still needs a pair to
+    take effect/CI/p/n and the sparkline from — the leader's own vs-control
+    verdict. With no leader (nobody beat the control, a failed SRM gate, or
+    nothing judged yet) there is nothing to promote and the first declared
+    treatment answers, exactly as it did through `0.8.0`.
+
+    **This cannot move a two-arm row**, structurally rather than by measurement:
+    one treatment means one candidate, so the leader is either that arm or
+    ``None`` and both branches return the same verdict.
+    """
+    if rollup is None:
+        return ship[0]
+    candidates = [v for v in ship if v.metric == rollup.metric]
+    if not candidates:
+        # `rollups` and the ship list are both derived from `main_comparisons`,
+        # so this is unreachable; fall back rather than raise, because a
+        # dashboard row is a read-only view and losing the whole page over a
+        # headline choice is the worse failure.
+        return ship[0]
+    if rollup.leader is not None:
+        for verdict in candidates:
+            if verdict.name_2 == rollup.leader:
+                return verdict
+    return candidates[0]
 
 
 def _headline_insufficient(pair_series: Sequence[dict], verdict: PairVerdict) -> bool:
@@ -515,14 +563,6 @@ def _fill_stats(
     # dropping the oldest is not a shorter experiment, it is a truncated
     # stabilization history (module docstring).
     readout = evaluate(experiment, rows, project=project)
-    # m14 DEC-2: the dashboard stays CONTROL-ANCHORED. Since DEC-2 the readout
-    # also issues treatment-vs-treatment verdicts, and this row cannot yet say
-    # which is which — the expand list would gain unlabelled `B vs C` entries
-    # reading as ship decisions, and the row's safety flag would turn red for a
-    # regression between two treatments, which says nothing about harm relative
-    # to control (DEC-4 decided that flag stays control-anchored; DEC-2 is what
-    # makes the distinction reachable). DEC-4 replaces the headline with the
-    # rollup and opens the list deliberately.
     ship = [v for v in readout.verdicts if v.role == "vs_control"]
     if not ship:
         # Unreachable through a validated config (≥1 main comparison and ≥2
@@ -532,7 +572,15 @@ def _fill_stats(
             "a main comparison and a treatment arm are both required"
         )
 
-    headline = ship[0]
+    # m14 DEC-4: the headline is the FIRST DECLARED main metric's rollup, and
+    # the pair behind it is that rollup's LEADER. Until now it was
+    # `verdicts[0]` — the first declared treatment — which on a three-arm
+    # experiment presented an ARBITRARY arm as the experiment's result on the
+    # project-level cockpit. Config order stays the metric convention (D2
+    # refused to invent a metric priority, so a "worst-of" rule across metrics
+    # is not available); what changes is which ARM inside that metric answers.
+    headline_rollup = readout.rollups[0] if readout.rollups else None
+    headline = _headline_verdict(ship, headline_rollup)
     row["verdict"] = headline.verdict
     row["effect"] = _num(headline.effect)
     row["ci"] = [_num(headline.left_bound), _num(headline.right_bound)]
@@ -553,13 +601,32 @@ def _fill_stats(
     # must not go green because the regression happened on another arm.
     row["rationale"] = list(headline.rationale)
     row["caveats"] = list(headline.caveats)
+    # ORed over the SHIP decisions only, and it stays that way (m14 DEC-4): a
+    # guardrail regression BETWEEN TWO TREATMENTS says nothing about whether the
+    # experiment harms users relative to control, which is the one question this
+    # red flag answers. The treatment pair's own guardrail status still rides in
+    # `verdicts` below and shows on its own card in the report. At two arms both
+    # readings coincide, so this cannot move a `0.8.0` row.
     row["guardrail_regressed"] = any(
         guardrail.regressed for verdict in ship for guardrail in verdict.guardrails
     )
+    # The decision layer, DEC-4. `leader`/`separation` belong to the HEADLINE
+    # metric — the same scope as the `rationale`/`caveats` above, so the row's
+    # top-level cells all describe one thing.
+    row["leader"] = None if headline_rollup is None else headline_rollup.leader
+    row["separation"] = None if headline_rollup is None else headline_rollup.separation
+    row["rollups"] = [rollup.to_dict() for rollup in readout.rollups]
+    row["leaders_agree"] = readout.leaders_agree
     # Named `verdicts`, matching ``ExperimentReadout.verdicts`` — deliberately
     # NOT `comparisons`, which is the boot entry's CONFIGURED list. DASH-5
     # merges the two payloads by experiment name, and one key holding two
     # incompatible shapes is a trap.
+    # Every DECLARED pair since DEC-4, each carrying its `role` — the ship
+    # decisions first, in the readout's own order, so a client that ignored the
+    # new field would still list what `0.8.0` listed before reaching an
+    # arm-vs-arm entry. The role is a FIELD rather than a `name_1 == control`
+    # inference for the DEC-2 reason: three renderers need it, and each
+    # re-deriving it is how they drift.
     row["verdicts"] = [
         {
             "metric": verdict.metric,
@@ -567,11 +634,12 @@ def _fill_stats(
             # the two surfaces name a pair the same way.
             "pair": {"c": verdict.name_1, "t": verdict.name_2},
             "verdict": verdict.verdict,
+            "role": verdict.role,
             "effect": _num(verdict.effect),
             "caveats": list(verdict.caveats),
             "guardrail_regressed": any(guardrail.regressed for guardrail in verdict.guardrails),
         }
-        for verdict in ship
+        for verdict in readout.verdicts
     ]
     # The two states `abk clean` exists for are invisible unless the row says
     # so: the report warns about them and this surface is the one an operator

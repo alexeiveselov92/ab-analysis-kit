@@ -36,16 +36,19 @@ in the decision / presentation layer.**
 | 3. treatment-vs-treatment charted but never verdicted | **shipped** — M14 DEC-2 verdicts every declared pair (`role: treatment_pair`), DEC-3 renders it behind a *not a ship decision* chip |
 | 5. `abk plan` sizes ONE contrast of many | **live**, warns; since DEC-1 the pair is the declared control vs the first declared treatment, and the warning names both arms (DEC-5 owns the rest) |
 | 6. `abk validate` collapses N arms into a two-arm placebo | **live**, undisclosed ([runner.py:118](../../abkit/validate/runner.py#L118)) |
-| 7. `abk run --report` prints unlabeled verdict words | **live** — `" · ".join(verdicts)` ([run.py:153](../../abkit/cli/commands/run.py#L153)) |
+| 7. `abk run --report` prints unlabeled verdict words | **shipped** — M14 DEC-4: at 3+ arms the ROLLUP replaces the list (one keyed entry per main metric, plus a disagreement note); two-arm output is unchanged |
 | 13. no pair selector; blocks grow C(N,2)/metric | **shipped** — M14 DEC-3 (`buildPairPicker`, 3+ arms) |
-| 10/14/15. `activePair` reset, no SRM culprit, flat picker | **live** (cosmetic tier) |
+| 10. explore's `activePair` resets on metric switch | **shipped** — M14 DEC-4 (`activePairByMetric`) |
+| 14/15. no SRM culprit, flat picker | **live** (cosmetic tier) |
 
 **One surface the audit could not know about, because it did not exist yet:**
-the M11 dashboard takes `readout.verdicts[0]` as the experiment's headline
-([overview.py:514](../../abkit/tuning/overview.py#L514)). At three arms that is
-the first main metric crossed with the **first treatment** — an arbitrary arm
-presented as the experiment's result, on the project-level cockpit. This is the
-highest-value single fix in the milestone and it is DEC-4's first item.
+the M11 dashboard took `readout.verdicts[0]` as the experiment's headline. At
+three arms that is the first main metric crossed with the **first treatment** —
+an arbitrary arm presented as the experiment's result, on the project-level
+cockpit. It was the highest-value single fix in the milestone and **DEC-4
+shipped it**: the headline is now the first declared main metric's rollup
+LEADER (`overview._headline_verdict`), falling back to the first declared
+treatment when no arm beat the control.
 
 ### 0.2 The posture: nothing already computed moves
 
@@ -501,7 +504,7 @@ is the §0.2 leg, proven to bite by removing the 3+ arm gate.
 
 ---
 
-### DEC-4 — the other three surfaces read the same rollup
+### DEC-4 — the other surfaces read the same rollup ✅
 
 The M11/M12 invariant, extended: *one decision, many surfaces, and none of them
 recomputes it.*
@@ -546,6 +549,109 @@ the leader line at 3+ arms. `abk explore`'s `activePair` remembers its selection
 per metric (audit gap 10).
 
 ---
+
+#### DEC-4 as built ✅
+
+Merged as PR #112. Four surfaces, not the three the heading counts — the CLI
+line is the fourth, and `abk explore` and that line were DEC-3's two holds,
+released here.
+
+1. **The rollup names an ARM; a row still needs a PAIR.**
+   `overview._headline_verdict` promotes the leader's own vs-control verdict and
+   falls back to the first declared treatment when there is no leader (nobody
+   beat the control, a failed gate, nothing judged yet). Every stat cell follows
+   it — effect, CI, p, alpha, the last look, the demotion chip and the
+   sparkline — because a chart drawn from a different arm than the number above
+   it is the contradiction the row exists to avoid. At two arms both branches
+   return the same verdict, so the change is a structural no-op there.
+2. **The row's multi-arm gate counts DISTINCT TREATMENTS, not treatment-pair
+   verdicts.** The first draft tested `role === 'treatment_pair'`, which is
+   false for every `contrasts: vs_control` experiment — so a three-arm
+   `vs_control` row moved its cells to the leader while rendering nothing that
+   said which arm they belonged to. That is the defect DEC-4 exists to remove,
+   left in place for one shipped config; the report and the CLI both gate on the
+   arm count, and counting ship-decision treatments is the row's equivalent.
+3. **The unreachable branch FALLS BACK rather than raising** — the opposite of
+   DEC-2's control-pair guard, deliberately: a dashboard row is a read-only
+   view, and losing the whole page over a headline choice is the worse failure.
+4. **Notifications got D7's treatment: the dedup changed, the volume did not.**
+   No seventh signal kind, no per-treatment-pair message; the rollup rides as
+   `ReadoutData.leader`/`separation`/`arm_count`/`rollup_rationale`, and
+   `_ab_notify_states` gains a nullable `last_rollup`.
+5. **The leader is in the dedup key only when the rollup SEPARATED it.**
+   `leader` is a raw argmax and the one term the stabilization scan does not
+   smooth; under `co_leaders` the rollup is *saying the arms are
+   indistinguishable*, so keying on which of them polled higher flips the
+   signature on about half the runs of a genuinely tied pair — a message every
+   run, the exact failure NTF-3 exists to prevent.
+6. **A state row written before `0.9.0` drops the term.** Every `0.9.0` readout
+   signs a non-null rollup while every stored row holds NULL, so comparing them
+   would make the first upgraded run re-announce **every comparison in the
+   project** — most of them with a message textually identical to the last one
+   delivered. Measured before the fix: 100% of the dedup population.
+7. **The CLI line is the rollup, not the words.** Listing per-pair verdicts with
+   an arm suffix does not survive a legal config: `ship_decisions` is
+   metric-blind, so at two main metrics the same arm appears twice with
+   contradictory verdicts, and at five arms the line runs past 160 characters.
+   One keyed entry per main metric, and a disagreement is NAMED rather than left
+   for the reader to spot.
+8. **`ship_decisions` survived with one caller.** DEC-3 predicted DEC-4 would
+   delete both; explore's went, the CLI's stayed — it is no longer a hold but
+   the rule for which verdicts belong on a one-line ship summary.
+
+**What the review changed** (four lenses; each finding below was reproduced
+before it was fixed):
+
+9. **Two CSS custom properties did not exist.** `--abk-line` and `--abk-ink-1`
+   are defined nowhere, and CSS's "invalid at computed-value time" drops the
+   whole SHORTHAND — so the `arm vs arm` pill lost its box entirely, i.e. the
+   one affordance that stops a treatment-vs-treatment `WIN` reading as a ship
+   recommendation did not draw. Second instance in one WP (`--abk-accent` on the
+   dashboard, caught during the build). The gates could not see it: they check
+   token DEFINITIONS and raw hexes, never a `var()` REFERENCE. There is a gate
+   now (`tests/tuning/test_brand_token_references.py`), green on `main`.
+10. **A leader was recommended under a failed SRM gate.** The guard sat only on
+    the no-leader branch, but `srm_flag` is the experiment-wide gate while a
+    verdict is judged on its own pair's latest row — reachable with `abk run
+    --metric`, one metric advancing into a broken cutoff while another sits on a
+    healthy earlier look. The message read "results withheld" and, one line
+    down, which arm to ship.
+11. **The channels were re-wording a decision the readout had worded.**
+    `no_leader` covers three facts and the renderer synthesized one sentence for
+    all of them, so every young three-arm experiment's message said "No arm beat
+    the control" where the truth was that nothing had been judged. The payload
+    carries `rollup_rationale` now and the channels render it verbatim — the
+    DEC-3 fix, applied to the surface that could not do it before.
+12. **The roster gate could not fail.** It asserted over the context dict
+    dumped beside the rendered body, and `build_context` computes the line for
+    every channel — so deleting Telegram's render of it left all 502 tests
+    green. It renders through each channel's own outermost builder now.
+13. **The explore half shipped with no tests at all**, and all four behaviours
+    survived simultaneous deletion. Six tests now cover them, each
+    mutation-probed.
+14. **The comment promised an on-page disclosure that did not exist.** Review is
+    the one panel where a live knob and a baked readout sit inches apart — the
+    role checkboxes re-tier alphas and recompute, while the rollup beside them
+    is as of page build. Since DEC-4 the baked half carries a RECOMMENDATION, so
+    the page says so rather than only the source.
+15. **Two surfaces worded one rollup differently**, and explore was the lossy
+    one — it dropped the rationale, which is the only place the arm NAMES
+    appear. Same words as the report's chip now, with the rationale under it.
+16. **The index-memory comment was factually wrong.** It claimed index 0 is a
+    different pair on two metrics; `builder.py` computes `contrast_pairs()` once
+    per experiment and hands the same ordered list to every metric, so
+    remembering the index IS remembering the pair. The clamp stays, documented
+    as defending an invariant rather than an observed shape.
+17. **A green headline could hide a harmed arm.** `rollup.losers` rode in the
+    payload unrendered; the row now carries an `N lost` chip, because the
+    headline being the leader must not make an arm the control BEAT invisible
+    until the row is expanded.
+
+**Named limitation, recorded not fixed:** in DEC-1's re-orientation window the
+row's headline says "no computed results" while the expand list one click below
+shows a WIN with a full series. DEC-3 solved the equivalent for the report (the
+selector falls back to whatever has data); the row's headline fallback is
+`0.8.0`'s and changing it would change what "headline" means. DEC-6 may weigh it.
 
 ### DEC-5 — the supporting instruments: `validate`, `plan`, SRM
 

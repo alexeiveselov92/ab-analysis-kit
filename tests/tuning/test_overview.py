@@ -238,11 +238,30 @@ class TestGoldenRow:
                     "metric": "revenue",
                     "pair": {"c": "control", "t": "treatment"},
                     "verdict": "WIN",
+                    "role": "vs_control",
                     "effect": 0.1,
                     "caveats": [],
                     "guardrail_regressed": False,
                 }
             ],
+            # m14 DEC-4. At two arms the rollup has exactly one candidate, so
+            # `leader` is the treatment iff it won and `separation` is a
+            # function of that — no cell above moved.
+            "leader": "treatment",
+            "separation": "separated",
+            "rollups": [
+                {
+                    "metric": "revenue",
+                    "leader": "treatment",
+                    "indistinguishable": [],
+                    "separation": "separated",
+                    "losers": [],
+                    "guardrail_regressed": [],
+                    "rationale": ["treatment beat control on revenue"],
+                    "caveats": [],
+                }
+            ],
+            "leaders_agree": None,
             "warnings": [],
             "error": None,
         }
@@ -315,6 +334,10 @@ class TestGoldenRow:
             "last_end_ts": None,
             "spark": [],
             "verdicts": [],
+            "leader": None,
+            "separation": None,
+            "rollups": [],
+            "leaders_agree": None,
             "warnings": [],
             "error": None,
         }
@@ -633,13 +656,22 @@ class TestComparisonsSubList:
 
         row = row_for(tables, experiment)
 
-        assert [entry["pair"] for entry in row["verdicts"]] == [
+        ship = [entry for entry in row["verdicts"] if entry["role"] == "vs_control"]
+        assert [entry["pair"] for entry in ship] == [
             {"c": "control", "t": "treat_a"},
             {"c": "control", "t": "treat_b"},
         ]
-        assert [entry["effect"] for entry in row["verdicts"]] == [0.1, 0.2]
+        assert [entry["effect"] for entry in ship] == [0.1, 0.2]
+        assert [entry["pair"] for entry in row["verdicts"] if entry not in ship] == [
+            {"c": "treat_a", "t": "treat_b"}
+        ]
 
-    def test_the_headline_is_verdicts_zero(self, tables):
+    def test_the_headline_is_the_leaders_own_entry(self, tables):
+        """Superseded from ``verdicts[0]`` by m14 DEC-4 — and this fixture is
+        where the difference shows: ``treat_b`` is declared LAST and is the arm
+        that won. The row's cells must be its, and must agree with its entry in
+        the expand list, so the glanceable numbers and the list cannot
+        contradict each other."""
         experiment = make_experiment(
             assignment={
                 "query": "SELECT 1",
@@ -652,9 +684,26 @@ class TestComparisonsSubList:
 
         row = row_for(tables, experiment)
         readout = evaluate(experiment, tables.load_results(experiment.name), project=PROJECT)
+        leader = next(v for v in readout.verdicts if v.name_2 == readout.rollups[0].leader)
+
+        assert readout.rollups[0].leader == "treat_b"
+        assert row["effect"] == leader.effect
+        entry = next(e for e in row["verdicts"] if e["pair"]["t"] == row["leader"])
+        assert entry["effect"] == row["effect"]
+
+    def test_a_two_arm_row_is_unmoved_by_the_rollup(self, tables):
+        """The §0.2 leg for this surface. With one treatment the leader is
+        either that arm or ``None``, so both branches of the DEC-4 headline
+        return the same verdict — structurally, not by coincidence."""
+        experiment = make_experiment()
+        seed_series(tables, experiment)
+
+        row = row_for(tables, experiment)
+        readout = evaluate(experiment, tables.load_results(experiment.name), project=PROJECT)
 
         assert row["effect"] == readout.verdicts[0].effect
         assert row["verdicts"][0]["effect"] == row["effect"]
+        assert row["leaders_agree"] is None, "one rollup — nothing to agree about"
 
     def test_a_secondary_metric_never_appears_in_the_sub_list(self, tables):
         """The ``evaluate()`` contract, not a bug — see the module docstring."""
@@ -1192,14 +1241,20 @@ class TestSeveralMainMetrics:
 
         row = row_for(tables, experiment)
 
+        # Ship decisions first (the readout's order, metric-major), then the
+        # arm-vs-arm pairs — which have no rows in this fixture and therefore
+        # come back INCONCLUSIVE rather than being omitted: a declared pair
+        # nobody computed is a state the row must be able to show.
         assert [
-            (entry["metric"], entry["pair"], entry["verdict"], entry["effect"])
+            (entry["metric"], entry["pair"], entry["verdict"], entry["effect"], entry["role"])
             for entry in row["verdicts"]
         ] == [
-            ("revenue", {"c": "control", "t": "treat_a"}, "WIN", 0.1),
-            ("revenue", {"c": "control", "t": "treat_b"}, "LOSE", -0.1),
-            ("signups", {"c": "control", "t": "treat_a"}, "WIN", 0.1),
-            ("signups", {"c": "control", "t": "treat_b"}, "WIN", 0.1),
+            ("revenue", {"c": "control", "t": "treat_a"}, "WIN", 0.1, "vs_control"),
+            ("revenue", {"c": "control", "t": "treat_b"}, "LOSE", -0.1, "vs_control"),
+            ("signups", {"c": "control", "t": "treat_a"}, "WIN", 0.1, "vs_control"),
+            ("signups", {"c": "control", "t": "treat_b"}, "WIN", 0.1, "vs_control"),
+            ("revenue", {"c": "treat_a", "t": "treat_b"}, "INCONCLUSIVE", None, "treatment_pair"),
+            ("signups", {"c": "treat_a", "t": "treat_b"}, "INCONCLUSIVE", None, "treatment_pair"),
         ]
         assert all(entry["caveats"] == [] for entry in row["verdicts"])
         assert all(entry["guardrail_regressed"] is False for entry in row["verdicts"])
@@ -1567,12 +1622,15 @@ class TestModuleContract:
             assert hasattr(package, name)
 
 
-class TestControlAnchoredUntilDec4:
-    """m14 DEC-2: the row stays control-anchored while the readout widens.
+class TestTheHeadlineIsTheRollup:
+    """m14 DEC-4: the row's headline is the first main metric's rollup leader.
 
-    DEC-4 replaces the headline with the rollup and opens the expand list; this
-    class is what makes that a DELIBERATE commit rather than something that
-    happened when DEC-2 merged.
+    Through `0.8.0` it was ``verdicts[0]`` — the FIRST DECLARED treatment —
+    which on a three-arm experiment presented an arbitrary arm as the
+    experiment's result on the project-level cockpit. Every fixture here makes
+    the leader the LAST declared arm, so a row that still reads `verdicts[0]`
+    fails: a fixture whose declaration order and effect ranking agree cannot
+    tell the two apart (the DEC-2 review's own lesson).
     """
 
     @staticmethod
@@ -1585,15 +1643,166 @@ class TestControlAnchoredUntilDec4:
             }
         )
 
-    def test_the_expand_list_holds_only_ship_decisions(self, tables):
+    def test_the_headline_pair_is_the_leader_not_the_first_treatment(self, tables):
+        experiment = self._three_arm()
+        # t1 wins small, t2 wins big ⇒ the rollup leads with t2, declared LAST
+        seed_series(tables, experiment, name_2="t1", effect=0.05, left_bound=0.01, right_bound=0.09)
+        seed_series(tables, experiment, name_2="t2", effect=0.30, left_bound=0.24, right_bound=0.36)
+        seed_series(
+            tables,
+            experiment,
+            name_1="t1",
+            name_2="t2",
+            effect=0.24,
+            left_bound=0.18,
+            right_bound=0.30,
+        )
+
+        row = row_for(tables, experiment)
+
+        assert row["leader"] == "t2"
+        assert row["effect"] == pytest.approx(0.30), "the cells are the LEADER's, not t1's"
+        assert row["ci"] == [pytest.approx(0.24), pytest.approx(0.36)]
+        assert row["separation"] == "separated"
+        # EVERY cell follows the headline, not just the glanceable three: a
+        # sparkline still drawn from t1 would contradict the number above it,
+        # and the demotion chip would fire on t1's look while the row reports
+        # t2's verdict. Both survived every existing test (review finding).
+        assert [value for _, value in row["spark"]] == [pytest.approx(0.30)] * 14
+        assert row["insufficient"] is False
+
+    def test_with_no_leader_the_first_declared_treatment_still_answers(self, tables):
+        """Nobody beat the control — the common case. There is nothing to
+        promote, so the row reads exactly what `0.8.0` read."""
+        experiment = self._three_arm()
+        for treatment in ("t1", "t2"):
+            seed_series(
+                tables,
+                experiment,
+                name_2=treatment,
+                effect=0.01,
+                left_bound=-0.05,
+                right_bound=0.07,
+                pvalue=0.6,
+                reject=0,
+            )
+        seed_series(
+            tables,
+            experiment,
+            name_1="t1",
+            name_2="t2",
+            effect=0.0,
+            left_bound=-0.05,
+            right_bound=0.05,
+            pvalue=0.9,
+            reject=0,
+        )
+
+        row = row_for(tables, experiment)
+
+        assert row["leader"] is None
+        # the HEADLINE CELLS are the first declared treatment's — the previous
+        # form of this assertion compared the row's rationale against a key the
+        # expand entry does not have, so it read `x == x` (review finding)
+        assert row["verdicts"][0]["pair"] == {"c": "control", "t": "t1"}
+        assert row["effect"] == pytest.approx(0.01)
+        assert [value for _, value in row["spark"]] == [pytest.approx(0.01)] * 14
+
+    def test_the_expand_list_carries_every_declared_pair_with_its_role(self, tables):
         experiment = self._three_arm()
         seed_series(tables, experiment, name_2="t1")
         seed_series(tables, experiment, name_2="t2")
         seed_series(tables, experiment, name_1="t1", name_2="t2")
 
         row = row_for(tables, experiment)
-        pairs = {(v["pair"]["c"], v["pair"]["t"]) for v in row["verdicts"]}
-        assert pairs == {("control", "t1"), ("control", "t2")}
+
+        listed = [(v["pair"]["c"], v["pair"]["t"], v["role"]) for v in row["verdicts"]]
+        assert listed == [
+            ("control", "t1", "vs_control"),
+            ("control", "t2", "vs_control"),
+            ("t1", "t2", "treatment_pair"),
+        ], "ship decisions first, in the readout's order, each labelled"
+
+    def test_disagreeing_main_metrics_are_reported_not_resolved(self, tables):
+        experiment = make_experiment(
+            assignment={
+                "query": "SELECT 1",
+                "variants": ["control", "t1", "t2"],
+                "expected_split": {"control": 0.34, "t1": 0.33, "t2": 0.33},
+            },
+            comparisons=[
+                {"metric": "revenue", "is_main_metric": True, "method": {"name": "t-test"}},
+                {"metric": "orders", "is_main_metric": True, "method": {"name": "t-test"}},
+            ],
+        )
+        # revenue leads with t2, orders with t1
+        seed_series(tables, experiment, name_2="t1", effect=0.05, left_bound=0.01, right_bound=0.09)
+        seed_series(tables, experiment, name_2="t2", effect=0.30, left_bound=0.24, right_bound=0.36)
+        seed_series(
+            tables,
+            experiment,
+            name_1="t1",
+            name_2="t2",
+            effect=0.24,
+            left_bound=0.18,
+            right_bound=0.30,
+        )
+        seed_series(
+            tables,
+            experiment,
+            metric="orders",
+            name_2="t1",
+            effect=0.30,
+            left_bound=0.24,
+            right_bound=0.36,
+        )
+        seed_series(
+            tables,
+            experiment,
+            metric="orders",
+            name_2="t2",
+            effect=0.05,
+            left_bound=0.01,
+            right_bound=0.09,
+        )
+        seed_series(
+            tables,
+            experiment,
+            metric="orders",
+            name_1="t1",
+            name_2="t2",
+            effect=-0.24,
+            left_bound=-0.30,
+            right_bound=-0.18,
+        )
+
+        row = row_for(tables, experiment)
+
+        assert row["leaders_agree"] is False
+        assert [r["metric"] for r in row["rollups"]] == ["revenue", "orders"]
+        assert row["leader"] == "t2", "the headline follows the FIRST declared main metric"
+        assert {r["metric"]: r["leader"] for r in row["rollups"]} == {
+            "revenue": "t2",
+            "orders": "t1",
+        }
+
+
+class TestControlAnchoredUntilDec4:
+    """m14 DEC-2/DEC-4: what stays control-anchored after the row opens.
+
+    The expand list is open (see :class:`TestTheHeadlineIsTheRollup`); the
+    row's safety flag is not, and that is a decision rather than an oversight.
+    """
+
+    @staticmethod
+    def _three_arm():
+        return make_experiment(
+            assignment={
+                "query": "SELECT 1",
+                "variants": ["control", "t1", "t2"],
+                "expected_split": {"control": 0.34, "t1": 0.33, "t2": 0.33},
+            }
+        )
 
     def test_a_regression_between_two_treatments_does_not_redden_the_row(self, tables):
         """DEC-4's decision, reachable for the first time here: a guardrail

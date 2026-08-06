@@ -71,6 +71,10 @@ class _NotifyStatesMixin(_InternalTablesBase):
         empty: dict[str, Any] = {
             "last_verdict": None,
             "last_srm_flag": False,
+            # m14 DEC-4. NULL on a pre-0.9.0 row and on a fresh key alike, so a
+            # readout carrying no rollup compares EQUAL to both and upgrading
+            # does not re-announce every comparison in the project.
+            "last_rollup": None,
             "last_notified_at": None,
             "notify_count": 0,
         }
@@ -96,6 +100,7 @@ class _NotifyStatesMixin(_InternalTablesBase):
         return {
             "last_verdict": row.get("last_verdict"),
             "last_srm_flag": bool(row.get("last_srm_flag")),
+            "last_rollup": row.get("last_rollup"),
             "last_notified_at": to_naive_utc(row.get("last_notified_at")),
             "notify_count": int(row.get("notify_count") or 0),
         }
@@ -110,6 +115,7 @@ class _NotifyStatesMixin(_InternalTablesBase):
         *,
         verdict: str | None,
         srm_flag: bool,
+        rollup: str | None = None,
         notified_at: datetime | None = None,
     ) -> None:
         """Stamp what was just announced, incrementing the count.
@@ -128,6 +134,7 @@ class _NotifyStatesMixin(_InternalTablesBase):
             "method_config_id": method_config_id,
             "last_verdict": verdict,
             "last_srm_flag": bool(srm_flag),
+            "last_rollup": rollup,
             "last_notified_at": notified_at if notified_at is not None else now,
             "notify_count": int(previous["notify_count"]) + 1,
             "updated_at": now,

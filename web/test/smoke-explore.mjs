@@ -19,6 +19,7 @@ import { JSDOM } from 'jsdom';
 
 import {
   makeCalibration,
+  makeDecisionExplorePayload,
   makeExplorePayload,
   makeReply,
   makeSurface,
@@ -653,4 +654,102 @@ test('a stale (409) Auto validate yields quietly without greening the chip', asy
     'uncalibrated',
     'a dropped validate never greens the chip',
   );
+});
+
+// ---------------------------------------------------------------------------
+// m14 DEC-4: the cockpit reads the decision layer
+// ---------------------------------------------------------------------------
+
+const openReview = (mount) => {
+  [...mount.querySelectorAll('.abk-mode-btn')].find((b) => b.textContent === 'Review').click();
+  return mount.querySelector('.abk-review-row');
+};
+
+test('Review labels an arm-vs-arm verdict so it cannot read as a ship decision', () => {
+  const { mount } = renderInJsdom(makeDecisionExplorePayload());
+  const row = openReview(mount);
+
+  const lines = [...row.querySelectorAll('.abk-review-verdict')];
+  assert.equal(lines.length, 3, 'every declared pair reaches the cockpit since DEC-4');
+  const tagged = lines.filter((l) => l.querySelector('.abk-review-role'));
+  assert.equal(tagged.length, 1, 'exactly the treatment pair is tagged');
+  assert.match(tagged[0].textContent, /treatment vs treatment_b/);
+  assert.match(tagged[0].querySelector('.abk-review-role').textContent, /arm vs arm/);
+});
+
+test('Review names the leader and keeps the readout own words for the detail', () => {
+  const { mount } = renderInJsdom(makeDecisionExplorePayload());
+  const row = openReview(mount);
+
+  const rollup = row.querySelector('.abk-review-rollup');
+  assert.match(rollup.textContent, /leader: treatment_b/);
+  assert.match(rollup.textContent, /co-leaders/, 'the same word the report chip uses');
+  // the rationale is the only place the arm NAMES appear — dropping it would
+  // make explore the lossy surface for the same rollup
+  const detail = row.querySelector('.abk-review-rationale');
+  assert.match(detail.textContent, /did not separate from treatment/);
+});
+
+test('with no leader the readout own sentence is rendered, never a synthesized one', () => {
+  const payload = makeDecisionExplorePayload({
+    rollups: [
+      { metric: 'revenue', leader: null, indistinguishable: [], separation: 'no_leader',
+        losers: [], guardrail_regressed: [],
+        rationale: ['no pair could be judged against control on revenue yet (pre-horizon)'],
+        caveats: [] },
+    ],
+  });
+  const row = openReview(renderInJsdom(payload).mount);
+
+  const rollup = row.querySelector('.abk-review-rollup');
+  assert.match(rollup.textContent, /pre-horizon/);
+  assert.ok(!/beat the control/.test(rollup.textContent), 'no finding is asserted');
+});
+
+test('a two-arm cockpit grows no rollup line and no role tag', () => {
+  const row = openReview(renderInJsdom(makeExplorePayload()).mount);
+
+  assert.equal(row.querySelector('.abk-review-rollup'), null);
+  assert.equal(row.querySelector('.abk-review-role'), null);
+});
+
+test('the page says the Review verdicts are as of page build', () => {
+  // Review is the one panel where a live knob (the role checkboxes re-tier
+  // alphas and recompute) sits inches from a baked readout — and since DEC-4
+  // the baked half carries a RECOMMENDATION.
+  const { mount } = renderInJsdom(makeDecisionExplorePayload());
+  openReview(mount);
+  const notes = [...mount.querySelectorAll('.abk-ctl-note')]
+    .map((n) => n.textContent)
+    .join(' ');
+
+  assert.match(notes, /as of page build/);
+});
+
+test('the pair selector remembers its choice per metric', () => {
+  const payload = makeDecisionExplorePayload();
+  // a second metric, so there is something to switch to
+  payload.metrics = [...payload.metrics, { ...payload.metrics[0], name: 'orders', main: false }];
+  payload.explore.metrics = { ...payload.explore.metrics, orders: payload.explore.metrics.revenue };
+  const { mount } = renderInJsdom(payload);
+
+  const pairBtns = () =>
+    [...mount.querySelectorAll('.abk-seg')].find((s) => / vs /.test(s.textContent));
+  const pick = (label) =>
+    [...pairBtns().querySelectorAll('button')].find((b) => b.textContent === label);
+  const active = () =>
+    [...pairBtns().querySelectorAll('button')].find((b) => b.classList.contains('on')).textContent;
+
+  pick('control vs treatment_b').click();
+  assert.equal(active(), 'control vs treatment_b');
+
+  const metricSeg = [...mount.querySelectorAll('.abk-seg')].find((seg) =>
+    [...seg.querySelectorAll('button')].some((b) => b.textContent === 'orders'),
+  );
+  const metricBtn = (label) =>
+    [...metricSeg.querySelectorAll('button')].find((b) => b.textContent === label);
+  metricBtn('orders').click();
+  metricBtn('revenue').click();
+
+  assert.equal(active(), 'control vs treatment_b', 'the selection survived the round trip');
 });

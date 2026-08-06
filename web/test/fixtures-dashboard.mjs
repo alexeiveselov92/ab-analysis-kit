@@ -98,13 +98,63 @@ export function makeRow(name, overrides = {}) {
         metric: 'revenue',
         pair: { c: 'control', t: 'treatment' },
         verdict: 'WIN',
+        role: 'vs_control',
         effect: 0.12,
         caveats: [],
         guardrail_regressed: false,
       },
     ],
+    leader: 'treatment',
+    separation: 'separated',
+    rollups: [
+      {
+        metric: 'revenue',
+        leader: 'treatment',
+        indistinguishable: [],
+        separation: 'separated',
+        losers: [],
+        guardrail_regressed: [],
+        rationale: ['treatment beat control on revenue'],
+        caveats: [],
+      },
+    ],
+    leaders_agree: null,
     warnings: [],
     error: null,
+    ...overrides,
+  };
+}
+
+/**
+ * A three-arm row where the leader is the LAST declared arm — a fixture whose
+ * declaration order and effect ranking agree cannot tell the DEC-4 headline
+ * from `verdicts[0]` (the DEC-2 review's lesson).
+ * @param {string} name
+ * @param {Partial<import('../src/dashboard/payload').ExperimentRow>} [overrides]
+ * @returns {import('../src/dashboard/payload').ExperimentRow}
+ */
+export function makeMultiArmRow(name, overrides = {}) {
+  const base = makeRow(name);
+  return {
+    ...base,
+    effect: 0.3,
+    ci: [0.24, 0.36],
+    verdicts: [
+      { metric: 'revenue', pair: { c: 'control', t: 't1' }, verdict: 'WIN',
+        role: 'vs_control', effect: 0.05, caveats: [], guardrail_regressed: false },
+      { metric: 'revenue', pair: { c: 'control', t: 't2' }, verdict: 'WIN',
+        role: 'vs_control', effect: 0.3, caveats: [], guardrail_regressed: false },
+      { metric: 'revenue', pair: { c: 't1', t: 't2' }, verdict: 'WIN',
+        role: 'treatment_pair', effect: 0.24, caveats: [], guardrail_regressed: false },
+    ],
+    leader: 't2',
+    separation: 'separated',
+    rollups: [
+      { metric: 'revenue', leader: 't2', indistinguishable: [], separation: 'separated',
+        losers: [], guardrail_regressed: [],
+        rationale: ['t2 beat control on revenue and separated from t1'], caveats: [] },
+    ],
+    leaders_agree: null,
     ...overrides,
   };
 }

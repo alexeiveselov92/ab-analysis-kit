@@ -43,15 +43,14 @@ def _verdict(name_1: str, name_2: str, role: str, metric: str = "arpu") -> dict:
     return {"metric": metric, "pair": {"c": name_1, "t": name_2}, "verdict": "WIN", "role": role}
 
 
-def test_treatment_pair_verdicts_do_not_reach_the_cockpit():
-    """The fixture is shaped to defeat three WRONG filters, not just to pass.
+def test_every_declared_pair_reaches_the_cockpit():
+    """m14 DEC-4 released the DEC-3 hold.
 
-    Two ship decisions on ONE metric, so "keep the first verdict" — the M7 WP0
-    `.find`-instead-of-`.filter` bug, on the server side this time — loses the
-    second and fails here. A third on another metric, so a metric-scoped filter
-    fails too. And the control is `c`, declared LAST, so a positional
-    `pair.c == variants[0]` filter inverts: it would keep the treatment pair and
-    drop both ship decisions.
+    Review mode labels the role now, so the cockpit sees what the report sees —
+    and it must see ALL of it: the fixture keeps two ship decisions on ONE
+    metric so a "keep the first" filter (the M7 WP0 `.find` bug, server-side)
+    fails, one on another metric so a metric-scoped filter fails, and declares
+    the control LAST so a positional `pair.c == variants[0]` filter inverts.
     """
     session, engine = _session_and_engine()
     report = {
@@ -67,13 +66,16 @@ def test_treatment_pair_verdicts_do_not_reach_the_cockpit():
 
     payload = build_explore_payload(session, engine, report)
 
-    assert [(v["metric"], v["pair"]["c"], v["pair"]["t"]) for v in payload["verdicts"]] == [
-        ("arpu", "c", "a"),
-        ("arpu", "c", "b"),
-        ("orders", "c", "a"),
+    assert [
+        (v["metric"], v["pair"]["c"], v["pair"]["t"], v["role"]) for v in payload["verdicts"]
+    ] == [
+        ("arpu", "c", "a", "vs_control"),
+        ("arpu", "c", "b", "vs_control"),
+        ("orders", "c", "a", "vs_control"),
+        ("arpu", "a", "b", "treatment_pair"),
     ]
-    # non-destructive: the caller's payload is the one `abk run --report` may
-    # still bake, so the hold must filter a COPY
+    # still non-destructive: the caller's payload is the one `abk run --report`
+    # may bake, and the cockpit must not mutate it on the way past
     assert report["verdicts"] == original
 
 

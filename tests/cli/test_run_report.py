@@ -177,34 +177,116 @@ class TestReportGuards:
         assert "names one file" in result.output
 
 
-class TestTheSummaryLineStaysControlAnchored:
-    """m14 DEC-3 hold, opened by DEC-4.
+class TestTheSummaryLine:
+    """m14 DEC-4 (audit gap 7): the line labels its verdicts and names a leader.
 
-    Since DEC-3 the payload carries a verdict for every declared pair. This
-    line joins the bare WORDS, so a treatment-pair verdict would read as a
-    third ship decision — "WIN · FLAT · LOSE" where the last is one treatment
-    against another. DEC-4 replaces the line with labeled verdicts and drops
-    the filter; until then this test is what makes that a deliberate commit.
+    Through `0.8.0` it joined bare words, so at three arms the reader could not
+    tell which arm each belonged to. The arm-vs-arm verdicts DEC-3 added stay
+    OFF this line — they are evidence, and a one-line summary is the wrong
+    place to explain the difference.
     """
 
     @staticmethod
-    def _payload(*roles: str) -> dict:
+    def _payload(*roles: str, arms: int = 3, rollups=None, leaders_agree=None) -> dict:
         words = ["WIN", "FLAT", "LOSE", "INCONCLUSIVE"]
+        treatments = ["t1", "t2", "t3", "t4"]
         return {
+            "arms": [f"a{i}" for i in range(arms)],
+            "rollups": rollups if rollups is not None else [],
+            "leaders_agree": leaders_agree,
             "verdicts": [
-                {"verdict": word, "role": role} for word, role in zip(words, roles, strict=False)
-            ]
+                {"verdict": word, "role": role, "pair": {"c": "control", "t": arm}}
+                for word, role, arm in zip(words, roles, treatments, strict=False)
+            ],
         }
 
-    def test_treatment_pairs_are_left_off_the_line(self):
+    def test_the_rollup_replaces_the_words_at_three_arms(self):
         from abkit.cli.commands.run import _verdict_note
 
-        note = _verdict_note(self._payload("vs_control", "vs_control", "treatment_pair"))
-        assert note == "WIN · FLAT"
+        note = _verdict_note(
+            self._payload(
+                "vs_control",
+                "vs_control",
+                "treatment_pair",
+                rollups=[{"metric": "revenue", "leader": "t1"}],
+            )
+        )
+        assert note == "leader — revenue: t1"
+
+    def test_the_line_stays_ONE_line_on_a_legal_wide_experiment(self):
+        """Five arms x two main metrics is legal (m13 STAT-1's `(M+1)*alpha`),
+        and listing per-pair words there ran past 160 characters AND printed the
+        same arm twice with contradictory verdicts — `ship_decisions` is
+        metric-blind, so the arm suffix asserted an identification it did not
+        have."""
+        from abkit.cli.commands.run import _verdict_note
+
+        note = _verdict_note(
+            self._payload(
+                *(["vs_control"] * 4),
+                arms=5,
+                rollups=[
+                    {"metric": "revenue", "leader": "checkout_variant_b"},
+                    {"metric": "orders", "leader": "checkout_variant_b"},
+                ],
+            )
+        )
+        assert len(note) < 80, note
+        assert note.count("checkout_variant_b") == 2, "one entry per main metric, each keyed"
+
+    def test_disagreeing_metrics_are_NAMED_as_disagreeing(self):
+        """The readout REPORTS the disagreement and does not break the tie (D2).
+        A flat list leaves the reader to notice the names differ; the report
+        raises a chip, and the CLI is the surface where the operator may never
+        open the report."""
+        from abkit.cli.commands.run import _verdict_note
+
+        note = _verdict_note(
+            self._payload(
+                "vs_control",
+                "vs_control",
+                leaders_agree=False,
+                rollups=[
+                    {"metric": "revenue", "leader": "t1"},
+                    {"metric": "orders", "leader": "t2"},
+                ],
+            )
+        )
+        assert note == "leader — revenue: t1, orders: t2 (metrics disagree)"
+
+    def test_a_metric_with_no_leader_is_named_not_omitted(self):
+        """Omitting it makes partial agreement read as total."""
+        from abkit.cli.commands.run import _verdict_note
+
+        note = _verdict_note(
+            self._payload(
+                "vs_control",
+                rollups=[
+                    {"metric": "revenue", "leader": "t1"},
+                    {"metric": "orders", "leader": None},
+                ],
+            )
+        )
+        assert note == "leader — revenue: t1, orders: no leader"
+
+    def test_a_two_arm_line_is_the_0_8_0_line(self):
+        """The section 0.2 leg: bare verdict words, character-identical."""
+        from abkit.cli.commands.run import _verdict_note
+
+        note = _verdict_note(
+            self._payload("vs_control", arms=2, rollups=[{"metric": "revenue", "leader": "t1"}])
+        )
+        assert note == "WIN"
+
+    def test_a_three_arm_bake_with_no_rollups_falls_back_to_labelled_words(self):
+        from abkit.cli.commands.run import _verdict_note
+
+        assert _verdict_note(self._payload("vs_control", "vs_control")) == "WIN t1 · FLAT t2"
 
     def test_a_pre_0_9_0_payload_has_no_role_and_is_all_ship_decisions(self):
         """Every list baked before 0.9.0 is control-anchored by construction —
-        a missing key must not silence the line."""
+        a missing key must not silence the line, and an absent `arms` key (no
+        such payload exists, but the reader must not raise) reads as two arms."""
         from abkit.cli.commands.run import _verdict_note
 
         assert (

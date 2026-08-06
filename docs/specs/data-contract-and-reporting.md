@@ -213,11 +213,10 @@ gated on the arm count, so a two-arm readout is exactly what `0.8.0` rendered.
 
 One versioned, JSON-serializable payload per **experiment** — produced by
 `abkit/reporting/builder.py` (`build_report_payload`), consumed by both the
-readout renderer and the explore shell. **One key is not shared verbatim:** since
-m14 DEC-3 the cockpit's copy has its `verdicts` filtered back to the ship
-decisions (`builder.ship_decisions`, applied in `tuning/payload.py`), because
-Review mode prints the verdict word with nothing beside it and DEC-4 is the WP
-that gives it a role label. The Python builder and the renderer-side
+readout renderer and the explore shell. (m14 DEC-3 filtered the cockpit's
+`verdicts` back to the ship decisions for one WP, because Review mode printed
+the verdict word with nothing beside it; DEC-4 gave it a role label and a rollup
+line, and the payload rides verbatim again.) The Python builder and the renderer-side
 `web/src/shared/payload.ts` (M3 WP3) are kept in **documented lockstep** — same
 keys, same units (the donor's `payload.ts` discipline). Explore extends the
 payload with `param_specs`/tier-map/seed blocks; the report ignores unknown keys.
