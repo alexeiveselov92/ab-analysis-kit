@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import math
+from datetime import datetime
 
 import pytest
 import requests
@@ -41,6 +42,40 @@ def _readout(**overrides) -> ReadoutData:
     for k, v in overrides.items():
         setattr(base, k, v)
     return base
+
+
+#: One constructed channel per registered type — the DEC-4 roster gate builds
+#: every one of them rather than a hand-listed subset.
+def _channel_of_type(channel_type: str):
+    from abkit.config.profile import NotificationChannelConfig
+
+    configs = {
+        "discord": {"webhook_url": DISCORD_URL},
+        "email": {
+            "smtp_host": "localhost",
+            "smtp_port": 25,
+            "from_email": "a@b.c",
+            "to_emails": ["d@e.f"],
+        },
+        "googlechat": {"webhook_url": GCHAT_URL},
+        "mattermost": {"webhook_url": "https://mm.example.com/hooks/x"},
+        "ntfy": {"topic": "abkit"},
+        "slack": {"webhook_url": "https://hooks.slack.com/services/T/B/X"},
+        "teams": {"webhook_url": TEAMS_URL},
+        "telegram": {"bot_token": "123:abc", "chat_id": "42"},
+        "webhook": {"webhook_url": "http://x"},
+    }
+    cfg = NotificationChannelConfig.model_validate({"type": channel_type, **configs[channel_type]})
+    return ChannelFactory.create_from_config(cfg.model_dump())
+
+
+def _render_text(channel, readout) -> str:
+    """Everything the reader could see, whatever shape the channel posts in."""
+    import json as _json
+
+    ctx = channel.build_context(readout)
+    body = channel.build_payload(readout) if hasattr(channel, "build_payload") else None
+    return _json.dumps(body, default=str) + "\n" + _json.dumps(ctx, default=str)
 
 
 # ── verdict presentation ───────────────────────────────────────────────────────
@@ -821,3 +856,77 @@ def test_every_new_channel_resolves_through_the_factory_with_routing_keys(config
     channel = ChannelFactory.create_from_config(cfg.model_dump())
 
     assert channel.send(_readout()) is not None or True  # constructed is the assertion
+
+
+class TestTheDecisionLineReachesEveryChannel:
+    """m14 DEC-4: the rollup rides ON the control-anchored payload as fields.
+
+    It has to reach the reader, not just the dataclass: the rollup is part of
+    the dedup signature now, so a message can be re-sent BECAUSE the leader
+    moved — and a message that looks identical to the last one, arriving with
+    no explanation, is worse than the silence it replaced.
+
+    The roster is DERIVED from the factory, so a tenth channel cannot quietly
+    skip the line (the NTF-1 lesson about `on:` breaking every channel at once).
+    """
+
+    #: A FIXED look timestamp: several channels stamp the message with it, and
+    #: two renders a microsecond apart would differ for a reason that has
+    #: nothing to do with the decision layer.
+    _AS_OF = datetime(2026, 7, 1, 12, 0, 0)
+
+    @staticmethod
+    def _three_arm(**overrides):
+        return _readout(
+            arm_count=3,
+            leader="treatment_b",
+            separation="separated",
+            timestamp=TestTheDecisionLineReachesEveryChannel._AS_OF,
+            **overrides,
+        )
+
+    @pytest.mark.parametrize("channel_type", ChannelFactory.list_available_types())
+    def test_every_channel_names_the_leader_at_three_arms(self, channel_type):
+        channel = _channel_of_type(channel_type)
+        rendered = _render_text(channel, self._three_arm())
+
+        assert "treatment_b" in rendered, rendered
+        assert "Leader" in rendered or "leader" in rendered, rendered
+
+    @pytest.mark.parametrize("channel_type", ChannelFactory.list_available_types())
+    def test_a_two_arm_message_is_unchanged(self, channel_type):
+        """With one treatment "leader: treatment" restates the verdict word
+        beside it, so `0.8.0`'s message is reproduced to the character."""
+        channel = _channel_of_type(channel_type)
+        before = _render_text(channel, _readout(timestamp=self._AS_OF))
+        after = _render_text(
+            channel,
+            _readout(
+                arm_count=2,
+                leader="treatment",
+                separation="separated",
+                timestamp=self._AS_OF,
+            ),
+        )
+
+        assert before == after
+
+    def test_the_line_is_silent_under_a_failed_srm_gate(self):
+        """A rollup must not speak over a gate (DEC-2 delta 6, DEC-3's renderer
+        instance): the SRM line already says the effects are untrustworthy, and
+        "no arm beat the control" beside it reports a measured finding where
+        nothing was measurable."""
+        channel = WebhookChannel("http://x")
+        ctx = channel.build_context(
+            _readout(
+                arm_count=3, leader=None, separation="no_leader", srm_flag=True, srm_pvalue=1e-6
+            )
+        )
+
+        assert ctx["rollup_display"] == ""
+
+    def test_no_leader_is_reported_when_the_cohort_is_healthy(self):
+        channel = WebhookChannel("http://x")
+        ctx = channel.build_context(_readout(arm_count=3, leader=None, separation="no_leader"))
+
+        assert "No arm beat the control" in ctx["rollup_display"]

@@ -177,34 +177,85 @@ class TestReportGuards:
         assert "names one file" in result.output
 
 
-class TestTheSummaryLineStaysControlAnchored:
-    """m14 DEC-3 hold, opened by DEC-4.
+class TestTheSummaryLine:
+    """m14 DEC-4 (audit gap 7): the line labels its verdicts and names a leader.
 
-    Since DEC-3 the payload carries a verdict for every declared pair. This
-    line joins the bare WORDS, so a treatment-pair verdict would read as a
-    third ship decision — "WIN · FLAT · LOSE" where the last is one treatment
-    against another. DEC-4 replaces the line with labeled verdicts and drops
-    the filter; until then this test is what makes that a deliberate commit.
+    Through `0.8.0` it joined bare words, so at three arms the reader could not
+    tell which arm each belonged to. The arm-vs-arm verdicts DEC-3 added stay
+    OFF this line — they are evidence, and a one-line summary is the wrong
+    place to explain the difference.
     """
 
     @staticmethod
-    def _payload(*roles: str) -> dict:
+    def _payload(*roles: str, arms: int = 3, rollups=None) -> dict:
         words = ["WIN", "FLAT", "LOSE", "INCONCLUSIVE"]
+        treatments = ["t1", "t2", "t3", "t4"]
         return {
+            "arms": [f"a{i}" for i in range(arms)],
+            "rollups": rollups if rollups is not None else [],
             "verdicts": [
-                {"verdict": word, "role": role} for word, role in zip(words, roles, strict=False)
-            ]
+                {"verdict": word, "role": role, "pair": {"c": "control", "t": arm}}
+                for word, role, arm in zip(words, roles, treatments, strict=False)
+            ],
         }
 
-    def test_treatment_pairs_are_left_off_the_line(self):
+    def test_ship_decisions_carry_their_arm_and_arm_pairs_stay_off(self):
         from abkit.cli.commands.run import _verdict_note
 
         note = _verdict_note(self._payload("vs_control", "vs_control", "treatment_pair"))
-        assert note == "WIN · FLAT"
+        assert note == "WIN t1 · FLAT t2"
+
+    def test_the_leader_replaces_the_guesswork(self):
+        from abkit.cli.commands.run import _verdict_note
+
+        note = _verdict_note(
+            self._payload(
+                "vs_control",
+                "vs_control",
+                rollups=[{"metric": "revenue", "leader": "t1"}],
+            )
+        )
+        assert note == "WIN t1 · FLAT t2 · leader: t1 (revenue)"
+
+    def test_disagreeing_metrics_both_get_named(self):
+        """The readout REPORTS the disagreement and does not break the tie
+        (D2 — there is no declared metric priority), so neither may the line."""
+        from abkit.cli.commands.run import _verdict_note
+
+        note = _verdict_note(
+            self._payload(
+                "vs_control",
+                "vs_control",
+                rollups=[
+                    {"metric": "revenue", "leader": "t1"},
+                    {"metric": "orders", "leader": "t2"},
+                ],
+            )
+        )
+        assert note.endswith("leader: t1 (revenue), t2 (orders)")
+
+    def test_no_leader_prints_no_leader_clause(self):
+        from abkit.cli.commands.run import _verdict_note
+
+        note = _verdict_note(
+            self._payload("vs_control", rollups=[{"metric": "revenue", "leader": None}])
+        )
+        assert note == "WIN t1"
+
+    def test_a_two_arm_line_is_the_0_8_0_line(self):
+        """The §0.2 leg: one treatment means the arm suffix names the only arm
+        there is, so the line stays exactly what `0.8.0` printed."""
+        from abkit.cli.commands.run import _verdict_note
+
+        note = _verdict_note(
+            self._payload("vs_control", arms=2, rollups=[{"metric": "revenue", "leader": "t1"}])
+        )
+        assert note == "WIN"
 
     def test_a_pre_0_9_0_payload_has_no_role_and_is_all_ship_decisions(self):
         """Every list baked before 0.9.0 is control-anchored by construction —
-        a missing key must not silence the line."""
+        a missing key must not silence the line, and an absent `arms` key (no
+        such payload exists, but the reader must not raise) reads as two arms."""
         from abkit.cli.commands.run import _verdict_note
 
         assert (

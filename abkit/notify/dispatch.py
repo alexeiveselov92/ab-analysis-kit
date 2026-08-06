@@ -49,11 +49,17 @@ from abkit.notify.base import ReadoutData, describe_error
 from abkit.notify.branding import READOUT_GUIDE_URL
 from abkit.notify.cooldown import (
     recurring_signature,
+    rollup_signature,
     should_announce,
     should_announce_recurring,
 )
 from abkit.pipeline._types import BacklogEntry
-from abkit.pipeline.readout import ExperimentReadout, PairVerdict, evaluate
+from abkit.pipeline.readout import (
+    ExperimentReadout,
+    MetricRollup,
+    PairVerdict,
+    evaluate,
+)
 from abkit.utils.datetime_utils import now_utc_naive, to_naive_utc
 
 #: What a caller passes to receive the yellow one-liners this module produces.
@@ -249,6 +255,9 @@ def readout_data_from_verdict(
     still say which cutoff it describes.
     """
     comparison = next((c for c in experiment.comparisons if c.metric == verdict.metric), None)
+    rollup = _rollup_for(readout, verdict.metric)
+    leader = None if rollup is None else rollup.leader
+    separation = None if rollup is None else rollup.separation
     n_1, n_2 = _pair_sizes(verdict, rows)
     mentions = list(experiment.notify.mentions) if experiment.notify is not None else []
     return ReadoutData(
@@ -271,6 +280,15 @@ def readout_data_from_verdict(
         # disagree has to travel WITH the numbers (the M12 rule that a message
         # cannot disagree with the report about the same experiment).
         family_divergence=verdict.family_divergence,
+        # m14 DEC-4: the decision layer rides ON the control-anchored payload as
+        # fields — there is no seventh signal kind (D7). It has to travel with
+        # the numbers for the same reason `family_divergence` does: the rollup
+        # is now part of the dedup signature, so a message can be re-sent
+        # BECAUSE the leader moved, and a reader with no leader line would see
+        # an identical-looking message arrive twice with no explanation.
+        leader=leader,
+        separation=separation,
+        arm_count=len(experiment.assignment.variants),
         n_1=n_1,
         n_2=n_2,
         timestamp=to_naive_utc(verdict.end_ts),
@@ -424,7 +442,9 @@ def dispatch_experiment_signals(
                 verdict.name_2,
                 _method_config_id(experiment, verdict.metric),
             )
-            if should_announce(state, verdict.verdict, readout.srm_flag):
+            if should_announce(
+                state, verdict.verdict, readout.srm_flag, _rollup_signature(readout, verdict)
+            ):
                 previous = state.get("last_verdict") if state.get("notify_count") else None
                 if previous is not None and previous != verdict.verdict:
                     changed.add(len(keep))
@@ -467,8 +487,29 @@ def dispatch_experiment_signals(
                     _method_config_id(experiment, verdict.metric),
                     verdict=verdict.verdict,
                     srm_flag=readout.srm_flag,
+                    rollup=_rollup_signature(readout, verdict),
                 )
     return sum(per_payload)
+
+
+def _rollup_for(readout: ExperimentReadout, metric: str) -> MetricRollup | None:
+    """The rollup for one verdict's OWN metric (m14 DEC-4).
+
+    Per metric, never the experiment's first: a message about ``orders`` that
+    carried ``revenue``'s leader would name an arm the reader cannot find in
+    the numbers beside it.
+    """
+    for rollup in readout.rollups:
+        if rollup.metric == metric:
+            return rollup
+    return None
+
+
+def _rollup_signature(readout: ExperimentReadout, verdict: PairVerdict) -> str | None:
+    rollup = _rollup_for(readout, verdict.metric)
+    if rollup is None:
+        return rollup_signature(None, None)
+    return rollup_signature(rollup.leader, rollup.separation)
 
 
 def pipeline_error_notice(

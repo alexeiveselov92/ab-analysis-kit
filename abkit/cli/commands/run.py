@@ -107,21 +107,36 @@ def _resolve_report_path(report_path: str, project_root: Path, experiment: str) 
 
 
 def _verdict_note(payload: dict) -> str:
-    """The verdict words on the ``Report →`` line.
+    """The verdict summary on the ``Report →`` line (m14 DEC-4, audit gap 7).
 
-    **m14 DEC-3 hold, opened by DEC-4** (which prints LABELED verdicts and the
-    leader line). This joins the bare words, so the treatment-pair verdicts
-    DEC-3 put in the payload would append unlabeled words to a line the
-    operator reads as ship decisions: "WIN · FLAT · LOSE", where the third is
-    one treatment against another and says nothing about shipping either.
+    Through `0.8.0` this was ``" · ".join(words)`` — bare words, and at three
+    arms the reader could not tell which arm each belonged to. DEC-3 then put a
+    verdict on every DECLARED pair, so joining them unlabeled would have added
+    "WIN" for one treatment against another to a line read as ship decisions.
 
-    Extracted from the caller so the hold has something to test — the
-    surrounding function writes a file and prints.
+    So: the SHIP decisions carry their arm (``WIN treatment_b``) and the
+    arm-vs-arm verdicts stay OFF this line entirely — they are evidence, and a
+    one-line summary is the wrong place to explain the distinction. At 3+ arms
+    the leader replaces the list, because "which arm do I ship" is the question
+    the line is being read for; the per-pair words are on the page it points at.
+
+    A two-arm line is `0.8.0`'s to the character: one ship decision whose
+    treatment is the only one, so the arm suffix is dropped.
     """
     from abkit.reporting.builder import ship_decisions
 
-    words = [str(v["verdict"]) for v in ship_decisions(payload["verdicts"])]
-    return " · ".join(words) if words else "no verdicts yet"
+    ship = ship_decisions(payload["verdicts"])
+    if not ship:
+        return "no verdicts yet"
+    if len(payload.get("arms", [])) <= 2:
+        return " · ".join(str(v["verdict"]) for v in ship)
+
+    words = " · ".join(f"{v['verdict']} {v['pair']['t']}" for v in ship)
+    leaders = [r for r in payload.get("rollups", []) if r.get("leader")]
+    if not leaders:
+        return words
+    named = ", ".join(f"{r['leader']} ({r['metric']})" for r in leaders)
+    return f"{words} · leader: {named}"
 
 
 def _emit_experiment_report(

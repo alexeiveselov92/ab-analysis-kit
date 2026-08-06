@@ -365,12 +365,18 @@ def get_notify_states_table_model() -> TableModel:
     name_2, method_config_id)`` — so a re-tuned comparison starts a fresh dedup
     track instead of inheriting the old method's announcement history.
 
-    ``last_verdict`` and ``last_srm_flag`` together are the dedup signature: the
-    verdict word alone is not enough, because a pair that was already
-    INCONCLUSIVE (pre-horizon — the common case early in an experiment) and
-    then breaks its sample-ratio gate keeps the SAME word while becoming a
-    genuinely new, urgent fact. Comparing the pair means the SRM notification
-    NTF-2 built cannot be swallowed by NTF-3's dedup.
+    ``last_verdict``, ``last_srm_flag`` and ``last_rollup`` together are the
+    dedup signature: the verdict word alone is not enough, because a pair that
+    was already INCONCLUSIVE (pre-horizon — the common case early in an
+    experiment) and then breaks its sample-ratio gate keeps the SAME word while
+    becoming a genuinely new, urgent fact. Comparing the pair means the SRM
+    notification NTF-2 built cannot be swallowed by NTF-3's dedup.
+
+    ``last_rollup`` (m14 DEC-4, additive and NULLABLE — NULL means a row
+    written before `0.9.0`) is the same argument one arm-count up: at three
+    arms the leader can flip from B to C with every verdict word unchanged, and
+    the decision would go unannounced. It cannot move a two-arm project, where
+    both halves of the rollup identity are functions of the verdict word.
 
     ``last_notified_at`` is stamped only when a channel actually ACCEPTED the
     message (see ``notify/dispatch.py``): recording an announcement nobody
@@ -390,6 +396,7 @@ def get_notify_states_table_model() -> TableModel:
             ColumnDefinition("method_config_id", "String", max_length=64),
             ColumnDefinition("last_verdict", "Nullable(String)", nullable=True),
             ColumnDefinition("last_srm_flag", "Bool"),
+            ColumnDefinition("last_rollup", "Nullable(String)", nullable=True),
             ColumnDefinition("last_notified_at", "Nullable(DateTime64(3, 'UTC'))", nullable=True),
             ColumnDefinition("notify_count", "Int32"),
             ColumnDefinition("updated_at", "DateTime64(3, 'UTC')"),

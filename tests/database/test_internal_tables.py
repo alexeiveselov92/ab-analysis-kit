@@ -28,9 +28,11 @@ from abkit.database.internal_tables._results import RESULT_COLUMNS
 from abkit.database.tables import (
     INTERNAL_TABLES,
     TABLE_EXPERIMENTS,
+    TABLE_NOTIFY_STATES,
     TABLE_RESULTS,
     TABLE_TASKS,
     get_experiments_table_model,
+    get_notify_states_table_model,
     get_results_table_model,
 )
 from abkit.utils.datetime_utils import now_utc_naive
@@ -253,6 +255,72 @@ class TestCatalogSchemaMigration:
         record = {**_catalog_record_for("exp"), "invented_later": "x"}
         with pytest.raises(ValueError, match="would drop"):
             manager.upsert_experiment(record)
+
+
+#: Columns `_ab_notify_states` has gained since `0.8.0`. Same discipline as
+#: POST_0_7_0_CATALOG_COLUMNS above, and for the same reason: the "old" model
+#: below is derived by SUBTRACTION, so a WP that adds a column and forgets this
+#: set seeds a table that already has it and stops testing a migration at all.
+POST_0_8_0_NOTIFY_STATE_COLUMNS = ("last_rollup",)
+
+
+class TestNotifyStateSchemaMigration:
+    """m14 DEC-4: a `0.8.0` ``_ab_notify_states`` migrates additively.
+
+    The dedup signature gains the rollup identity, which means a new column on
+    a table `0.7.0` already ships — the STAT-6 shape, where a NOT-NULL/no-default
+    addition would meet ``ensure_columns``' refusal on the first run of every
+    installed project.
+    """
+
+    @staticmethod
+    def _pre_dec4_model() -> TableModel:
+        model = get_notify_states_table_model()
+        return TableModel(
+            columns=[
+                col for col in model.columns if col.name not in POST_0_8_0_NOTIFY_STATE_COLUMNS
+            ],
+            primary_key=model.primary_key,
+            engine=model.engine,
+            order_by=model.order_by,
+            version_column=model.version_column,
+        )
+
+    def test_the_seeded_model_is_really_older_than_the_current_one(self):
+        current = {col.name for col in get_notify_states_table_model().columns}
+        old = {col.name for col in self._pre_dec4_model().columns}
+        assert old < current, "the seeded table is not a strict subset of the current one"
+        assert current - old == set(POST_0_8_0_NOTIFY_STATE_COLUMNS)
+
+    def test_ensure_tables_adds_the_column_and_the_old_row_reads_null(self, backend):
+        full = backend.get_full_table_name(TABLE_NOTIFY_STATES, use_internal=True)
+        old_model = self._pre_dec4_model()
+        backend.create_table(full, old_model)
+        backend.insert_batch(
+            full,
+            {
+                "experiment": np.array(["exp"], dtype=object),
+                "metric": np.array(["revenue"], dtype=object),
+                "name_1": np.array(["control"], dtype=object),
+                "name_2": np.array(["treatment"], dtype=object),
+                "method_config_id": np.array(["mid"], dtype=object),
+                "last_verdict": np.array(["WIN"], dtype=object),
+                "last_srm_flag": np.array([False], dtype=object),
+                "last_notified_at": np.array([datetime(2026, 7, 1)], dtype=object),
+                "notify_count": np.array([1], dtype=object),
+                "updated_at": np.array([datetime(2026, 7, 1)], dtype=object),
+            },
+        )
+
+        manager = InternalTablesManager(backend)
+        manager.ensure_tables()
+
+        assert "last_rollup" in backend.list_columns(TABLE_NOTIFY_STATES)
+        state = manager.get_notify_state("exp", "revenue", "control", "treatment", "mid")
+        # NULL is the honest reading: the row was announced before rollups
+        # existed, and it must compare EQUAL to a fresh no-rollup readout so
+        # upgrading does not re-announce every comparison in the project.
+        assert state["last_rollup"] is None
 
 
 def _catalog_placeholder(column: str):

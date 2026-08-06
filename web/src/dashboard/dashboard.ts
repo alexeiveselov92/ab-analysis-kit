@@ -1266,6 +1266,11 @@ function render(payload: DashboardPayload, mount: HTMLElement): void {
           line.appendChild(
             el('span', 'abk-pair-name', `${verdict.metric}: ${verdict.pair.c} vs ${verdict.pair.t}`),
           );
+          // m14 DEC-4: an arm-vs-arm verdict is EVIDENCE. Unlabelled, a `WIN`
+          // on `t1 vs t2` in this list reads as a third ship decision.
+          if ((verdict.role ?? 'vs_control') !== 'vs_control') {
+            line.appendChild(el('span', 'abk-pair-role', 'arm vs arm'));
+          }
           line.appendChild(el('span', 'abk-pair-effect', dash(verdict.effect, fmtSigned)));
           if (verdict.guardrail_regressed) {
             line.appendChild(el('span', 'abk-badge-guardrail', 'guardrail regressed'));
@@ -1435,6 +1440,24 @@ function render(payload: DashboardPayload, mount: HTMLElement): void {
         setNote(note, note === '' ? '' : classes.slice(1).join(' '));
       }
 
+      // m14 DEC-4. The leader chip is the row's answer to "which arm", which
+      // the verdict word alone cannot give at 3+ arms. Gated on the ROLLUP
+      // COUNT rather than the arm count — the row does not carry one — via the
+      // pair list: a treatment-pair verdict exists only above two arms, and
+      // with two arms `leader` merely restates the WIN beside it.
+      const multiArm = row.verdicts.some((v) => v.role === 'treatment_pair');
+      if (multiArm && row.leader !== null) {
+        const badge = el('span', 'abk-badge-leader', `→ ${row.leader}`);
+        badge.title = row.rollups.find((r) => r.leader === row.leader)?.rationale.join('\n') ?? '';
+        badges.appendChild(badge);
+      }
+      if (row.leaders_agree === false) {
+        const badge = el('span', 'abk-badge-caveat', 'leaders split');
+        badge.title = row.rollups
+          .map((r) => `${r.metric}: ${r.leader ?? 'no leader'}`)
+          .join('\n');
+        badges.appendChild(badge);
+      }
       if (row.guardrail_regressed) {
         badges.appendChild(el('span', 'abk-badge-guardrail', 'guardrail'));
       }
@@ -1701,6 +1724,10 @@ function injectStyle(): void {
   border:1px solid var(--abk-st-warn);color:var(--abk-ink-2);cursor:help;}
 .${ROOT_CLASS} .abk-badge-lock{font:600 9.5px var(--abk-mono);padding:1px 6px;border-radius:7px;
   border:1px solid var(--abk-border);color:var(--abk-muted);cursor:help;}
+.${ROOT_CLASS} .abk-badge-leader{font:600 9.5px var(--abk-mono);padding:1px 6px;border-radius:7px;
+  border:1px solid var(--abk-explore-accent);color:var(--abk-explore-accent);cursor:help;}
+.${ROOT_CLASS} .abk-pair-role{margin-left:6px;font:500 9px var(--abk-mono);padding:0 4px;
+  border:1px solid var(--abk-border);border-radius:3px;color:var(--abk-muted);}
 /* row note / message / detail ----------------------------------------------- */
 .${ROOT_CLASS} .abk-row-note{font:11px var(--abk-mono);padding:0 12px 7px 44px;
   color:var(--abk-ink-2);}

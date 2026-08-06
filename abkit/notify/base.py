@@ -72,6 +72,17 @@ class ReadoutData:
     #: excludes zero under a verdict that does not call it, with no explanation
     #: and nowhere to look one up.
     family_divergence: bool = False
+    #: The decision layer (m14 DEC-4), for the verdict's OWN metric. ``leader``
+    #: is the arm to ship — ``None`` when nobody beat the control, which is the
+    #: common state — and ``separation`` says whether it is decisively ahead of
+    #: the other treatments. Both are ``None`` on a two-arm experiment's message
+    #: too, in the sense that ``arm_count`` gates the RENDERING: with one
+    #: treatment "leader: treatment" restates the verdict word beside it.
+    leader: str | None = None
+    separation: str | None = None
+    #: How many arms the experiment declares. The renderers' one gate for the
+    #: DEC-4 line, so a two-arm message is `0.8.0`'s to the character.
+    arm_count: int = 2
     n_1: int | None = None
     n_2: int | None = None
     timestamp: datetime | None = None
@@ -250,6 +261,31 @@ class BaseChannel(ABC):
             f"{family_divergence_display}\n" if family_divergence_display else ""
         )
 
+        # m14 DEC-4, gated on the ARM COUNT: with one treatment "leader:
+        # treatment" only restates the verdict word beside it, so a two-arm
+        # message is `0.8.0`'s to the character. It says "ship X", never just
+        # "X wins", because the whole point of the rollup is that it is a
+        # decision over arms rather than one pair's result — and it names the
+        # separation, since a leader nobody could separate from its rivals is a
+        # weaker recommendation than one that is decisively ahead.
+        rollup_display = ""
+        if readout.arm_count > 2 and readout.kind == "readout":
+            if readout.leader is not None:
+                rollup_display = f"Leader on {readout.metric}: {readout.leader}"
+                if readout.separation == "separated":
+                    rollup_display += " — separated from every other arm"
+                elif readout.separation == "co_leaders":
+                    rollup_display += " — not separated from every other arm"
+                elif readout.separation == "untested":
+                    rollup_display += " — separation untested"
+            elif readout.separation == "no_leader" and not readout.srm_flag:
+                # deliberately silent under a failed SRM gate: the gate line
+                # above already says the effects are untrustworthy, and "no arm
+                # beat the control" beside it would report a measured finding
+                # where nothing was measurable (the DEC-3 renderer lesson)
+                rollup_display = f"No arm beat the control on {readout.metric} yet"
+        rollup_line = f"{rollup_display}\n" if rollup_display else ""
+
         dashboard_url = readout.dashboard_url or ""
         dashboard_line = f"Report: {dashboard_url}\n" if dashboard_url else ""
 
@@ -296,6 +332,8 @@ class BaseChannel(ABC):
             "weekly_cycle_line": weekly_cycle_line,
             "family_divergence_display": family_divergence_display,
             "family_divergence_line": family_divergence_line,
+            "rollup_display": rollup_display,
+            "rollup_line": rollup_line,
             "dashboard_url": dashboard_url,
             "dashboard_line": dashboard_line,
             "help_url": help_url,
@@ -322,6 +360,7 @@ class BaseChannel(ABC):
             "{srm_line}"
             "{weekly_cycle_line}"
             "{family_divergence_line}"
+            "{rollup_line}"
             "Observed: {timestamp}\n"
             "{dashboard_line}"
             "{help_line}"

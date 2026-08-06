@@ -122,6 +122,8 @@ class EmailChannel(BaseChannel):
                 rows.append(("Note", esc(ctx["weekly_cycle_display"])))
             if ctx["family_divergence_display"]:
                 rows.append(("Note", esc(ctx["family_divergence_display"])))
+            if ctx["rollup_display"]:
+                rows.append(("Decision", esc(ctx["rollup_display"])))
         row_html = "".join(
             f'<tr><td style="padding:4px 12px 4px 0;color:{_MUTED};font-size:13px;">{label}</td>'
             f'<td style="padding:4px 0;color:{_INK};font-size:14px;font-weight:600;">{value}</td></tr>'

@@ -94,6 +94,7 @@ class TeamsChannel(BaseChannel):
                 ctx["srm_display"],
                 ctx["weekly_cycle_display"],
                 ctx["family_divergence_display"],
+                ctx["rollup_display"],
             ):
                 if extra:
                     body.append(_text_block(extra, wrap=True))

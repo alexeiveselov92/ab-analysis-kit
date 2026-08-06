@@ -30,7 +30,23 @@ EMPTY_STATE: dict[str, Any] = {
 }
 
 
-def announcement_signature(verdict: str | None, srm_flag: bool) -> tuple[str | None, bool]:
+def rollup_signature(leader: str | None, separation: str | None) -> str | None:
+    """The decision-layer half of the signature (m14 DEC-4).
+
+    ``None`` — never a string — for a readout that carries no rollup, so a
+    pre-`0.9.0` state row (whose stored value is NULL) compares equal to a
+    fresh one and does not re-announce every comparison on upgrade.
+    """
+    if leader is None and separation is None:
+        return None
+    return f"{leader or ''}|{separation or ''}"
+
+
+def announcement_signature(
+    verdict: str | None,
+    srm_flag: bool,
+    rollup: str | None = None,
+) -> tuple[str | None, bool, str | None]:
     """What a message ANNOUNCES, which is more than its verdict word.
 
     The SRM gate is part of it because the two can move independently in the
@@ -39,19 +55,38 @@ def announcement_signature(verdict: str | None, srm_flag: bool) -> tuple[str | N
     when its sample-ratio gate breaks. Deduping on the word alone would
     therefore swallow the SRM alarm, silencing the urgent signal NTF-2 exists
     to deliver, on the experiments most likely to need it.
+
+    **The rollup identity is part of it for the same reason, one arm-count up**
+    (m14 DEC-4). At three arms the leader can flip from B to C while every
+    verdict word stays ``WIN``: the ship decision changed and, without this
+    term, nobody would be told. Separation rides along because
+    "we could not compare them" → "they are tied" is also a changed decision.
+    This is NTF-3's own trap — deduping on the verdict word alone — in its
+    multi-arm form.
+
+    **It cannot fire at two arms**, structurally: with one treatment the leader
+    is that arm iff its verdict is WIN and the separation follows from the same
+    fact, so both terms are functions of the word already in the signature.
     """
-    return (verdict, bool(srm_flag))
+    return (verdict, bool(srm_flag), rollup)
 
 
-def should_announce(state: dict[str, Any], verdict: str | None, srm_flag: bool) -> bool:
+def should_announce(
+    state: dict[str, Any],
+    verdict: str | None,
+    srm_flag: bool,
+    rollup: str | None = None,
+) -> bool:
     """Has anything changed since the last message about this comparison?
 
     A never-announced comparison (``last_verdict is None``,
     ``notify_count == 0``) always announces: its first readout is news.
     """
-    current = announcement_signature(verdict, srm_flag)
+    current = announcement_signature(verdict, srm_flag, rollup)
     previous = announcement_signature(
-        state.get("last_verdict"), bool(state.get("last_srm_flag", False))
+        state.get("last_verdict"),
+        bool(state.get("last_srm_flag", False)),
+        state.get("last_rollup"),
     )
     if not state.get("notify_count"):
         # Nothing was ever delivered for this comparison. Do not compare
