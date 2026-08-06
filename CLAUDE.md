@@ -22,7 +22,7 @@ The as-built condensation for contributors/assistants (detectkit-style):
 Design contracts for what is being *built next* stay in [docs/specs/](docs/specs/)
 (canonical for M2+ work — table below). Keep rules ↔ docs in sync per milestone.
 
-## Status: M1–M13 shipped; latest on PyPI: `0.8.0` (M13 = versioned statistics, all opt-in); BOTH `0.6.x` interstitials closed (PLAN-1/PLAN-2 in `0.6.1`/`0.6.2`, UI-1 + UI-2 + PERF-1 in `0.6.4`); polish track continues with M14–M17 (**M14 IN PROGRESS — DEC-1, the declared `control:` baseline, is merged**)
+## Status: M1–M13 shipped; latest on PyPI: `0.8.0` (M13 = versioned statistics, all opt-in); BOTH `0.6.x` interstitials closed (PLAN-1/PLAN-2 in `0.6.1`/`0.6.2`, UI-1 + UI-2 + PERF-1 in `0.6.4`); polish track continues with M14–M17 (**M14 IN PROGRESS — DEC-1…DEC-4 merged; DEC-5 and the DEC-6 exit gate remain**)
 
 **Done — M1, the pure statistical core** (`abkit.stats`, importable standalone;
 see [ROADMAP.md](ROADMAP.md) for the deferred-cleanup list): data model with the
@@ -327,8 +327,14 @@ every other treatment, not the runner-up. **✅ DEC-3** put it on the report:
 the payload carries every declared pair plus the rollups, and the page grows a
 role chip, a cross-arm overview and a pair selector — all gated at 3+ arms, so a
 two-arm readout renders the DOM `0.8.0` rendered. Opening the payload opened
-THREE readers, so `abk explore` and the `abk run --report` summary line hold at
-control-anchored (one shared `ship_decisions`) until DEC-4**; M15–M17 (new methods, owned
+THREE readers, so `abk explore` and the `abk run --report` summary line were
+held at control-anchored (one shared `ship_decisions`). **✅ DEC-4** released
+both and finished the layer: the dashboard row's headline is the first declared
+main metric's ROLLUP LEADER rather than an arbitrary arm, explore's Review mode
+labels the role and names the leader, the CLI line names it per metric, and the
+notification dedup signature gained the rollup identity so a leader flip with no
+verdict word moving is no longer silent — with notifications themselves staying
+control-anchored by decision (D7)**; M15–M17 (new methods, owned
 randomization, app integration) stay contours, design-session-first. The
 track section in [ROADMAP.md](ROADMAP.md) is the map;
 [m7](docs/specs/m7-implementation-plan.md),
@@ -358,7 +364,7 @@ spec before writing code:
 | The A/A FPR matrix (`abk validate`) | [docs/specs/aa-false-positive-matrix.md](docs/specs/aa-false-positive-matrix.md) |
 | CLI, explore cockpit, init-claude, Prefect, docs | [docs/specs/cli-and-dx.md](docs/specs/cli-and-dx.md) |
 | `abk dashboard` — the launcher discipline, the row shape, the job routes | [docs/specs/m11-implementation-plan.md](docs/specs/m11-implementation-plan.md) |
-| **The multi-arm decision layer being built now** (✅ `control:`, ✅ the verdicts + the rollup, ✅ the report; next: dashboard·explore·notify·CLI) | [docs/specs/m14-implementation-plan.md](docs/specs/m14-implementation-plan.md) |
+| **The multi-arm decision layer being built now** (✅ `control:`, ✅ the verdicts + the rollup, ✅ the report, ✅ the other surfaces; next: DEC-5 validate·plan·SRM) | [docs/specs/m14-implementation-plan.md](docs/specs/m14-implementation-plan.md) |
 | **What must be true before/after each milestone** | [docs/specs/quorum-review.md](docs/specs/quorum-review.md) (the must-fix gate) |
 
 The master plan in Russian: [docs/ru/project-initiation-spec.md](docs/ru/project-initiation-spec.md).

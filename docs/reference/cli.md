@@ -239,8 +239,10 @@ or to all configured channels when it has none. A **failed SRM gate** does not
 add a message: the readout already built answers to the `srm` kind as well, so an
 `on: [srm, error]` channel hears about a broken split without receiving routine
 readouts. **Only a CHANGE is announced**: abkit records what each comparison last
-said in `_ab_notify_states` and stays quiet until the verdict — or its SRM gate —
-moves, so a scheduled run every hour is not a message every hour. A message no
+said in `_ab_notify_states` and stays quiet until the verdict, its SRM gate, or
+(at 3+ arms) the metric's **leader** moves — the ship decision can change with
+every verdict word unchanged — so a scheduled run every hour is not a message
+every hour. A 3+-arm message also carries a `Leader on <metric>: <arm>` line. A message no
 channel accepted is not recorded, so the next run retries it. A completed run
 also sends a **`stale`** notice when a metric's computed series was more than
 three cadence steps behind the looks already due when the run planned it — a

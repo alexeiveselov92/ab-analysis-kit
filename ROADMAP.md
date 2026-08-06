@@ -964,7 +964,7 @@ STAT-1b, STAT-2, STAT-1), the guard (STAT-3a) and the proportion interval
 An explicit `control:` field (✅ **shipped — DEC-1**);
 experiment-level winner rollup on `ExperimentReadout` (✅ DEC-2);
 treatment-vs-treatment verdicts (✅ DEC-2); a cross-arm overview in report
-(✅ DEC-3) / explore / dashboard (the 0.1.x
+(✅ DEC-3) / explore / dashboard (✅ DEC-4) (the 0.1.x
 multi-arm UX safe wins fold in here). Pair statistics do not change — this is
 the interpretation layer + UI, built on M11's dashboard surface.
 
@@ -997,17 +997,27 @@ metric — leader among WINNING arms only, separation tested against EVERY other
 treatment, plus `leaders_agree`. No verdict `0.8.0` issued moved (proved by
 diffing against a live `main` module across 8 configurations), the read-time
 family is built from ROWS and is untouched, and the report / dashboard /
-notification surfaces are held control-anchored so DEC-3 and DEC-4 open them
-deliberately. ✅ **DEC-3** — the report: the payload carries every declared
+notification surfaces were held control-anchored so DEC-3 and DEC-4 could open
+them deliberately (notifications stay so by decision — D7). ✅ **DEC-3** — the report: the payload carries every declared
 pair with its `role` plus the read-time `rollups`/`leaders_agree`, and the HTML
 readout renders a role chip on the arm-vs-arm cards (collapsed, below the ship
 decisions), a cross-arm overview per main metric (leader · separation · an arm
 table of effect · CI · verdict · n) and a pair selector — **all gated at 3+
 arms, so a two-arm report is byte-identical to `0.8.0`**. Opening the payload
 turned out to open THREE readers, not one: `abk explore` and the
-`abk run --report` summary line print the verdict word alone and are held at
-control-anchored through one shared `reporting.builder.ship_decisions` until
-DEC-4. ⬜ DEC-4 next (dashboard · explore · notify · CLI). As-built deltas: a third resolver
+`abk run --report` summary line print the verdict word alone and were held at
+control-anchored through one shared `reporting.builder.ship_decisions`.
+✅ **DEC-4** — the other surfaces, and both of those holds released. The
+dashboard row's headline is the first declared main metric's **rollup leader**
+(it was `verdicts[0]`, i.e. an arbitrary arm at 3+ arms — the milestone's
+highest-value single fix), with a leader chip, a `leaders split` chip, an
+`N lost` chip and an expand list of every declared pair; explore's Review mode
+gains a rollup line, `arm vs arm` tags and per-metric pair memory (audit gap
+10); the CLI line names the leader per metric instead of joining bare words
+(audit gap 7); and notifications stay control-anchored by decision (D7) while
+their dedup signature gains the rollup identity, so a leader flip with no
+verdict word moving is no longer silent. A two-arm experiment is unchanged on
+every one of them. ⬜ DEC-5 next (`validate` · `plan` · SRM). As-built deltas: a third resolver
 member (`control_reorients_pairs`), one shared `UNDECLARED_PAIR_CAUSES` string
 replacing four surface-local copies of the cause list, a `control` key in the
 report payload so the report/explore headers stop claiming "first = control",
@@ -1073,7 +1083,8 @@ A/A revalidation).
     helper + registry-parametrized contract/completeness tests + double-compute dedup.
   - Multi-arm: B-vs-C (non-control) **verdict card** ✅ shipped in M14 DEC-3 (behind a
     *not a ship decision* role chip) + on-page asymmetry note; per-pair
-    labels in `abk run --report` text (still live — DEC-4); explore `activePair` memory.
+    labels in `abk run --report` text ✅ DEC-4 (the leader replaces the words at 3+
+    arms); explore `activePair` memory ✅ DEC-4.
 - **1.x (versioned statistical improvements — ALGORITHM_VERSION + A/A; opt-in first):**
   - **Holm** (step-down) over Bonferroni (strict power gain, same FWER); z-test **unpooled**
     CI SE; restore the **relative-z covariance** term; **uniform ddof=1**; **Agresti-Caffo /
@@ -1082,7 +1093,7 @@ A/A revalidation).
     same items already named under v2 below — promote per demand.)*
   - Multi-arm decision layer: **experiment-level winner rollup** on `ExperimentReadout`
     ✅ + treatment-vs-treatment verdicts ✅ (M14 DEC-2) + a cross-arm overview
-    (✅ in the report, DEC-3; explore/dashboard pending DEC-4); the explicit
+    (✅ in the report DEC-3, ✅ in explore/dashboard/notify/CLI DEC-4); the explicit
     **`control:`** field ✅ shipped in M14 DEC-1.
 - **v2 / bets:** incremental Chan-merge cumulative recompute (the real warehouse-cost lever;
   see below); drop-`statsmodels` scipy reimplementation (or `[power]` optional extra);

@@ -139,7 +139,9 @@ on with nothing declared additive, and how many looks fell back to recompute.
   the page carries the decision layer: a cross-arm overview per main metric
   (leader · separation · an arm table), a card per declared pair with the
   arm-vs-arm ones labelled *not a ship decision*, and a pair selector. The
-  one-line terminal summary beside it still lists the SHIP decisions only.
+  one-line terminal summary beside it names the LEADER per main metric at 3+
+  arms (`leader — revenue: b, orders: b`, plus `(metrics disagree)` when they
+  split) rather than listing verdict words; two-arm output is unchanged.
 - `--cost-report` — print per-stage warehouse cost (wall-time, queries, rows returned,
   rows scanned where the backend reports them), plus `of which day-additive:` — the
   same measured cost attributed to the state-eligible comparisons only, followed by
@@ -162,7 +164,11 @@ on with nothing declared additive, and how many looks fell back to recompute.
   remembers what each comparison last said, and an unchanged verdict is not
   re-sent — so a scheduled run every hour is not a message every hour. A newly
   broken SRM gate counts as a change even when the verdict word is identical
-  (a pre-horizon pair says INCONCLUSIVE either way), and a message no channel
+  (a pre-horizon pair says INCONCLUSIVE either way) — and so does a moved
+  LEADER or separation state at 3+ arms, since the ship decision can change with
+  every verdict word unchanged. A 3+ arm message also carries a
+  `Leader on <metric>: <arm> — …` line, suppressed under a failed SRM gate and
+  at two arms. A message no channel
   accepted is not recorded, so the next run retries it. A completed run also
   sends a **`stale`** notice when a metric's series was more than 3 cadence steps
   behind the looks ALREADY DUE when the run planned it. Read it as "the schedule
@@ -207,7 +213,11 @@ abk dashboard [--select <sel>]... [--exclude <sel>]... [--window 24h|7d|30d|90d|
 and help. `dashboard` stays canonical: `dashboard`/`explore` say WHICH surface
 you want, where `ui` does not.
 
-The project-level cockpit (0.6.0): one row per selected experiment — headline
+The project-level cockpit (0.6.0). At 3+ arms the row's headline is the first
+declared main metric's ROLLUP LEADER (falling back to the first declared
+treatment when no arm beat control), with a `→ arm` chip, a `leaders split` chip
+when two main metrics name different arms, an `N lost` chip, and `arm vs arm`
+tags on treatment pairs in the expand list. One row per selected experiment — headline
 verdict, effect, p-value, last look and a sparkline — served on localhost with a
 per-start token that authorizes EVERY request, `GET` included. The page boots on
 metadata only and fills each row on demand (3 requests in flight), so a

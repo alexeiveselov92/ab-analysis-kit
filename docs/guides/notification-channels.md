@@ -376,6 +376,8 @@ happens. abkit remembers, per comparison, what it last told you (in
 | WIN → LOSE, INCONCLUSIVE → WIN, any flip | **yes** |
 | Same verdict, but the SRM gate just broke | **yes** |
 | Same verdict, SRM still broken | no |
+| Same verdict, but the metric's **leader** moved (3+ arms) | **yes** |
+| Same verdict, the leader's *point estimate* moved but the arms are co-leaders | no |
 | A run that failed | **yes, every time** — an error is not a verdict, and a run that fails twice failed twice |
 
 Only the rows marked as a *flip* also count as `verdict_change`: the first
@@ -386,6 +388,25 @@ The SRM row is the subtle one and it is deliberate: before its horizon an
 experiment sits at INCONCLUSIVE for days, so a broken split would keep the
 verdict word identical. Remembering the gate alongside the verdict is what keeps
 that alarm from being deduped away.
+
+The **leader** rows are the same argument at three or more arms: the arm to ship
+can move from B to C while both comparisons stay `WIN`. abkit remembers the
+rollup too — but only when the rollup **separated** the leader. Under
+`co-leaders` it is saying the arms are indistinguishable, and keying on which of
+them happened to poll higher would send you a message on roughly half of all
+runs. At two arms none of this can fire: with one treatment the leader is a
+function of the verdict word.
+
+A 3+-arm message also carries the decision itself:
+
+```
+Leader on revenue: treatment_b — separated from every other arm
+```
+
+suppressed under a failed SRM gate (the gate line above it already says the
+effects are untrustworthy) and at two arms (it would restate the verdict word
+beside it). When no arm won, the line is the readout's own sentence — which
+distinguishes "nobody beat the control" from "nothing could be judged yet".
 
 Two consequences worth knowing:
 

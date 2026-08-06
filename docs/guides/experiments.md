@@ -453,12 +453,10 @@ overview** naming the leader and whether it separated from the other treatments
 — see [Multi-arm: who won?](reading-a-readout.md#multi-arm-who-won). A few
 adjacent surfaces are honestly not (yet) k-arm-aware, though:
 
-- **The cockpit and the dashboard still read control-anchored.**
-  [`abk explore`](explore.md)'s Review mode shows one line per
-  control-vs-treatment pair and no rollup line, the dashboard row's headline is
-  one arm's verdict, and `abk run --report`'s one-line summary joins the ship
-  decisions' words with no labels. All four are the next work package; the HTML
-  report is the surface that reads the whole decision layer today.
+- **`abk validate` and `abk plan` are not yet arm-aware** — see the two bullets
+  below. Every *presentation* surface reads the whole decision layer: the
+  report, the dashboard row, [`abk explore`](explore.md)'s Review mode,
+  notifications and the `abk run --report` line.
 - **`abk plan` sizes off one contrast only** — the control against the FIRST
   declared treatment. (Deliberately not `contrast_pairs()[0]`: with a control
   declared late in `variants` that entry is a treatment-vs-treatment pair, which
