@@ -618,7 +618,92 @@ class TestDeclaredControlReachesThePlaceboSplit:
         )
 
     def test_the_share_follows_the_declaration(self):
+        """Superseded in its DENOMINATOR by m14 DEC-5, not in its claim.
+
+        The share is still the CONTROL's, but now within the calibrated PAIR
+        rather than over every arm: 20/40/40 with the default control gives
+        0.2/(0.2+0.4) = 1/3, the split the live control-vs-b comparison runs,
+        where `0.8.0` used 0.2 — a baseline share no comparison in this
+        experiment has. Declaring `control: c` moves both the numerator and the
+        pair (c vs a, the first declared treatment).
+        """
         from abkit.validate.runner import _share_a
 
-        assert _share_a(self._experiment()) == pytest.approx(0.2)
-        assert _share_a(self._experiment(control="c")) == pytest.approx(0.4)
+        assert _share_a(self._experiment()) == pytest.approx(0.2 / 0.6)
+        assert _share_a(self._experiment(control="c")) == pytest.approx(0.4 / 0.6)
+
+    def test_the_pair_is_the_control_against_the_first_declared_treatment(self):
+        from abkit.validate.runner import calibrated_contrast
+
+        assert calibrated_contrast(self._experiment()) == ("a", "b")
+        # with a control declared LAST, the first treatment is `a` — and
+        # `contrast_pairs()[0]` would have been the treatment pair (a, b)
+        assert calibrated_contrast(self._experiment(control="c")) == ("c", "a")
+
+    def test_a_two_arm_split_is_unchanged(self):
+        """The WP's №1 assertion, at the level the change is made: with two arms
+        the pair IS the whole split, so the new denominator equals the old."""
+        from abkit.validate.runner import _share_a
+
+        two_arm = ExperimentConfig.model_validate(
+            {
+                "name": "share_two",
+                "start_ts": "2024-07-01",
+                "horizon_ts": "2024-07-15",
+                "unit_key": "user_id",
+                "assignment": {
+                    "query": "SELECT 1",
+                    "variants": ["control", "treatment"],
+                    "expected_split": {"control": 0.3, "treatment": 0.7},
+                },
+                "comparisons": [
+                    {"metric": "cr", "is_main_metric": True, "method": {"name": "z-test"}}
+                ],
+            }
+        )
+
+        assert _share_a(two_arm) == pytest.approx(0.3)
+
+
+class TestTheCalibratedContrastIsDisclosed:
+    """m14 DEC-5(a): one pair sizes the placebo, so the verdict names it.
+
+    A decision-log entry would not do — no CLI user ever sees one (the M7 WP6
+    lesson, where a warning found by review had never reached a terminal).
+    """
+
+    @staticmethod
+    def _score(fpr=0.05, share=None):
+        import inspect
+
+        from abkit.validate.scoring import CellScore
+
+        # built from the dataclass' own signature: a new CellScore field must
+        # not silently default here, it must be classified (the m13 roster rule)
+        kwargs = {
+            "iterations": 2000,
+            "valid_iterations": 2000,
+            "fpr": fpr,
+            "fpr_negative_share": share,
+            "peeking_fpr": fpr,
+            "peeking_curve": (),
+        }
+        params = inspect.signature(CellScore).parameters
+        for name, param in params.items():
+            if name not in kwargs and param.default is inspect.Parameter.empty:
+                kwargs[name] = None
+        return CellScore(**kwargs)
+
+    def test_three_arms_name_the_pair(self):
+        from abkit.validate.runner import _verdict
+
+        note = _verdict("t-test", "arpu", self._score(), 0.075, 0.05, ("control", "b"))
+        assert note.endswith("; calibrated on control vs b")
+
+    def test_two_arms_say_nothing(self):
+        """Naming the only pair there is would be noise — and would move a
+        `0.8.0` string, which the WP's №1 assertion forbids."""
+        from abkit.validate.runner import _verdict
+
+        note = _verdict("t-test", "arpu", self._score(), 0.075, 0.05, None)
+        assert "calibrated on" not in note

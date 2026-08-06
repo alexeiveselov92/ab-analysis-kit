@@ -228,8 +228,14 @@ def test_plan_multi_arm_warns_sizing_is_first_pair_only(capsys):
     grid = exp.grid()
     _emit_plan(exp, project, alphas, 0.8, len(grid), grid, 42, [plan])
     out = capsys.readouterr().out
-    assert "3-arm experiment" in out
-    assert "control vs t1 contrast only" in out
+    # m14 DEC-5(b): the "one contrast only" warning is replaced by real numbers.
+    # This split is even to 1 part in 34, so every vs-control contrast sizes the
+    # same and the honest report is one sentence rather than two identical lines.
+    assert "contrast only" not in out
+    assert "all 2 declared vs-control contrasts size identically" in out
+    # …and the arm-vs-arm half of an `all_pairs` family is disclosed as UNSIZED
+    # rather than silently missing: it shares the alpha and has no baseline
+    assert "treatment-vs-treatment contrast" in out and "not sized" in out
 
 
 def test_plan_comparison_refuses_ratio_and_bootstrap_but_sizes_ztest():
@@ -985,5 +991,8 @@ class TestDeclaredControlReachesTheSizing:
         grid = exp.grid()
         _emit_plan(exp, project, alphas, 0.8, len(grid), grid, 42, [plan])
         out = capsys.readouterr().out
-        assert "c vs a contrast only" in out
-        assert "a vs b contrast only" not in out
+        # since m14 DEC-5(b) the declared pairs are SIZED rather than named in a
+        # warning; the split here is uneven, so each gets its own line and the
+        # declared control `c` is the baseline in every one of them
+        assert "c vs b" in out
+        assert "a vs b" not in out, "a treatment pair is never sized as a contrast"

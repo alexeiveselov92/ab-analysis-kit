@@ -15,6 +15,8 @@ disclosed on the panel (aa-fpr §3 "the matrix must state when it did").
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import numpy as np
 
 from abkit.compute.recompute_backend import RecomputeBackend
@@ -65,13 +67,31 @@ def subsample_grid(cutoffs: tuple[Cutoff, ...], cap: int) -> tuple[list[Cutoff],
 
 
 def _pool(
-    loaded: MetricLoadResult, input_kind: str
+    loaded: MetricLoadResult,
+    input_kind: str,
+    arms: Sequence[str] | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None, np.ndarray | None]:
-    """Pool a per-variant load into one per-unit (units, values, secondary, covariate)."""
+    """Pool a per-variant load into one per-unit (units, values, secondary, covariate).
+
+    *arms* restricts the pool to the CALIBRATED CONTRAST (m14 DEC-5). Pooling
+    every arm sizes a design nobody is running: at three even arms the placebo
+    then splits 1/3 vs 2/3 over three arms' units, while the live
+    control-vs-treatment comparison is 1/2 vs 1/2 over two arms'. The FPR column
+    is robust to that — a null is a null at any n — but power and achieved-MDE
+    are read off per-arm n and feed the Recommended row, so the placebo's ≈1.5×
+    units make the achieved MDE optimistic by ≈√1.5 ≈ 22%.
+
+    Filtering PRESERVES `variants()`' order rather than following *arms*, so a
+    two-arm experiment (where the two are the same set) concatenates in exactly
+    the order it always did — the WP's byte-identity claim.
+    """
     if input_kind not in _ROLES:
         raise ValidateError(f"unsupported metric input_kind {input_kind!r}")
     primary_role, secondary_role = _ROLES[input_kind]
     variants = loaded.variants()
+    if arms is not None:
+        keep = set(arms)
+        variants = [v for v in variants if v in keep]
     if not variants:
         empty = np.array([], dtype=np.float64)
         return np.array([], dtype=object), empty, None, None
@@ -97,12 +117,17 @@ def load_placebo_panel(
     *,
     input_kind: str,
     cap: int = DEFAULT_GRID_CAP,
+    arms: Sequence[str] | None = None,
 ) -> PlaceboPanel:
     """Load the pooled per-unit panel for one (metric, comparison) over the grid.
 
     ``input_kind`` mirrors the method family (``sample`` | ``fraction`` | ``ratio``).
     The covariate is loaded when the comparison's method declares ``covariate_lookback``
     (a fixed pre-period constant per unit — the same value across cutoffs).
+
+    ``arms`` names the two variants of the contrast being calibrated (m14
+    DEC-5); ``None`` pools every arm, which is what `0.8.0` did and what a
+    two-arm experiment means anyway.
     """
     kept_cutoffs, kept, total = subsample_grid(grid.cutoffs, cap)
     if not kept_cutoffs:
@@ -116,7 +141,7 @@ def load_placebo_panel(
     # The horizon (last, by construction the superset of every earlier cumulative
     # cutoff) defines the global unit universe and the fixed covariate.
     horizon_load = loads[-1][1]
-    h_units, _h_values, _h_secondary, h_cov = _pool(horizon_load, input_kind)
+    h_units, _h_values, _h_secondary, h_cov = _pool(horizon_load, input_kind, arms)
     if h_units.size == 0:
         raise ValidateError(
             f"metric '{metric.name}': no units at the horizon cutoff — nothing to validate"
@@ -130,7 +155,7 @@ def load_placebo_panel(
 
     panel_cutoffs: list[PanelCutoff] = []
     for cut, loaded in loads:
-        units, values, secondary, _cov = _pool(loaded, input_kind)
+        units, values, secondary, _cov = _pool(loaded, input_kind, arms)
         # map present units → global indices (units absent from the horizon cannot
         # occur under cumulative growth; guard drops any stray rather than crashing)
         keep = np.array([unit in global_index for unit in units], dtype=bool)

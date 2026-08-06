@@ -2132,7 +2132,12 @@ function buildSrmChip(payload: ReportPayload): HTMLElement {
     const exp = payload.arms.map((arm) => (srm.expected[arm] ?? 0).toFixed(2)).join('/');
     const p = srm.pvalue === null ? 'p=—' : `p${srm.pvalue < 0.001 ? '<0.001' : '=' + fmtP(srm.pvalue)}`;
     chip.classList.add('abk-srm-fail');
-    chip.textContent = `SRM FAILED (observed ${obs} vs expected ${exp}, χ² ${p}) — effects untrustworthy`;
+    // m14 DEC-5(c): the same server-computed culprit the report chip reads —
+    // one decomposition, two surfaces, no second transcription.
+    const culprit = srm.culprit
+      ? ` — ${srm.culprit.arm} has too ${srm.culprit.direction === 'under' ? 'few' : 'many'} units`
+      : '';
+    chip.textContent = `SRM FAILED (observed ${obs} vs expected ${exp}, χ² ${p})${culprit} — effects untrustworthy`;
     chip.setAttribute('data-abk-srm', 'fail');
   } else if (total === 0) {
     chip.textContent = 'SRM — no exposure data';

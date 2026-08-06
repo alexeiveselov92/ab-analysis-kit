@@ -857,6 +857,10 @@ class TestEmptyContract:
             "observed": {"control": 0, "treatment": 0},
             "expected": {"control": 0.5, "treatment": 0.5},
             "kind": "chi2",  # daily cadence ⇒ the χ² gate (WP5)
+            # m14 DEC-5(c): null at two arms, where naming one of two mirrored
+            # residuals is a tautology — so a two-arm payload keeps `0.8.0`'s
+            # value for every field it had
+            "culprit": None,
         }
         (metric,) = payload["metrics"]
         assert metric["name"] == "revenue"

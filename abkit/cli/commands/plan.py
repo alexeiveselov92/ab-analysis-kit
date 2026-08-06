@@ -45,6 +45,7 @@ from abkit.planning.sizing import (
     AsnResult,
     BaselineMoments,
     ComparisonPlan,
+    ContrastSizing,
     RuntimePlan,
     asn_for,
     is_powered,
@@ -410,6 +411,25 @@ def _plan_comparison(
         target_mde=target_mde,
         plan_ratio=plan_ratio,
     )
+    # m14 DEC-5(b): every OTHER declared vs-control contrast, sized for real.
+    # Only the allocation RATIO differs between them — the baseline is the
+    # control's either way — so this is the same solve at a different ratio, not
+    # a second model.
+    contrasts = tuple(
+        ContrastSizing(
+            pair=(experiment.control, treatment),
+            plan_ratio=ratio,
+            result=size_comparison(
+                moments,
+                test_type=test_type,
+                alpha=alpha,
+                power=power,
+                target_mde=target_mde,
+                plan_ratio=ratio,
+            ),
+        )
+        for treatment, ratio in _other_contrast_ratios(experiment)
+    )
     runtime = _build_runtime(
         experiment,
         method_cls,
@@ -438,6 +458,7 @@ def _plan_comparison(
         plan_ratio=plan_ratio,
         result=result,
         runtime=runtime,
+        contrasts=contrasts,
         notes=notes,
     )
 
@@ -514,12 +535,30 @@ def _build_runtime(
 
 def _plan_ratio(experiment) -> float:
     """Forward-looking treatment:control allocation from ``expected_split`` (defaults 1.0)."""
+    return _ratio_for(experiment, experiment.treatments[0])
+
+
+def _ratio_for(experiment, treatment: str) -> float:
+    """One arm's treatment:control allocation (1.0 when the split is silent)."""
     split = experiment.assignment.expected_split
     control = split.get(experiment.control)
-    treatment = split.get(experiment.treatments[0])
-    if control and treatment and control > 0:
-        return treatment / control
+    share = split.get(treatment)
+    if control and share and control > 0:
+        return share / control
     return 1.0
+
+
+def _other_contrast_ratios(experiment) -> list[tuple[str, float]]:
+    """The declared vs-control contrasts BEYOND the one already sized.
+
+    Treatment-vs-treatment pairs (declared under `contrasts: all_pairs`) are
+    deliberately absent: sizing needs the BASELINE arm's moments, and a
+    pre-launch plan has none per treatment — the population render behind
+    `--from-history` is cohort-blind by construction. They share the family's
+    alpha, which `pairs_phrase` already states, and the plan says so rather than
+    inventing a baseline for them.
+    """
+    return [(t, _ratio_for(experiment, t)) for t in experiment.treatments[1:]]
 
 
 class _HistoryBaselines:
@@ -915,17 +954,18 @@ def _emit_plan(experiment, project, alphas, power, looks, grid, rows_per_refresh
 
     warnings: list[str] = []
     variants = experiment.assignment.variants
-    if len(variants) > 2:
-        others = len(experiment.contrast_pairs()) - 1
-        family = (
-            f"the other {others} vs-control contrast{'s' if others != 1 else ''} "
-            "shares the same α"
-            if experiment.contrasts == "vs_control"
-            else "the other pairs share the same α"
-        )
+    if len(variants) > 2 and experiment.contrasts != "vs_control":
+        # m14 DEC-5(b) replaced the "one contrast only" warning with real
+        # per-contrast numbers on each plan line. What remains unsized is the
+        # treatment-vs-treatment half of an `all_pairs` family: sizing needs the
+        # BASELINE arm's moments and a pre-launch plan has none per treatment.
+        # They are in the family — `pairs_phrase` already divides alpha by them
+        # — so the omission is stated rather than left to be inferred.
+        pairs = len(experiment.contrast_pairs()) - (len(variants) - 1)
         warnings.append(
-            f"{len(variants)}-arm experiment — sizing is shown for the "
-            f"{experiment.control} vs {experiment.treatments[0]} contrast only ({family})"
+            f"{pairs} treatment-vs-treatment contrast{'s' if pairs != 1 else ''} "
+            "share the same α but are not sized — a pre-launch baseline exists "
+            "for the control arm only (set contrasts: vs_control to drop them)"
         )
     warn_looks = project.limits.warn_looks
     if looks > warn_looks and not experiment.sequential.enabled:
@@ -970,11 +1010,41 @@ def _plan_lines(plan: ComparisonPlan) -> list[str]:
         parts.append("no target MDE (pass --mde or set comparison.min_effect for required-N)")
     parts.append(f"achievable MDE {_fmt_effect(r.achievable_mde, plan.test_type or 'relative')}")
     lines.append("  " + " · ".join(parts))
+    lines.extend(_contrast_lines(plan))
     if plan.runtime is not None:
         lines.extend(_runtime_lines(plan.runtime))
     for note in plan.notes:
         lines.append(f"  ⚠ {note}")
     return lines
+
+
+def _contrast_lines(plan: ComparisonPlan) -> list[str]:
+    """The other declared vs-control contrasts (m14 DEC-5(b)).
+
+    Through `0.8.0` this was a WARNING — "sizing is shown for one contrast only"
+    — which named the omission without saying whether it mattered. It usually
+    does not: sizing depends on the pair only through the allocation ratio, so
+    under an even split every contrast lands on the same numbers and one
+    sentence is the honest report. Under an UNEVEN split they differ, and then
+    each gets its line, because that is the case the warning was hiding.
+    """
+    if not plan.contrasts or plan.result is None:
+        return []
+    scale = plan.test_type or "relative"
+    same = all(
+        c.result.required_n == plan.result.required_n
+        and c.result.achievable_mde == plan.result.achievable_mde
+        for c in plan.contrasts
+    )
+    total = len(plan.contrasts) + 1
+    if same:
+        return [f"  all {total} declared vs-control contrasts size identically (even split)"]
+    return [
+        f"  {c.pair[0]} vs {c.pair[1]} (ratio {c.plan_ratio:.3g}) — "
+        + (f"required {_fmt_n(c.result.required_n)}/arm · " if plan.target_mde is not None else "")
+        + f"achievable MDE {_fmt_effect(c.result.achievable_mde, scale)}"
+        for c in plan.contrasts
+    ]
 
 
 def _fmt_days(days: float | None) -> str:

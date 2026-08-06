@@ -9,17 +9,21 @@ from __future__ import annotations
 import math
 from datetime import datetime, timedelta
 
+import numpy as np
 from synthetic_ab import (
     CONVERSION,
     CTR,
     REVENUE,
+    START,
     SyntheticWarehouse,
+    experiment_payload,
     make_experiment,
     seed_cohort,
     seed_null_events,
 )
 
 from abkit.compute.recompute_backend import RecomputeBackend
+from abkit.config.experiment_config import ExperimentConfig
 from abkit.core.period_planner import Cutoff
 from abkit.stats.factory import create_method
 from abkit.validate.load import load_placebo_panel, subsample_grid
@@ -177,3 +181,85 @@ def test_cuped_panel_loads_covariate():
     )
     assert score.fpr is not None
     assert abs(score.fpr - 0.05) < _band(0.05, 1000) + 0.015
+
+
+class TestThePlaceboSizesTheCalibratedContrast:
+    """m14 DEC-5(a): the panel pools the CONTRAST, not every arm.
+
+    Pooling all arms calibrated a design nobody runs: at three even arms the
+    placebo splits 1/3 vs 2/3 over three arms' units while the live
+    control-vs-treatment comparison is 1/2 vs 1/2 over two arms'. The FPR column
+    is robust to that; achieved-MDE is read off per-arm n and feeds the
+    Recommended row, so it came out optimistic by ≈√1.5.
+    """
+
+    @staticmethod
+    def _three_arm_warehouse(n_per_arm: int = 120):
+        warehouse = SyntheticWarehouse()
+        for i in range(n_per_arm):
+            warehouse.cohort.append((f"c{i:03d}", "control", START + timedelta(hours=1)))
+            warehouse.cohort.append((f"t{i:03d}", "treatment", START + timedelta(hours=1)))
+            warehouse.cohort.append((f"u{i:03d}", "treatment_b", START + timedelta(hours=1)))
+        seed_null_events(warehouse)
+        return warehouse
+
+    @staticmethod
+    def _three_arm_experiment() -> ExperimentConfig:
+        payload = experiment_payload("aa_three", "arpu", {"name": "t-test"})
+        payload["assignment"]["variants"] = ["control", "treatment", "treatment_b"]
+        payload["assignment"]["expected_split"] = {
+            "control": 1 / 3,
+            "treatment": 1 / 3,
+            "treatment_b": 1 / 3,
+        }
+        return ExperimentConfig.model_validate(payload)
+
+    def _panel(self, arms):
+        warehouse = self._three_arm_warehouse()
+        experiment = self._three_arm_experiment()
+        return load_placebo_panel(
+            RecomputeBackend(warehouse, experiment),
+            experiment.comparisons[0],
+            REVENUE,
+            REVENUE.get_query_text(None),
+            _grid(experiment),
+            input_kind="sample",
+            arms=arms,
+        )
+
+    def test_a_third_arms_units_stay_out_of_the_pool(self):
+        assert self._panel(("control", "treatment")).n_units == 240
+        # what `0.8.0` did, and the reason the achieved MDE was optimistic
+        assert self._panel(None).n_units == 360
+
+    def test_the_pool_is_the_pair_whichever_pair_it_is(self):
+        assert self._panel(("control", "treatment_b")).n_units == 240
+        assert self._panel(("treatment", "treatment_b")).n_units == 240
+
+    def test_a_two_arm_panel_is_unchanged_by_the_filter(self):
+        """The WP's №1 assertion at the loader: naming both arms of a two-arm
+        experiment is the same pool, in the same concatenation order, as naming
+        none — the filter preserves `variants()`' order rather than following
+        the argument."""
+        warehouse = SyntheticWarehouse()
+        seed_cohort(warehouse, n_per_arm=160)
+        seed_null_events(warehouse)
+        experiment = make_experiment("aa_two", "arpu", {"name": "t-test"})
+        backend = RecomputeBackend(warehouse, experiment)
+        common = {
+            "comparison": experiment.comparisons[0],
+            "metric": REVENUE,
+            "metric_sql": REVENUE.get_query_text(None),
+            "grid": _grid(experiment),
+            "input_kind": "sample",
+        }
+
+        unfiltered = load_placebo_panel(backend, **common)
+        # deliberately reversed, to prove the ORDER comes from the load and not
+        # from the argument — a reordered pool would move every seeded draw
+        filtered = load_placebo_panel(backend, **common, arms=("treatment", "control"))
+
+        assert filtered.n_units == unfiltered.n_units
+        for left, right in zip(filtered.cutoffs, unfiltered.cutoffs, strict=True):
+            np.testing.assert_array_equal(left.unit_idx, right.unit_idx)
+            np.testing.assert_array_equal(left.values, right.values)

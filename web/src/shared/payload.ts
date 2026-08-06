@@ -183,6 +183,13 @@ export interface SrmBlock {
    * the test in the chip; optional so an older bundle defaults to χ².
    */
   kind?: string;
+  /**
+   * m14 DEC-5(c): WHICH arm the mismatch is concentrated in — a decomposition
+   * of the same chi-square, computed server-side so the three surfaces cannot
+   * drift. `null` at two arms (the residuals mirror each other, so naming one
+   * is a tautology) and absent from every pre-`0.9.0` bake.
+   */
+  culprit?: { arm: string; residual: number; direction: 'under' | 'over' } | null;
 }
 
 /**

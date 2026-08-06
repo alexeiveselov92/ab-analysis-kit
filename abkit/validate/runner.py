@@ -110,22 +110,43 @@ def _budget(project: ProjectConfig, alpha: float, metric: MetricConfig | None) -
     return resolve_fpr_budget(project, alpha, metric)
 
 
-def _share_a(experiment: ExperimentConfig) -> float:
-    """Arm-A split share from the CONTROL's ``expected_split`` (default 0.5).
+def calibrated_contrast(experiment: ExperimentConfig) -> tuple[str, str]:
+    """The arm pair ``abk validate`` calibrates (m14 DEC-5).
 
-    The control is ``experiment.control`` (m14 DEC-1), not the first declared
-    variant: the placebo split has to mirror the real one, and A is the
-    baseline arm. (That the N-arm cohort is collapsed into a two-arm placebo at
-    all is a separate, wider issue — DEC-5's.)
+    Deterministically the control against the FIRST declared treatment. The
+    calibration chip is keyed ``(metric, method_config_id, effective alpha)``
+    and is arm-pair-independent by design (m4 D4), so one pair answers for the
+    family — but it has to be a pair the experiment actually runs, and at two
+    arms it is the only one there is.
+
+    Not `contrast_pairs()[0]`: with a control declared late in `variants` that
+    entry is a treatment-vs-treatment pair (the `abk plan` precedent).
     """
-    variants = experiment.assignment.variants
+    return experiment.control, experiment.treatments[0]
+
+
+def _share_a(experiment: ExperimentConfig) -> float:
+    """Arm-A split share WITHIN the calibrated contrast (default 0.5).
+
+    The control is ``experiment.control`` (m14 DEC-1), and since m14 DEC-5 the
+    denominator is the pair's own two shares rather than the whole split. Taking
+    the control's share of ALL arms sized a design nobody runs: at three even
+    arms it is 1/3, while the live control-vs-treatment comparison splits 1/2.
+    Together with the pooled panel's arm filter that is what makes the
+    achieved-MDE column describe the experiment being validated.
+
+    A two-arm experiment is unchanged: the pair IS the split, so the
+    denominators coincide.
+    """
     split = experiment.assignment.expected_split
-    if variants and split:
-        first = float(split.get(experiment.control, 0.5))
-        total = float(sum(split.values())) or 1.0
-        share = first / total
-        return min(max(share, 0.01), 0.99)
-    return 0.5
+    if not experiment.assignment.variants or not split:
+        return 0.5
+    control, treatment = calibrated_contrast(experiment)
+    control_share = float(split.get(control, 0.5))
+    pair_total = control_share + float(split.get(treatment, 0.5))
+    if pair_total <= 0:
+        return 0.5
+    return min(max(control_share / pair_total, 0.01), 0.99)
 
 
 def _method_fits(
@@ -192,7 +213,14 @@ def enumerate_cells(
     return cells
 
 
-def _verdict(method_name: str, metric: str, score: CellScore, budget: float, alpha: float) -> str:
+def _verdict(
+    method_name: str,
+    metric: str,
+    score: CellScore,
+    budget: float,
+    alpha: float,
+    arms: tuple[str, str] | None = None,
+) -> str:
     """A plain-language per-method verdict (aa-fpr §4.3 / R15)."""
     if score.fpr is None:
         return f"{method_name} on {metric}: could not measure FPR (degenerate/insufficient data)"
@@ -206,7 +234,24 @@ def _verdict(method_name: str, metric: str, score: CellScore, budget: float, alp
     if score.peeking_fpr is not None and score.peeking_fpr > 2 * alpha:
         verdict += f"; peeking FPR {score.peeking_fpr:.1%} vs nominal α={alpha:g}"
     verdict += _sign_lean_note(score)
+    verdict += _contrast_note(arms)
     return verdict
+
+
+def _contrast_note(arms: tuple[str, str] | None) -> str:
+    """Name the calibrated contrast at 3+ arms (m14 DEC-5).
+
+    One pair answers for the family — the D3 chip is keyed
+    ``(metric, method_config_id, effective alpha)`` and is arm-pair-independent
+    by design — but WHICH pair set the placebo's size and split, so the operator
+    reading an achieved MDE has to know it is that pair's. Disclosed in the
+    VERDICT rather than only in `decision_log`, which no CLI user ever sees (the
+    M7 WP6 lesson). Silent at two arms, where naming the only pair there is
+    would be noise — and where it would move a `0.8.0` string.
+    """
+    if arms is None:
+        return ""
+    return f"; calibrated on {arms[0]} vs {arms[1]}"
 
 
 #: Below this many false positives the sign share is noise — at 100 hits its own
@@ -305,6 +350,7 @@ def run_validation(
     if metric_filter is not None:
         specs = [s for s in specs if s.metric == metric_filter]
     share_a = _share_a(experiment)
+    arms = calibrated_contrast(experiment)
     panel_cache: dict[tuple[str, object], PlaceboPanel] = {}
     cells: list[CellResult] = []
 
@@ -325,6 +371,7 @@ def run_validation(
             spec,
             settings,
             share_a,
+            arms,
             panel_cache,
             log,
         )
@@ -544,6 +591,7 @@ def _score_one(
     spec,
     settings,
     share_a,
+    arms,
     panel_cache,
     log,
 ) -> CellResult:
@@ -576,6 +624,7 @@ def _score_one(
                 grid,
                 input_kind=metric.type,
                 cap=settings.grid_cap,
+                arms=arms,
             )
             panel_cache[cache_key] = panel
         method = spec.method.bind(alpha=spec.alpha)
@@ -633,7 +682,14 @@ def _score_one(
         achieved_mde=score.achieved_mde,
         coverage=score.coverage,
         effect_exaggeration=score.effect_exaggeration,
-        verdict=_verdict(spec.method.name, spec.metric, score, budget, spec.alpha),
+        verdict=_verdict(
+            spec.method.name,
+            spec.metric,
+            score,
+            budget,
+            spec.alpha,
+            arms if len(experiment.assignment.variants) > 2 else None,
+        ),
         budget=budget,
         recommended=False,
         details=details,

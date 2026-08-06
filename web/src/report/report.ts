@@ -236,8 +236,15 @@ function buildSrmChip(payload: ReportPayload): HTMLElement {
     // (WP5) — for which a since-rebalanced cohort can read FAILED with an even split.
     const gate = srm.kind === 'sequential_multinomial' ? 'anytime-valid' : 'χ²';
     chip.classList.add('abk-srm-fail');
+    // m14 DEC-5(c): at 3+ arms the payload names where the mismatch sits.
+    // "assignment is broken" without "which arm" is a diagnosis the operator
+    // cannot act on — and this is READ, never re-derived: the server computed
+    // it from the same chi-square the flag came from.
+    const culprit = srm.culprit
+      ? ` — ${srm.culprit.arm} has too ${srm.culprit.direction === 'under' ? 'few' : 'many'} units`
+      : '';
     chip.textContent =
-      `SRM FAILED (observed ${obs} vs expected ${exp}, ${gate} ${p}) — effects untrustworthy`;
+      `SRM FAILED (observed ${obs} vs expected ${exp}, ${gate} ${p})${culprit} — effects untrustworthy`;
     chip.setAttribute('data-abk-srm', 'fail');
   } else if (total === 0) {
     chip.textContent = 'SRM — no exposure data';
