@@ -4,18 +4,28 @@
 // abkit/reporting/builder.py) baked by abkit/reporting/html_report.py into a
 // standalone HTML file, and paints the experiment readout into a mount:
 // header + SRM/calibration/look chips, one verdict banner per main-metric ×
-// pair (rationale + caveats + guardrails), and per metric × pair the
+// declared pair (rationale + caveats + guardrails), and per metric × pair the
 // stabilization chart (cumulative effect + CI band vs elapsed days, zero
 // line, horizon marker, §4 peeking-honesty treatments) with hover readout and
 // wheel-zoom/drag-pan, four small-multiple views (variant means, pair MDE,
 // p-value vs alpha, avg group size — one axis each, never dual-axis), and a
 // results/audit table.
 //
+// At 3+ arms it also paints the m14 DEC-3 decision layer — a cross-arm
+// overview per main metric (leader · separation · arm table), a pair selector,
+// the arm-vs-arm verdicts in a collapsed evidence group behind a role chip,
+// and a leaders-disagree chip. Every one of those is gated on isMultiArm(), so
+// a two-arm readout renders the DOM 0.8.0 rendered (§0.2 point 3).
+//
 // Peeking honesty (data-contract-and-reporting.md §4) carries stable
 // machine-checkable markers so WP10 and the CI bundle gate can assert them:
 //   .abk-prehorizon   — pre-horizon fixed CIs are dashed/de-emphasized
 //   .abk-insufficient — insufficient_data cutoffs greyed, counts + SRM only
 //   .abk-srm-fail     — the red SRM gate chip
+// The DEC-3 hooks (data-abk-role / data-abk-separation / data-abk-leaders,
+// .abk-rollup / .abk-evidence / .abk-pair-picker) are asserted by
+// web/test/smoke.mjs but are NOT part of the §4 marker contract the CI grep
+// enforces — they are presentation, not peeking honesty.
 //
 // It is bundled (esbuild → IIFE) to abkit/reporting/assets/report.js, which
 // assigns `window.__ABK_REPORT__ = { render }`. Nothing is exported for ESM —
@@ -57,6 +67,7 @@ import type {
   PairBlock,
   ReportPayload,
   RollupBlock,
+  SeparationState,
   SeriesPoint,
   VerdictBlock,
 } from '../shared/payload';
@@ -514,6 +525,19 @@ function drawPeekingCurve(
 
 const isShipDecision = (v: VerdictBlock): boolean => (v.role ?? 'vs_control') === 'vs_control';
 
+/**
+ * The ONE gate behind every m14 DEC-3 affordance (§0.2 point 3: a two-arm
+ * report reproduces `0.8.0`).
+ *
+ * One predicate rather than four, because the claim was otherwise protected in
+ * one place by a coincidence — the pair selector's own `blocks.length > 1`
+ * happens to be false at two arms, so dropping the arm-count half of its gate
+ * was undetectable — and the evidence group's gate is DERIVED (a
+ * `treatment_pair` verdict cannot exist below three declared arms) rather than
+ * asserted. A milestone's headline invariant should not rest on either.
+ */
+const isMultiArm = (payload: ReportPayload): boolean => payload.arms.length > 2;
+
 function buildVerdicts(payload: ReportPayload): HTMLElement {
   const wrap = el('div', 'abk-verdicts');
   if (payload.verdicts.length === 0) {
@@ -534,7 +558,7 @@ function buildVerdicts(payload: ReportPayload): HTMLElement {
   // there is no second group at all, so the section is 0.8.0's byte for byte.
   for (const v of payload.verdicts.filter(isShipDecision)) wrap.appendChild(buildVerdictCard(v));
 
-  const evidence = payload.verdicts.filter((v) => !isShipDecision(v));
+  const evidence = isMultiArm(payload) ? payload.verdicts.filter((v) => !isShipDecision(v)) : [];
   if (evidence.length > 0) {
     const details = document.createElement('details');
     details.className = 'abk-evidence';
@@ -683,9 +707,8 @@ function buildMetricSection(
     return null;
   };
 
-  const multiArm = payload.arms.length > 2;
   const rollup = (payload.rollups ?? []).find((r) => r.metric === metric.name);
-  if (multiArm && rollup) section.appendChild(buildRollupPanel(rollup, metric, payload));
+  if (isMultiArm(payload) && rollup) section.appendChild(buildRollupPanel(rollup, metric, payload));
 
   // Each block is built eagerly (the charts must exist for the shared resize
   // pass) but a non-default one starts hidden — a hidden canvas fits to zero,
@@ -696,9 +719,7 @@ function buildMetricSection(
     const node = buildPairBlock(metric, pair, payload, verdictFor(pair), charts);
     return { pair, node, own: charts.slice(first) };
   });
-  if (multiArm && blocks.length > 1) {
-    section.appendChild(buildPairPicker(blocks, payload));
-  }
+  if (isMultiArm(payload)) section.appendChild(buildPairPicker(blocks, payload));
   for (const block of blocks) section.appendChild(block.node);
   return section;
 }
@@ -715,15 +736,35 @@ interface PairBlockHandle {
  * Block count grows as C(N,2) per metric, so at five arms one metric is ten
  * stabilization charts. The control-anchored pairs are expanded by default
  * because those are the ship decisions; the treatment pairs are one click away
- * rather than absent, which is what the charts were before this WP anyway
- * (charted, unverdicted, and below everything).
+ * rather than absent.
+ *
+ * **Unless the default would show nothing.** `_metric_entry` emits a
+ * present-but-EMPTY block for a declared pair with no rows yet, and DEC-1
+ * documents a window in which that is every control-anchored pair: declare
+ * `assignment.control: d` on a running experiment and, until the next `abk
+ * run`, the re-oriented pairs have no rows while the old treatment-vs-treatment
+ * pairs still carry the whole series. Defaulting on orientation alone would
+ * then open three "no persisted cutoffs" boxes and HIDE the three charts with
+ * data — a page strictly worse than the one `0.8.0` rendered, in exactly the
+ * state DEC-1 tells the operator to expect.
  */
 function buildPairPicker(blocks: PairBlockHandle[], payload: ReportPayload): HTMLElement {
   const control = controlArm(payload);
+  const anchored = (block: PairBlockHandle): boolean => block.pair.c === control;
+  const hasData = (block: PairBlockHandle): boolean => block.pair.series.length > 0;
+  const defaultShows = blocks.some((b) => anchored(b) && hasData(b))
+    ? anchored
+    : // nothing anchored has data: fall back to whatever does, and if nothing
+      // does at all, keep the orientation default so the empty states still say
+      // which pairs were declared
+      blocks.some(hasData)
+      ? hasData
+      : anchored;
+
   const picker = el('div', 'abk-pair-picker');
   picker.appendChild(el('span', 'abk-pair-picker-label', 'pairs'));
   for (const block of blocks) {
-    const shown = block.pair.c === control;
+    const shown = defaultShows(block);
     block.node.hidden = !shown;
 
     const label = el('label', 'abk-pair-toggle');
@@ -763,7 +804,23 @@ function buildRollupPanel(
   head.appendChild(
     el('span', 'abk-rollup-leader', rollup.leader === null ? 'no leader' : `leader: ${rollup.leader}`),
   );
-  head.appendChild(el('span', 'abk-chip abk-rollup-state', SEPARATION_LABEL[rollup.separation]));
+  // The chip NAMES THE STATE; it never states the finding. `no_leader` is one
+  // state with three readouts — nobody beat the control, the SRM gate failed,
+  // or nothing could be judged yet — and each is worded differently in
+  // `rationale` precisely because a rollup must not speak over a gate (DEC-2
+  // review delta 6). A static "no arm beat the control" beside a failed SRM
+  // gate would reintroduce the DEC-1 `_srm_from_series` failure at the
+  // renderer: a broken cohort reading as an ordinary null result. With no
+  // leader there is also nothing for a separation claim to be ABOUT, so the
+  // chip is suppressed and the head's "no leader" plus the readout's own
+  // sentences carry it.
+  if (rollup.leader !== null) {
+    // the `??` is for a payload carrying a state this bundle predates — a
+    // blank pill claims nothing and reads as a rendering bug, so fall through
+    // to the raw word (the map itself is exhaustive at compile time)
+    const label = SEPARATION_LABEL[rollup.separation] ?? String(rollup.separation);
+    head.appendChild(el('span', 'abk-chip abk-rollup-state', label));
+  }
   panel.appendChild(head);
 
   for (const line of rollup.rationale) panel.appendChild(el('div', 'abk-rollup-line', line));
@@ -773,11 +830,17 @@ function buildRollupPanel(
   return panel;
 }
 
-const SEPARATION_LABEL: Record<string, string> = {
-  separated: 'separated from every other arm',
-  co_leaders: 'co-leaders — not separated',
+/** Typed on `SeparationState`, so a fifth state is a COMPILE error rather than
+ * a chip that renders blank — the m13 lesson that the one per-key map nobody
+ * gated was the one that broke a readout. Every label names the state; the
+ * claim is the readout's, three lines below. */
+const SEPARATION_LABEL: Record<SeparationState, string> = {
+  separated: 'separated',
+  co_leaders: 'co-leaders',
   untested: 'separation untested',
-  no_leader: 'no arm beat the control',
+  // rendered nowhere today (the chip is suppressed with no leader), and kept
+  // so the map stays exhaustive over the union
+  no_leader: 'no leader',
 };
 
 /** Effect · CI · verdict · n per arm, so the ordering reads without scrolling
@@ -793,11 +856,13 @@ function buildArmTable(
     payload.verdicts.find(
       (v) => v.metric === metric.name && isShipDecision(v) && v.pair.t === arm,
     );
-  const latestOf = (arm: string): SeriesPoint | undefined => {
-    const pair = metric.pairs.find((p) => p.c === control && p.t === arm);
+  const latestPoint = (pair: PairBlock | undefined): SeriesPoint | undefined => {
     if (!pair || pair.series.length === 0) return undefined;
-    return [...pair.series].sort((a, b) => a.t - b.t)[pair.series.length - 1];
+    const ordered = [...pair.series].sort((a, b) => a.t - b.t);
+    return ordered[ordered.length - 1];
   };
+  const latestOf = (arm: string): SeriesPoint | undefined =>
+    latestPoint(metric.pairs.find((p) => p.c === control && p.t === arm));
 
   const scroll = el('div', 'abk-arm-scroll');
   const table = document.createElement('table');
@@ -812,14 +877,25 @@ function buildArmTable(
   const body = document.createElement('tbody');
   const baseline = document.createElement('tr');
   baseline.className = 'abk-arm-baseline';
-  const controlN = metric.pairs.find((p) => p.c === control);
-  const controlPts = controlN && controlN.series.length > 0 ? [...controlN.series].sort((a, b) => a.t - b.t) : [];
+  // The baseline's own size, from the FRESHEST control-anchored pair rather
+  // than the first: a declared pair with no rows yet is emitted present-and-
+  // empty, so the first one can be the empty one and the row would read "—"
+  // beside treatments reporting real counts. `s1` is the control arm in every
+  // control-anchored pair, so any pair answers — the newest answers as of the
+  // same look as the rows beneath it.
+  const controlPoint = metric.pairs
+    .filter((p) => p.c === control)
+    .map((p) => latestPoint(p))
+    .reduce<SeriesPoint | undefined>(
+      (best, point) => (point !== undefined && (best === undefined || point.t > best.t) ? point : best),
+      undefined,
+    );
   for (const cell of [
     control,
     '—',
     '—',
     'baseline',
-    controlPts.length > 0 ? String(controlPts[controlPts.length - 1].s1) : '—',
+    controlPoint === undefined ? '—' : String(controlPoint.s1),
   ]) {
     baseline.appendChild(el('td', undefined, cell));
   }
@@ -835,7 +911,16 @@ function buildArmTable(
     armCell.appendChild(el('span', undefined, arm));
     if (arm === rollup.leader) armCell.appendChild(el('span', 'abk-arm-tag', 'leader'));
     else if (rollup.indistinguishable.includes(arm)) {
-      armCell.appendChild(el('span', 'abk-arm-tag', 'co-leader'));
+      // NOT "co-leader": `indistinguishable` merges two states the readout
+      // keeps apart in `separation` and in its prose — arms the leader was
+      // compared against and did not separate from, and arms that could not be
+      // compared at all (no rows, a demoted latest look, pre-horizon). Calling
+      // the second kind a co-leader asserts MEASURED parity about a pair nobody
+      // measured, which is the claim DEC-2 added its `untestable` state to
+      // prevent — and it is reachable with no config edit, since the treatment
+      // pair holds the two smallest arms and demotes first. "not separated" is
+      // true of both; which arms fall in which is in the rationale.
+      armCell.appendChild(el('span', 'abk-arm-tag', 'not separated'));
     }
     if (rollup.guardrail_regressed.includes(arm)) {
       armCell.appendChild(el('span', 'abk-arm-tag abk-arm-tag-warn', 'guardrail'));
@@ -1641,6 +1726,17 @@ function injectStyle(): void {
 .${ROOT_CLASS} .abk-pair-picker-label{color:var(--abk-muted);letter-spacing:0.06em;
   text-transform:uppercase;font-size:10px;}
 .${ROOT_CLASS} .abk-pair-toggle{display:inline-flex;align-items:center;gap:5px;cursor:pointer;}
+/* A readout gets printed and PDF'd, and until DEC-3 nothing on it could hide a
+   CHART: a collapsed <details> prints as its summary and a [hidden] block does
+   not print at all, so a 3-arm PDF would silently lose the arm-vs-arm charts
+   and cards that 0.8.0 put on paper. The interactive defaults are about
+   scrolling, not about what the document CONTAINS. (The audit table's own
+   <details> shipped closed in 0.8.0 and is deliberately left alone.) */
+@media print{
+  .${ROOT_CLASS} .abk-pair[hidden]{display:block !important;}
+  .${ROOT_CLASS} .abk-evidence>.abk-evidence-list{display:flex !important;}
+  .${ROOT_CLASS} .abk-pair-picker{display:none;}
+}
 /* metric sections ------------------------------------------------------------ */
 .${ROOT_CLASS} .abk-metric{margin:26px 0;}
 .${ROOT_CLASS} .abk-metric-name-row{display:flex;align-items:baseline;gap:10px;}

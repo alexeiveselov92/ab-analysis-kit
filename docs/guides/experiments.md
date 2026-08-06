@@ -446,17 +446,19 @@ interactively, open the cockpit with [`abk explore`](explore.md).
 `variants` accepts any number `>= 2` — the control is the first declared variant
 unless `assignment.control` names another, and abkit computes a full comparison
 for every DECLARED contrast: every pair under `all_pairs`, the
-control-vs-treatment ones under `vs_control` (declarative-config §2). A 3+-arm experiment runs end to end: the pipeline computes every pair, the
-readout renders a verdict for each, and [`abk explore`](explore.md)'s Review mode
-shows one line per pair. A few adjacent surfaces are honestly not (yet)
-k-arm-aware, though:
+control-vs-treatment ones under `vs_control` (declarative-config §2). A 3+-arm
+experiment runs end to end: the pipeline computes every pair, the readout
+verdicts each one, and the HTML report shows a card per pair plus a **cross-arm
+overview** naming the leader and whether it separated from the other treatments
+— see [Multi-arm: who won?](reading-a-readout.md#multi-arm-who-won). A few
+adjacent surfaces are honestly not (yet) k-arm-aware, though:
 
-- **No experiment-level winner rollup.** The readout carries one verdict per
-  (main metric x control-vs-treatment pair) — a WIN against `treatment` and a
-  LOSE against `treatment_b` on the same metric are both real, independent
-  calls; there is no invented "best arm" scalar that picks a winner across pairs
-  (that rollup is a named future item, M14 — see [Reading a
-  readout](reading-a-readout.md#the-verdict)).
+- **The cockpit and the dashboard still read control-anchored.**
+  [`abk explore`](explore.md)'s Review mode shows one line per
+  control-vs-treatment pair and no rollup line, the dashboard row's headline is
+  one arm's verdict, and `abk run --report`'s one-line summary joins the ship
+  decisions' words with no labels. All four are the next work package; the HTML
+  report is the surface that reads the whole decision layer today.
 - **`abk plan` sizes off one contrast only** — the control against the FIRST
   declared treatment. (Deliberately not `contrast_pairs()[0]`: with a control
   declared late in `variants` that entry is a treatment-vs-treatment pair, which

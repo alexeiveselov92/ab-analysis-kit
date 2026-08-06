@@ -190,12 +190,15 @@ export function makeThreeArmPayload(overrides = {}) {
 export function makeMultiArmDecisionPayload(overrides = {}) {
   const base = makeThreeArmPayload();
   const [vsTreatment] = base.verdicts;
+  // s1 differs from s2 on purpose: with makePoint's default 1000 on both, an
+  // arm table that read the TREATMENT's size for the baseline row would pass
   const seriesB = Array.from({ length: 14 }, (_, i) =>
-    makePoint(i + 1, { e: 0.16, lo: 0.11, hi: 0.21, s2: 900 }),
+    makePoint(i + 1, { e: 0.16, lo: 0.11, hi: 0.21, s1: 1100, s2: 900 }),
   );
   const pairSeries = Array.from({ length: 14 }, (_, i) =>
     makePoint(i + 1, { e: 0.05, lo: -0.02, hi: 0.12, p: 0.21, rj: 0 }),
   );
+  const controlSeries = Array.from({ length: 14 }, (_, i) => makePoint(i + 1, { s1: 1100 }));
   return {
     ...base,
     verdicts: [
@@ -240,7 +243,7 @@ export function makeMultiArmDecisionPayload(overrides = {}) {
       {
         ...base.metrics[0],
         pairs: [
-          base.metrics[0].pairs[0],
+          { ...base.metrics[0].pairs[0], series: controlSeries },
           { c: 'control', t: 'treatment_b', series: seriesB, diag: null },
           { c: 'treatment', t: 'treatment_b', series: pairSeries, diag: null },
         ],

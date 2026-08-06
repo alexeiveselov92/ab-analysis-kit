@@ -82,7 +82,9 @@ abkit/
   pipeline/              # ✅ M2: driver (lock→load→SRM→plan→compute→persist),
                          #   analyze, enrich, _types; worker pool;
                          #   ✅ M9 WP3: state (the write-only STATE stage)
-  reporting/             # ✅ M3: builder (the §5.3 terse payload + verdicts),
+  reporting/             # ✅ M3: builder (the §5.3 terse payload + verdicts;
+                         #   ✅ M14 DEC-3: ship_decisions — the control-anchored
+                         #   filter both held payload consumers import),
     assets/report.js     #   html_report (hardened bake), the committed bundle;
                          #   ✅ M4: calibration.py (the payload calibration block)
   tuning/                # ✅ M3: session (bounded Tier-S cache), recompute
@@ -885,6 +887,11 @@ two-process lock race) is deferred to a Docker-equipped environment.
   `B vs C` card as a ship recommendation — on the report AND in explore's
   Review mode, which renders every matching verdict. Their own pre-existing
   tests caught it: 10 failures in exactly those three places.
+  **DEC-3 released the `reporting/builder.py` one** — do not re-add a filter
+  there, it would silently undo the WP. The hold moved DOWN one level, to the
+  two consumers of the baked payload that print the word alone
+  (`tuning/payload.py`, `cli/commands/run.py`); `notify` and `overview` still
+  filter `PairVerdict` OBJECTS off the readout and are DEC-4's to open.
 - **`guardrail_policy: block` does not cap a treatment pair**, and the reason
   is not taste. The cap fires on WIN and never on LOSE, while "B is ahead of C"
   is a WIN stored one way and a LOSE stored the other — so leaving it on made
@@ -926,6 +933,70 @@ two-process lock race) is deferred to a Docker-equipped environment.
   always in `contrast_pairs()` (enumerated over 2–5 arms × every declaration ×
   both `contrasts` values), so a `continue` there would drop a ship decision in
   silence and shift the dashboard's headline to another pair.
+
+### M14 DEC-3 facts an assistant must know (the report reads the decision layer)
+
+- **Opening the payload opened THREE readers, not the one the WP is named
+  after.** `payload["verdicts"]` is read by `report.ts`, by `tuning/payload.py`
+  (the report payload rides into the cockpit VERBATIM — except this key now) and
+  by `cli/commands/run.py`'s `Report →` line. The latter two print the verdict
+  WORD with nothing beside it, so both hold at control-anchored through the one
+  `reporting.builder.ship_decisions` until DEC-4. This is DEC-2's
+  three-surfaces lesson one level down; the payload keys added are `role` on
+  every verdict plus `rollups` and `leaders_agree`, all ADDITIVE (no
+  `PAYLOAD_VERSION` bump — the `contrasts`/`control` precedent).
+- **`ship_decisions` is the one place the rule is written FOR A BAKED PAYLOAD,
+  and it is honor-system.** `tuning/overview.py` and `notify/dispatch.py` filter
+  `PairVerdict` OBJECTS off the readout instead (DEC-2's holds) — two forms, two
+  types, and unlike `grid()` / `contrast_pairs()` / `ExperimentConfig.control`
+  there is no AST gate. An absent `role` reads as `vs_control`: every payload
+  baked before `0.9.0` is control-anchored by construction.
+- **A seam is only a hold if the surface still CALLS it.** Reverting
+  `_emit_experiment_report` to the pre-DEC-3 inline join left all fifteen CLI
+  tests green, because they exercised the extracted `_verdict_note` directly.
+  The DEC-1 lesson restated: a rerouted surface owes a behavioural assertion at
+  the surface (here, a monkeypatched sentinel asserted on the printed line).
+- **`isMultiArm(payload)` is the ONE gate behind every DEC-3 affordance** — the
+  overview, the pair selector, the evidence group and the leaders chip. Four
+  ad-hoc gates left the §0.2 two-arm claim resting on a coincidence in one of
+  them (the selector's `blocks.length > 1` is false at two arms anyway) and on a
+  derivation in another (a `treatment_pair` verdict cannot exist below three
+  arms). `leaders_agree` is why the gate is not decorative: with two main
+  metrics and two arms both rollups name the same single treatment, so the chip
+  would fire on a tautology, on a page `0.8.0` rendered without one.
+- **"Byte-identical at two arms" means the rendered DOM, not the file.** The
+  payload gains keys and the injected stylesheet grows, so the baked HTML
+  differs; what was measured (same payload through the `main` bundle and this
+  one) is that `mount.innerHTML` is character-for-character identical and every
+  `0.8.0` payload field reproduces. DEC-6's gate must be written that way.
+- **The renderer must not re-word a decision the readout already worded.** A
+  static separation label mapped `no_leader` to "no arm beat the control" — but
+  that state also covers a FAILED SRM GATE and "nothing judged yet", each worded
+  differently by the readout precisely because a rollup must not speak over a
+  gate. The chip now NAMES THE STATE and is suppressed when there is no leader;
+  the claim is `rollup.rationale`, rendered verbatim. Same rule, second
+  instance: `indistinguishable` merges "compared and undecided" with "could not
+  be compared", so its members are tagged **`not separated`**, never
+  `co-leader` — which would assert measured parity about a pair nobody
+  measured. (Named limitation: the payload cannot express that split.)
+- **The arm table does not rank.** `desired_direction` is deliberately not in
+  the payload; a renderer sorting by effect would put the leader LAST on a
+  `decrease` metric. Declaration order, with the leader named by its chip.
+- **The pair selector's default falls back to whatever HAS data.** DEC-1's
+  documented window — a control declared on a running experiment — leaves every
+  control-anchored pair present-but-EMPTY while the old treatment pairs hold the
+  series, so an orientation-only default opened three empty boxes and hid three
+  real charts.
+- **A hidden canvas fits to zero, and jsdom cannot see it.** Revealing a block
+  re-fits the charts it owns (tracked by the `charts.slice(first)` each block
+  appended). jsdom has no 2D context, so the whole suite takes the fallback path
+  and `charts` is EMPTY — deleting the re-fit left every test green. The gate is
+  `renderWithCanvas` in `web/test/smoke.mjs`, which stubs the context and a
+  layout where a canvas under a `hidden` ancestor measures zero.
+- **A report gets printed.** `hidden` blocks and collapsed `<details>` do not
+  reach paper, and before DEC-3 nothing on the page could hide a CHART — an
+  `@media print` rule reveals both, because the interactive default is about
+  scrolling, not about what the document contains.
 
 ### M7 vectorization facts an assistant must know
 
@@ -1790,12 +1861,14 @@ see the track section in [ROADMAP.md](../../ROADMAP.md);
 records now; **M14 is IN PROGRESS against its contract
 [m14-implementation-plan.md](../../docs/specs/m14-implementation-plan.md)** —
 six WPs (✅ DEC-1 the declared `control:` → ✅ DEC-2 treatment-pair verdicts +
-the per-metric rollup → DEC-3 the report / DEC-4 dashboard·explore·notify·CLI;
+the per-metric rollup → ✅ DEC-3 the report / DEC-4 dashboard·explore·notify·CLI
+— where explore and the `abk run --report` line are DEC-3 holds it releases;
 DEC-5 `validate`/`plan`/SRM, independent; DEC-6 the exit gate + `0.9.0`), under
 the posture that **M14 moves no persisted number, no alpha and no verdict
 `0.8.0` already issues**: the read-time family is built from ROWS, so verdicting
 a treatment pair that is already in it cannot move a threshold, and a two-arm
-experiment stays byte-identical on every surface. M15–M17 are still contours,
+experiment renders an identical DOM on every surface (the BAKED FILE is not
+byte-identical — the payload gains keys and the report's stylesheet grows). M15–M17 are still contours,
 each opening with its own design session). The `0.6.x`
 **PLAN-1/PLAN-2** interstitial is closed (released as `0.6.1`/`0.6.2`; design
 contract: [cli-and-dx.md](../../docs/specs/cli-and-dx.md) "`abk plan` sizing

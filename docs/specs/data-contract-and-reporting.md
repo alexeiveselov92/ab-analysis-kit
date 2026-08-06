@@ -201,11 +201,23 @@ means/lift, the stabilization chart, MDE/power, p-value-vs-alpha, the SRM panel,
 the A/A matrix, and the WIN/LOSE/FLAT/INCONCLUSIVE verdict with its rationale.
 Shareable with stakeholders without standing up BI.
 
+**At 3+ arms** the page additionally carries the m14 DEC-3 decision layer: a
+**cross-arm overview** per main metric (the leader, the separation state in
+words, and an arm table of effect · CI · verdict · n), a **pair selector** so the
+block count stops growing as C(N,2), a collapsed **arm-vs-arm evidence** group
+holding the treatment-pair verdicts behind a *not a ship decision* role chip, and
+a header chip when two main metrics name different leaders. Every one of those is
+gated on the arm count, so a two-arm readout is exactly what `0.8.0` rendered.
+
 ### 5.3 The baked payload contract (added with M3 WP2 — m3-implementation-plan.md D6)
 
 One versioned, JSON-serializable payload per **experiment** — produced by
 `abkit/reporting/builder.py` (`build_report_payload`), consumed by both the
-readout renderer and the explore shell. The Python builder and the renderer-side
+readout renderer and the explore shell. **One key is not shared verbatim:** since
+m14 DEC-3 the cockpit's copy has its `verdicts` filtered back to the ship
+decisions (`builder.ship_decisions`, applied in `tuning/payload.py`), because
+Review mode prints the verdict word with nothing beside it and DEC-4 is the WP
+that gives it a role label. The Python builder and the renderer-side
 `web/src/shared/payload.ts` (M3 WP3) are kept in **documented lockstep** — same
 keys, same units (the donor's `payload.ts` discipline). Explore extends the
 payload with `param_specs`/tier-map/seed blocks; the report ignores unknown keys.
@@ -261,12 +273,35 @@ double-escape hazard open), not here.
                                // coverage, effect_exaggeration, alpha, budget,
                                // over_budget, recommended, rationale, verdict,
                                // status, peeking_curve:[[elapsed_days,fpr]], note}]}
-  verdicts: [{metric, pair:{c,t}, verdict, rationale:[..], caveats:[..],
+  verdicts: [{metric, pair:{c,t}, verdict, role, rationale:[..], caveats:[..],
               significant, effect, pvalue, lo, hi, alpha, mde, min_effect,
               end_ts|null, elapsed_days, is_horizon,
               guardrails:[{metric, pair, regressed, effect, desired_direction}]}],
-                               // one per main-metric × control-vs-treatment pair,
-                               // the readout.evaluate output verbatim (JSON-safe)
+                               // one per main-metric × DECLARED arm pair (m14
+                               // DEC-3), the readout.evaluate output verbatim
+                               // (JSON-safe). ORDER: every control-anchored
+                               // verdict first, in the sequence 0.8.0 emitted
+                               // them — so the 0.8.0 list is a literal PREFIX —
+                               // then the treatment pairs (which exist only
+                               // under `contrasts: all_pairs`).
+                               // role: 'vs_control' | 'treatment_pair' — a WIN
+                               // on (B, C) means "C beat B", NEVER "ship C".
+                               // ABSENT in a pre-0.9.0 bake, and absent reads as
+                               // 'vs_control': every such list is
+                               // control-anchored by construction.
+  rollups: [{metric, leader|null, indistinguishable:[..], separation,
+             losers:[..], guardrail_regressed:[..], rationale:[..],
+             caveats:[..]}],   // m14 DEC-3: one per MAIN metric, config order —
+                               // a read-time composition over the verdicts
+                               // above, persisted NOWHERE (D10). Present (with
+                               // one candidate) at two arms too, so the shape is
+                               // uniform; the renderer draws the cross-arm
+                               // affordances only at 3+ arms.
+                               // separation ∈ separated | co_leaders | untested
+                               //             | no_leader
+  leaders_agree,               // bool|null — do the per-metric leaders coincide?
+                               // null when fewer than two rollups NAME one:
+                               // there is nothing to agree about.
   metrics: [{name, description|null,   // description from the METRIC YAML (D6)
              main, guardrail,
              method: {name, params, id, alpha|null},  // params: parsed canonical

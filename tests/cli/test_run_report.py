@@ -207,7 +207,25 @@ class TestTheSummaryLineStaysControlAnchored:
         a missing key must not silence the line."""
         from abkit.cli.commands.run import _verdict_note
 
-        assert _verdict_note({"verdicts": [{"verdict": "WIN"}, {"verdict": "LOSE"}]}) == "WIN · LOSE"
+        assert (
+            _verdict_note({"verdicts": [{"verdict": "WIN"}, {"verdict": "LOSE"}]}) == "WIN · LOSE"
+        )
+
+    def test_the_printed_line_actually_goes_through_the_hold(self, scaffolded, monkeypatch):
+        """The helper is only a hold if the surface still CALLS it.
+
+        Reverting `_emit_experiment_report` to the pre-DEC-3 inline join —
+        the exact leak this WP declares it prevents — left every test above
+        green, because they all call `_verdict_note` directly. This one reads
+        the terminal.
+        """
+        import abkit.cli.commands.run as run_mod
+
+        monkeypatch.setattr(run_mod, "_verdict_note", lambda payload: "HELD-BY-THE-SEAM")
+        result = runner.invoke(cli, ["run", "--select", EXP, "--report"])
+        assert result.exit_code == 0, result.output
+        report_line = next(line for line in result.output.splitlines() if "Report →" in line)
+        assert "HELD-BY-THE-SEAM" in report_line
 
     def test_an_experiment_with_only_treatment_pairs_says_so(self):
         """Unreachable through `evaluate` (a declared pair set always contains

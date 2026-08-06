@@ -39,23 +39,42 @@ def _session_and_engine():
     return session, RecomputeEngine(session)
 
 
-def _verdict(name_1: str, name_2: str, role: str) -> dict:
-    return {"metric": "arpu", "pair": {"c": name_1, "t": name_2}, "verdict": "WIN", "role": role}
+def _verdict(name_1: str, name_2: str, role: str, metric: str = "arpu") -> dict:
+    return {"metric": metric, "pair": {"c": name_1, "t": name_2}, "verdict": "WIN", "role": role}
 
 
 def test_treatment_pair_verdicts_do_not_reach_the_cockpit():
+    """The fixture is shaped to defeat three WRONG filters, not just to pass.
+
+    Two ship decisions on ONE metric, so "keep the first verdict" — the M7 WP0
+    `.find`-instead-of-`.filter` bug, on the server side this time — loses the
+    second and fails here. A third on another metric, so a metric-scoped filter
+    fails too. And the control is `c`, declared LAST, so a positional
+    `pair.c == variants[0]` filter inverts: it would keep the treatment pair and
+    drop both ship decisions.
+    """
     session, engine = _session_and_engine()
     report = {
         "experiment": "explore_holds",
         "verdicts": [
-            _verdict("control", "t1", "vs_control"),
-            _verdict("t1", "t2", "treatment_pair"),
+            _verdict("c", "a", "vs_control"),
+            _verdict("c", "b", "vs_control"),
+            _verdict("c", "a", "vs_control", metric="orders"),
+            _verdict("a", "b", "treatment_pair"),
         ],
     }
+    original = [dict(v) for v in report["verdicts"]]
 
     payload = build_explore_payload(session, engine, report)
 
-    assert [(v["pair"]["c"], v["pair"]["t"]) for v in payload["verdicts"]] == [("control", "t1")]
+    assert [(v["metric"], v["pair"]["c"], v["pair"]["t"]) for v in payload["verdicts"]] == [
+        ("arpu", "c", "a"),
+        ("arpu", "c", "b"),
+        ("orders", "c", "a"),
+    ]
+    # non-destructive: the caller's payload is the one `abk run --report` may
+    # still bake, so the hold must filter a COPY
+    assert report["verdicts"] == original
 
 
 def test_a_pre_0_9_0_report_payload_keeps_every_verdict():

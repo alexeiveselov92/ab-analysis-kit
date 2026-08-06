@@ -404,7 +404,7 @@ test('the cross-arm overview names the leader the ROLLUP chose, not the first wi
   // `treatment` is declared first and also beat control — the leader is the
   // arm the readout picked, which is the LAST declared one
   assert.match(panel.querySelector('.abk-rollup-leader').textContent, /leader: treatment_b/);
-  assert.match(panel.querySelector('.abk-rollup-state').textContent, /co-leaders/);
+  assert.equal(panel.querySelector('.abk-rollup-state').textContent, 'co-leaders');
   assert.match(panel.querySelector('.abk-rollup-line').textContent, /co-leaders on this metric/);
 
   const rows = [...panel.querySelectorAll('tbody tr')].map((tr) =>
@@ -413,8 +413,8 @@ test('the cross-arm overview names the leader the ROLLUP chose, not the first wi
   assert.equal(rows.length, 3, 'the baseline plus one row per treatment');
   assert.match(rows[0][0], /^control/);
   assert.equal(rows[0][3], 'baseline');
-  assert.equal(rows[0][4], '1000', "the control's n comes from its own pair series");
-  assert.match(rows[1][0], /^treatmentco-leader/);
+  assert.equal(rows[0][4], '1100', "the control's n is s1, not the treatment's s2");
+  assert.match(rows[1][0], /^treatmentnot separated/);
   assert.match(rows[2][0], /^treatment_bleader/);
   assert.equal(rows[2][3], 'WIN');
   assert.equal(rows[2][4], '900', "each arm's n is the latest cutoff of its control pair");
@@ -490,4 +490,160 @@ test('a pre-0.9.0 payload without rollups or roles renders as it always did', ()
   assert.equal(mount.querySelectorAll('.abk-verdicts > .abk-verdict').length, 2);
   // the selector is a presentation affordance and does not need a rollup
   assert.ok(mount.querySelector('.abk-pair-picker'), 'the selector still applies');
+});
+
+test('the overview never states a finding the readout refused to state', () => {
+  // `no_leader` is ONE state with three readouts — nobody won, the SRM gate
+  // failed, or nothing could be judged yet — and the readout words each
+  // differently because a rollup must not speak over a gate. A static "no arm
+  // beat the control" chip beside a failed SRM gate is that failure at the
+  // renderer, so the chip is suppressed and the readout's own sentence carries.
+  const srmFailed = makeMultiArmDecisionPayload({
+    rollups: [
+      { metric: 'revenue', leader: null, indistinguishable: [], separation: 'no_leader',
+        losers: [], guardrail_regressed: [],
+        rationale: ['SRM failed — no arm can be judged against control on revenue'],
+        caveats: [] },
+    ],
+  });
+  const { mount } = renderInJsdom(srmFailed);
+  const panel = mount.querySelector('.abk-rollup');
+  assert.equal(panel.getAttribute('data-abk-separation'), 'no_leader');
+  assert.match(panel.querySelector('.abk-rollup-leader').textContent, /^no leader$/);
+  assert.equal(panel.querySelector('.abk-rollup-state'), null, 'no separation chip without a leader');
+  assert.ok(!/no arm beat the control/.test(panel.textContent), panel.textContent);
+  assert.match(panel.textContent, /SRM failed/);
+});
+
+test('an arm nobody could compare is not tagged a co-leader', () => {
+  // `indistinguishable` merges "compared and undecided" with "could not be
+  // compared" (demoted rows, pre-horizon); asserting co-leadership over the
+  // second is a positive claim of measured parity about a pair nobody measured
+  const untested = makeMultiArmDecisionPayload({
+    rollups: [
+      { metric: 'revenue', leader: 'treatment_b', indistinguishable: ['treatment'],
+        separation: 'untested', losers: [], guardrail_regressed: [],
+        rationale: ['treatment_b beat control; treatment could not be compared against it'],
+        caveats: [] },
+    ],
+  });
+  const { mount } = renderInJsdom(untested);
+  const panel = mount.querySelector('.abk-rollup');
+  assert.equal(panel.querySelector('.abk-rollup-state').textContent, 'separation untested');
+  assert.ok(!/co-leader/.test(panel.textContent), panel.textContent);
+  assert.match(panel.textContent, /not separated/);
+});
+
+/**
+ * jsdom has no 2D context, so every chart in the suite above takes the
+ * `abk-chart-fallback` path and `charts` is EMPTY — which makes the pair
+ * selector's re-fit-on-reveal loop unreachable, i.e. a mechanism no assertion
+ * could see (deleting it left the suite green). This harness stubs the context
+ * and a layout in which a canvas inside a `hidden` ancestor measures zero,
+ * which is the browser behaviour the loop exists for.
+ */
+function renderWithCanvas(payload) {
+  const dom = new JSDOM('<!doctype html><html><head></head><body><div id="abk-report"></div></body></html>', {
+    runScripts: 'outside-only',
+    pretendToBeVisual: true,
+  });
+  const win = dom.window;
+  const ctx = new Proxy(
+    {},
+    {
+      get(target, prop) {
+        if (prop === 'measureText') return () => ({ width: 10 });
+        if (prop === 'createPattern') return () => null;
+        if (prop === 'createLinearGradient') return () => ({ addColorStop() {} });
+        if (prop in target) return target[prop];
+        return () => {};
+      },
+      set(target, prop, value) {
+        target[prop] = value;
+        return true;
+      },
+    },
+  );
+  win.HTMLCanvasElement.prototype.getContext = () => ctx;
+  const laidOut = (node) => {
+    for (let el = node; el; el = el.parentElement) if (el.hidden) return false;
+    return true;
+  };
+  for (const [prop, size] of [['clientWidth', 600], ['clientHeight', 340]]) {
+    Object.defineProperty(win.HTMLElement.prototype, prop, {
+      configurable: true,
+      get() {
+        return laidOut(this) ? size : 0;
+      },
+    });
+  }
+  win.eval(BUNDLE);
+  const mount = win.document.getElementById('abk-report');
+  win.__ABK_REPORT__.render(payload, mount);
+  return { dom, mount };
+}
+
+test('revealing a collapsed pair re-fits its charts (a hidden canvas measures zero)', () => {
+  const { mount } = renderWithCanvas(makeMultiArmDecisionPayload());
+  const blocks = [...mount.querySelectorAll('.abk-metric .abk-pair')];
+  const widths = (block) => [...block.querySelectorAll('canvas')].map((c) => c.width);
+
+  assert.ok(widths(blocks[0]).length > 0, 'the stub really produced charts');
+  assert.ok(
+    widths(blocks[0]).every((w) => w > 0),
+    'a shown block is fitted by the initial resize pass',
+  );
+  assert.ok(
+    widths(blocks[2]).every((w) => w === 0),
+    'a hidden block fits to zero — this is what makes the reveal re-fit necessary',
+  );
+
+  const toggles = [...mount.querySelectorAll('.abk-pair-picker input[type=checkbox]')];
+  toggles[2].checked = true;
+  toggles[2].dispatchEvent(new mount.ownerDocument.defaultView.Event('change'));
+
+  assert.ok(
+    widths(blocks[2]).every((w) => w > 0),
+    'without the re-fit the revealed charts stay blank until the window resizes',
+  );
+  assert.ok(widths(blocks[1]).every((w) => w > 0), 'the other blocks are untouched');
+});
+
+test('the selector opens the pairs that HAVE data when the declared ones are empty', () => {
+  // DEC-1's documented window: a control declared on a running experiment
+  // re-orients the pairs, so until the next `abk run` the control-anchored
+  // blocks are present-but-empty while the old treatment pairs hold the series.
+  // Defaulting on orientation alone opens three "no cutoffs yet" boxes and
+  // hides every chart with data — worse than the page 0.8.0 rendered.
+  const reoriented = makeMultiArmDecisionPayload();
+  const [, withData] = reoriented.metrics[0].pairs;
+  reoriented.metrics[0].pairs = [
+    { c: 'control', t: 'treatment', series: [], diag: null },
+    { c: 'control', t: 'treatment_b', series: [], diag: null },
+    { c: 'treatment', t: 'treatment_b', series: withData.series, diag: null },
+  ];
+  const { mount } = renderInJsdom(reoriented);
+  const blocks = [...mount.querySelectorAll('.abk-metric .abk-pair')];
+  assert.deepEqual(
+    blocks.map((b) => b.hidden),
+    [true, true, false],
+    'the block with a series is the one on screen',
+  );
+});
+
+test('the leaders chip also reports agreement', () => {
+  const agreed = makeMultiArmDecisionPayload({
+    leaders_agree: true,
+    rollups: [
+      { metric: 'revenue', leader: 'treatment_b', indistinguishable: [], separation: 'separated',
+        losers: [], guardrail_regressed: [], rationale: ['treatment_b beat control'], caveats: [] },
+      { metric: 'orders', leader: 'treatment_b', indistinguishable: [], separation: 'separated',
+        losers: [], guardrail_regressed: [], rationale: ['treatment_b beat control'], caveats: [] },
+    ],
+  });
+  const { mount } = renderInJsdom(agreed);
+  const chip = mount.querySelector('[data-abk-leaders]');
+  assert.equal(chip.getAttribute('data-abk-leaders'), 'agree');
+  assert.match(chip.textContent, /agree on the leader/);
+  assert.ok(chip.classList.contains('abk-leaders-agree'));
 });

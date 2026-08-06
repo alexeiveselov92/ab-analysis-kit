@@ -70,7 +70,34 @@ number change).
   every surface. The report, the dashboard and notifications stay
   control-anchored for now — a `WIN` card on a `B vs C` block with no role chip
   would read as a ship recommendation, so DEC-3/DEC-4 open those surfaces
-  deliberately.
+  deliberately. (DEC-3, below, opened the report; the dashboard, notifications,
+  `abk explore` and the `abk run --report` summary line are still held.)
+
+- **The HTML report shows the decision layer** (M14 DEC-3). The baked payload
+  now carries a verdict for **every declared arm pair**, each with its `role`,
+  plus `rollups` (one per main metric) and `leaders_agree` — all three additive,
+  so no `PAYLOAD_VERSION` bump and an older bundle still loads an older bake.
+  `abk run --report` renders, **at 3+ arms only**:
+  a **role chip** on every treatment-vs-treatment card (`arm vs arm — not a
+  ship decision`), with those cards folded into one collapsed group *below* the
+  ship decisions rather than mixed among them; a **cross-arm overview** per main
+  metric — the leader, the separation state in words, the readout's own
+  rationale, and an arm table of effect · CI · verdict · n; a **pair selector**
+  so the block count stops growing as C(N,2) per metric (the control-anchored
+  pairs are expanded by default); and a **leaders chip** when two main metrics
+  name different leaders.
+  A treatment-pair block also gains the min-effect reference line it never had,
+  because `verdictFor` now finds its verdict.
+  **A two-arm report is byte-identical to `0.8.0`**: there is no treatment pair
+  to label, and every affordance above is suppressed below three arms —
+  including the leaders chip, which would otherwise fire on the tautology that
+  two main metrics of a two-arm experiment can only name the same treatment.
+  The arm table deliberately does **not** re-rank the arms: `desired_direction`
+  is resolved once, in the readout, and a renderer sorting by effect would put
+  the leader last on a `decrease` metric.
+  `abk explore`'s Review mode and the `abk run --report` summary line stay
+  control-anchored until DEC-4 (one shared `reporting.builder.ship_decisions`),
+  since both print the verdict word with nothing beside it.
 
 ### Changed
 - **`guardrail_policy: block` no longer caps a treatment-vs-treatment verdict**

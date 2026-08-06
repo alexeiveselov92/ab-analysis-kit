@@ -15,7 +15,7 @@
 // key presence. Explore (M3 WP6/WP7) extends this payload with extra keys;
 // the report renderer ignores unknown keys.
 
-/** One cumulative cutoff of one control-vs-treatment series (terse §5.3 keys). */
+/** One cumulative cutoff of one DECLARED arm pair's series (terse §5.3 keys). */
 export interface SeriesPoint {
   /** cutoff end_ts, ms epoch */
   t: number;

@@ -3,7 +3,9 @@
 Thin by design (the donor's series/window logic is superseded by the WP2
 builder + the WP4 engine): the report payload rides verbatim — the report
 renderer ignores unknown keys, the explore client reads the ``explore`` block
-— extended with the knob surfaces auto-derived from ``param_specs`` (D12),
+— with ONE exception since m14 DEC-3, ``verdicts``, which is filtered back to
+the ship decisions until DEC-4 teaches Review mode to label a role (see the
+comment at the filter). Extended with the knob surfaces from ``param_specs`` (D12),
 the per-metric initial calibration state (D3), the session-cache facts, and
 the endpoint slots a server injects post-bind (``None`` in the static
 ``--no-serve`` page — the client's preview-badge substrate, D3 gating).

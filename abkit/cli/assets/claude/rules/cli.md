@@ -135,7 +135,11 @@ on with nothing declared additive, and how many looks fell back to recompute.
 - `--report [PATH]` — after the run, emit a self-contained HTML readout per
   experiment (best-effort — never fails the run). Tri-state: bare `--report` →
   `reports/<exp>.html`; a directory → `<dir>/<exp>.html`; a `.html` path → that
-  file. Reads persisted rows, so even a load-only run can produce one.
+  file. Reads persisted rows, so even a load-only run can produce one. At 3+ arms
+  the page carries the decision layer: a cross-arm overview per main metric
+  (leader · separation · an arm table), a card per declared pair with the
+  arm-vs-arm ones labelled *not a ship decision*, and a pair selector. The
+  one-line terminal summary beside it still lists the SHIP decisions only.
 - `--cost-report` — print per-stage warehouse cost (wall-time, queries, rows returned,
   rows scanned where the backend reports them), plus `of which day-additive:` — the
   same measured cost attributed to the state-eligible comparisons only, followed by

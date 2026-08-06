@@ -1278,12 +1278,22 @@ class TestTheDecisionLayerReachesThePayload:
         )
         for metric, (best, worst) in (("revenue", ("t1", "t2")), ("orders", ("t2", "t1"))):
             seed_series(
-                tables, experiment, metric=metric, name_2=best, effect=0.2,
-                left_bound=0.15, right_bound=0.25,
+                tables,
+                experiment,
+                metric=metric,
+                name_2=best,
+                effect=0.2,
+                left_bound=0.15,
+                right_bound=0.25,
             )
             seed_series(
-                tables, experiment, metric=metric, name_2=worst, effect=0.1,
-                left_bound=0.05, right_bound=0.15,
+                tables,
+                experiment,
+                metric=metric,
+                name_2=worst,
+                effect=0.1,
+                left_bound=0.05,
+                right_bound=0.15,
             )
             seed_series(
                 tables, experiment, metric=metric, name_1="t1", name_2="t2", **self.UNDECIDED

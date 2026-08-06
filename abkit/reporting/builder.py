@@ -218,9 +218,16 @@ def ship_decisions(verdicts: Sequence[dict]) -> list[dict]:
     surface that prints the word without saying what it is ABOUT turns "C beat
     B" into "ship C". Two surfaces are in that position until DEC-4 opens them
     — explore's Review mode and the ``abk run --report`` summary line — and
-    this is the ONE place the rule is written, because four copies of a
-    knob-dependent set is the STAT-1b failure (there, `combinations(variants,
-    2)` in four modules).
+    this is the one place the rule is written **for a baked payload dict**,
+    because two copies of a role-dependent predicate is the STAT-1b shape in
+    miniature (there, `combinations(variants, 2)` in four modules).
+
+    It is deliberately NOT the only ship-decision filter in the tree:
+    `tuning/overview.py` and `notify/dispatch.py` filter `PairVerdict` OBJECTS
+    straight off the readout (m14 DEC-2's holds), which never pass through a
+    payload. Two forms, two types, both honor-system — unlike `grid()`,
+    `contrast_pairs()` and `ExperimentConfig.control`, this factory has no AST
+    gate.
 
     An absent ``role`` reads as a ship decision: that is what every payload
     baked before ``0.9.0`` carries, and every one of those lists is

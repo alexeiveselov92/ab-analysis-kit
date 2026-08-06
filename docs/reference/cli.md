@@ -230,8 +230,9 @@ fails the run (the one recorded exception to the exit-non-zero rule).
 
 **`--notify` is best-effort on the same terms**, and it is the only other flag
 that reads rows back after the pipeline (both share one connection). It fires
-on a **completed** experiment (the verdicts `readout.evaluate()` returns, one
-message per verdict) and on a **failed** one (an error notice carrying the
+on a **completed** experiment (one message per SHIP decision — the readout
+also verdicts treatment-vs-treatment pairs at 3+ arms, and those are evidence
+rather than a decision to announce) and on a **failed** one (an error notice carrying the
 reason, with no statistics block — nothing was measured). `locked` and `skipped`
 stay silent. Messages go to the channels an experiment's `notify:` block selects,
 or to all configured channels when it has none. A **failed SRM gate** does not
