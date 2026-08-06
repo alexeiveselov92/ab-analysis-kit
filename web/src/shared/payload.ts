@@ -98,11 +98,22 @@ export interface GuardrailNote {
 
 export type VerdictWord = 'WIN' | 'LOSE' | 'FLAT' | 'INCONCLUSIVE';
 
-/** One WP1 readout verdict — per main-metric × control-vs-treatment pair. */
+/**
+ * What a verdict is ABOUT (m14 DEC-2/DEC-3). `vs_control` is a ship decision;
+ * `treatment_pair` is evidence about two treatments and says nothing about
+ * either against the baseline — a `WIN` on `(B, C)` means "C beat B", never
+ * "ship C". Absent on every payload baked before 0.9.0, all of which are
+ * control-anchored by construction, so `undefined` reads as `vs_control`.
+ */
+export type PairRole = 'vs_control' | 'treatment_pair';
+
+/** One WP1 readout verdict — per main-metric × DECLARED arm pair. */
 export interface VerdictBlock {
   metric: string;
   pair: { c: string; t: string };
   verdict: VerdictWord;
+  /** m14 DEC-3; see `PairRole`. Optional so older baked payloads type-check. */
+  role?: PairRole;
   rationale: string[];
   caveats: string[];
   significant: boolean;
@@ -123,6 +134,40 @@ export interface VerdictBlock {
    */
   weekly_cycle_pct?: number | null;
   guardrails: GuardrailNote[];
+}
+
+/**
+ * How well the leader is separated from the other treatments (m14 DEC-2).
+ *
+ * `no_leader` is the COMMON state — most experiments do not win — and it is
+ * distinct from `separated` on purpose: with no winning arm the
+ * `indistinguishable` set is empty, which would otherwise read as "the leader
+ * beat everyone" said of an experiment that has no leader. `untested` means
+ * "we could not look" (a `contrasts: vs_control` family, or missing/demoted
+ * treatment-pair rows), which is a different statement again.
+ */
+export type SeparationState = 'separated' | 'co_leaders' | 'untested' | 'no_leader';
+
+/**
+ * One main metric's arm-level summary (m14 DEC-2/DEC-3) — a read-time
+ * composition over the verdicts above, recomputing nothing and persisted
+ * nowhere. Present at two arms too (one candidate, a uniform shape); the
+ * renderer draws the cross-arm affordances only at 3+ arms.
+ */
+export interface RollupBlock {
+  metric: string;
+  /** the arm to ship, or null — chosen ONLY among arms that beat the control */
+  leader: string | null;
+  /** treatments the leader is not decisively better than */
+  indistinguishable: string[];
+  separation: SeparationState;
+  /** treatments the control beat */
+  losers: string[];
+  /** arms whose guardrail regressed AGAINST THE CONTROL */
+  guardrail_regressed: string[];
+  /** the readout's own voice — rendered verbatim, never re-worded here */
+  rationale: string[];
+  caveats: string[];
 }
 
 /** CURRENT experiment health — window-independent (§6 "SRM loud"). */
@@ -257,7 +302,15 @@ export interface ReportPayload {
   contrasts?: string;
   srm: SrmBlock;
   calibration: CalibrationBlock | null;
+  /** every DECLARED pair since m14 DEC-3, ship decisions first (the 0.8.0 list
+   * is a literal prefix); each carries `role` */
   verdicts: VerdictBlock[];
+  /** m14 DEC-3: one per main metric, config order. Optional so older baked
+   * payloads type-check — absent means a pre-0.9.0 bake, not "no rollup". */
+  rollups?: RollupBlock[];
+  /** do the per-metric leaders coincide? null when fewer than two rollups name
+   * one — there is nothing to agree about. Optional for the same reason. */
+  leaders_agree?: boolean | null;
   metrics: MetricBlock[];
   /** n = cutoffs with ≥1 non-demoted row; planned = the planner grid length */
   look: { n: number; planned: number } | null;
@@ -291,4 +344,16 @@ export function baselineNote(payload: ReportPayload): string {
   const control = payload.control;
   if (!control || control === payload.arms[0]) return 'first = control';
   return `control: ${control}`;
+}
+
+/**
+ * The baseline arm every effect on the page is measured against (m14 DEC-1).
+ *
+ * Shared for the same reason `baselineNote` is: a surface that re-derives the
+ * baseline can name a different arm than the sentence printed above it. The
+ * fallback is the positional convention, which is exactly what a payload
+ * without the key was baked under.
+ */
+export function controlArm(payload: ReportPayload): string {
+  return payload.control ?? payload.arms[0];
 }

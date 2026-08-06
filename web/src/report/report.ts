@@ -56,10 +56,11 @@ import type {
   MetricBlock,
   PairBlock,
   ReportPayload,
+  RollupBlock,
   SeriesPoint,
   VerdictBlock,
 } from '../shared/payload';
-import { baselineNote } from '../shared/payload';
+import { baselineNote, controlArm } from '../shared/payload';
 import { makeBrandLockup } from '../shared/logo';
 
 // ----------------------------------------------------------------------------
@@ -185,6 +186,21 @@ function buildHeader(payload: ReportPayload): HTMLElement {
   const chips = el('div', 'abk-chips');
   chips.appendChild(buildSrmChip(payload));
   chips.appendChild(buildCalibrationChip(payload));
+  // m14 DEC-3: do the main metrics' leaders coincide? `null` means fewer than
+  // two rollups NAME one, so there is nothing to agree about — and the chip is
+  // gated at 3+ arms because at two arms both metrics can only ever name the
+  // same single treatment, which would put a chip on a page 0.8.0 rendered
+  // without one (§0.2 point 3).
+  if (payload.arms.length > 2 && payload.leaders_agree != null) {
+    const agree = payload.leaders_agree;
+    const chip = el(
+      'span',
+      `abk-chip abk-leaders ${agree ? 'abk-leaders-agree' : 'abk-leaders-split'}`,
+      agree ? 'main metrics agree on the leader' : 'main metrics name DIFFERENT leaders',
+    );
+    chip.setAttribute('data-abk-leaders', agree ? 'agree' : 'split');
+    chips.appendChild(chip);
+  }
   if (payload.look !== null && payload.cadence_seconds < 86400) {
     chips.appendChild(
       el('span', 'abk-chip abk-look', `look ${payload.look.n} / ~${payload.look.planned} planned`),
@@ -496,6 +512,8 @@ function drawPeekingCurve(
 // Verdict banners
 // ----------------------------------------------------------------------------
 
+const isShipDecision = (v: VerdictBlock): boolean => (v.role ?? 'vs_control') === 'vs_control';
+
 function buildVerdicts(payload: ReportPayload): HTMLElement {
   const wrap = el('div', 'abk-verdicts');
   if (payload.verdicts.length === 0) {
@@ -508,18 +526,57 @@ function buildVerdicts(payload: ReportPayload): HTMLElement {
     );
     return wrap;
   }
-  for (const v of payload.verdicts) wrap.appendChild(buildVerdictCard(v));
+  // m14 DEC-3. The ship decisions keep the headline area to themselves; the
+  // treatment-vs-treatment verdicts are EVIDENCE about two arms and are folded
+  // into one collapsed group below them. Both facts matter: a `WIN` on `B vs C`
+  // must not sit unlabeled among ship decisions, and at five arms the group
+  // would otherwise be six cards nobody asked for above the charts. At two arms
+  // there is no second group at all, so the section is 0.8.0's byte for byte.
+  for (const v of payload.verdicts.filter(isShipDecision)) wrap.appendChild(buildVerdictCard(v));
+
+  const evidence = payload.verdicts.filter((v) => !isShipDecision(v));
+  if (evidence.length > 0) {
+    const details = document.createElement('details');
+    details.className = 'abk-evidence';
+    details.appendChild(
+      el(
+        'summary',
+        undefined,
+        `arm-vs-arm evidence — ${evidence.length} comparison${evidence.length === 1 ? '' : 's'}` +
+          ' (not ship decisions)',
+      ),
+    );
+    // its own class, not a second `abk-verdicts`: nesting the same class would
+    // make `.abk-verdicts > .abk-verdict` match the evidence cards too, and the
+    // one selector that must never be ambiguous is "the ship decisions"
+    const list = el('div', 'abk-evidence-list');
+    for (const v of evidence) list.appendChild(buildVerdictCard(v));
+    details.appendChild(list);
+    wrap.appendChild(details);
+  }
   return wrap;
 }
 
 function buildVerdictCard(v: VerdictBlock): HTMLElement {
   const kind = v.verdict.toLowerCase();
-  const card = el('div', `abk-verdict abk-verdict-${kind}`);
+  const ship = isShipDecision(v);
+  const card = el('div', `abk-verdict abk-verdict-${kind}${ship ? '' : ' abk-verdict-evidence'}`);
   card.setAttribute('data-abk-verdict', v.verdict);
 
   const head = el('div', 'abk-verdict-head');
   head.appendChild(el('span', 'abk-verdict-word', v.verdict));
   head.appendChild(el('span', 'abk-verdict-target', `${v.metric} — ${v.pair.c} vs ${v.pair.t}`));
+  // m14 DEC-3: the role is a CHIP, not an inference from `pair.c === control`.
+  // A `WIN` here means `pair.t` came out ahead of `pair.c` — which is evidence
+  // about two treatments and says nothing about either against the baseline.
+  // Rendered only for the treatment pairs, so a two-arm card (and every ship
+  // decision) is unchanged.
+  if (!ship) {
+    const role = el('span', 'abk-chip abk-role-chip', 'arm vs arm — not a ship decision');
+    role.setAttribute('data-abk-role', 'treatment_pair');
+    role.title = `the word is about ${v.pair.t} against ${v.pair.c}, not against the control`;
+    head.appendChild(role);
+  }
   // §6.5 representativeness chip: an early decisive verdict covers < one weekly
   // cycle. Promoted from a caveat bullet to a glanceable chip (WP4); the full
   // "day-of-week" sentence stays in the tooltip + is filtered from the list below.
@@ -616,6 +673,9 @@ function buildMetricSection(
   for (const w of metric.warnings) head.appendChild(el('div', 'abk-warning', `⚠ ${w}`));
   section.appendChild(head);
 
+  // Since m14 DEC-3 this finds treatment pairs too — the payload carries every
+  // declared pair, so the block that used to render with no verdict (no MDE
+  // reference line, no min-effect) now gets its own.
   const verdictFor = (pair: PairBlock): VerdictBlock | null => {
     for (const v of payload.verdicts) {
       if (v.metric === metric.name && v.pair.c === pair.c && v.pair.t === pair.t) return v;
@@ -623,10 +683,180 @@ function buildMetricSection(
     return null;
   };
 
-  for (const pair of metric.pairs) {
-    section.appendChild(buildPairBlock(metric, pair, payload, verdictFor(pair), charts));
+  const multiArm = payload.arms.length > 2;
+  const rollup = (payload.rollups ?? []).find((r) => r.metric === metric.name);
+  if (multiArm && rollup) section.appendChild(buildRollupPanel(rollup, metric, payload));
+
+  // Each block is built eagerly (the charts must exist for the shared resize
+  // pass) but a non-default one starts hidden — a hidden canvas fits to zero,
+  // so revealing one has to re-fit the charts it owns, which is why the
+  // selector tracks them by the slice each block appended.
+  const blocks = metric.pairs.map((pair) => {
+    const first = charts.length;
+    const node = buildPairBlock(metric, pair, payload, verdictFor(pair), charts);
+    return { pair, node, own: charts.slice(first) };
+  });
+  if (multiArm && blocks.length > 1) {
+    section.appendChild(buildPairPicker(blocks, payload));
   }
+  for (const block of blocks) section.appendChild(block.node);
   return section;
+}
+
+interface PairBlockHandle {
+  pair: PairBlock;
+  node: HTMLElement;
+  own: Chart[];
+}
+
+/**
+ * The pair selector (m14 DEC-3, audit gap 13).
+ *
+ * Block count grows as C(N,2) per metric, so at five arms one metric is ten
+ * stabilization charts. The control-anchored pairs are expanded by default
+ * because those are the ship decisions; the treatment pairs are one click away
+ * rather than absent, which is what the charts were before this WP anyway
+ * (charted, unverdicted, and below everything).
+ */
+function buildPairPicker(blocks: PairBlockHandle[], payload: ReportPayload): HTMLElement {
+  const control = controlArm(payload);
+  const picker = el('div', 'abk-pair-picker');
+  picker.appendChild(el('span', 'abk-pair-picker-label', 'pairs'));
+  for (const block of blocks) {
+    const shown = block.pair.c === control;
+    block.node.hidden = !shown;
+
+    const label = el('label', 'abk-pair-toggle');
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.checked = shown;
+    box.addEventListener('change', () => {
+      block.node.hidden = !box.checked;
+      // a chart that was fitted while hidden has zero size — re-fit on reveal
+      if (box.checked) for (const chart of block.own) chart.resize();
+    });
+    label.appendChild(box);
+    label.appendChild(el('span', undefined, `${block.pair.c} vs ${block.pair.t}`));
+    picker.appendChild(label);
+  }
+  return picker;
+}
+
+/**
+ * The cross-arm overview (m14 DEC-3): one per main metric, 3+ arms only.
+ *
+ * Everything it states comes from the rollup the READOUT composed — the leader,
+ * the separation state and the prose. Nothing is re-derived here, including the
+ * ranking: `desired_direction` is not in the payload on purpose, so the table
+ * stays in declaration order and the leader is named by the chip rather than by
+ * this renderer's idea of which end of the scale is good.
+ */
+function buildRollupPanel(
+  rollup: RollupBlock,
+  metric: MetricBlock,
+  payload: ReportPayload,
+): HTMLElement {
+  const panel = el('div', 'abk-rollup');
+  panel.setAttribute('data-abk-separation', rollup.separation);
+
+  const head = el('div', 'abk-rollup-head');
+  head.appendChild(
+    el('span', 'abk-rollup-leader', rollup.leader === null ? 'no leader' : `leader: ${rollup.leader}`),
+  );
+  head.appendChild(el('span', 'abk-chip abk-rollup-state', SEPARATION_LABEL[rollup.separation]));
+  panel.appendChild(head);
+
+  for (const line of rollup.rationale) panel.appendChild(el('div', 'abk-rollup-line', line));
+  for (const line of rollup.caveats) panel.appendChild(el('div', 'abk-caveat', `⚠ ${line}`));
+
+  panel.appendChild(buildArmTable(rollup, metric, payload));
+  return panel;
+}
+
+const SEPARATION_LABEL: Record<string, string> = {
+  separated: 'separated from every other arm',
+  co_leaders: 'co-leaders — not separated',
+  untested: 'separation untested',
+  no_leader: 'no arm beat the control',
+};
+
+/** Effect · CI · verdict · n per arm, so the ordering reads without scrolling
+ * C(N,2) charts. `n` is the latest cutoff of that arm's control-anchored pair —
+ * the same row the verdict beside it was taken from. */
+function buildArmTable(
+  rollup: RollupBlock,
+  metric: MetricBlock,
+  payload: ReportPayload,
+): HTMLElement {
+  const control = controlArm(payload);
+  const shipVerdict = (arm: string): VerdictBlock | undefined =>
+    payload.verdicts.find(
+      (v) => v.metric === metric.name && isShipDecision(v) && v.pair.t === arm,
+    );
+  const latestOf = (arm: string): SeriesPoint | undefined => {
+    const pair = metric.pairs.find((p) => p.c === control && p.t === arm);
+    if (!pair || pair.series.length === 0) return undefined;
+    return [...pair.series].sort((a, b) => a.t - b.t)[pair.series.length - 1];
+  };
+
+  const scroll = el('div', 'abk-arm-scroll');
+  const table = document.createElement('table');
+  const headRow = document.createElement('tr');
+  for (const h of ['arm', 'effect', 'CI', `vs ${control}`, 'n']) {
+    headRow.appendChild(el('th', undefined, h));
+  }
+  const thead = document.createElement('thead');
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+
+  const body = document.createElement('tbody');
+  const baseline = document.createElement('tr');
+  baseline.className = 'abk-arm-baseline';
+  const controlN = metric.pairs.find((p) => p.c === control);
+  const controlPts = controlN && controlN.series.length > 0 ? [...controlN.series].sort((a, b) => a.t - b.t) : [];
+  for (const cell of [
+    control,
+    '—',
+    '—',
+    'baseline',
+    controlPts.length > 0 ? String(controlPts[controlPts.length - 1].s1) : '—',
+  ]) {
+    baseline.appendChild(el('td', undefined, cell));
+  }
+  body.appendChild(baseline);
+
+  for (const arm of payload.arms.filter((a) => a !== control)) {
+    const v = shipVerdict(arm);
+    const point = latestOf(arm);
+    const row = document.createElement('tr');
+    if (arm === rollup.leader) row.className = 'abk-arm-leader';
+
+    const armCell = el('td');
+    armCell.appendChild(el('span', undefined, arm));
+    if (arm === rollup.leader) armCell.appendChild(el('span', 'abk-arm-tag', 'leader'));
+    else if (rollup.indistinguishable.includes(arm)) {
+      armCell.appendChild(el('span', 'abk-arm-tag', 'co-leader'));
+    }
+    if (rollup.guardrail_regressed.includes(arm)) {
+      armCell.appendChild(el('span', 'abk-arm-tag abk-arm-tag-warn', 'guardrail'));
+    }
+    row.appendChild(armCell);
+
+    row.appendChild(el('td', undefined, v?.effect == null ? '—' : fmtSigned(v.effect)));
+    row.appendChild(
+      el(
+        'td',
+        undefined,
+        v == null || v.lo === null || v.hi === null ? '—' : `[${fmtVal(v.lo)}, ${fmtVal(v.hi)}]`,
+      ),
+    );
+    row.appendChild(el('td', undefined, v?.verdict ?? '—'));
+    row.appendChild(el('td', undefined, point === undefined ? '—' : String(point.s2)));
+    body.appendChild(row);
+  }
+  table.appendChild(body);
+  scroll.appendChild(table);
+  return scroll;
 }
 
 function buildPairBlock(
@@ -1376,6 +1606,41 @@ function injectStyle(): void {
   background:var(--abk-st-good);color:var(--abk-card);margin-left:6px;font-weight:700;letter-spacing:0.02em;}
 .${ROOT_CLASS} .abk-cal-verdict{max-width:360px;white-space:normal;}
 .${ROOT_CLASS} .abk-cal-rationale{font-size:11px;color:var(--abk-ink-2);margin-top:2px;font-style:normal;}
+/* m14 DEC-3: arm-vs-arm evidence + the cross-arm overview ---------------------- */
+.${ROOT_CLASS} .abk-evidence summary{font-size:12px;color:var(--abk-ink-2);cursor:pointer;
+  font-family:var(--abk-mono);}
+.${ROOT_CLASS} .abk-evidence-list{display:flex;flex-direction:column;gap:10px;margin:8px 0 0;}
+.${ROOT_CLASS} .abk-verdict-evidence{border-left-style:dashed;background:transparent;}
+.${ROOT_CLASS} .abk-role-chip{padding:2px 9px;font-size:11px;align-self:center;
+  border-style:dashed;color:var(--abk-muted);}
+.${ROOT_CLASS} .abk-leaders-agree{border-color:var(--abk-st-good);}
+.${ROOT_CLASS} .abk-leaders-split{border-color:var(--abk-st-warn);color:var(--abk-ink);
+  background:color-mix(in srgb, var(--abk-st-warn) 12%, transparent);}
+.${ROOT_CLASS} .abk-rollup{background:var(--abk-card);border:1px solid var(--abk-border);
+  border-radius:10px;padding:10px 12px;margin:10px 0 6px;}
+.${ROOT_CLASS} .abk-rollup-head{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;}
+.${ROOT_CLASS} .abk-rollup-leader{font-size:14px;font-weight:700;}
+.${ROOT_CLASS} .abk-rollup-state{padding:2px 9px;font-size:11px;}
+.${ROOT_CLASS} .abk-rollup-line{font-size:12px;color:var(--abk-ink-2);margin-top:5px;line-height:1.45;}
+.${ROOT_CLASS} .abk-arm-scroll{overflow-x:auto;margin-top:8px;}
+.${ROOT_CLASS} .abk-rollup table{border-collapse:collapse;font-size:11.5px;font-family:var(--abk-mono);
+  min-width:420px;font-variant-numeric:tabular-nums;}
+.${ROOT_CLASS} .abk-rollup th{text-align:left;color:var(--abk-muted);font-weight:600;
+  border-bottom:1px solid var(--abk-border);padding:4px 12px 4px 0;white-space:nowrap;}
+.${ROOT_CLASS} .abk-rollup td{border-bottom:1px solid var(--abk-border);padding:4px 12px 4px 0;
+  white-space:nowrap;color:var(--abk-ink-2);}
+.${ROOT_CLASS} .abk-rollup tr.abk-arm-leader td{color:var(--abk-ink);font-weight:700;}
+.${ROOT_CLASS} .abk-rollup tr.abk-arm-baseline td{color:var(--abk-muted);}
+.${ROOT_CLASS} .abk-arm-tag{margin-left:7px;font-size:10px;text-transform:uppercase;
+  letter-spacing:0.06em;padding:1px 6px;border-radius:7px;border:1px solid var(--abk-border);
+  color:var(--abk-ink-2);font-weight:400;}
+.${ROOT_CLASS} tr.abk-arm-leader .abk-arm-tag{border-color:var(--abk-st-good);color:var(--abk-good-text);}
+.${ROOT_CLASS} .abk-arm-tag-warn{border-color:var(--abk-st-serious);color:var(--abk-st-serious);}
+.${ROOT_CLASS} .abk-pair-picker{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;
+  margin:10px 0 2px;font-size:11.5px;font-family:var(--abk-mono);color:var(--abk-ink-2);}
+.${ROOT_CLASS} .abk-pair-picker-label{color:var(--abk-muted);letter-spacing:0.06em;
+  text-transform:uppercase;font-size:10px;}
+.${ROOT_CLASS} .abk-pair-toggle{display:inline-flex;align-items:center;gap:5px;cursor:pointer;}
 /* metric sections ------------------------------------------------------------ */
 .${ROOT_CLASS} .abk-metric{margin:26px 0;}
 .${ROOT_CLASS} .abk-metric-name-row{display:flex;align-items:baseline;gap:10px;}

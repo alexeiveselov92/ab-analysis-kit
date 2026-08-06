@@ -17,6 +17,7 @@ from typing import Any, get_args
 import numpy as np
 
 from abkit.config.experiment_config import CorrectionKind
+from abkit.reporting.builder import ship_decisions
 from abkit.tuning.recompute import RecomputeEngine, find_calibration, resolve_fpr_budget
 from abkit.tuning.session import ExploreSession
 from abkit.utils.datetime_utils import to_naive_utc
@@ -100,6 +101,14 @@ def build_explore_payload(
         else project.statistics.guardrail_correction
     )
     payload = dict(report_payload)
+    # m14 DEC-3 hold, opened by DEC-4. The report payload rides VERBATIM, and
+    # since DEC-3 its `verdicts` list carries treatment-vs-treatment pairs.
+    # Review mode renders every verdict whose metric matches (M7 WP0's
+    # `.find` → `.filter`) and prints the word alone, so a `WIN` on `B vs C`
+    # would read here as a ship recommendation — the misreading `role` exists to
+    # stop, on the one surface that cannot yet say it. `rollups` rides along
+    # unrendered; DEC-4 adds the Review line and drops this filter together.
+    payload["verdicts"] = ship_decisions(report_payload.get("verdicts", []))
     payload["explore"] = {
         "metrics": metrics,
         "default_metric": default_metric,

@@ -174,6 +174,13 @@ def _verdict_to_payload(verdict: PairVerdict) -> dict:
         "metric": verdict.metric,
         "pair": {"c": verdict.name_1, "t": verdict.name_2},
         "verdict": verdict.verdict,
+        # m14 DEC-3: what the word is ABOUT. `vs_control` is a ship decision;
+        # `treatment_pair` is evidence about two treatments and says nothing
+        # about either against the baseline. It rides as a FIELD because the
+        # renderers must not re-infer it from `pair.c == control` — the same
+        # argument that put `control` in the payload (DEC-1) and
+        # `family_divergence` on the verdict (STAT-1).
+        "role": verdict.role,
         "rationale": list(verdict.rationale),
         "caveats": list(verdict.caveats),
         "significant": bool(verdict.significant),
@@ -202,6 +209,24 @@ def _verdict_to_payload(verdict: PairVerdict) -> dict:
             for g in verdict.guardrails
         ],
     }
+
+
+def ship_decisions(verdicts: Sequence[dict]) -> list[dict]:
+    """The control-anchored subset of a baked ``verdicts`` list (m14 DEC-3).
+
+    Since DEC-3 the payload carries a verdict for every DECLARED pair, and a
+    surface that prints the word without saying what it is ABOUT turns "C beat
+    B" into "ship C". Two surfaces are in that position until DEC-4 opens them
+    — explore's Review mode and the ``abk run --report`` summary line — and
+    this is the ONE place the rule is written, because four copies of a
+    knob-dependent set is the STAT-1b failure (there, `combinations(variants,
+    2)` in four modules).
+
+    An absent ``role`` reads as a ship decision: that is what every payload
+    baked before ``0.9.0`` carries, and every one of those lists is
+    control-anchored by construction.
+    """
+    return [v for v in verdicts if v.get("role", "vs_control") == "vs_control"]
 
 
 def _window_filter(rows: list[dict], start: datetime | None, end: datetime | None) -> list[dict]:
@@ -531,14 +556,26 @@ def build_report_payload(
         # The M4 shape (fpr, peeking_fpr, headline, matrix_rows, report_link) fills
         # in without a payload v-bump (§5.3; every field renderer-side optional).
         "calibration": calibration,
-        # m14 DEC-2: control-anchored only, for now. The readout issues a
-        # verdict for every declared pair since DEC-2, but the renderers cannot
-        # yet SAY which is which — `report.ts` prints the word alone, so a
-        # `WIN` on a `B vs C` card would read as a ship recommendation, and
-        # explore's Review mode renders every matching verdict, so it would
-        # inherit the same misreading for free. DEC-3 adds `role` to the payload
-        # and the role chip beside it; that is the commit that opens this up.
-        "verdicts": [_verdict_to_payload(v) for v in readout.verdicts if v.role == "vs_control"],
+        # m14 DEC-3: every DECLARED pair, in the readout's own order — the
+        # control-anchored verdicts first (the exact sequence 0.8.0 emitted, so
+        # that list stays a literal PREFIX of this one), then the treatment
+        # pairs. DEC-2 withheld the second group because no renderer could yet
+        # SAY which was which; `role` above is what opens it. Two consumers of
+        # this list are NOT ready and hold themselves at `vs_control` until
+        # DEC-4 — `tuning/payload.py` (explore's Review mode has no chip) and
+        # `cli/commands/run.py` (it joins the bare words). Opening a payload
+        # opens every reader of it, which is the DEC-2 three-surfaces lesson one
+        # level down.
+        "verdicts": [_verdict_to_payload(v) for v in readout.verdicts],
+        # m14 DEC-3: the read-time arm-level summary, one per main metric (D2),
+        # composed by the readout FROM the verdicts above — nothing here
+        # recomputes a statistic, and it is persisted nowhere (D10). Present
+        # (and single-candidate) at two arms too, so the shape is uniform; the
+        # renderer draws the cross-arm affordances only at 3+ arms.
+        "rollups": [rollup.to_dict() for rollup in readout.rollups],
+        # null when fewer than two rollups NAME a leader — there is nothing to
+        # agree about, and a metric with no winner has no opinion.
+        "leaders_agree": readout.leaders_agree,
         "metrics": metrics,
         "look": {"n": len(informative_cutoffs), "planned": len(grid)},
         # injected by the explore server at serve time; null in a baked report
