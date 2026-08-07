@@ -76,12 +76,17 @@ class SrmResult:
             # are mirror images and naming one is a tautology — so a two-arm
             # gate line is `0.8.0`'s to the character.
             blame = ""
-            if len(self.observed) > 2:
+            # Only under the chi-square gate. The sub-day e-process's flag is a
+            # RUNNING MAX over earlier looks, so a since-rebalanced cohort reads
+            # FAILED on an even split — and a decomposition of the CURRENT
+            # counts would then blame an arm at noise magnitude, in the opposite
+            # direction, as the diagnosis (review finding).
+            if self.kind == "chi2" and len(self.observed) > 2:
                 found = self.culprit()
                 if found is not None:
                     arm, residual = found
                     side = "too few" if residual < 0 else "too many"
-                    blame = f" — {arm} has {side} units ({residual:+.1f}σ)"
+                    blame = f" — {arm} contributes most to the mismatch ({side} units)"
             return (
                 f"SRM FAILED (observed {observed_shares} vs expected {expected_shares}, "
                 f"{evid}){blame} — effects untrustworthy"
@@ -133,10 +138,19 @@ def srm_culprit(
 
     A DECOMPOSITION of a statistic already computed, never a second gate: the
     joint K-way test keeps deciding, and this only says where the mismatch is
-    concentrated. Returns ``(arm, standardised_residual)`` — the Pearson
-    residual ``(observed − expected) / √expected``, signed, so the surface can
-    say "too few" or "too many" — or ``None`` when the decomposition is not
-    defined (fewer than two arms, no units, a non-positive expectation).
+    concentrated. Returns ``(arm, residual)`` — the Pearson residual
+    ``(observed − expected) / √expected``, signed, so the surface can say "too
+    few" or "too many" — or ``None`` when the decomposition is not defined
+    (fewer than two arms, no units, a non-positive expectation).
+
+    **It is the chi-square CONTRIBUTION, not a z-score**, and no surface prints
+    it as one: a Pearson residual's null standard deviation is ``√(1−p)``, not 1
+    (measured 0.70 / 0.82 / 0.90 at 2 / 3 / 5 even arms), so a "σ" label would
+    overstate it by up to 30%. The ~N(0,1) quantity is the ADJUSTED residual
+    ``(o−e)/√(e(1−p))``, and under a strongly uneven declared split the two can
+    name DIFFERENT arms (measured: ~14% of imbalanced draws). This answers the
+    question the gate asks — which arm drives the statistic that failed — and
+    the adjusted residual is a named follow-up, not a silent substitution.
 
     At 3+ arms "assignment is broken" without "which arm" is a diagnosis the
     operator cannot act on; at two arms the answer is a tautology (the residuals

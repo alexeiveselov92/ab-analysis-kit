@@ -351,7 +351,7 @@ def run_validation(
         specs = [s for s in specs if s.metric == metric_filter]
     share_a = _share_a(experiment)
     arms = calibrated_contrast(experiment)
-    panel_cache: dict[tuple[str, object], PlaceboPanel] = {}
+    panel_cache: dict[tuple[str, object, tuple[str, str]], PlaceboPanel] = {}
     cells: list[CellResult] = []
 
     total = len(specs)
@@ -412,7 +412,9 @@ def run_validation(
             )
         else:
             emit("composing multi-metric family (FWER/FDR)")
-            family = _run_family_sweep(experiment, project, panel_cache, share_a, settings, log)
+            family = _run_family_sweep(
+                experiment, project, panel_cache, share_a, arms, settings, log
+            )
     elif metric_filter is None and len(experiment.comparisons) >= 2:
         # the one-release migration notice for the 0.2.0 default flip (WP6 risk item)
         log.append(
@@ -465,8 +467,9 @@ def _family_verdict(score, budget: float | None) -> str:
 def _run_family_sweep(
     experiment: ExperimentConfig,
     project: ProjectConfig,
-    panel_cache: dict[tuple[str, object], PlaceboPanel],
+    panel_cache: dict[tuple[str, object, tuple[str, str]], PlaceboPanel],
     share_a: float,
+    arms: tuple[str, str],
     settings: ValidateSettings,
     log: list[DecisionEntry],
 ) -> FamilyResult | None:
@@ -481,7 +484,7 @@ def _run_family_sweep(
     correction = experiment.correction or project.statistics.correction
     members: list[FamilyMember] = []
     for comparison in experiment.comparisons:
-        panel = panel_cache.get((comparison.metric, comparison.method.covariate_lookback))
+        panel = panel_cache.get((comparison.metric, comparison.method.covariate_lookback, arms))
         if panel is None:
             log.append(
                 DecisionEntry(
@@ -613,7 +616,11 @@ def _score_one(
     budget = _budget(project, spec.alpha, metric)
     try:
         metric_sql = metric_sqls[spec.metric]
-        cache_key = (spec.metric, spec.method.covariate_lookback)
+        # `arms` is part of what a panel MEANS since m14 DEC-5, so it is in the
+        # key — the m10 boot-memo rule. Constant per run today (one calibrated
+        # contrast per experiment); a future `--contrast` would otherwise score
+        # a cell against another pair's panel, silently.
+        cache_key = (spec.metric, spec.method.covariate_lookback, arms)
         panel = panel_cache.get(cache_key)
         if panel is None:
             panel = load_placebo_panel(

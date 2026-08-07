@@ -79,7 +79,11 @@ def _pool(
     control-vs-treatment comparison is 1/2 vs 1/2 over two arms'. The FPR column
     is robust to that — a null is a null at any n — but power and achieved-MDE
     are read off per-arm n and feed the Recommended row, so the placebo's ≈1.5×
-    units make the achieved MDE optimistic by ≈√1.5 ≈ 22%.
+    units make the achieved MDE optimistic — by 15% at three even arms, not the
+    ≈√1.5 ≈ 22% the contract first claimed: the OLD placebo did not split its
+    pooled units evenly either (it split 1/3 vs 2/3), so its effective n was
+    ``(G−1)n/G`` and the law is ``√(2(G−1)/G)`` — measured 1.000 / 1.155 / 1.230
+    / 1.270 at 2 / 3 / 4 / 5 even arms. √1.5 happens to be right at FOUR.
 
     Filtering PRESERVES `variants()`' order rather than following *arms*, so a
     two-arm experiment (where the two are the same set) concatenates in exactly
@@ -143,8 +147,12 @@ def load_placebo_panel(
     horizon_load = loads[-1][1]
     h_units, _h_values, _h_secondary, h_cov = _pool(horizon_load, input_kind, arms)
     if h_units.size == 0:
+        # Name the PAIR when one is being calibrated: since m14 DEC-5 the filter
+        # is what can empty the panel, and "no units" about an experiment whose
+        # third arm is full sends the operator to look at their data.
+        scope = "" if arms is None else f" for {arms[0]} vs {arms[1]}"
         raise ValidateError(
-            f"metric '{metric.name}': no units at the horizon cutoff — nothing to validate"
+            f"metric '{metric.name}': no units at the horizon cutoff{scope} — nothing to validate"
         )
 
     order = np.argsort(h_units, kind="stable")

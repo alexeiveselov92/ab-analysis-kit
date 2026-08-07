@@ -202,7 +202,7 @@ def _refuse_experiment() -> ExperimentConfig:
     )
 
 
-def test_plan_multi_arm_warns_sizing_is_first_pair_only(capsys):
+def test_plan_multi_arm_sizes_every_declared_contrast(capsys):
     from abkit.cli.commands.plan import _emit_plan, _plan_comparison
     from abkit.config.project_config import ProjectConfig
 
@@ -232,7 +232,7 @@ def test_plan_multi_arm_warns_sizing_is_first_pair_only(capsys):
     # This split is even to 1 part in 34, so every vs-control contrast sizes the
     # same and the honest report is one sentence rather than two identical lines.
     assert "contrast only" not in out
-    assert "all 2 declared vs-control contrasts size identically" in out
+    assert "all 2 declared vs-control contrasts share this allocation ratio" in out
     # …and the arm-vs-arm half of an `all_pairs` family is disclosed as UNSIZED
     # rather than silently missing: it shares the alpha and has no baseline
     assert "treatment-vs-treatment contrast" in out and "not sized" in out
@@ -996,3 +996,98 @@ class TestDeclaredControlReachesTheSizing:
         # declared control `c` is the baseline in every one of them
         assert "c vs b" in out
         assert "a vs b" not in out, "a treatment pair is never sized as a contrast"
+
+
+class TestUnevenContrastsAreSizedHonestly:
+    """m14 DEC-5(b), the cases the first implementation got wrong.
+
+    Every assertion here failed against the shipped-then-fixed renderer: a
+    numeric collapse test called a 60/30/10 split "identical", the per-contrast
+    achievable MDE was the headline pair's number under another pair's name, and
+    a contrast needing twice the control units carried no ✗ beside it.
+    """
+
+    @staticmethod
+    def _experiment(split):
+        return ExperimentConfig.model_validate(
+            {
+                "name": "uneven",
+                "start_ts": "2024-07-01",
+                "horizon_ts": "2024-07-15",
+                "unit_key": "user_id",
+                "assignment": {
+                    "query": "SELECT 1",
+                    "variants": list(split),
+                    "expected_split": split,
+                },
+                "comparisons": [
+                    {
+                        "metric": "cr",
+                        "is_main_metric": True,
+                        "min_effect": 0.05,
+                        "method": {"name": "z-test"},
+                    }
+                ],
+            }
+        )
+
+    def _emit(self, capsys, split, baseline):
+        from abkit.cli.commands.plan import _emit_plan, _plan_comparison
+        from abkit.config.project_config import ProjectConfig
+
+        exp = self._experiment(split)
+        project = ProjectConfig.model_validate({"name": "p", "default_profile": "dev"})
+        alphas = TwoTierAlphas(
+            alpha=0.05, groups_count=len(split), metrics_count=0, main=0.0167, secondary=None
+        )
+        plan = _plan_comparison(exp, exp.comparisons[0], alphas, 0.8, 0.05, baseline, tables=None)
+        grid = exp.grid()
+        _emit_plan(exp, project, alphas, 0.8, len(grid), grid, 42, [plan])
+        return capsys.readouterr().out
+
+    def test_an_uneven_split_is_never_called_identical(self, capsys):
+        out = self._emit(capsys, {"control": 0.6, "t1": 0.3, "t2": 0.1}, {"prop": 0.1, "n": 150000})
+
+        assert "share this allocation ratio" not in out
+        assert "control vs t2 (ratio 0.167)" in out
+
+    def test_the_contrast_line_carries_its_own_powered_flag(self, capsys):
+        out = self._emit(capsys, {"control": 0.6, "t1": 0.3, "t2": 0.1}, {"prop": 0.1, "n": 150000})
+
+        t2_line = next(line for line in out.splitlines() if "control vs t2" in line)
+        assert "✓ powered" in t2_line or "✗ underpowered" in t2_line
+
+    def test_the_line_never_prints_another_pairs_achievable_mde(self, capsys):
+        """`achievable_mde` is solved from `moments.observed_ratio` and never
+        sees `plan_ratio`, so it is identical for every contrast — printing it
+        per pair was the headline's number wearing another pair's name."""
+        out = self._emit(capsys, {"control": 0.6, "t1": 0.3, "t2": 0.1}, {"prop": 0.1, "n": 150000})
+
+        t2_line = next(line for line in out.splitlines() if "control vs t2" in line)
+        assert "achievable MDE" not in t2_line
+
+    def test_a_binding_contrast_past_the_headline_is_named(self, capsys):
+        out = self._emit(capsys, {"control": 0.6, "t1": 0.3, "t2": 0.1}, {"prop": 0.1, "n": 150000})
+
+        assert "the binding contrast is control vs t2" in out
+        assert "the timing below is the headline contrast's" in out
+
+    def test_without_a_target_the_ratios_are_listed_not_collapsed(self, capsys):
+        exp = self._experiment({"control": 0.6, "t1": 0.3, "t2": 0.1})
+        exp.comparisons[0].min_effect = None
+        from abkit.cli.commands.plan import _emit_plan, _plan_comparison
+        from abkit.config.project_config import ProjectConfig
+
+        project = ProjectConfig.model_validate({"name": "p", "default_profile": "dev"})
+        alphas = TwoTierAlphas(
+            alpha=0.05, groups_count=3, metrics_count=0, main=0.0167, secondary=None
+        )
+        plan = _plan_comparison(
+            exp, exp.comparisons[0], alphas, 0.8, None, {"prop": 0.1, "n": 150000}, tables=None
+        )
+        grid = exp.grid()
+        _emit_plan(exp, project, alphas, 0.8, len(grid), grid, 42, [plan])
+        out = capsys.readouterr().out
+
+        assert "share this allocation ratio" not in out, "no target ⇒ every required_n is None"
+        assert "DIFFERENT allocation ratios" in out

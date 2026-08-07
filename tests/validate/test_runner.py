@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 import pytest
 from synthetic_ab import (
     METRICS,
     PROJECT,
+    START,
     SyntheticWarehouse,
+    experiment_payload,
     make_experiment,
     seed_cohort,
     seed_null_events,
@@ -707,3 +711,100 @@ class TestTheCalibratedContrastIsDisclosed:
 
         note = _verdict("t-test", "arpu", self._score(), 0.075, 0.05, None)
         assert "calibrated on" not in note
+
+
+class TestTheRunnerActuallyCalibratesTheContrast:
+    """m14 DEC-5(a) AT THE SURFACE, not at the helper.
+
+    Deleting `arms=arms` from the panel load — i.e. reverting `abk validate` to
+    the `0.8.0` pooled placebo — left all 264 tests green, because every test of
+    the filter called `load_placebo_panel` directly. That is the DEC-1/DEC-3
+    lesson this WP's own commit invokes: a rerouted surface owes a behavioural
+    assertion at the surface.
+    """
+
+    @staticmethod
+    def _three_arm_run(n_per_arm: int = 140):
+        warehouse = SyntheticWarehouse()
+        for i in range(n_per_arm):
+            warehouse.cohort.append((f"c{i:03d}", "control", START + timedelta(hours=1)))
+            warehouse.cohort.append((f"t{i:03d}", "treatment", START + timedelta(hours=1)))
+            warehouse.cohort.append((f"u{i:03d}", "treatment_b", START + timedelta(hours=1)))
+        seed_null_events(warehouse)
+        payload = experiment_payload("aa_three_run", "arpu", {"name": "t-test"})
+        payload["assignment"]["variants"] = ["control", "treatment", "treatment_b"]
+        payload["assignment"]["expected_split"] = {
+            "control": 1 / 3,
+            "treatment": 1 / 3,
+            "treatment_b": 1 / 3,
+        }
+        experiment = ExperimentConfig.model_validate(payload)
+        return warehouse, experiment
+
+    def test_the_panel_the_runner_scores_holds_the_pair_only(self, monkeypatch):
+        import abkit.validate.runner as runner_mod
+
+        warehouse, experiment = self._three_arm_run()
+        seen: list[object] = []
+        real = runner_mod.load_placebo_panel
+
+        def spy(*args, **kwargs):
+            panel = real(*args, **kwargs)
+            seen.append((kwargs.get("arms"), panel.n_units))
+            return panel
+
+        monkeypatch.setattr(runner_mod, "load_placebo_panel", spy)
+        run_validation(
+            RecomputeBackend(warehouse, experiment),
+            experiment,
+            PROJECT,
+            METRICS,
+            {name: cfg.get_query_text(None) for name, cfg in METRICS.items()},
+            _grid(experiment),
+            ValidateSettings(iterations=50),
+            now_iso=NOW_ISO,
+        )
+
+        assert seen, "the runner loaded no panel at all"
+        for arms, n_units in seen:
+            assert arms == ("control", "treatment"), "the calibrated contrast, not every arm"
+            assert n_units == 280, "the third arm's 140 units must stay out of the placebo"
+
+    def test_the_verdict_names_the_pair_end_to_end(self):
+        warehouse, experiment = self._three_arm_run()
+
+        result = run_validation(
+            RecomputeBackend(warehouse, experiment),
+            experiment,
+            PROJECT,
+            METRICS,
+            {name: cfg.get_query_text(None) for name, cfg in METRICS.items()},
+            _grid(experiment),
+            ValidateSettings(iterations=50),
+            now_iso=NOW_ISO,
+        )
+
+        assert all("calibrated on control vs treatment" in c.verdict for c in result.cells)
+
+    def test_a_two_arm_verdict_carries_no_disclosure(self):
+        """The gate that produces `None`, not the helper that receives it: with
+        `> 2` mutated to `> 1` every two-arm cell would gain the suffix — in a
+        PERSISTED `_ab_aa_runs.verdict` column and on the printed CLI line."""
+        warehouse = SyntheticWarehouse()
+        seed_cohort(warehouse, n_per_arm=160)
+        seed_null_events(warehouse)
+        experiment = make_experiment("aa_two_run", "arpu", {"name": "t-test"})
+
+        result = run_validation(
+            RecomputeBackend(warehouse, experiment),
+            experiment,
+            PROJECT,
+            METRICS,
+            {name: cfg.get_query_text(None) for name, cfg in METRICS.items()},
+            _grid(experiment),
+            ValidateSettings(iterations=50),
+            now_iso=NOW_ISO,
+        )
+
+        assert result.cells
+        assert all("calibrated on" not in c.verdict for c in result.cells)

@@ -551,6 +551,12 @@ def _ratio_for(experiment, treatment: str) -> float:
 def _other_contrast_ratios(experiment) -> list[tuple[str, float]]:
     """The declared vs-control contrasts BEYOND the one already sized.
 
+    Derived by FILTERING ``contrast_pairs()`` rather than re-enumerating
+    ``treatments[1:]``: the STAT-1b gate forbids only ``combinations``, so a
+    second hand-rolled enumeration of the declared family would be an
+    unrecorded exemption — and this one has to agree with the factory under
+    both ``contrasts`` values forever, not just today.
+
     Treatment-vs-treatment pairs (declared under `contrasts: all_pairs`) are
     deliberately absent: sizing needs the BASELINE arm's moments, and a
     pre-launch plan has none per treatment — the population render behind
@@ -558,7 +564,13 @@ def _other_contrast_ratios(experiment) -> list[tuple[str, float]]:
     alpha, which `pairs_phrase` already states, and the plan says so rather than
     inventing a baseline for them.
     """
-    return [(t, _ratio_for(experiment, t)) for t in experiment.treatments[1:]]
+    control = experiment.control
+    first = experiment.treatments[0]
+    return [
+        (treatment, _ratio_for(experiment, treatment))
+        for baseline, treatment in experiment.contrast_pairs()
+        if baseline == control and treatment != first
+    ]
 
 
 class _HistoryBaselines:
@@ -964,8 +976,9 @@ def _emit_plan(experiment, project, alphas, power, looks, grid, rows_per_refresh
         pairs = len(experiment.contrast_pairs()) - (len(variants) - 1)
         warnings.append(
             f"{pairs} treatment-vs-treatment contrast{'s' if pairs != 1 else ''} "
-            "share the same α but are not sized — a pre-launch baseline exists "
-            "for the control arm only (set contrasts: vs_control to drop them)"
+            f"{'share' if pairs != 1 else 'shares'} the same α but "
+            f"{'are' if pairs != 1 else 'is'} not sized — a pre-launch baseline "
+            "exists for the control arm only (set contrasts: vs_control to drop them)"
         )
     warn_looks = project.limits.warn_looks
     if looks > warn_looks and not experiment.sequential.enabled:
@@ -1023,28 +1036,79 @@ def _contrast_lines(plan: ComparisonPlan) -> list[str]:
 
     Through `0.8.0` this was a WARNING — "sizing is shown for one contrast only"
     — which named the omission without saying whether it mattered. It usually
-    does not: sizing depends on the pair only through the allocation ratio, so
-    under an even split every contrast lands on the same numbers and one
-    sentence is the honest report. Under an UNEVEN split they differ, and then
-    each gets its line, because that is the case the warning was hiding.
+    does not: the required N depends on the pair only through the ALLOCATION
+    RATIO, so contrasts sharing a ratio share their sizing and one sentence is
+    the honest report.
+
+    Two numbers are deliberately NOT printed per contrast, because they would be
+    the headline pair's wearing another pair's name (review finding): the
+    achievable MDE and the achieved power are solved from
+    ``moments.observed_ratio`` — a RETROSPECTIVE bound read off data that exists
+    only for the pair the moments came from — and never see ``plan_ratio``.
+    ``required_n`` is the one forward-looking solve.
+
+    The collapse test is on the RATIOS, not on the resulting numbers: with no
+    target MDE every ``required_n`` is ``None``, so a numeric comparison called
+    a 60/30/10 split "identical" — a claim about the config that nothing had
+    examined.
     """
     if not plan.contrasts or plan.result is None:
         return []
-    scale = plan.test_type or "relative"
-    same = all(
-        c.result.required_n == plan.result.required_n
-        and c.result.achievable_mde == plan.result.achievable_mde
-        for c in plan.contrasts
-    )
     total = len(plan.contrasts) + 1
-    if same:
-        return [f"  all {total} declared vs-control contrasts size identically (even split)"]
-    return [
-        f"  {c.pair[0]} vs {c.pair[1]} (ratio {c.plan_ratio:.3g}) — "
-        + (f"required {_fmt_n(c.result.required_n)}/arm · " if plan.target_mde is not None else "")
-        + f"achievable MDE {_fmt_effect(c.result.achievable_mde, scale)}"
-        for c in plan.contrasts
-    ]
+    if all(c.plan_ratio == plan.plan_ratio for c in plan.contrasts):
+        return [
+            f"  all {total} declared vs-control contrasts share this allocation "
+            "ratio, so they size the same"
+        ]
+    if plan.target_mde is None:
+        ratios = ", ".join(f"{c.pair[1]} {c.plan_ratio:.3g}" for c in plan.contrasts)
+        return [
+            f"  {total} declared vs-control contrasts at DIFFERENT allocation ratios "
+            f"({ratios}) — pass --mde for their required-N"
+        ]
+
+    lines = []
+    for contrast in plan.contrasts:
+        powered = _contrast_powered(plan, contrast)
+        flag = " ✓ powered" if powered else " ✗ underpowered" if powered is False else ""
+        lines.append(
+            f"  {contrast.pair[0]} vs {contrast.pair[1]} (ratio {contrast.plan_ratio:.3g}) — "
+            f"required {_fmt_n(contrast.result.required_n)}/arm{flag}"
+        )
+    binding = max(
+        plan.contrasts,
+        key=lambda c: c.result.required_n if c.result.required_n is not None else -1,
+    )
+    head_n = plan.result.required_n
+    if (
+        head_n is not None
+        and binding.result.required_n is not None
+        and binding.result.required_n > head_n
+    ):
+        # The runtime line below is the HEADLINE contrast's, and a plan reading
+        # "✓ powered · 23d" while a declared contrast needs twice the control
+        # units past its own horizon is the failure the replaced warning at
+        # least gestured at.
+        lines.append(
+            f"  the binding contrast is {binding.pair[0]} vs {binding.pair[1]} "
+            f"({_fmt_n(binding.result.required_n)}/arm) — the timing below is the "
+            "headline contrast's"
+        )
+    return lines
+
+
+def _contrast_powered(plan: ComparisonPlan, contrast: ContrastSizing) -> bool | None:
+    """``is_powered`` for one contrast: its own required-N against the sample.
+
+    The headline's ✓/✗ says nothing about a contrast on a sixth of the traffic,
+    and printing that contrast's required-N with no flag beside it reads as fine.
+    """
+    if plan.baseline is None or contrast.result.required_n is None:
+        return None
+    required = contrast.result.required_n
+    if not math.isfinite(required):
+        return False
+    return plan.baseline.n >= required
 
 
 def _fmt_days(days: float | None) -> str:

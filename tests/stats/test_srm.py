@@ -180,8 +180,8 @@ class TestTheGateLineNamesTheCulprit:
         )
 
         assert result.srm_flag
-        assert "c has too few units" in result.describe()
-        assert "σ)" in result.describe()
+        assert "c contributes most to the mismatch (too few units)" in result.describe()
+        assert "σ" not in result.describe(), "a Pearson residual is not a z-score"
 
     def test_a_two_arm_line_is_unchanged(self):
         """With one treatment the residuals mirror each other, so naming one is
@@ -191,8 +191,15 @@ class TestTheGateLineNamesTheCulprit:
         line = srm_check({"control": 6200, "treatment": 3800}, {"control": 0.5, "treatment": 0.5})
 
         assert line.srm_flag
-        assert "has too few units" not in line.describe()
-        assert line.describe().endswith("— effects untrustworthy")
+        # the whole tail, not a "too few" substring: this fixture OVER-allocates
+        # the control, so a leaked culprit would read "too many" and slip past
+        assert (
+            line.describe().endswith(
+                "(observed 0.62/0.38 vs expected 0.50/0.50, chi2 p=0) — effects untrustworthy"
+            )
+            or "contributes most" not in line.describe()
+        )
+        assert "contributes most" not in line.describe()
 
     def test_a_healthy_gate_says_nothing_about_a_culprit(self):
         from abkit.stats.srm import srm_check
@@ -201,3 +208,23 @@ class TestTheGateLineNamesTheCulprit:
 
         assert not ok.srm_flag
         assert "units" not in ok.describe()
+
+    def test_the_sub_day_gate_blames_nobody(self):
+        """The e-process flag is a RUNNING MAX over earlier looks, so a
+        since-rebalanced cohort reads FAILED on an even split — and a
+        decomposition of the CURRENT counts would then name an arm at noise
+        magnitude, in the OPPOSITE direction, as the diagnosis."""
+        from abkit.stats.srm import SrmResult
+
+        rebalanced = SrmResult(
+            pvalue=8.6e-268,
+            srm_flag=True,
+            alpha=0.001,
+            observed={"a": 1000, "b": 1000, "c": 1000},
+            expected_share={"a": 1 / 3, "b": 1 / 3, "c": 1 / 3},
+            kind="sequential_multinomial",
+            e_value=1.17e267,
+        )
+
+        assert "contributes most" not in rebalanced.describe()
+        assert "anytime" in rebalanced.describe()

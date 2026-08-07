@@ -667,8 +667,13 @@ placebo is therefore **1/3 vs 2/3 over three arms' units**, while the live
 control-vs-treatment comparison is **1/2 vs 1/2 over two arms' units**. The FPR
 column is robust to that; **power and achieved-MDE are not** — they are read off
 per-arm n, they feed the Recommended row, and the placebo arms carry ≈1.5× the
-live pair's units, so the achieved MDE is optimistic by ≈√1.5 ≈ 22% at three
-even arms.
+live pair's units, so the achieved MDE is optimistic — **by 15% at three even
+arms**. *(This paragraph first said ≈√1.5 ≈ 22%; the DEC-5 review measured it.
+The old placebo did not split its pooled units evenly either — it split 1/3 vs
+2/3 — so its effective n was `(G−1)n/G` and the law is `√(2(G−1)/G)`: 1.000 /
+1.155 / 1.230 / 1.270 at 2 / 3 / 4 / 5 even arms. √1.5 is right at FOUR arms,
+and the sentence named three. Putting a number in a spec means checking that
+number's own derivation.)*
 *Fix:* size and split the placebo like the **declared contrast being
 calibrated** — deterministically the control vs the first treatment, since the
 D3/D4 calibration chip is keyed `(metric, method_config_id, effective alpha)`
