@@ -22,7 +22,7 @@ The as-built condensation for contributors/assistants (detectkit-style):
 Design contracts for what is being *built next* stay in [docs/specs/](docs/specs/)
 (canonical for M2+ work — table below). Keep rules ↔ docs in sync per milestone.
 
-## Status: M1–M13 shipped; latest on PyPI: `0.8.0` (M13 = versioned statistics, all opt-in); BOTH `0.6.x` interstitials closed (PLAN-1/PLAN-2 in `0.6.1`/`0.6.2`, UI-1 + UI-2 + PERF-1 in `0.6.4`); polish track continues with M14–M17 (**M14 IN PROGRESS — DEC-1…DEC-5 merged; only the DEC-6 exit gate remains**)
+## Status: M1–M13 shipped; latest on PyPI: `0.8.0` (M13 = versioned statistics, all opt-in); BOTH `0.6.x` interstitials closed (PLAN-1/PLAN-2 in `0.6.1`/`0.6.2`, UI-1 + UI-2 + PERF-1 in `0.6.4`); polish track continues with M14–M17 (**M14 CODE-COMPLETE — DEC-1…DEC-6 all merged; `0.9.0` release pending**)
 
 **Done — M1, the pure statistical core** (`abkit.stats`, importable standalone;
 see [ROADMAP.md](ROADMAP.md) for the deferred-cleanup list): data model with the
@@ -309,7 +309,8 @@ too, which is new surface rather than an addendum. The code-verified pain audit
 ([docs/research/2026-07-data-flow-audit/REPORT.md](docs/research/2026-07-data-flow-audit/REPORT.md))
 plus the entire hardening backlog, one minor release per milestone: M12
 notifications shipped as `0.7.0` and M13 (versioned stats) as `0.8.0`;
-**M14 (the multi-arm decision layer → `0.9.0`) is IN PROGRESS against its
+**M14 (the multi-arm decision layer → `0.9.0`) is CODE-COMPLETE — all six WPs
+merged, the release not yet cut — against its
 contract [m14-implementation-plan.md](docs/specs/m14-implementation-plan.md):
 six WPs (DEC-1…DEC-6), ten decisions, and the posture that it moves NO
 persisted number, no alpha and no verdict `0.8.0` already issues, with a
@@ -334,8 +335,19 @@ main metric's ROLLUP LEADER rather than an arbitrary arm, explore's Review mode
 labels the role and names the leader, the CLI line names it per metric, and the
 notification dedup signature gained the rollup identity so a leader flip with no
 verdict word moving is no longer silent — with notifications themselves staying
-control-anchored by decision (D7)**; M15–M17 (new methods, owned
-randomization, app integration) stay contours, design-session-first. The
+control-anchored by decision (D7). **✅ DEC-5** made the supporting instruments
+arm-aware: `abk validate` calibrates the CONTRAST it runs (the milestone's one
+persisted-number exception — multi-arm power/achieved-MDE were sizing a design
+nobody runs), `abk plan` sizes every declared vs-control contrast with its own
+powered flag, and the SRM gate names the culprit arm. **✅ DEC-6** turned the
+posture from a claim into a measurement:
+[tests/e2e/test_multi_arm_decisions.py](tests/e2e/test_multi_arm_decisions.py)
+reproduces seven two-arm surfaces from a real `v0.8.0` checkout field for field
+against an *enumerated* 17-key addition set, holds every four-arm row, alpha and
+control-anchored verdict identical, and asserts the two deliberate moves WITH
+their direction so neither can be mistaken for a regression**; M15–M17 (new
+methods, owned randomization, app integration) stay contours,
+design-session-first. The
 track section in [ROADMAP.md](ROADMAP.md) is the map;
 [m7](docs/specs/m7-implementation-plan.md),
 [m8](docs/specs/m8-implementation-plan.md),
@@ -364,7 +376,7 @@ spec before writing code:
 | The A/A FPR matrix (`abk validate`) | [docs/specs/aa-false-positive-matrix.md](docs/specs/aa-false-positive-matrix.md) |
 | CLI, explore cockpit, init-claude, Prefect, docs | [docs/specs/cli-and-dx.md](docs/specs/cli-and-dx.md) |
 | `abk dashboard` — the launcher discipline, the row shape, the job routes | [docs/specs/m11-implementation-plan.md](docs/specs/m11-implementation-plan.md) |
-| **The multi-arm decision layer being built now** (✅ `control:`, ✅ the verdicts + the rollup, ✅ the report, ✅ the other surfaces, ✅ validate·plan·SRM; next: DEC-6, the exit gate) | [docs/specs/m14-implementation-plan.md](docs/specs/m14-implementation-plan.md) |
+| **The multi-arm decision layer** (✅ `control:`, ✅ the verdicts + the rollup, ✅ the report, ✅ the other surfaces, ✅ validate·plan·SRM, ✅ the exit gate — an implementation record now) | [docs/specs/m14-implementation-plan.md](docs/specs/m14-implementation-plan.md) |
 | **What must be true before/after each milestone** | [docs/specs/quorum-review.md](docs/specs/quorum-review.md) (the must-fix gate) |
 
 The master plan in Russian: [docs/ru/project-initiation-spec.md](docs/ru/project-initiation-spec.md).

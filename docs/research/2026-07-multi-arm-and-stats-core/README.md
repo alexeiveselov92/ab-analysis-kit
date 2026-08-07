@@ -1,5 +1,19 @@
 # Research: multi-arm support + stats-core optimization (2026-07-07)
 
+> **STATUS: HISTORICAL — this audit has been WORKED, not merely filed.** Both
+> answers below still hold, but the "Roadmap split" section further down is a
+> July 2026 plan, and almost all of it has since shipped: the `0.1.x` latency
+> wins in M7, the versioned statistical upgrades in M13 (`0.8.0` — Holm, the
+> score proportion interval, the Fieller relative interval, the declared
+> contrast set, the FWER claim; uniform ddof was dropped by D13, and Welch-t /
+> BCa / cross-fitted CUPED remain contours), and the whole multi-arm
+> decision layer in M14 (`0.9.0`). Read it as the framing that produced the
+> track, and check
+> [ROADMAP.md](../../../ROADMAP.md) plus the per-milestone implementation
+> records for what is actually built. The multi-arm half carries its own,
+> narrower status banner in
+> [multi-arm-support.md](multi-arm-support.md).
+
 Two maintainer questions, audited against the shipped code (`main @ 700e749`) by
 independent multi-agent sweeps, each finding adversarially cross-checked. Every
 claim carries a `file:line` anchor.

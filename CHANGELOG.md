@@ -14,6 +14,28 @@ number change).
 ## [Unreleased]
 
 ### Added
+- **DEC-6 — the M14 exit gate** (`tests/e2e/test_multi_arm_decisions.py`, with
+  the capture in `tests/e2e/_m14_baseline.py`). The milestone's №1 assertion is
+  measured against the **released** code rather than against itself: seven
+  two-arm surfaces captured from a real `v0.8.0` checkout — the persisted rows,
+  the catalog row, the readout, the report payload, the dashboard row, the
+  notification contexts, the explore payload, the real `abk run --report` line
+  and the `_ab_aa_runs` row — reproduce here **field for field**, and the only
+  difference anywhere is an *enumerated* set of 17 added keys, each of which the
+  gate also proves is actually produced. At four arms all 252 persisted rows,
+  every per-pair alpha and all six control-anchored verdicts (`rationale` and
+  `caveats` strings included) are identical, with the six treatment pairs
+  appearing beside them labelled `treatment_pair`. The gate additionally pins
+  the rollup's four separation states on constructed data, that five surfaces
+  plus the CLI line name the SAME leader over one set of rows, that a
+  three-arm experiment still sends **six** messages rather than twelve (D7),
+  and that `contrasts: vs_control` reports `separation: untested` *naming the
+  knob* as the reason.
+  The two deliberate moves are asserted **with their direction**, so neither can
+  be mistaken for a regression: the dashboard headline follows the rollup leader
+  rather than the first declared treatment (whose own `0.8.0` number is still on
+  the page), and the multi-arm A/A achieved MDE grows by 1.20× against the
+  predicted `√1.5` while both FPR readings stay inside the same budget.
 - **`abk plan` sizes every declared contrast** (M14 DEC-5(b)). Through `0.8.0`
   a 3+-arm plan printed one contrast's numbers and a warning naming the
   omission. Every declared **vs-control** contrast is now sized at its own

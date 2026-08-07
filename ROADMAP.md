@@ -960,7 +960,7 @@ before STAT-3 — D17.) ~5–6 sessions, of which the correction layer (STAT-1c,
 STAT-1b, STAT-2, STAT-1), the guard (STAT-3a) and the proportion interval
 (STAT-3) are done.
 
-### M14 — multi-arm decision layer (bucket B, decisions) → `0.9.0` 🚧 in progress
+### M14 — multi-arm decision layer (bucket B, decisions) → `0.9.0` ✅ code-complete (release pending)
 An explicit `control:` field (✅ **shipped — DEC-1**);
 experiment-level winner rollup on `ExperimentReadout` (✅ DEC-2);
 treatment-vs-treatment verdicts (✅ DEC-2); a cross-arm overview in report
@@ -1022,7 +1022,23 @@ CALIBRATED CONTRAST rather than every arm pooled (multi-arm power/achieved-MDE
 move — the milestone's one persisted-number exception, an instrument reading
 rather than a method's math), `abk plan` sizes every declared vs-control
 contrast with its own powered flag, and the SRM gate names the culprit arm on
-the CLI, the report and explore. ⬜ DEC-6 next (the exit gate + `0.9.0`). As-built deltas: a third resolver
+the CLI, the report and explore. ✅ **DEC-6** — the exit gate
+(`tests/e2e/test_multi_arm_decisions.py` + the `_m14_baseline.py` capture): the
+posture is now MEASURED against a real `v0.8.0` checkout rather than argued —
+seven two-arm surfaces (rows, catalog, readout, report payload, dashboard row,
+notification contexts, explore payload, the real CLI `Report →` line and the
+`_ab_aa_runs` row) reproduce field for field with an *enumerated* 17-key
+addition set, and at four arms every persisted row, every per-pair alpha and all
+six control-anchored verdicts are identical while the six treatment pairs appear
+beside them. Both deliberate moves are asserted with their DIRECTION (the
+dashboard headline follows the leader; the multi-arm A/A achieved MDE grows by
+1.20× against the predicted √1.5 with the FPR still in budget), so neither reads
+as a regression. The two recorded limitations were decided rather than left
+open — and the gate corrected DEC-5's own record of one of them:
+`find_calibration` never reads `cell_hash`, so the pair-blind chip needs an
+additive contrast COLUMN, not a wider hash (named follow-up). Also: the
+brief's pre-verified scaffold-parity check pointed at a path that does not
+exist. As-built deltas of the earlier WPs: a third resolver
 member (`control_reorients_pairs`), one shared `UNDECLARED_PAIR_CAUSES` string
 replacing four surface-local copies of the cause list, a `control` key in the
 report payload so the report/explore headers stop claiming "first = control",

@@ -1,7 +1,8 @@
 # abkit architecture — as built
 
 > The contributor/assistant condensation of the system **as it exists in code**.
-> Reflects: **M1–M13 shipped** and **BOTH `0.6.x` interstitials released** —
+> Reflects: **M1–M13 shipped, M14 code-complete (`0.9.0` release pending)** and
+> **BOTH `0.6.x` interstitials released** —
 > the `abk plan` one (PLAN-1 as `0.6.1`, PLAN-2 as `0.6.2`), `0.6.3` (the
 > `paths.experiments` selection fix), and the cockpit/perf one as `0.6.4`:
 > **UI-1** (the dashboard's YAML editor), **UI-2** (`abk ui`) and **PERF-1**
@@ -19,7 +20,10 @@
 > behind `abk validate --notify`), and the exit gate + `verdict_change`. The
 > milestone's implementation record is
 > [m12-implementation-plan.md](../../docs/specs/m12-implementation-plan.md) §7.
-> Design contracts for what is being *built next* (the M14–M17 polish track)
+> **M14 is code-complete** — DEC-1…DEC-6 merged, the multi-arm decision layer on
+> every surface, `0.9.0` not yet cut. Its record is
+> [m14-implementation-plan.md](../../docs/specs/m14-implementation-plan.md).
+> Design contracts for what is being *built next* (M15–M17 of the polish track)
 > live in [docs/specs/](../../docs/specs/) + [ROADMAP.md](../../ROADMAP.md);
 > this file must never claim unbuilt code exists.
 > Keep in sync with `docs/` and the packaged `init-claude` payload
@@ -1090,9 +1094,13 @@ two-process lock race) is deferred to a Docker-equipped environment.
   lesson again). Silent because `_ab_aa_runs.verdict` is PERSISTED: leaking the
   suffix at two arms moves a `0.8.0` string, and the mutation that did so
   survived the whole suite before the review.
-- **`cell_hash` does not know about the pair.** A `0.8.0` multi-arm green row
-  still matches and still lights explore's D3 chip, on numbers measured for a
-  design the engine no longer runs. Re-run `abk validate` after upgrading.
+- **The calibration LOOKUP does not know about the pair.** A `0.8.0` multi-arm
+  green row still matches and still lights explore's D3 chip, on numbers measured
+  for a design the engine no longer runs. Re-run `abk validate` after upgrading.
+  *(DEC-5 recorded this as "`cell_hash` does not know about the pair" — true, but
+  not the cause: `find_calibration` matches on `(metric, method_config_id,
+  alpha)` and never reads the hash, so widening it fixes nothing. See the DEC-6
+  facts below for the decision and the real fix's shape.)*
 - **`abk plan` sizes the RATIO, not the arm.** `achievable_mde`/`achieved_power`
   come off `moments.observed_ratio` and never see `plan_ratio`, so only
   `required_n` is that contrast's — printing the others per pair was the
@@ -1115,6 +1123,62 @@ two-process lock race) is deferred to a Docker-equipped environment.
   row reads `_ab_results`, whose `size_1`/`size_2` are metric units (trials, for
   a fraction metric), so a culprit derived from them would be a second diagnosis
   that can contradict the report.
+
+### M14 DEC-6 facts an assistant must know (the exit gate)
+
+- **`tests/e2e/_m14_baseline.py` runs UNCHANGED in a `v0.8.0` worktree**, which
+  is the whole reason the gate can compare against the release instead of against
+  HEAD (the STAT-6/M10 discipline). It uses only entry points whose signatures
+  are identical at both ends (`run_experiment`, `build_report_payload`,
+  `build_experiment_row`, `dispatch_experiment_signals`, `run_validation`,
+  `evaluate`), reads no field M14 added, and seeds its own per-arm lifts rather
+  than calling `synthetic_ab.seed_all_events` (which lifts only the arm literally
+  named `treatment`). **Regenerate the golden ONLY from a released checkout.**
+- **"Byte-identical" is the WRONG claim for a rendering surface, and the gate says
+  so in code.** `assert_reproduces` demands that every `0.8.0` field reproduce and
+  that the ONLY differences be an enumerated set of added paths
+  (`ADDED_TWO_ARM`, normalised so `verdicts[3].role` and `verdicts[0].role` are
+  one entry). A second test asserts every declared addition is actually PRODUCED —
+  otherwise the set is a wish list, the DEC-3 dead-hold failure one level up.
+- **An ADDED key is exempt from value comparison**, so the comparator
+  structurally cannot see a two-arm message gaining prose. `rollup_display` /
+  `rollup_line` therefore have their own "empty at two arms" assertion. Any future
+  key added to a rendered surface owes the same.
+- **The gate pins the notification COUNT, because nothing else did.** Deleting
+  DEC-2's `role == "vs_control"` filter from `dispatch` — the entire content of D7
+  — left all 27 tests green: 12 messages instead of 6, and every rollup assertion
+  passes on the doubled list. A per-item assertion cannot see a doubled list.
+- **The four-arm fixture's leader is deliberately NOT the first declared
+  treatment.** With them coincident, `0.8.0`'s dashboard headline and HEAD's
+  leader agree by accident and DEC-4's fix becomes invisible to the gate.
+- **A deliberate move is asserted with its DIRECTION, never merely tolerated.**
+  The multi-arm A/A achieved MDE must GROW by ≈`√1.5` at four arms (measured
+  1.20) with power falling and both FPRs still inside the same budget; the
+  dashboard headline must move to the leader while the first treatment's own
+  `0.8.0` number is still present on the page. A gate that only allowed these to
+  differ could not tell either from a regression.
+- **The A/A leg declares `correction: none`** so both arm counts score at α=0.05.
+  Under the default divisor the four-arm cell sits at α/6, where 300 iterations
+  resolve the FPR to ±2 hits and the verdict STRING becomes a coin flip.
+- **m12's fail-soft dispatcher hides a broken test as happily as a broken
+  channel.** Handing `channels_cfg` plain dicts instead of
+  `NotificationChannelConfig` objects made every send fail at `cfg.model_dump()`,
+  which m12 renders as one echo line and zero messages — a "successful" capture
+  with an empty notification surface. The capture now asserts the echo is silent
+  AND that something was received.
+- **The pre-session brief's scaffold-parity check pointed at a path that does not
+  exist** (`abkit/cli/assets/project/`): the scaffold is generated inline by
+  `abkit/cli/commands/init.py`, which DOES differ from `v0.8.0` — one comment on
+  the example `variants:` line. Inert (a YAML comment reaches no hash), and the
+  scaffold leg proves it rather than assuming it. **A vacuous `git diff` check
+  reads exactly like a passing one.**
+- **The two limitations M14 recorded are decided, not open.** The calibration
+  chip's pair-blindness stays DOCUMENTED — the real fix is an additive
+  `_ab_aa_runs` contrast column compared inside `find_calibration`, with NULL
+  meaning "written before `0.9.0`, warn rather than trust", which is a new
+  persisted column plus a new gate rule in the WP whose posture is that nothing
+  moves. The dashboard's missing SRM culprit stays a STRUCTURAL exception (its row
+  has no cohort counts, and `get_exposure_counts()` exists only in copy mode).
 
 ### M7 vectorization facts an assistant must know
 
@@ -1978,20 +2042,25 @@ see the track section in [ROADMAP.md](../../ROADMAP.md);
 [m11](../../docs/specs/m11-implementation-plan.md),
 [m12](../../docs/specs/m12-implementation-plan.md) and
 [m13](../../docs/specs/m13-implementation-plan.md) are all implementation
-records now; **M14 is IN PROGRESS against its contract
+records now, and **so is
 [m14-implementation-plan.md](../../docs/specs/m14-implementation-plan.md)** —
-six WPs (✅ DEC-1 the declared `control:` → ✅ DEC-2 treatment-pair verdicts +
-the per-metric rollup → ✅ DEC-3 the report → ✅ DEC-4
-dashboard·explore·notify·CLI → ✅ DEC-5 `validate`/`plan`/SRM; DEC-6 the exit
-gate + `0.9.0`), under
+all six WPs are merged (✅ DEC-1 the declared `control:` → ✅ DEC-2
+treatment-pair verdicts + the per-metric rollup → ✅ DEC-3 the report →
+✅ DEC-4 dashboard·explore·notify·CLI → ✅ DEC-5 `validate`/`plan`/SRM →
+✅ DEC-6 the exit gate), **`0.9.0` release pending**, under
 the posture that **M14 moves no persisted number, no alpha and no verdict
 `0.8.0` already issues — with ONE deliberate exception, DEC-5's `_ab_aa_runs`
 power/achieved-MDE for multi-arm experiments, which were measuring a design
 nobody runs**: the read-time family is built from ROWS, so verdicting
 a treatment pair that is already in it cannot move a threshold, and a two-arm
 experiment renders an identical DOM on every surface (the BAKED FILE is not
-byte-identical — the payload gains keys and the report's stylesheet grows). M15–M17 are still contours,
-each opening with its own design session). The `0.6.x`
+byte-identical — the payload gains keys and the report's stylesheet grows).
+**That posture is now MEASURED, not argued** — `tests/e2e/
+test_multi_arm_decisions.py` reproduces seven two-arm surfaces from a real
+`v0.8.0` checkout field for field against an enumerated 17-key addition set, and
+asserts the two deliberate moves with their direction (DEC-6 facts above).
+M15–M17 are still contours,
+each opening with its own design session. The `0.6.x`
 **PLAN-1/PLAN-2** interstitial is closed (released as `0.6.1`/`0.6.2`; design
 contract: [cli-and-dx.md](../../docs/specs/cli-and-dx.md) "`abk plan` sizing
 gaps"); the second `0.6.x` interstitial is closed too, released as `0.6.4` —

@@ -239,5 +239,11 @@ A/A is the expensive corner**. So:
 - **Editing `method_params` orphans the calibration.** The chip keys off
   `method_config_id`; retuning starts a new series and the old `_ab_aa_runs` rows no
   longer match — re-run validate on the new params.
+- **After upgrading to abkit `0.9.0`, re-run validate on 3+-arm experiments.**
+  The placebo now draws from the calibrated pair's two arms instead of the pooled
+  cohort, so power / achieved-MDE / coverage move (the FPR does not — a null is a
+  null at any size). The chip's lookup is `(metric, method_config_id, alpha)` and
+  knows nothing about the pair, so a green row written by `0.8.0` keeps lighting
+  it on numbers measured for a design abkit no longer runs. Nothing warns you.
 
 > Installed by `abk init-claude`. Re-run it after upgrading abkit to refresh this file.

@@ -441,7 +441,7 @@ Before you trust or launch an experiment:
 To inspect the stabilization series and re-slice alpha, correction, and metrics
 interactively, open the cockpit with [`abk explore`](explore.md).
 
-## Known multi-arm limitations
+## Multi-arm experiments
 
 `variants` accepts any number `>= 2` — the control is the first declared variant
 unless `assignment.control` names another, and abkit computes a full comparison
@@ -455,7 +455,28 @@ overview** naming the leader and whether it separated from the other treatments
 Since `0.9.0` every surface reads that decision layer — the report, the
 dashboard row, [`abk explore`](explore.md)'s Review mode, notifications, the
 `abk run --report` line — and both supporting instruments are arm-aware too.
-What is left is narrower, and worth knowing:
+A two-arm experiment is unaffected: with one treatment the rollup has one
+candidate and every surface renders exactly what `0.8.0` rendered.
+
+What abkit deliberately does **not** do at 3+ arms, and what to know about it:
+
+- **It does not run a simultaneous best-arm procedure.** The rollup names the
+  best arm *among those that beat the control* and states whether it separated
+  from the others, read off comparisons the alpha already paid for. A joint
+  "which arms cannot be excluded from being the best" statement (Hsu's MCB and
+  its relatives) is different statistics and is not in `0.9.0`.
+- **It does not rank arms that did not beat the control.** "The best point
+  estimate among the arms that lost" is exactly the uncontrolled claim the
+  rollup refuses to make; with no winner it names none and says so.
+- **After upgrading to `0.9.0`, re-run `abk validate` on multi-arm
+  experiments.** The placebo now draws from the calibrated contrast's two arms
+  rather than the pooled cohort, which changes the power / achieved-MDE /
+  coverage columns (the FPR is unaffected — a null is a null at any size). A
+  green row written by `0.8.0` still matches the calibration chip's key, so
+  nothing warns you: the chip would be lit by numbers measured for a design the
+  engine no longer runs.
+
+And the residue that is genuinely narrower:
 
 - **One calibrated pair answers for the whole family in `abk validate`.** The
   A/A matrix calibrates the control against the first declared treatment and

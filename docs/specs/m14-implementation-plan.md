@@ -1,7 +1,23 @@
 # M14 Implementation Plan — the multi-arm decision layer → `0.9.0`
 
-> **STATUS: DRAFT (2026-08-05), nothing blocking open.** Written in the M14
-> design session. Inputs: the maintainer's four sign-offs (§3 D1–D4) and a code
+> **STATUS: IMPLEMENTED (2026-08-07).** Every WP is shipped — DEC-1 the declared
+> baseline, DEC-2 the decision layer, DEC-3 the report, DEC-4 the other four
+> surfaces, DEC-5 the supporting instruments, and DEC-6 the exit gate. This file
+> is now an **implementation record** (the m9–m13 shape): the per-WP "as built"
+> blocks are what the build learned, and they are authoritative where they
+> contradict the design below.
+>
+> **The posture held, with the one exception it declared.** No `_ab_results`
+> number, no alpha and no verdict `0.8.0` already issues moved — measured against
+> a real `v0.8.0` checkout across 294 persisted rows, seven surfaces and every
+> control-anchored verdict field for field (DEC-6 leg 1/2). The exception is
+> DEC-5's multi-arm `_ab_aa_runs` power / achieved-MDE / coverage, which were
+> measuring a design nobody runs, and the gate asserts the DIRECTION of that
+> move so it cannot be confused with a regression. One four-arm surface changed
+> on purpose: the dashboard headline stopped being an arbitrary arm (DEC-4).
+>
+> *Originally written as:* **DRAFT (2026-08-05), nothing blocking open.** Written in
+> the M14 design session. Inputs: the maintainer's four sign-offs (§3 D1–D4) and a code
 > audit run at the top of the session, whose every claim is anchored to a line
 > in this repository at `bdd1321` (the `0.8.0` cut). Where this document states
 > what the code does today, that statement was read, not remembered.
@@ -796,13 +812,16 @@ e2e matrix gates included.
 
 **Named limitations, recorded not fixed:**
 
-- **`cell_hash` does not know about the pair.** It is
-  `(metric, method_config_id, mode, alpha)` and DEC-5 did not change it, so a
-  green `_ab_aa_runs` row written by `0.8.0` for a multi-arm experiment still
-  satisfies `find_calibration` and still lights explore's D3 chip — on numbers
-  measured for a design the engine no longer runs. **Re-run `abk validate` on
-  multi-arm experiments after upgrading.** This is DEC-1's own hand-off note,
-  now wider; DEC-6 must decide whether to fix or to keep documenting it.
+- **The calibration lookup does not know about the pair.** A green
+  `_ab_aa_runs` row written by `0.8.0` for a multi-arm experiment still satisfies
+  `find_calibration` and still lights explore's D3 chip — on numbers measured for
+  a design the engine no longer runs. **Re-run `abk validate` on multi-arm
+  experiments after upgrading.** *(Corrected by DEC-6: this was recorded as
+  "`cell_hash` does not know about the pair", which is true —
+  `(metric, method_config_id, mode, alpha)` — but not the cause.
+  `find_calibration` never reads `cell_hash`; it matches on
+  `(metric, method_config_id, alpha)`, so widening the hash would fix nothing.
+  DEC-6 as built ¶11 has the decision and the shape of the real fix.)*
 - **The dashboard row does not name the SRM culprit.** Its row reads
   `_ab_results`, which carries no cohort counts — `size_1`/`size_2` are metric
   units, and *trials* for a fraction metric, so a culprit derived from them
@@ -817,7 +836,7 @@ e2e matrix gates included.
 - **The family sweep inherits the filter but not the disclosure** — the
   `__family__` row's verdict does not name the contrast.
 
-### DEC-6 — exit gate, docs, release
+### DEC-6 — exit gate, docs, release ✅
 
 **Gate** (`tests/e2e/test_multi_arm_decisions.py`), four arms, two main metrics
 and a guardrail, driven through the CLI over a scaffolded project:
@@ -843,6 +862,112 @@ limitations" to a described feature, and the audit's own file gets a status
 banner rather than being left to read as current.
 
 **Release.** `0.9.0` per `abk-release`.
+
+---
+
+#### DEC-6 as built ✅
+
+Three files: `tests/e2e/_m14_baseline.py` (the capture, runnable unchanged in a
+`v0.8.0` worktree), `tests/e2e/fixtures/decisions_golden_0_8_0.json` (captured
+FROM that worktree) and `tests/e2e/test_multi_arm_decisions.py` (29 tests, the
+five legs). The whole gate runs in ~16 s.
+
+**The three corrections this WP owed the contract, all three made.**
+
+1. **Leg 1's literal form is false for a rendering surface**, so the gate asserts
+   the DEC-3 amended form: *every `0.8.0` field reproduces, and the only
+   difference is an enumerated set of ADDED keys* (`ADDED_TWO_ARM`, 17 paths,
+   normalised so a list index cannot make the set fixture-shaped). A second test
+   asserts the converse — every declared addition is actually PRODUCED — because
+   an allowance nothing exercises is a wish list, which is the DEC-3 hold that
+   had stopped being called.
+2. **Leg 1 must not read DEC-5's legitimate move as a regression.** The two-arm
+   `_ab_aa_runs` row is compared exactly (verdict STRING included); the four-arm
+   one is asserted as a **signed** move — achieved MDE grows by 1.20× against the
+   predicted `√1.5` ≈ 1.22, power falls, both FPRs stay inside the same budget
+   (the blind column stays blind), and the verdict gains `calibrated on control
+   vs b` where `0.8.0` said nothing.
+3. **There are five surfaces, not four** — `abk explore` reads the layer too
+   (DEC-4) — and with the CLI's `Report →` line and the two instruments, leg 1
+   compares **seven** readers of the two-arm surface.
+
+**What the build found (each measured, not reasoned):**
+
+4. **The pre-session brief's parity check pointed at a path that does not
+   exist.** `git diff v0.8.0 HEAD -- abkit/cli/assets/project/` is empty because
+   there is no such directory: the scaffold is generated inline by
+   `abkit/cli/commands/init.py`, which **does** differ from `v0.8.0` — by one
+   comment on the example experiment's `variants:` line (DEC-1 documenting
+   `control:`). A YAML comment reaches no hash and no number, and the scaffold
+   leg now proves that instead of assuming it. A vacuous check reads exactly like
+   a passing one.
+5. **The fail-soft dispatcher hid a broken capture.** Handing `channels_cfg`
+   plain dicts rather than `NotificationChannelConfig` objects made every send
+   fail at `cfg.model_dump()`; m12's fail-soft contract turned that into one echo
+   line and zero messages, so the capture "succeeded" with an empty notification
+   surface that nothing would have compared. The capture now asserts that the
+   echo is silent AND that the channel received something. What protects a run
+   protects a broken test just as well.
+6. **An ADDED key is exempt from value comparison, so the comparator
+   structurally cannot see a two-arm message gaining prose.**
+   `rollup_display`/`rollup_line` are new keys whose two-arm value must be
+   EMPTY — DEC-4 gates the line on the arm count precisely because "leader:
+   treatment" only restates the verdict word beside it — and that needs its own
+   assertion, which it now has (with the non-empty four-arm twin in leg 4).
+7. **Nothing pinned the notification COUNT.** Deleting DEC-2's
+   `role == "vs_control"` filter from `dispatch` — the entire content of D7 —
+   left all 27 tests green: a four-arm experiment sent 12 messages instead of 6
+   and every rollup assertion passed on the doubled list, because a
+   treatment-pair message carries a metric and a leader like any other.
+8. **The fixture's leader is deliberately NOT the first declared treatment.**
+   With `b` as both, `0.8.0`'s headline pair and HEAD's leader coincide and the
+   one four-arm surface M14 changes on purpose (DEC-4's dashboard headline)
+   becomes invisible. Swapping the lifts so `c` leads makes the golden hold
+   `b`'s numbers and the gate assert HEAD reads `c`'s — while `b`'s row is still
+   present, still carrying `0.8.0`'s effect.
+9. **The A/A leg declares `correction: none`** so both arm counts score at
+   α = 0.05 and the power columns are comparable. Under the default divisor the
+   four-arm cell sits at α/6, where 300 iterations resolve the FPR to ±2 hits and
+   the verdict STRING becomes a coin flip — noise in the one column DEC-5 did
+   not move.
+10. **Six mutation probes, each biting**: the headline ignoring the leader (2
+    tests), the pre-DEC-5 pooled placebo (1), a one-character change to a
+    two-arm message string (2), the `vs_control` untested branch (1), the D7
+    filter (1), and a stale path in `ADDED_TWO_ARM` (1). The `vs_control` probe
+    is the instructive one: with the branch removed the rollup still answers
+    `untested` (via the never-compared fallback), so the assertion that bit was
+    the one on the RATIONALE naming the knob — the word alone would have passed.
+
+**The two recorded limitations, decided.**
+
+11. **`cell_hash` pair-blindness: documented, not fixed — and DEC-5's own record
+    of it is corrected here.** `cell_hash` is not what lights the chip:
+    `find_calibration` matches on `(metric, method_config_id, alpha)` plus
+    `status`/`fpr` and never reads the hash at all, so widening `cell_hash` would
+    change nothing about the staleness. The real fix is an additive
+    `_ab_aa_runs` column naming the calibrated contrast, compared at read time,
+    with NULL meaning "written before `0.9.0` — warn rather than trust" — a new
+    persisted column plus a new gate rule, in the WP whose posture is that
+    nothing moves. The remedy is one command, and it is now in the CHANGELOG's
+    upgrade note *and* in the multi-arm guide. **Named follow-up** for a
+    milestone allowed to move a persisted identity.
+12. **The dashboard row's missing SRM culprit: documented, and structural.** The
+    row reads `_ab_results`, whose `size_1`/`size_2` are metric units (trials,
+    for a fraction metric), so any culprit derived from them would be a second
+    diagnosis able to contradict the report — the m11 launcher failure.
+    `get_exposure_counts()` is exact but exists only in copy mode, which would
+    light the chip for some projects and not others. The report, `abk explore`
+    and `abk run`'s red line all name the arm; the dashboard's job is to get you
+    to one of them.
+
+**What the gate does NOT reach**, stated rather than implied: the rendered DOM
+(`web/test/smoke*.mjs` owns it — every affordance is gated on
+`isMultiArm`/`arm_count`), the nine notification transports
+(`tests/notify/test_channels.py`; this gate compares `build_context()`, which is
+what a message *says*), and DEC-1's re-orientation of a declared non-first
+control, which has no `0.8.0` counterpart to compare against at all —
+`assignment.control` is an unknown key there — and is pinned by
+`tests/config/test_declared_control.py` plus the AST gate.
 
 ## 2. Dependency graph
 
