@@ -960,7 +960,7 @@ before STAT-3 — D17.) ~5–6 sessions, of which the correction layer (STAT-1c,
 STAT-1b, STAT-2, STAT-1), the guard (STAT-3a) and the proportion interval
 (STAT-3) are done.
 
-### M14 — multi-arm decision layer (bucket B, decisions) → `0.9.0` 🚧 in progress
+### M14 — multi-arm decision layer (bucket B, decisions) → `0.9.0` ✅ code-complete (release pending)
 An explicit `control:` field (✅ **shipped — DEC-1**);
 experiment-level winner rollup on `ExperimentReadout` (✅ DEC-2);
 treatment-vs-treatment verdicts (✅ DEC-2); a cross-arm overview in report
@@ -976,7 +976,8 @@ three surfaces; DEC-5 `validate`/`plan`/SRM, independent; DEC-6 exit gate +
 no persisted number, no alpha and no verdict `0.8.0` already issues** — it adds
 verdicts for pairs that had none (treatment-vs-treatment, which exist only
 under `contrasts: all_pairs`) plus a read-time rollup over them, and a two-arm
-experiment stays byte-identical on every surface. The winner claim is "leader +
+experiment renders `0.8.0`'s DOM character for character on every surface (the
+baked FILE is not byte-identical — the payload gains keys). The winner claim is "leader +
 tested separation" off existing rows (D1); a simultaneous best-arm procedure
 (MCB) is new statistics and is re-weighed in M15. ~6 WP, ~6 sessions — one over
 the contour, because the audit's supporting items (the `abk validate` N-arm
@@ -1003,7 +1004,8 @@ pair with its `role` plus the read-time `rollups`/`leaders_agree`, and the HTML
 readout renders a role chip on the arm-vs-arm cards (collapsed, below the ship
 decisions), a cross-arm overview per main metric (leader · separation · an arm
 table of effect · CI · verdict · n) and a pair selector — **all gated at 3+
-arms, so a two-arm report is byte-identical to `0.8.0`**. Opening the payload
+arms, so a two-arm report renders `0.8.0`'s DOM character for character**
+(payload keys and CSS grow; the DOM does not). Opening the payload
 turned out to open THREE readers, not one: `abk explore` and the
 `abk run --report` summary line print the verdict word alone and were held at
 control-anchored through one shared `reporting.builder.ship_decisions`.
@@ -1022,20 +1024,47 @@ CALIBRATED CONTRAST rather than every arm pooled (multi-arm power/achieved-MDE
 move — the milestone's one persisted-number exception, an instrument reading
 rather than a method's math), `abk plan` sizes every declared vs-control
 contrast with its own powered flag, and the SRM gate names the culprit arm on
-the CLI, the report and explore. ⬜ DEC-6 next (the exit gate + `0.9.0`). As-built deltas: a third resolver
+the CLI, the report and explore. ✅ **DEC-6** — the exit gate
+(`tests/e2e/test_multi_arm_decisions.py` + the `_m14_baseline.py` capture): the
+posture is now MEASURED against a real `v0.8.0` checkout rather than argued —
+two persisted tables and seven read two-arm surfaces (rows, catalog, readout,
+report payload, dashboard row,
+notification contexts, explore payload, the real CLI `Report →` line and the
+`_ab_aa_runs` row) reproduce field for field with an *enumerated* 17-key
+addition set, and at four arms every persisted row, every per-pair alpha and all
+six control-anchored verdicts are identical while the six treatment pairs appear
+beside them. Both deliberate moves are asserted with their DIRECTION (the
+dashboard headline follows the leader; the multi-arm A/A achieved MDE grows by
+1.20× against the predicted √1.5 with the FPR still in budget), so neither reads
+as a regression. The two recorded limitations were decided rather than left
+open — and the gate corrected DEC-5's own record of one of them:
+`find_calibration` never reads `cell_hash`, so the pair-blind chip needs an
+additive contrast COLUMN, not a wider hash (named follow-up). Also: the
+brief's pre-verified scaffold-parity check pointed at a path that does not
+exist. As-built deltas of the earlier WPs: a third resolver
 member (`control_reorients_pairs`), one shared `UNDECLARED_PAIR_CAUSES` string
 replacing four surface-local copies of the cause list, a `control` key in the
 report payload so the report/explore headers stop claiming "first = control",
 and two review-found repairs beyond the plan — the catalog-migration gate had
 gone blind to its own class of defect, and the inherited `--full-refresh --to
-<horizon>` advice was off by one look. ✅ DEC-2 shipped (below).
-
+<horizon>` advice was off by one look. 
 ### M15 — new methods (bucket C, statistics) → `0.10.0` 📐 contour
 Student-t (Welch–Satterthwaite), BCa bootstrap, Mann-Whitney, cross-fitted
 CUPED/CUPAC, cluster-robust SE — each through the plugin checklist
 (`BaseMethod` + `ParamSpec` + dual entry + identity test + A/A through the
 matrix; `supports_vectorized` where applicable) and the full change control.
 ~6 WP, ~6–8 sessions; design session first.
+
+**Named M14 hand-offs to weigh here** (all recorded in
+[m14-implementation-plan.md](docs/specs/m14-implementation-plan.md), none
+blocking): MCB / best-subset selection (D1 — it would give
+`MetricRollup.separation` a fifth state); `abk plan`'s per-contrast achievable
+MDE, which needs the planner to read a per-pair `_ab_results` row (DEC-5 §24);
+the pair-aware calibration chip — an additive `_ab_aa_runs` contrast column
+compared inside `find_calibration`, with NULL meaning "written before `0.9.0`"
+(DEC-6 §21); and the ADJUSTED SRM residual, which is the ~N(0,1) quantity and
+under a strongly uneven split can name a different arm than the Pearson one
+DEC-5 prints.
 
 ### M16 — owned randomization (opt-in) → `0.11.0` 📐 contour
 abkit today only *reads* assignments. An optional deterministic hash-split
@@ -1081,8 +1110,11 @@ A/A revalidation).
   - Fix `abk explore` Review mode showing only the **first** arm's verdict per metric
     (`.find` → map) — the one near-decision multi-arm bug (`web/src/explore/explore.ts:1516`).
   - **Document** the known multi-arm limitations honestly ✅ — and M14 then closed
-    all four (the readout's rollup, `abk plan`'s per-contrast sizing, `abk validate`'s
-    calibrated contrast, the SRM culprit).
+    all four *features* (the readout's rollup, `abk plan`'s per-contrast sizing,
+    `abk validate`'s calibrated contrast, the SRM culprit), each leaving a
+    narrower residue that [the experiments guide](docs/guides/experiments.md)
+    still lists: one calibrated pair answers for the family, treatment-vs-treatment
+    pairs are unsized, and the dashboard row does not name the culprit arm.
 - **0.1.x safe wins (byte-identical, no version bump — opportunistic):**
   - Stats hot path: `ndtri/ndtr` swap (~60×) + lazy `statsmodels` import + lazy never-read
     `effect_distribution` (~250× on the `validate`/`explore` path); parametric `_finalize`

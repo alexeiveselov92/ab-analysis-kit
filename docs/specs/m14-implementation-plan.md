@@ -1,7 +1,25 @@
 # M14 Implementation Plan — the multi-arm decision layer → `0.9.0`
 
-> **STATUS: DRAFT (2026-08-05), nothing blocking open.** Written in the M14
-> design session. Inputs: the maintainer's four sign-offs (§3 D1–D4) and a code
+> **STATUS: CODE-COMPLETE (2026-08-07); the `0.9.0` RELEASE IS STILL PENDING.**
+> Every WP is shipped — DEC-1 the declared baseline, DEC-2 the decision layer,
+> DEC-3 the report, DEC-4 the other four surfaces, DEC-5 the supporting
+> instruments, and DEC-6 the exit gate + docs. `abkit.__version__` is still
+> `0.8.0` and nothing is tagged. This file is now an **implementation record**
+> (the m9–m13 shape): the per-WP "as built" blocks are what the build learned,
+> and they are authoritative where they contradict the design below.
+>
+> **The posture held, with the one exception it declared.** No `_ab_results`
+> number, no alpha and no verdict `0.8.0` already issues moved — measured against
+> a real `v0.8.0` checkout across 322 persisted rows, nine comparison targets
+> and every
+> control-anchored verdict field for field (DEC-6 leg 1/2). The exception is
+> DEC-5's multi-arm `_ab_aa_runs` power / achieved-MDE / coverage, which were
+> measuring a design nobody runs, and the gate asserts the DIRECTION of that
+> move so it cannot be confused with a regression. One four-arm surface changed
+> on purpose: the dashboard headline stopped being an arbitrary arm (DEC-4).
+>
+> *Originally written as:* **DRAFT (2026-08-05), nothing blocking open.** Written in
+> the M14 design session. Inputs: the maintainer's four sign-offs (§3 D1–D4) and a code
 > audit run at the top of the session, whose every claim is anchored to a line
 > in this repository at `bdd1321` (the `0.8.0` cut). Where this document states
 > what the code does today, that statement was read, not remembered.
@@ -21,10 +39,13 @@
 
 The source inventory is
 [docs/research/2026-07-multi-arm-and-stats-core/multi-arm-support.md](../research/2026-07-multi-arm-and-stats-core/multi-arm-support.md)
-(2026-07-07). Five of its fifteen items have since shipped under other
-milestones; the audit's headline finding still holds — **multi-arm is
-statistically and structurally correct end to end, and every remaining gap is
-in the decision / presentation layer.**
+(2026-07-07). Three of its fifteen items had shipped under other milestones when
+this plan was written and ten more shipped in M14; the audit's headline finding
+still holds — **multi-arm is statistically and structurally correct end to end,
+and every remaining gap is in the decision / presentation layer.**
+
+*(Table completed by DEC-6: it listed thirteen of the fifteen items, and the two
+missing ones are the two that answer "what is left" — see the last two rows.)*
 
 | Audit gap | Status at `0.8.0` |
 |---|---|
@@ -39,7 +60,9 @@ in the decision / presentation layer.**
 | 7. `abk run --report` prints unlabeled verdict words | **shipped** — M14 DEC-4: at 3+ arms the ROLLUP replaces the list (one keyed entry per main metric, plus a disagreement note); two-arm output is unchanged |
 | 13. no pair selector; blocks grow C(N,2)/metric | **shipped** — M14 DEC-3 (`buildPairPicker`, 3+ arms) |
 | 10. explore's `activePair` resets on metric switch | **shipped** — M14 DEC-4 (`activePairByMetric`) |
+| 12. M×(K−1) verdict matrix with no summarization | **shipped** — M14 DEC-2's per-metric rollup plus `leaders_agree`, rendered by DEC-3/DEC-4 |
 | 14. SRM fails jointly with no per-arm culprit | **shipped** — M14 DEC-5(c) on the CLI, the report and explore; the dashboard row is a stated exception |
+| 9. no per-arm-pair method tuning in explore (Apply is per-metric) | **live** — `tuning/config_writer.py` keys every edit by metric; a per-pair method would fork `method_config_id` per pair, which is a config-model change, not a UX one |
 | 15. flat picker | **live** (cosmetic tier) |
 
 **One surface the audit could not know about, because it did not exist yet:**
@@ -105,7 +128,7 @@ independent of all of them; DEC-6 is last.
 
 ---
 
-### DEC-1 — `control:`, the declared baseline
+### DEC-1 — `control:`, the declared baseline ✅
 
 **What.** `AssignmentConfig.control: str | None = None`, validated to be one of
 `variants`; `ExperimentConfig.control` resolves it to `variants[0]` when unset
@@ -245,7 +268,7 @@ consequences of the build, two came out of the adversarial review.
 
 ---
 
-### DEC-2 — the decision layer: treatment pairs get verdicts, metrics get a rollup
+### DEC-2 — the decision layer: treatment pairs get verdicts, metrics get a rollup ✅
 
 **What.** `evaluate()` issues a `PairVerdict` for **every declared pair** of a
 main metric, and composes a `MetricRollup` per main metric.
@@ -681,7 +704,7 @@ D3/D4 calibration chip is keyed `(metric, method_config_id, effective alpha)`
 and is arm-pair-independent by design (m4 D4). The choice is **disclosed in the
 verdict**, not only in `decision_log` — the M7 WP6 lesson, where a warning that
 never reached the terminal was found by review, not by use.
-*The WP's №1 assertion:* **two-arm experiments are byte-identical.** With two
+*The WP's №1 assertion:* **two-arm `_ab_aa_runs` rows are byte-identical.** With two
 arms the pool already is both arms and `share_a` already is the control's share,
 so the m4/m5 matrix e2e gates (both two-arm —
 [test_validate_matrix.py:65](../../tests/e2e/test_validate_matrix.py#L65)) must
@@ -796,19 +819,23 @@ e2e matrix gates included.
 
 **Named limitations, recorded not fixed:**
 
-- **`cell_hash` does not know about the pair.** It is
-  `(metric, method_config_id, mode, alpha)` and DEC-5 did not change it, so a
-  green `_ab_aa_runs` row written by `0.8.0` for a multi-arm experiment still
-  satisfies `find_calibration` and still lights explore's D3 chip — on numbers
-  measured for a design the engine no longer runs. **Re-run `abk validate` on
-  multi-arm experiments after upgrading.** This is DEC-1's own hand-off note,
-  now wider; DEC-6 must decide whether to fix or to keep documenting it.
+- **The calibration lookup does not know about the pair.** A green
+  `_ab_aa_runs` row written by `0.8.0` for a multi-arm experiment still satisfies
+  `find_calibration` and still lights explore's D3 chip — on numbers measured for
+  a design the engine no longer runs. **Re-run `abk validate` on multi-arm
+  experiments after upgrading.** *(Corrected by DEC-6: this was recorded as
+  "`cell_hash` does not know about the pair", which is true —
+  `(metric, method_config_id, mode, alpha)` — but not the cause.
+  `find_calibration` never reads `cell_hash`; it matches on
+  `(metric, method_config_id, alpha)`, so widening the hash would fix nothing.
+  DEC-6 as built ¶11 has the decision and the shape of the real fix.)*
 - **The dashboard row does not name the SRM culprit.** Its row reads
   `_ab_results`, which carries no cohort counts — `size_1`/`size_2` are metric
   units, and *trials* for a fraction metric, so a culprit derived from them
   would be a second diagnosis that can contradict the report (the m11 launcher
-  failure). `get_exposure_counts()` is exact but exists only in copy mode, which
-  would make the chip appear for some projects and not others.
+  failure). `get_exposure_counts()` is exact, but the `_ab_exposures` table it
+  reads is only maintained in copy mode — so the chip would appear for some
+  projects and not others.
 - **One calibrated pair answers for a family it is not representative of.**
   Measured at 60/20/20: control-vs-t1 achieved MDE 0.1055 (the reported one),
   control-vs-t2 0.1052, t1-vs-t2 0.1295 — 23% worse, and the chip greens all
@@ -817,7 +844,7 @@ e2e matrix gates included.
 - **The family sweep inherits the filter but not the disclosure** — the
   `__family__` row's verdict does not name the contrast.
 
-### DEC-6 — exit gate, docs, release
+### DEC-6 — exit gate + docs ✅ (the `0.9.0` release is still pending)
 
 **Gate** (`tests/e2e/test_multi_arm_decisions.py`), four arms, two main metrics
 and a guardrail, driven through the CLI over a scaffolded project:
@@ -844,6 +871,237 @@ banner rather than being left to read as current.
 
 **Release.** `0.9.0` per `abk-release`.
 
+---
+
+#### DEC-6 as built ✅
+
+Three files: `tests/e2e/_m14_baseline.py` (the capture, runnable unchanged in a
+`v0.8.0` worktree), `tests/e2e/fixtures/decisions_golden_0_8_0.json` (captured
+FROM that worktree) and `tests/e2e/test_multi_arm_decisions.py` (42 tests, the
+five legs). The whole gate runs in ~4 s. Leg 1 compares **two persisted tables
+and seven read surfaces**: `_ab_results`, the `_ab_experiments` catalog row, the
+readout, the report payload, the dashboard row, the notification contexts, the
+explore payload, the real CLI `Report →` line, and the `_ab_aa_runs` row.
+
+**Eighteen mutations were run against the finished gate and all eighteen fail
+it.** Ten of them passed its first draft; those ten are the substance of this
+block.
+
+**The four corrections this WP owed the contract.**
+
+1. **Leg 1's literal form is false for a rendering surface**, so the gate asserts
+   the DEC-3 amended form: *every `0.8.0` field reproduces, and the only
+   difference is an enumerated set of ADDED keys* (`ADDED_TWO_ARM`, 17 paths,
+   normalised so a list index cannot make the set fixture-shaped). A second test
+   asserts the converse — every declared addition is actually PRODUCED — because
+   an allowance nothing exercises is a wish list, which is the DEC-3 hold that
+   had stopped being called.
+2. **Leg 1 must not read DEC-5's legitimate move as a regression.** The two-arm
+   `_ab_aa_runs` row is compared exactly (verdict STRING included); the four-arm
+   one is asserted as a **signed** move — achieved MDE grows by ≈1.2× against the
+   predicted `√1.5`, power falls, and the verdict gains `calibrated on control vs
+   b` where `0.8.0` said nothing — while the FPR column, the one DEC-5 did *not*
+   move, stays within sampling noise.
+3. **There are five surfaces, not four** — `abk explore` reads the layer too
+   (DEC-4) — and the CLI line plus `abk validate` make nine comparison targets in
+   all. (`abk plan` is NOT among them; DEC-5(b) is covered by
+   `tests/cli/test_plan_command.py`.)
+4. **The four-arm legs do not go "through the CLI over a scaffolded project"**,
+   as the contract says. They cannot: the scaffold is two-arm, and a four-arm
+   project on disk would have no `v0.8.0` counterpart to compare against. Only
+   the two-arm `Report →` capture uses the real CLI; the four-arm legs drive
+   `run_experiment` over the synthetic warehouse. The multi-arm CLI LINE is
+   pinned in two halves — `_verdict_note`'s output here, and the fact that
+   `_emit_experiment_report` actually calls it in `tests/cli/test_run_report.py`.
+
+**What the REVIEW found — ten mutations that passed the first draft.** Three
+lenses ran (gate validity, docs-vs-code, contract coverage); every finding below
+was reproduced by mutating `abkit/` and watching the gate stay green.
+
+5. **The gate never ran a read-time correction scheme, and §0.2 point 1 is
+   stated about nothing else.** The fixtures took the default `bonferroni`, where
+   the family is resolved at COMPUTE time and no read-time family exists — so
+   "verdicting a row already in the family cannot move a threshold" was measured
+   exactly where it is trivially true, and both read-time CAVEATS were
+   unreachable (which is why every golden verdict carries `caveats: []`). There is
+   now a `four_arm_bh` capture: the same experiment under `benjamini_hochberg`,
+   with its verdicts and its per-row alphas compared. The two caveats stay pinned
+   in `tests/pipeline/test_readout.py` — reaching them needs a pair on the knife
+   edge between its own interval and the family threshold, and tuning a fixture
+   onto that edge would make the golden fragile.
+6. **The explore surface was captured as its `explore` SUB-BLOCK — the one
+   subtree M14 never touches.** `build_explore_payload` returns
+   `dict(report_payload)` plus one `explore` key, so re-adding a `ship_decisions`
+   filter inside `tuning/payload.py` — the thing the architecture rules forbid in
+   italics — passed the whole gate while every arm-vs-arm card vanished from
+   Review mode. The capture now records the PASS-THROUGH relation (which report
+   keys arrived intact) and the cockpit's own verdict list. The DEC-4 lesson,
+   third instance: *explore is the surface whose behaviour deletions survive.*
+7. **The four-arm half captured seven surfaces and read three.** `report`,
+   `notify`, `explore` and `_ab_experiments` were dead weight in a 1 MB fixture,
+   so a `0.8.0` number could move inside a `0.8.0` message unseen (α = 0.5 on
+   every four-arm notification, gate green) and DEC-4's guardrail SCOPE could be
+   reverted (`guardrail_regressed` ORed over every declared pair instead of the
+   ship decisions — the red flag lit on an experiment with no regression against
+   control). All four are compared now.
+8. **An ADDED key's value is never compared, and only two of seventeen paths had
+   the compensating assertion.** Three more were free: `_ab_experiments.control`
+   could name the LAST arm to BI (the whole point of DEC-1's column is that BI
+   need not re-derive the baseline), `report.control` could make the header print
+   `control: treatment` above pair blocks reading "treatment vs control" — the
+   exact lie DEC-1 removed — and `report.srm.culprit` could name a nonexistent
+   arm on a GREEN gate. `ADDED_VALUES` now declares every path's expected two-arm
+   value, and a roster test fails on any added path that declares neither a value
+   nor a structured assertion.
+9. **A doubled verdict list was invisible.** Leg 2 matched through a dict and
+   compared sets, so `treatment_pairs + treatment_pairs` produced 18 verdicts and
+   passed — the file's own "a per-item assertion cannot see a doubled list"
+   lesson, applied to notifications but not to the verdicts themselves. Every
+   list now has an expected LENGTH, and the four-arm verdict lists are compared as
+   a PREFIX, which also pins DEC-2's ordering rule (control-anchored first, in
+   `0.8.0`'s order) — a property nothing else in the suite pinned.
+10. **Two "same leader everywhere" assertions were tautologies.** `"c" in text`
+    is true of `"conversion"` and of `"control"`, and
+    `context["metric"] in context["rollup_display"]` is satisfied by the
+    formatter that interpolates it. Both mutations survived: taking the
+    experiment's FIRST rollup instead of the verdict's own metric, and printing
+    `name_1` (the CONTROL) where the leader belongs. The gate compares whole
+    rendered STRINGS now, and the fixture gives the two main metrics DIFFERENT
+    leaders (`c` on `arpu`, `b` on `conversion`) so a first-rollup implementation
+    cannot look correct.
+11. **`_share_a` could be reduced to a hardcoded `0.5`.** Both fixtures declare
+    an even split, where the calibrated pair's share IS 0.5 at every arm count —
+    so DEC-5's "the denominator is the pair, not the whole split" was untested.
+    It has its own assertion now, on 40/30/20/10 (pair share 0.571) and on 60/40
+    (where the pair's share and the whole split's coincide — the coincidence the
+    two-arm byte-identity claim rests on). The A/A *fixture* stays even on
+    purpose: the `√(2(G−1)/G)` law the direction claim uses is derived for an even
+    split, and an uneven one measures 1.38, blurring the band that separates the
+    real move from a half-revert (which measures 1.383).
+12. **The FPR band was the wrong assertion.** "Both readings inside the budget"
+    read as equivalent to "the column did not move" and was not: one unlucky draw
+    at 300 iterations crossed the budget and the gate reported an inflated
+    instrument for a correct engine. It is now `|Δ| < 3σ_diff` with
+    `σ_diff = √2·√(α(1−α)/N)` at N = 1000 — the honest form of "no systematic
+    move", since the two readings come from different placebo pools.
+13. **The golden broke this repo's own pre-commit limit.** At 1.06 MB it exceeded
+    `check-added-large-files --maxkb=500`, and CI runs no pre-commit — so it would
+    have ambushed whoever next regenerated it, long after this PR. Fixed from both
+    ends: the two SQL columns are compared as sha256 digests (300 kB of
+    near-duplicate text, and a digest comparison is still exact), the four-arm
+    window is seven looks rather than fourteen (that fixture varies the ARM COUNT;
+    the stabilization series is the two-arm fixture's job), and the hook now
+    exempts `tests/e2e/fixtures/*.json` with the reason in a comment.
+
+**What the build found while writing it (each measured, not reasoned):**
+
+14. **The pre-session brief's parity check pointed at a path that does not
+   exist.** `git diff v0.8.0 HEAD -- abkit/cli/assets/project/` is empty because
+   there is no such directory: the scaffold is generated inline by
+   `abkit/cli/commands/init.py`, which **does** differ from `v0.8.0` — by one
+   comment on the example experiment's `variants:` line (DEC-1 documenting
+   `control:`). A YAML comment reaches no hash and no number, and the scaffold
+   leg now proves that instead of assuming it. A vacuous check reads exactly like
+   a passing one.
+15. **The fail-soft dispatcher hid a broken capture.** Handing `channels_cfg`
+   plain dicts rather than `NotificationChannelConfig` objects made every send
+   fail at `cfg.model_dump()`; m12's fail-soft contract turned that into one echo
+   line and zero messages, so the capture "succeeded" with an empty notification
+   surface that nothing would have compared. The capture now asserts that the
+   echo is silent AND that the channel received something. What protects a run
+   protects a broken test just as well.
+16. **An ADDED key is exempt from value comparison, so the comparator
+   structurally cannot see a two-arm message gaining prose.**
+   `rollup_display`/`rollup_line` are new keys whose two-arm value must be
+   EMPTY — DEC-4 gates the line on the arm count precisely because "leader:
+   treatment" only restates the verdict word beside it — and that needs its own
+   assertion, which it now has (with the non-empty four-arm twin in leg 4).
+17. **Nothing pinned the notification COUNT.** Deleting DEC-2's
+   `role == "vs_control"` filter from `dispatch` — the entire content of D7 —
+   left all 27 tests green: a four-arm experiment sent 12 messages instead of 6
+   and every rollup assertion passed on the doubled list, because a
+   treatment-pair message carries a metric and a leader like any other.
+18. **The fixture's leader is deliberately NOT the first declared treatment.**
+   With `b` as both, `0.8.0`'s headline pair and HEAD's leader coincide and the
+   one four-arm surface M14 changes on purpose (DEC-4's dashboard headline)
+   becomes invisible. Swapping the lifts so `c` leads makes the golden hold
+   `b`'s numbers and the gate assert HEAD reads `c`'s — while `b`'s row is still
+   present, still carrying `0.8.0`'s effect.
+19. **The A/A leg declares `correction: none`** so both arm counts score at
+   α = 0.05 and the power columns are comparable. Under the default divisor the
+   four-arm cell sits at α/6, where 300 iterations resolve the FPR to ±2 hits and
+   the verdict STRING becomes a coin flip — noise in the one column DEC-5 did
+   not move.
+20. **Six probes written WITH the gate, each biting**: the headline ignoring the leader (2
+    tests), the pre-DEC-5 pooled placebo (1), a one-character change to a
+    two-arm message string (2), the `vs_control` untested branch (1), the D7
+    filter (1), and a stale path in `ADDED_TWO_ARM` (1). The `vs_control` probe
+    is the instructive one: with the branch removed the rollup still answers
+    `untested` (via the never-compared fallback), so the assertion that bit was
+    the one on the RATIONALE naming the knob — the word alone would have passed.
+
+**The limitations, decided rather than left open.**
+
+21. **The calibration chip's pair-blindness: documented, not fixed — and DEC-5's
+    own record of it is corrected here.** `cell_hash` is not what lights the chip:
+    `find_calibration` matches on `(metric, method_config_id, alpha)` plus
+    `status`/`fpr` and never reads the hash at all, so widening `cell_hash` would
+    change nothing about the staleness. The real fix is an additive
+    `_ab_aa_runs` column naming the calibrated contrast, compared at read time,
+    with NULL meaning "written before `0.9.0` — warn rather than trust" — a new
+    persisted column plus a new gate rule, in the WP whose posture is that
+    nothing moves. The remedy is one command, and it is now in the CHANGELOG's
+    upgrade note *and* in the multi-arm guide. **Named follow-up** for a
+    milestone allowed to move a persisted identity.
+22. **The dashboard row's missing SRM culprit: documented, and structural.** The
+    row reads `_ab_results`, whose `size_1`/`size_2` are metric units (trials,
+    for a fraction metric), so any culprit derived from them would be a second
+    diagnosis able to contradict the report — the m11 launcher failure.
+    `get_exposure_counts()` is exact, but the `_ab_exposures` table it reads is
+    only maintained in copy mode, so the chip would light for some projects and
+    not others. The report, `abk explore`
+    and `abk run`'s red line all name the arm; the dashboard's job is to get you
+    to one of them.
+23. **DEC-4's re-orientation-window headline ("DEC-6 may weigh it"): left as
+    `0.8.0`'s.** In the window after a non-first `control:` is declared and before
+    the next run, the dashboard row's headline reads "no computed results" while
+    the expand list one click below shows a WIN with a full series. DEC-3 solved
+    the equivalent for the report by letting the pair selector fall back to
+    whatever HAS data; doing the same for the ROW would change what "headline"
+    means — the row has one set of stat cells, and pointing them at a pair the
+    operator did not select is a different surface, in the WP whose posture is
+    that nothing moves. The window closes on the next plain `abk run`, which the
+    validator's own warning tells the operator to do. Cosmetic tier.
+24. **DEC-5's per-contrast achievable MDE ("DEC-6's or M15's to weigh"): M15.**
+    `achievable_mde`/`achieved_power` come off `moments.observed_ratio` and are the
+    headline pair's for every printed contrast. Fixing it means `abk plan` reading
+    a per-pair `_ab_results` row — new behaviour in a read-only pre-launch command
+    that today needs no history at all — so it is a feature for the milestone that
+    revisits the planner, not a correction this one can smuggle in. The plan says
+    which contrast its numbers describe, which is what stops it from lying.
+
+**Still open after M14, and named so nobody has to re-derive it:** the payload
+cannot express the difference between "compared and undecided" and "could not be
+compared" inside `indistinguishable` (DEC-3); the family sweep inherits DEC-5's
+arm filter but not its disclosure, so the `__family__` row's verdict does not name
+the contrast; `srm_culprit` prints the Pearson residual where the ADJUSTED
+residual is the ~N(0,1) quantity, and under a strongly uneven declared split the
+two can name different arms (~14% of imbalanced draws); and audit gaps 9 and 15
+(per-arm-pair Apply, the flat picker).
+
+**What the gate does NOT reach**, stated rather than implied: the rendered DOM
+(`web/test/smoke*.mjs` owns it — the report gates on `isMultiArm()`, the dashboard
+row on its distinct-treatment count, explore on `payload.arms.length > 2`), the
+nine notification transports (`tests/notify/test_channels.py`; this gate compares
+`build_context()`, which is what a message *says*), a FAILING SRM gate (the
+culprit decomposition is pinned in `tests/stats/test_srm.py` and
+`tests/reporting/test_builder.py`; here the gate is green, and item 8's value pin
+is what stops a culprit being invented on a green one), `abk plan`
+(`tests/cli/test_plan_command.py`), and DEC-1's re-orientation of a declared
+non-first control, which has no `0.8.0` counterpart to compare against at all —
+`assignment.control` is an unknown key there — and is pinned by
+`tests/config/test_declared_control.py` plus the AST gate.
+
 ## 2. Dependency graph
 
 ```
@@ -863,14 +1121,14 @@ DEC-3/DEC-4 after it because both render `role`, which DEC-2 defines.
 |---|---|---|
 | **D1** | **Leader + tested separation.** The rollup names the best-effect arm among the winners and states whether it is separated from the others, read off existing treatment-pair rows. A simultaneous procedure (MCB) is NOT in M14 — new statistics, full change control, re-weighed in M15. | maintainer, 2026-08-05 |
 | **D2** | **A rollup per main metric.** No cross-metric pick, because no metric priority is declared and abkit does not invent one; the experiment-level statement is whether the per-metric leaders agree. | maintainer, 2026-08-05 |
-| **D3** | **`control:` is optional and defaults to the first declared variant.** `0.8.0` configs stay byte-compatible; declaring a non-first control re-orients pairs, orphans their rows and flips their effect sign — documented, warned, healed by `--full-refresh --from/--to`. | maintainer, 2026-08-05 |
+| **D3** | **`control:` is optional and defaults to the first declared variant.** `0.8.0` configs stay byte-compatible; declaring a non-first control re-orients pairs, orphans their rows and flips their effect sign — documented, warned, and healed by the next **plain `abk run`** — no `--full-refresh` needed, since no look carries the re-oriented pair (*corrected by DEC-1 as built; this row originally said `--full-refresh --from/--to`*). | maintainer, 2026-08-05 |
 | **D4** | **Scope: all four buckets are in M14** — the core decision layer, the cheap UX wins, the `validate` placebo, and `plan`/SRM. Six WPs (~6 sessions) against the contour's ~4; DEC-5 is the shed-able one if the milestone must fit. | maintainer delegated ("реши сам"), 2026-08-05 |
 | **D5** | Separation is tested against **every** other treatment, not the runner-up: under `all_pairs` all treatment pairs are inside the family the alpha paid for, so the statement is controlled; "beat the runner-up" is a data-selected comparison that sounds conclusive while leaving K−2 pairs unexamined. | derived |
 | **D6** | The leader is chosen **only among `WIN` arms**. Ranking non-significant arms is the uncontrolled claim D1 refused. | derived |
 | **D7** | Notifications stay **control-anchored** — no message per treatment pair and no seventh signal kind; the rollup rides as fields, and the M12 dedup signature gains the rollup identity so a leader flip with an unchanged verdict word is still announced. | derived |
 | **D8** | The dashboard headline is the **first declared main metric's** rollup plus a disagreement chip — not a "worst-of" priority, which would be the metric ordering D2 refused. The row's `guardrail_regressed` flag stays control-anchored. | derived |
 | **D9** | `abk validate` calibrates the **declared control-vs-first-treatment contrast** and discloses the choice in the verdict; **two-arm runs stay byte-identical**. | derived |
-| **D10** | The rollup is **never persisted** — read-time only, the STAT-1 D12 precedent (a stored decision goes stale the moment a metric or the contrast set moves, and BI then disagrees with the product). | derived |
+| **D10** | The rollup is **never persisted** — read-time only, the STAT-1 D12 precedent (a stored decision goes stale the moment a metric or the contrast set moves, and BI then disagrees with the product). *As built: the rollup's IDENTITY does reach storage, in `_ab_notify_states.last_rollup` — a dedup signature, not a decision, and deliberately dropped rather than trusted when NULL. Nothing reads it to answer "who won".* | derived |
 
 ## 4. Exit gate (sketch)
 
@@ -879,9 +1137,21 @@ must be able to fail — is **§0.2 point 3**: a two-arm experiment reproduces
 `0.8.0` on every surface. The M13 lesson applies verbatim: compare against a
 real `v0.8.0` checkout, not against HEAD, or the gate compares HEAD with itself.
 
-## 5. Before start — open questions
+## 5. Before start — open questions *(both answered; kept for the record)*
 
-Neither blocks DEC-1 or DEC-2.
+Neither blocked DEC-1 or DEC-2.
+
+1. ~~Open~~ **Answered in DEC-3**, exactly as the precedent predicted: the arm
+   table renders effect · CI · verdict · n in DECLARATION order with the leader
+   named by a chip (it does not re-rank — `desired_direction` is not in the
+   payload), and the pair selector keeps the block count flat at any arm count.
+2. ~~Open~~ **Answered by D9 and left as a named follow-up**: DEC-5 shipped the
+   deterministic control-vs-first-treatment pick, and a `--contrast` selector
+   would need the calibration chip to become pair-aware — which DEC-6 then found
+   is an additive `_ab_aa_runs` column plus a `find_calibration` rule, not a
+   wider `cell_hash`. Recorded there.
+
+*The original text of both:*
 
 1. **The cross-arm overview's visual design** (DEC-3 item 2) is a UX task, not a
    derivation — the arm table's columns, where the leader chip sits, and how the

@@ -109,9 +109,11 @@ Two consequences worth planning around:
 
 - **Upgrading to `0.9.0` moves multi-arm A/A numbers.** Nothing about your data
   or your methods changed — the instrument now measures the design you run. A
-  green row written by `0.8.0` still *matches* (the cell identity does not
-  include the pair), so it will keep lighting the explore calibration chip until
-  you re-run. **Re-run `abk validate` on multi-arm experiments after upgrading.**
+  green row written by `0.8.0` still *matches* — the chip's lookup is
+  `(metric, method_config_id, alpha)` and knows nothing about which pair was
+  calibrated — so it will keep lighting the explore calibration chip until you
+  re-run, and nothing warns you.
+  **Re-run `abk validate` on multi-arm experiments after upgrading.**
 - **One pair is not every pair.** Measured on a 60/20/20 split, the calibrated
   `control vs t1` achieved MDE 0.1055 while `t1 vs t2` needs 0.1295 — 23% worse,
   and the chip greens both. Under `contrasts: vs_control` there are no

@@ -7,6 +7,14 @@ repos:
       - id: check-yaml
       - id: check-added-large-files
         args: [--maxkb=500]
+        # The exit-gate goldens are deliberately large: each one is a whole
+        # persisted+rendered surface captured from a PREVIOUS RELEASE, and the
+        # m14 one (`decisions_golden_0_8_0.json`) covers two arm counts across
+        # seven readers. The limit exists to stop accidental binaries, and it
+        # bites only at commit time — CI runs no pre-commit — so without this
+        # exemption it would ambush whoever next REGENERATES a golden, long
+        # after the PR that added it. Scoped to that one directory on purpose.
+        exclude: ^tests/e2e/fixtures/.*\.json$
       - id: check-merge-conflict
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
