@@ -50,6 +50,10 @@ class SrmResult:
     #: gate; ``None`` for chi-square. ``pvalue`` is its dual: ``min(1, 1/e_value)``.
     e_value: float | None = None
 
+    def culprit(self) -> tuple[str, float] | None:
+        """The arm contributing most to the mismatch (m14 DEC-5(c))."""
+        return srm_culprit(self.observed, self.expected_share)
+
     def describe(self) -> str:
         """The loud one-liner for the CLI gate (data-contract-and-reporting.md §6)."""
         total = sum(self.observed.values())
@@ -66,9 +70,26 @@ class SrmResult:
         else:
             evid = f"chi2 p={self.pvalue:.2g}"
         if self.srm_flag:
+            # m14 DEC-5(c): at 3+ arms name WHERE the mismatch is concentrated.
+            # "assignment is broken" without "which arm" is a diagnosis the
+            # operator cannot act on. Silent at two arms, where the residuals
+            # are mirror images and naming one is a tautology — so a two-arm
+            # gate line is `0.8.0`'s to the character.
+            blame = ""
+            # Only under the chi-square gate. The sub-day e-process's flag is a
+            # RUNNING MAX over earlier looks, so a since-rebalanced cohort reads
+            # FAILED on an even split — and a decomposition of the CURRENT
+            # counts would then blame an arm at noise magnitude, in the opposite
+            # direction, as the diagnosis (review finding).
+            if self.kind == "chi2" and len(self.observed) > 2:
+                found = self.culprit()
+                if found is not None:
+                    arm, residual = found
+                    side = "too few" if residual < 0 else "too many"
+                    blame = f" — {arm} contributes most to the mismatch ({side} units)"
             return (
                 f"SRM FAILED (observed {observed_shares} vs expected {expected_shares}, "
-                f"{evid}) — effects untrustworthy"
+                f"{evid}){blame} — effects untrustworthy"
             )
         return f"SRM ok (observed {observed_shares} vs expected {expected_shares}, {evid})"
 
@@ -107,6 +128,48 @@ def srm_check(
         expected_share={v: float(share) for v, share in zip(variants, shares, strict=True)},
         kind="chi2",
     )
+
+
+def srm_culprit(
+    observed_counts: Mapping[str, int],
+    expected_share: Mapping[str, float],
+) -> tuple[str, float] | None:
+    """Which arm contributes most to the SRM chi-square (m14 DEC-5(c)).
+
+    A DECOMPOSITION of a statistic already computed, never a second gate: the
+    joint K-way test keeps deciding, and this only says where the mismatch is
+    concentrated. Returns ``(arm, residual)`` — the Pearson residual
+    ``(observed − expected) / √expected``, signed, so the surface can say "too
+    few" or "too many" — or ``None`` when the decomposition is not defined
+    (fewer than two arms, no units, a non-positive expectation).
+
+    **It is the chi-square CONTRIBUTION, not a z-score**, and no surface prints
+    it as one: a Pearson residual's null standard deviation is ``√(1−p)``, not 1
+    (measured 0.70 / 0.82 / 0.90 at 2 / 3 / 5 even arms), so a "σ" label would
+    overstate it by up to 30%. The ~N(0,1) quantity is the ADJUSTED residual
+    ``(o−e)/√(e(1−p))``, and under a strongly uneven declared split the two can
+    name DIFFERENT arms (measured: ~14% of imbalanced draws). This answers the
+    question the gate asks — which arm drives the statistic that failed — and
+    the adjusted residual is a named follow-up, not a silent substitution.
+
+    At 3+ arms "assignment is broken" without "which arm" is a diagnosis the
+    operator cannot act on; at two arms the answer is a tautology (the residuals
+    are mirror images), which is why every surface gates the line on the arm
+    count rather than printing it always.
+    """
+    if len(observed_counts) < 2 or set(observed_counts) != set(expected_share):
+        return None
+    variants = sorted(observed_counts)
+    counts = np.array([float(observed_counts[v]) for v in variants], dtype=np.float64)
+    shares = np.array([float(expected_share[v]) for v in variants], dtype=np.float64)
+    total = counts.sum()
+    share_total = shares.sum()
+    if total <= 0 or share_total <= 0 or np.any(shares <= 0):
+        return None
+    expected = total * (shares / share_total)
+    residuals = (counts - expected) / np.sqrt(expected)
+    idx = int(np.argmax(np.abs(residuals)))
+    return variants[idx], float(residuals[idx])
 
 
 def sequential_multinomial_srm(

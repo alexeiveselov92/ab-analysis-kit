@@ -173,6 +173,23 @@ class SizingResult:
 
 
 @dataclass(frozen=True)
+class ContrastSizing:
+    """One DECLARED vs-control contrast's own sizing (m14 DEC-5(b)).
+
+    Sizing depends on the pair only through the allocation ratio, so under an
+    even split every contrast lands on identical numbers and the renderer says
+    so once instead of printing C(g,2) copies. Under an UNEVEN split they
+    genuinely differ — which is exactly what the warning this replaced
+    understated ("sizing is shown for one contrast only" named the omission but
+    not its size).
+    """
+
+    pair: tuple[str, str]
+    plan_ratio: float
+    result: SizingResult
+
+
+@dataclass(frozen=True)
 class ComparisonPlan:
     """A fully-labelled plan line for one comparison (or a refusal)."""
 
@@ -189,6 +206,9 @@ class ComparisonPlan:
     plan_ratio: float = 1.0  # treatment:control allocation used for required-N
     result: SizingResult | None = None
     runtime: RuntimePlan | None = None  # WP-A timing (days-to-N + ASN); None ⇒ no rate
+    #: m14 DEC-5(b): every OTHER declared vs-control contrast, sized. Empty at
+    #: two arms, where the family is the single pair already shown.
+    contrasts: tuple[ContrastSizing, ...] = ()
     notes: list[str] = field(default_factory=list)
 
 

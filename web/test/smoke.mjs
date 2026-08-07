@@ -647,3 +647,35 @@ test('the leaders chip also reports agreement', () => {
   assert.match(chip.textContent, /agree on the leader/);
   assert.ok(chip.classList.contains('abk-leaders-agree'));
 });
+
+test('the SRM chip names the culprit arm at three arms, and nothing at two', () => {
+  // m14 DEC-5(c): a decomposition of the chi-square the gate already computed,
+  // READ off the payload rather than re-derived — "assignment is broken"
+  // without "which arm" is a diagnosis the operator cannot act on.
+  const broken = makeMultiArmDecisionPayload({
+    srm: {
+      flag: true,
+      pvalue: 1e-9,
+      observed: { control: 1000, treatment: 1000, treatment_b: 600 },
+      expected: { control: 1 / 3, treatment: 1 / 3, treatment_b: 1 / 3 },
+      culprit: { arm: 'treatment_b', residual: -12.6, direction: 'under' },
+    },
+  });
+  const { mount } = renderInJsdom(broken);
+  const chip = mount.querySelector('.abk-srm-fail');
+  assert.match(chip.textContent, /treatment_b has too few units/);
+  assert.match(chip.textContent, /effects untrustworthy$/);
+
+  // two arms: the residuals mirror each other, so the server sends no culprit
+  const twoArm = makePayload({
+    srm: {
+      flag: true,
+      pvalue: 0.0001,
+      observed: { control: 6200, treatment: 3800 },
+      expected: { control: 0.5, treatment: 0.5 },
+      culprit: null,
+    },
+  });
+  const plain = renderInJsdom(twoArm).mount.querySelector('.abk-srm-fail');
+  assert.ok(!/has too/.test(plain.textContent), plain.textContent);
+});

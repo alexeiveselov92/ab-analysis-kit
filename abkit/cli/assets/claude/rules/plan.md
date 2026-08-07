@@ -94,9 +94,14 @@ than crashing the plan.
 └─ looks: 14 planned · cadence 1d · horizon 2024-07-15 · ~28 _ab_results rows/full-refresh
 ```
 
-For a **>2-arm** experiment, sizing is shown for the control vs first-treatment
-contrast only (the other pairs share the same alpha) — the plan says so, naming
-both arms. If the look count
+For a **>2-arm** experiment EVERY declared vs-control contrast is sized at its
+own allocation ratio, each with its own ✓/✗ powered flag; contrasts sharing a
+ratio collapse to one line, and when the BINDING contrast is not the headline the
+plan names it (the runtime line describes the headline only). Only `required_n`
+is per contrast — the achievable MDE is a retrospective bound, identical for all
+of them. Treatment-vs-treatment pairs (`contrasts: all_pairs`) share the alpha
+but are NOT sized: a pre-launch baseline exists for the control arm only, and the
+plan says so. If the look count
 exceeds `warn_looks` without `sequential.enabled`, it warns that peeking inflates
 the false-positive rate (enable sequential or coarsen the cadence).
 

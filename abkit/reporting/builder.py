@@ -211,6 +211,26 @@ def _verdict_to_payload(verdict: PairVerdict) -> dict:
     }
 
 
+def _srm_culprit_block(
+    observed: dict[str, int], expected_split: dict[str, float], arm_count: int
+) -> dict[str, Any] | None:
+    """The SRM culprit as a payload block, or ``None`` (m14 DEC-5(c)).
+
+    ``None`` at two arms on purpose, not only when the decomposition is
+    undefined: with one treatment the two residuals are mirror images, so naming
+    one is a tautology — and a `0.8.0` payload carried no key at all here.
+    """
+    if arm_count <= 2:
+        return None
+    from abkit.stats.srm import srm_culprit
+
+    found = srm_culprit(observed, expected_split)
+    if found is None:
+        return None
+    arm, residual = found
+    return {"arm": arm, "residual": residual, "direction": "under" if residual < 0 else "over"}
+
+
 def ship_decisions(verdicts: Sequence[dict]) -> list[dict]:
     """The control-anchored subset of a baked ``verdicts`` list (m14 DEC-3).
 
@@ -558,6 +578,14 @@ def build_report_payload(
             # χ² at daily+, the anytime-valid e-process below 1d (WP5). Not
             # persisted, so derived from the current cadence (statistics-changes §4.2).
             "kind": "sequential_multinomial" if experiment.is_sub_day() else "chi2",
+            # m14 DEC-5(c): WHICH arm the mismatch is concentrated in, computed
+            # ONCE here rather than re-derived by each renderer (the DEC-2
+            # `role` rule — a fact several surfaces need is API). A
+            # decomposition of the chi-square the gate already computed: no new
+            # threshold, and it cannot move a decision.
+            "culprit": _srm_culprit_block(
+                observed, experiment.assignment.expected_split, len(experiment.assignment.variants)
+            ),
         },
         # the latest A/A validate matrix (M4); null until first `abk validate`.
         # The M4 shape (fpr, peeking_fpr, headline, matrix_rows, report_link) fills

@@ -753,3 +753,30 @@ test('the pair selector remembers its choice per metric', () => {
 
   assert.equal(active(), 'control vs treatment_b', 'the selection survived the round trip');
 });
+
+test('the cockpit SRM chip names the culprit arm, and the direction both ways', () => {
+  // m14 DEC-5(c). Replacing the interpolation with an empty string left the
+  // whole 114-test suite green: the only SRM test rendered a two-arm payload
+  // with no `culprit` key, which the mutation satisfies.
+  const starved = makeDecisionExplorePayload({
+    srm: {
+      flag: true,
+      pvalue: 1e-9,
+      observed: { control: 1000, treatment: 1000, treatment_b: 600 },
+      expected: { control: 1 / 3, treatment: 1 / 3, treatment_b: 1 / 3 },
+      culprit: { arm: 'treatment_b', residual: -9.06, direction: 'under' },
+    },
+  });
+  const under = renderInJsdom(starved).mount.querySelector('.abk-srm-fail');
+  assert.match(under.textContent, /treatment_b has too few units/);
+
+  const flooded = makeDecisionExplorePayload({
+    srm: {
+      ...starved.srm,
+      culprit: { arm: 'treatment_b', residual: 9.06, direction: 'over' },
+    },
+  });
+  const over = renderInJsdom(flooded).mount.querySelector('.abk-srm-fail');
+  assert.match(over.textContent, /treatment_b has too many units/);
+  assert.match(over.textContent, /effects untrustworthy$/);
+});

@@ -857,6 +857,10 @@ class TestEmptyContract:
             "observed": {"control": 0, "treatment": 0},
             "expected": {"control": 0.5, "treatment": 0.5},
             "kind": "chi2",  # daily cadence ⇒ the χ² gate (WP5)
+            # m14 DEC-5(c): null at two arms, where naming one of two mirrored
+            # residuals is a tautology — so a two-arm payload keeps `0.8.0`'s
+            # value for every field it had
+            "culprit": None,
         }
         (metric,) = payload["metrics"]
         assert metric["name"] == "revenue"
@@ -1323,3 +1327,54 @@ class TestTheDecisionLayerReachesThePayload:
         assert rollup["indistinguishable"] == []
         assert rollup["separation"] == "separated"
         assert payload["leaders_agree"] is None
+
+
+class TestTheSrmCulpritReachesThePayload:
+    """m14 DEC-5(c) on the SERVER half.
+
+    Making `_srm_culprit_block` return `None` unconditionally left 918
+    reporting+tuning and 257 e2e tests green: the only assertion on the key was
+    `culprit: None` in a fixture with zero observed counts, where the helper
+    returns `None` regardless (review finding).
+    """
+
+    @staticmethod
+    def _three_arm(**overrides):
+        return make_experiment(
+            assignment={
+                "query": "SELECT 1",
+                "variants": ["control", "t1", "t2"],
+                "expected_split": {"control": 1 / 3, "t1": 1 / 3, "t2": 1 / 3},
+                **overrides,
+            }
+        )
+
+    def test_an_imbalanced_three_arm_cohort_names_the_arm(self, tables):
+        experiment = self._three_arm()
+        seed_series(tables, experiment, name_2="t1")
+        seed_series(tables, experiment, name_2="t2")
+
+        payload = build_report_payload(
+            experiment, tables, cohort_counts={"control": 1000, "t1": 1000, "t2": 600}
+        )
+
+        assert payload["srm"]["culprit"] == {
+            "arm": "t2",
+            # (600 − 2600/3) / √(2600/3)
+            "residual": pytest.approx(-9.0582, rel=1e-4),
+            "direction": "under",
+        }
+
+    def test_a_two_arm_cohort_names_nobody_even_when_imbalanced(self, tables):
+        """Not because the decomposition is undefined — it is perfectly defined
+        here — but because with one treatment the two residuals are mirror
+        images, so naming one is a tautology and a `0.8.0` payload had no key."""
+        experiment = make_experiment()
+        seed_series(tables, experiment)
+
+        payload = build_report_payload(
+            experiment, tables, cohort_counts={"control": 6200, "treatment": 3800}
+        )
+
+        assert payload["srm"]["observed"] == {"control": 6200, "treatment": 3800}
+        assert payload["srm"]["culprit"] is None

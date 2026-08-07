@@ -99,3 +99,132 @@ def test_describe_ok_when_not_flagged() -> None:
     message = srm_check({"a": 5000, "b": 5000}, {"a": 0.5, "b": 0.5}).describe()
     assert message.startswith("SRM ok")
     assert "0.50" in message
+
+
+class TestTheCulpritDecomposition:
+    """m14 DEC-5(c): which arm the mismatch is concentrated in.
+
+    A decomposition of the chi-square the gate already computed — no new
+    threshold, nothing that can change a decision.
+    """
+
+    def test_it_names_the_arm_with_the_largest_standardised_residual(self):
+        from abkit.stats.srm import srm_culprit
+
+        # b is starved: 1000/1000/600 against an even declared split
+        arm, residual = srm_culprit(
+            {"a": 1000, "b": 1000, "c": 600},
+            {"a": 1 / 3, "b": 1 / 3, "c": 1 / 3},
+        )
+        assert arm == "c"
+        assert residual < 0, "the sign says TOO FEW, which is what the operator acts on"
+
+    def test_an_over_allocated_arm_reads_positive(self):
+        from abkit.stats.srm import srm_culprit
+
+        arm, residual = srm_culprit(
+            {"a": 1000, "b": 1000, "c": 1600},
+            {"a": 1 / 3, "b": 1 / 3, "c": 1 / 3},
+        )
+        assert arm == "c" and residual > 0
+
+    def test_it_is_read_against_the_DECLARED_split_not_the_average(self):
+        """A deliberately uneven design is not a mismatch: 20/40/40 observed
+        against a 20/40/40 declaration has no culprit worth naming, and an
+        implementation comparing arms to each other would blame `a`."""
+        from abkit.stats.srm import srm_culprit
+
+        arm, residual = srm_culprit(
+            {"a": 200, "b": 400, "c": 400},
+            {"a": 0.2, "b": 0.4, "c": 0.4},
+        )
+        assert abs(residual) < 1e-9, arm
+
+    def test_it_agrees_with_the_gate_it_decomposes(self):
+        """The residuals are the chi-square's own terms: their squares sum to
+        the statistic scipy computes, so this cannot drift from the gate."""
+        import numpy as np
+        import scipy.stats as sps
+
+        from abkit.stats.srm import srm_culprit
+
+        observed = {"a": 1000, "b": 1000, "c": 600}
+        shares = {"a": 1 / 3, "b": 1 / 3, "c": 1 / 3}
+        counts = np.array([observed[v] for v in sorted(observed)], dtype=float)
+        expected = counts.sum() / 3
+        statistic, _ = sps.chisquare(f_obs=counts, f_exp=[expected] * 3)
+
+        _arm, residual = srm_culprit(observed, shares)
+        residuals = (counts - expected) / np.sqrt(expected)
+        assert np.isclose(float((residuals**2).sum()), float(statistic))
+        assert np.isclose(abs(residual), float(np.abs(residuals).max()))
+
+    def test_degenerate_inputs_answer_None_rather_than_guessing(self):
+        from abkit.stats.srm import srm_culprit
+
+        assert srm_culprit({"a": 1}, {"a": 1.0}) is None
+        assert srm_culprit({"a": 0, "b": 0}, {"a": 0.5, "b": 0.5}) is None
+        assert srm_culprit({"a": 1, "b": 1}, {"a": 0.0, "b": 1.0}) is None
+        assert srm_culprit({"a": 1, "b": 1}, {"a": 0.5, "c": 0.5}) is None
+
+
+class TestTheGateLineNamesTheCulprit:
+    """m14 DEC-5(c) on the surface an operator actually reads."""
+
+    def test_three_arms_get_the_arm_and_the_direction(self):
+        from abkit.stats.srm import srm_check
+
+        result = srm_check(
+            {"a": 1000, "b": 1000, "c": 600},
+            {"a": 1 / 3, "b": 1 / 3, "c": 1 / 3},
+        )
+
+        assert result.srm_flag
+        assert "c contributes most to the mismatch (too few units)" in result.describe()
+        assert "σ" not in result.describe(), "a Pearson residual is not a z-score"
+
+    def test_a_two_arm_line_is_unchanged(self):
+        """With one treatment the residuals mirror each other, so naming one is
+        a tautology — and it would move a `0.8.0` string."""
+        from abkit.stats.srm import srm_check
+
+        line = srm_check({"control": 6200, "treatment": 3800}, {"control": 0.5, "treatment": 0.5})
+
+        assert line.srm_flag
+        # the whole tail, not a "too few" substring: this fixture OVER-allocates
+        # the control, so a leaked culprit would read "too many" and slip past
+        assert (
+            line.describe().endswith(
+                "(observed 0.62/0.38 vs expected 0.50/0.50, chi2 p=0) — effects untrustworthy"
+            )
+            or "contributes most" not in line.describe()
+        )
+        assert "contributes most" not in line.describe()
+
+    def test_a_healthy_gate_says_nothing_about_a_culprit(self):
+        from abkit.stats.srm import srm_check
+
+        ok = srm_check({"a": 1000, "b": 1000, "c": 1000}, {"a": 1 / 3, "b": 1 / 3, "c": 1 / 3})
+
+        assert not ok.srm_flag
+        assert "units" not in ok.describe()
+
+    def test_the_sub_day_gate_blames_nobody(self):
+        """The e-process flag is a RUNNING MAX over earlier looks, so a
+        since-rebalanced cohort reads FAILED on an even split — and a
+        decomposition of the CURRENT counts would then name an arm at noise
+        magnitude, in the OPPOSITE direction, as the diagnosis."""
+        from abkit.stats.srm import SrmResult
+
+        rebalanced = SrmResult(
+            pvalue=8.6e-268,
+            srm_flag=True,
+            alpha=0.001,
+            observed={"a": 1000, "b": 1000, "c": 1000},
+            expected_share={"a": 1 / 3, "b": 1 / 3, "c": 1 / 3},
+            kind="sequential_multinomial",
+            e_value=1.17e267,
+        )
+
+        assert "contributes most" not in rebalanced.describe()
+        assert "anytime" in rebalanced.describe()

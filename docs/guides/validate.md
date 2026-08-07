@@ -56,10 +56,12 @@ validate never resamples invented data.
 
 The mechanism (aa-false-positive-matrix §1) is a standard permutation-A/A:
 
-1. **Source = the experiment's own pooled cohort**, rendered over the real cadence
+1. **Source = the experiment's own cohort**, rendered over the real cadence
    grid — the same grid, cadence, cohort, and metric SQL the pipeline uses. There is
-   no separate historical window and no exposure-free loader.
-2. **Pool the per-variant unit arrays and permute the unit→arm labels.** Permuting
+   no separate historical window and no exposure-free loader. At three or more arms
+   it is the **calibrated contrast's two arms**, not every arm pooled — see
+   [Which contrast is calibrated](#which-contrast-is-calibrated).
+2. **Pool those two arms' unit arrays and permute the unit→arm labels.** Permuting
    labels destroys any true treatment effect, so the split is an **exact null** by
    construction, while still exercising your real metric SQL and cadence.
 3. **A/A (false-positive):** repeat N times. Since 0.2.0 the default N is **tied to
@@ -82,6 +84,38 @@ Seeds are derived from `("aa", experiment, metric, method_config_id, iteration)`
 no wall-clock input (aa-false-positive-matrix §1), so the FPR numbers are a
 deterministic, reproducible invariant — the same command on the same data returns the
 same matrix.
+
+## Which contrast is calibrated
+
+At two arms there is one comparison and the placebo is it. At **three or more**,
+`abk validate` calibrates the **declared control against the first declared
+treatment**, and every cell's verdict says so:
+
+```
+z-test on signup_cr: well-calibrated, FPR 5.1%; calibrated on control vs t1
+```
+
+One pair answers for the family on purpose — the calibration chip is keyed
+`(metric, method_config_id, effective alpha)` and is arm-pair-independent by
+design — but it has to be a pair you actually run, and the power and
+achieved-MDE columns are **that pair's**. Through `0.8.0` the placebo pooled
+every arm and split it at the control's share of the whole split, which
+calibrated a design nobody runs: at three even arms 1/3 vs 2/3 over three arms'
+units, against a live comparison of 1/2 vs 1/2 over two. The FPR column was
+robust to it; the achieved MDE came out **15% optimistic** (23% at four arms,
+27% at five).
+
+Two consequences worth planning around:
+
+- **Upgrading to `0.9.0` moves multi-arm A/A numbers.** Nothing about your data
+  or your methods changed — the instrument now measures the design you run. A
+  green row written by `0.8.0` still *matches* (the cell identity does not
+  include the pair), so it will keep lighting the explore calibration chip until
+  you re-run. **Re-run `abk validate` on multi-arm experiments after upgrading.**
+- **One pair is not every pair.** Measured on a 60/20/20 split, the calibrated
+  `control vs t1` achieved MDE 0.1055 while `t1 vs t2` needs 0.1295 — 23% worse,
+  and the chip greens both. Under `contrasts: vs_control` there are no
+  treatment-vs-treatment pairs and the gap does not arise.
 
 ## Single-look vs cumulative-peeking FPR
 

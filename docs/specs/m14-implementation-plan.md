@@ -34,12 +34,13 @@ in the decision / presentation layer.**
 | 11. control is a positional convention with no field | **shipped** — M14 DEC-1, `assignment.control` + the one AST-gated resolver `ExperimentConfig.control` |
 | 2. no experiment-level winner / rollup | **shipped** — M14 DEC-2 composes `ExperimentReadout.rollups`, DEC-3 renders it as the report's cross-arm overview |
 | 3. treatment-vs-treatment charted but never verdicted | **shipped** — M14 DEC-2 verdicts every declared pair (`role: treatment_pair`), DEC-3 renders it behind a *not a ship decision* chip |
-| 5. `abk plan` sizes ONE contrast of many | **live**, warns; since DEC-1 the pair is the declared control vs the first declared treatment, and the warning names both arms (DEC-5 owns the rest) |
-| 6. `abk validate` collapses N arms into a two-arm placebo | **live**, undisclosed ([runner.py:118](../../abkit/validate/runner.py#L118)) |
+| 5. `abk plan` sizes ONE contrast of many | **shipped** — M14 DEC-5(b): every declared vs-control contrast is sized; the disclosed residue is the treatment-vs-treatment half of an `all_pairs` family (no pre-launch baseline per treatment) |
+| 6. `abk validate` collapses N arms into a two-arm placebo | **shipped** — M14 DEC-5(a): the placebo IS the calibrated two-arm contrast, at that pair's units and ratio, and the verdict names it |
 | 7. `abk run --report` prints unlabeled verdict words | **shipped** — M14 DEC-4: at 3+ arms the ROLLUP replaces the list (one keyed entry per main metric, plus a disagreement note); two-arm output is unchanged |
 | 13. no pair selector; blocks grow C(N,2)/metric | **shipped** — M14 DEC-3 (`buildPairPicker`, 3+ arms) |
 | 10. explore's `activePair` resets on metric switch | **shipped** — M14 DEC-4 (`activePairByMetric`) |
-| 14/15. no SRM culprit, flat picker | **live** (cosmetic tier) |
+| 14. SRM fails jointly with no per-arm culprit | **shipped** — M14 DEC-5(c) on the CLI, the report and explore; the dashboard row is a stated exception |
+| 15. flat picker | **live** (cosmetic tier) |
 
 **One surface the audit could not know about, because it did not exist yet:**
 the M11 dashboard took `readout.verdicts[0]` as the experiment's headline. At
@@ -653,7 +654,7 @@ shows a WIN with a full series. DEC-3 solved the equivalent for the report (the
 selector falls back to whatever has data); the row's headline fallback is
 `0.8.0`'s and changing it would change what "headline" means. DEC-6 may weigh it.
 
-### DEC-5 — the supporting instruments: `validate`, `plan`, SRM
+### DEC-5 — the supporting instruments: `validate`, `plan`, SRM ✅
 
 Independent of DEC-1…DEC-4; can run in parallel or be dropped last if the
 milestone needs to shed a session.
@@ -667,8 +668,13 @@ placebo is therefore **1/3 vs 2/3 over three arms' units**, while the live
 control-vs-treatment comparison is **1/2 vs 1/2 over two arms' units**. The FPR
 column is robust to that; **power and achieved-MDE are not** — they are read off
 per-arm n, they feed the Recommended row, and the placebo arms carry ≈1.5× the
-live pair's units, so the achieved MDE is optimistic by ≈√1.5 ≈ 22% at three
-even arms.
+live pair's units, so the achieved MDE is optimistic — **by 15% at three even
+arms**. *(This paragraph first said ≈√1.5 ≈ 22%; the DEC-5 review measured it.
+The old placebo did not split its pooled units evenly either — it split 1/3 vs
+2/3 — so its effective n was `(G−1)n/G` and the law is `√(2(G−1)/G)`: 1.000 /
+1.155 / 1.230 / 1.270 at 2 / 3 / 4 / 5 even arms. √1.5 is right at FOUR arms,
+and the sentence named three. Putting a number in a spec means checking that
+number's own derivation.)*
 *Fix:* size and split the placebo like the **declared contrast being
 calibrated** — deterministically the control vs the first treatment, since the
 D3/D4 calibration chip is keyed `(metric, method_config_id, effective alpha)`
@@ -698,6 +704,118 @@ arms, "assignment is broken" without "which arm" is a diagnosis the operator
 cannot act on.
 
 ---
+
+#### DEC-5 as built ✅
+
+Merged as PR #113. Three independent instruments; the posture note first,
+because this WP is the milestone's one exception.
+
+**§0.2 has an exception now, and it is `_ab_aa_runs`.** M14 promised to move no
+persisted number. DEC-5(a) moves `power`, `achieved_mde` and `coverage` for
+**multi-arm** experiments — deliberately, because they were measuring a design
+nobody runs. That is an *instrument* reading, not a `_ab_results` number and not
+a method's math: no `ALGORITHM_VERSION` applies, `abkit.stats` is untouched, and
+the four change-control steps do not fire. Two-arm projects are unmoved, both
+e2e matrix gates included.
+
+1. **`calibrated_contrast()` is a SELECTOR, not a fourth factory.** It picks one
+   pair out of `contrast_pairs()`' family; it never enumerates, so the STAT-1b
+   AST gate has nothing to say about it. Deliberately not `contrast_pairs()[0]`
+   — with a late-declared control that entry is a treatment pair.
+2. **The arm filter preserves `variants()` order, not `arms` order**, which is
+   what makes a two-arm pool concatenate exactly as it always did. Following the
+   argument would reorder it whenever the control was declared second.
+3. **`_share_a`'s denominator is the pair.** At two arms the pair IS the split,
+   so the denominators coincide bit-for-bit — the whole byte-identity claim
+   rests on that one coincidence, and it is asserted rather than assumed.
+4. **The disclosure rides the VERDICT** (the M7 WP6 lesson, third instance after
+   `fpr_negative_share` and auto-N) and is silent at two arms, because printing
+   the only pair there is would move a persisted `_ab_aa_runs.verdict` string.
+5. **`abk plan` sizes the RATIO, not the arm.** `achievable_mde` and
+   `achieved_power` are solved from `moments.observed_ratio` — a retrospective
+   bound over data that exists for one pair — and never see `plan_ratio`. So the
+   per-contrast line prints `required_n` and nothing else, and the plan's own
+   promise of "the per-arm baseline where the split is uneven" is **not
+   delivered**: every contrast is solved from the control's moments. Recorded as
+   a limitation; the per-pair `_ab_results` row that would fix it is one lookup
+   away and is DEC-6's or M15's to weigh.
+6. **`srm_culprit` is a decomposition, never a second gate.** The joint K-way
+   test keeps deciding; a residual cannot move a decision.
+
+**What the review changed** (three lenses; every finding reproduced first):
+
+7. **The fix was not pinned at the surface it fixes.** Deleting `arms=arms` from
+   the panel load — reverting `abk validate` to the `0.8.0` pooled placebo —
+   left all 264 tests green, because every test of the filter called
+   `load_placebo_panel` directly. The DEC-1/DEC-3 lesson, third time: a
+   rerouted surface owes a behavioural assertion AT the surface.
+8. **The two-arm guard was equally unpinned.** `> 2` → `> 1` also survived
+   everything, and it would have appended the disclosure to every two-arm cell's
+   **persisted** verdict — exactly the `0.8.0` string this WP forbids itself.
+   The old test passed `None` into the helper, i.e. tested the helper and not
+   the gate that produces `None`.
+9. **The 22% figure was wrong, and its own derivation says so.** The old placebo
+   did not split its pooled units evenly either — it split 1/3 vs 2/3 — so the
+   law is `√(2(G−1)/G)`, not `√1.5`: **15% at three even arms**, with √1.5
+   correct at FOUR. Measured 1.000 / 1.155 / 1.230 / 1.270 at 2–5 arms. Putting
+   a number in a spec means checking that number's own derivation (the PERF-1
+   §4.1 lesson).
+10. **"size identically (even split)" was a claim nothing tested.** The
+    collapse test compared `required_n` and `achievable_mde` — and with no
+    target MDE every `required_n` is `None`, so a 60/30/10 split printed "even".
+    It tests the RATIOS now, and says "share this allocation ratio".
+11. **The per-contrast achievable MDE was the headline pair's.** Ratio-invariant
+    by construction (delta 5), so every line printed the same number under a
+    different pair's name. Dropped.
+12. **A plan could read "✓ powered · 23d" while a declared contrast needed twice
+    the control units, past its own horizon.** Each contrast line carries its own
+    powered flag now, and when the binding contrast is not the headline the plan
+    says so beside the runtime it does not describe.
+13. **The sub-day gate blamed the wrong arm in the wrong direction.** The
+    e-process flag is a running MAX over earlier looks, so a since-rebalanced
+    cohort reads FAILED on an even split — and decomposing the CURRENT counts
+    then named an arm at noise magnitude, inverted, as the diagnosis. The blame
+    is gated on `kind == "chi2"`; the sub-day line stays as it was.
+14. **"σ" was the wrong unit.** A Pearson residual's null sd is `√(1−p)`, not 1
+    (0.70 / 0.82 / 0.90 at 2 / 3 / 5 even arms), so the printed number
+    overstated by up to 30%. The line names the contribution in words and prints
+    no false z-score. *Named follow-up:* the ADJUSTED residual `(o−e)/√(e(1−p))`
+    is the ~N(0,1) quantity and can name a different arm under a strongly uneven
+    declared split (measured ~14% of imbalanced draws) — a conscious substitution
+    for a later WP, not a silent one.
+15. **Three more places could not fail:** the payload's culprit (returning
+    `None` unconditionally left 918 tests green — the only assertion sat on a
+    zero-count fixture where `None` is right anyway), the explore chip (blanking
+    it left 114 green), and the two-arm `describe()` gate (the fixture
+    over-allocated the control, so a leaked "too many" slipped past a "too few"
+    assertion). All three now bite.
+16. **`_other_contrast_ratios` filters `contrast_pairs()`** rather than
+    re-enumerating `treatments[1:]` — the STAT-1b gate forbids only
+    `combinations`, so a second hand-rolled enumeration would have been an
+    unrecorded exemption.
+
+**Named limitations, recorded not fixed:**
+
+- **`cell_hash` does not know about the pair.** It is
+  `(metric, method_config_id, mode, alpha)` and DEC-5 did not change it, so a
+  green `_ab_aa_runs` row written by `0.8.0` for a multi-arm experiment still
+  satisfies `find_calibration` and still lights explore's D3 chip — on numbers
+  measured for a design the engine no longer runs. **Re-run `abk validate` on
+  multi-arm experiments after upgrading.** This is DEC-1's own hand-off note,
+  now wider; DEC-6 must decide whether to fix or to keep documenting it.
+- **The dashboard row does not name the SRM culprit.** Its row reads
+  `_ab_results`, which carries no cohort counts — `size_1`/`size_2` are metric
+  units, and *trials* for a fraction metric, so a culprit derived from them
+  would be a second diagnosis that can contradict the report (the m11 launcher
+  failure). `get_exposure_counts()` is exact but exists only in copy mode, which
+  would make the chip appear for some projects and not others.
+- **One calibrated pair answers for a family it is not representative of.**
+  Measured at 60/20/20: control-vs-t1 achieved MDE 0.1055 (the reported one),
+  control-vs-t2 0.1052, t1-vs-t2 0.1295 — 23% worse, and the chip greens all
+  three. `0.8.0` read 0.0833 for all of them, so DEC-5 closes most of the gap;
+  the residue is confined to treatment-vs-treatment pairs, i.e. `all_pairs`.
+- **The family sweep inherits the filter but not the disclosure** — the
+  `__family__` row's verdict does not name the contrast.
 
 ### DEC-6 — exit gate, docs, release
 

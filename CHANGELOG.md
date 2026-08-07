@@ -14,6 +14,32 @@ number change).
 ## [Unreleased]
 
 ### Added
+- **`abk plan` sizes every declared contrast** (M14 DEC-5(b)). Through `0.8.0`
+  a 3+-arm plan printed one contrast's numbers and a warning naming the
+  omission. Every declared **vs-control** contrast is now sized at its own
+  allocation ratio, each line carrying its own ✓/✗ powered flag; contrasts
+  sharing a ratio collapse to one sentence, and when the **binding** contrast is
+  not the headline the plan says so beside a runtime that describes the
+  headline. Only `required_n` is printed per contrast — the achievable MDE and
+  achieved power are retrospective bounds solved from the observed ratio, so
+  printing them per pair would be the headline pair's number under another
+  pair's name. The treatment-vs-treatment half of an `all_pairs` family stays
+  **unsized and now says so**: a pre-launch baseline exists for the control arm
+  only.
+- **The SRM gate names the culprit arm** (M14 DEC-5(c)). `abk run`'s red line,
+  the HTML report chip, the `abk explore` chip and the report payload's
+  `srm.culprit` say WHICH arm the mismatch is concentrated in and whether it has
+  too few or too many units — the largest Pearson residual
+  `(observed − expected)/√expected`, i.e. a **decomposition of the chi-square
+  the gate already computed**: no new gate, no new threshold, nothing that can
+  change a decision. Chi-square only: the sub-day e-process's flag is a running
+  max over earlier looks, so a since-rebalanced cohort would be blamed in the
+  wrong direction. Silent at two arms, where the residuals are mirror images —
+  a two-arm gate line is `0.8.0`'s to the character. `srm.culprit` is additive
+  (no `PAYLOAD_VERSION` bump) and `null` in every pre-`0.9.0` bake. The
+  `abk dashboard` row does **not** name it: it reads `_ab_results`, which
+  carries no cohort counts.
+
 - **Every surface reads the decision layer** (M14 DEC-4). The `abk dashboard`
   row's headline is the **first declared main metric's rollup leader** — through
   `0.8.0` it was `verdicts[0]`, the first declared *treatment*, so a three-arm
@@ -130,6 +156,29 @@ number change).
   both.
 
 ### Changed
+- **`abk validate`'s A/A numbers move for experiments with 3+ arms** (M14
+  DEC-5(a)) — the milestone's one exception to "no persisted number moves", and
+  it is deliberate. Through `0.8.0` the placebo pooled **every** arm's units and
+  split them at the control's share of the **whole** split: at three even arms a
+  1/3-vs-2/3 placebo over three arms' units, while the live control-vs-treatment
+  comparison is 1/2 vs 1/2 over two arms'. The FPR column is robust to that (a
+  null is a null at any n); **power, achieved MDE and coverage are not** — they
+  are read off per-arm n and they feed the Recommended row, so the achieved MDE
+  was optimistic by **15% at three even arms** (the law is `√(2(G−1)/G)`, so
+  23% at four, 27% at five). The placebo is now the **calibrated contrast** —
+  the declared control against the first declared treatment — and the choice is
+  disclosed in the per-cell verdict (`…; calibrated on <control> vs
+  <treatment>`), not only in `decision_log`, which no CLI user ever sees.
+  **Two-arm experiments are byte-identical** (the pair IS both arms and the
+  pair's shares ARE the whole split; both e2e matrix gates are unmoved), and
+  **no `ALGORITHM_VERSION` was bumped** — the A/A matrix is the *instrument*,
+  not the captured baseline, and `abkit.stats` is untouched by this change.
+  **Upgrade note:** `cell_hash` is `(metric, method_config_id, mode, alpha)` and
+  did not change, so a green `_ab_aa_runs` row written by `0.8.0` for a
+  multi-arm experiment still satisfies `find_calibration` and still lights the
+  explore calibration chip — on numbers measured for a design the engine no
+  longer runs. **Re-run `abk validate` on multi-arm experiments after
+  upgrading.**
 - **The dashboard row's `guardrail_regressed` flag is ORed over the SHIP
   decisions only** (M14 DEC-4). A guardrail regression between two treatments
   says nothing about whether the experiment harms users relative to control,

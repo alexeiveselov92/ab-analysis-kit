@@ -180,7 +180,11 @@ SRM is a **hard, blocking, non-dropping gate** (`data-contract-and-reporting.md
 - `abk run` prints a loud red line to stderr, e.g.
   `SRM FAILED (observed 0.62/0.38 vs expected 0.50/0.50, chi2 p=2.3e-11) — effects
   untrustworthy` (below `1d` cadence the evidence term reads `anytime e=… p=…`).
-- The HTML report and explore both show a red SRM chip.
+- The HTML report and explore both show a red SRM chip. At three or more arms
+every one of those surfaces also names **which arm** the mismatch sits in and
+whether it has too few or too many units — the largest contribution to the same
+chi-square, so it cannot disagree with the gate. (The `abk dashboard` row is the
+exception: it has the gate but not the cohort counts.)
 
 The gate is a **chi-square** test at daily-and-coarser cadence, and switches to the
 **anytime-valid sequential multinomial** test below `1d` cadence (Lindon & Malek) —
