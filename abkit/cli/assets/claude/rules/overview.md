@@ -102,7 +102,9 @@ profile's `internal_database` / `internal_schema`, separate from the
   plus **leaders_agree** when two main metrics name different arms. abkit reports
   the disagreement and does not break the tie: no metric priority is declared.
 - **SRM (sample-ratio-mismatch)** — a χ² gate (anytime-valid multinomial below 1d
-  cadence): observed arm split ≠ expected split ⇒ randomization/cohort is broken.
+  cadence): observed arm split ≠ expected split ⇒ randomization/cohort is broken. At 3+ arms
+  the CLI line, the report chip and the explore chip also name WHICH arm the
+  mismatch sits in (the `abk dashboard` row does not — it has no cohort counts).
   A **hard, blocking** gate — check it before trusting any effect.
 - **CUPED** — variance reduction using a pre-period covariate; abkit renders the
   SAME metric SQL a second time over a whole-day `covariate_lookback` window (no

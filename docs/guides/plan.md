@@ -193,11 +193,42 @@ Things worth reading closely:
 
 ### Multi-arm experiments
 
-For an experiment with more than two arms, sizing is shown for the **control vs
-first-treatment contrast only** (the other pairs share the same alpha). The plan
-says so explicitly in a warning line, naming both arms. It is deliberately not
-`contrast_pairs()[0]`: with a control declared late in `variants` that entry is a
-treatment-vs-treatment pair, which carries no baseline moments.
+Every declared **control-vs-treatment** contrast is sized, each at its own
+allocation ratio from `expected_split`:
+
+```
+signup_cr [main · z-test · relative] — baseline prop=0.1 · n=150,000/75,000 (…)
+  target MDE 5.00% → required 115,503/arm ✓ powered · power@MDE 0.98 · achievable MDE 3.57%
+  control vs t2 (ratio 0.167) — required 269,506/arm ✗ underpowered
+  the binding contrast is control vs t2 (269,506/arm) — the timing below is the
+  headline contrast's
+```
+
+Contrasts sharing an allocation ratio — every contrast, under an even split —
+collapse to one line instead of repeating the same numbers:
+
+```
+  all 3 declared vs-control contrasts share this allocation ratio, so they size the same
+```
+
+Three things are worth knowing about that output:
+
+- **Only the required N is per contrast.** The achievable MDE and the achieved
+  power are *retrospective* bounds solved from the observed ratio in the baseline
+  you passed, so they are the same for every contrast; printing them per pair
+  would be the headline pair's number wearing another pair's name.
+- **Each contrast carries its own ✓/✗ powered flag**, and when the binding
+  contrast is not the headline the plan names it — the runtime line below
+  describes the headline contrast only.
+- **Treatment-vs-treatment pairs are NOT sized.** Under the default
+  `contrasts: all_pairs` they are in the family and share the alpha, but sizing
+  needs the baseline arm's moments and a pre-launch plan has them for the control
+  only. The plan says so in a warning; `contrasts: vs_control` drops those pairs
+  (and the warning with them).
+
+The calibrated pair is deliberately not `contrast_pairs()[0]`: with a control
+declared late in `variants` that entry is a treatment-vs-treatment pair, which
+carries no baseline moments.
 
 ### The peeking warning
 

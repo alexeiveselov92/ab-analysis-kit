@@ -21,10 +21,14 @@ shuffle is in-memory only; it never touches the real assignment.
 
 ## Mechanism — the placebo split
 
-1. **Source = the experiment's own pooled cohort** rendered over the real cadence
-   grid (the same `generate_grid` + metric loaders the pipeline uses). No separate
-   historical window, no exposure-free loader.
-2. **Pool the per-variant unit arrays and permute the unit→arm labels.** Permuting
+1. **Source = the CALIBRATED CONTRAST's two arms** (the declared control vs the
+   first declared treatment; at two arms, the whole cohort) rendered over the real
+   cadence grid (the same `generate_grid` + metric loaders the pipeline uses). No
+   separate historical window, no exposure-free loader. The verdict names the pair
+   at 3+ arms, because `power` and `achieved_mde` are THAT pair's.
+2. **Pool those two arms' unit arrays and permute the unit→arm labels.** The verdict
+   names the pair at 3+ arms (`; calibrated on X vs Y`), because `power` and
+   `achieved_mde` are THAT pair's. Permuting
    labels destroys any true treatment effect → an **exact null** by construction (the
    standard permutation-A/A), while still exercising the real grid, cadence, cohort,
    and metric SQL.

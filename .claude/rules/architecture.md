@@ -267,8 +267,8 @@ two-process lock race) is deferred to a Docker-equipped environment.
   only — in copy mode a persisted shuffle would clobber the real cohort; in
   the default there is no persisted cohort at all); the CLI takes the lock and
   persists.
-- **Placebo source = the experiment's own pooled cohort, label-permuted (D1)** over
-  the real one-enumeration grid (`generate_grid` — same as driver/explore). Permuting
+- **Placebo source = the CALIBRATED CONTRAST's two arms, label-permuted (D1 as
+  amended by m14 DEC-5)** over the real one-enumeration grid (`generate_grid` — same as driver/explore). Permuting
   unit→arm labels destroys any true effect ⇒ an exact null. Seeds are
   `derive_seed("aa", experiment, metric, method_config_id, iteration)` — byte-repro,
   no wall-clock (D13); FPR numbers are a deterministic, golden-style invariant.
@@ -1066,6 +1066,56 @@ two-process lock race) is deferred to a Docker-equipped environment.
   test_brand_token_references.py` is the gate; two invented tokens shipped in
   one WP before it existed.
 
+### M14 DEC-5 facts an assistant must know (the supporting instruments)
+
+- **The A/A placebo is the calibrated CONTRAST, not the cohort.** Pooling every
+  arm sized a design nobody runs: at three even arms 1/3-vs-2/3 over three arms'
+  units against a live 1/2-vs-1/2 over two. The FPR column is blind to it (a
+  null is a null at any n) and power/achieved-MDE are not — one column wide, and
+  it is the column the Recommended row reads. The STAT-2 lesson in a second
+  place: an instrument can be blind along one axis while wrong along another.
+- **This is M14's ONE exception to "no persisted number moves."** Multi-arm
+  `_ab_aa_runs` power/achieved-MDE/coverage change. It is an INSTRUMENT reading,
+  not a `_ab_results` number and not a method's math, so no `ALGORITHM_VERSION`
+  applies — but a CHANGELOG entry does, and it says so plainly.
+- **`calibrated_contrast()` is a SELECTOR, not a fourth factory** — it picks one
+  pair out of `contrast_pairs()`, never enumerates, so the STAT-1b AST gate has
+  nothing to say. Not `contrast_pairs()[0]`: with a late-declared control that
+  entry is a treatment pair.
+- **The arm filter preserves `variants()` order, not `arms` order**, and
+  `_share_a`'s denominator is the pair. Both exist so a two-arm run is unmoved,
+  and at two arms the pair IS the split — the byte-identity claim rests on that
+  coincidence, so assert it rather than assume it.
+- **The disclosure rides the VERDICT and is silent at two arms** (the M7 WP6
+  lesson again). Silent because `_ab_aa_runs.verdict` is PERSISTED: leaking the
+  suffix at two arms moves a `0.8.0` string, and the mutation that did so
+  survived the whole suite before the review.
+- **`cell_hash` does not know about the pair.** A `0.8.0` multi-arm green row
+  still matches and still lights explore's D3 chip, on numbers measured for a
+  design the engine no longer runs. Re-run `abk validate` after upgrading.
+- **`abk plan` sizes the RATIO, not the arm.** `achievable_mde`/`achieved_power`
+  come off `moments.observed_ratio` and never see `plan_ratio`, so only
+  `required_n` is that contrast's — printing the others per pair was the
+  headline's number under another pair's name. The collapse test is on the
+  RATIOS: with no target MDE every `required_n` is `None`, and a numeric test
+  called a 60/30/10 split "even".
+- **A plan can be ✓ powered on its headline and unpowered on a declared
+  contrast.** Each line carries its own flag, and the binding contrast is named
+  beside the runtime it does not describe.
+- **`srm_culprit` is a DECOMPOSITION, never a second gate**, and it is
+  **chi-square only**: the sub-day e-process flag is a running MAX over earlier
+  looks, so decomposing the CURRENT counts of a since-rebalanced cohort named an
+  arm at noise magnitude in the OPPOSITE direction, as the diagnosis.
+- **A Pearson residual is not a z-score.** Its null sd is `√(1−p)`, so the "σ"
+  the first draft printed overstated by up to 30%; the ~N(0,1) quantity is the
+  ADJUSTED residual, which under a strongly uneven declared split can name a
+  DIFFERENT arm (~14% of imbalanced draws). Named follow-up, not a silent swap.
+- **Three surfaces read one server-computed culprit** (report, explore, CLI) —
+  the DEC-2 `role` rule. **The dashboard is the exception, structurally**: its
+  row reads `_ab_results`, whose `size_1`/`size_2` are metric units (trials, for
+  a fraction metric), so a culprit derived from them would be a second diagnosis
+  that can contradict the report.
+
 ### M7 vectorization facts an assistant must know
 
 - **`score_cell` and `sweep_family` are dispatchers** on
@@ -1778,7 +1828,8 @@ identity param orphans the prior results series.
   `pvalue`, `effect`, `ci_length`, `left_bound`, `right_bound`, `reject`,
   plus per-arm stats, optional `effect_distribution`, `warnings`,
   `diagnostics`, `to_dict()`.
-- `srm.py`: `srm_check(observed_counts, expected_split, alpha=0.001)` →
+- `srm.py`: `srm_check(observed_counts, expected_split, alpha=0.001)` +
+  `srm_culprit` (the m14 DEC-5(c) per-arm decomposition) →
   `SrmResult` (chi-square gate).
 - `correction.py`: `adjust_alpha`, `two_tier_alphas` (the legacy two-tier
   Bonferroni keyed off `is_main_metric`, plus the m13 D8 `guardrail_alpha`
@@ -1931,10 +1982,12 @@ records now; **M14 is IN PROGRESS against its contract
 [m14-implementation-plan.md](../../docs/specs/m14-implementation-plan.md)** —
 six WPs (✅ DEC-1 the declared `control:` → ✅ DEC-2 treatment-pair verdicts +
 the per-metric rollup → ✅ DEC-3 the report → ✅ DEC-4
-dashboard·explore·notify·CLI;
-DEC-5 `validate`/`plan`/SRM, independent; DEC-6 the exit gate + `0.9.0`), under
+dashboard·explore·notify·CLI → ✅ DEC-5 `validate`/`plan`/SRM; DEC-6 the exit
+gate + `0.9.0`), under
 the posture that **M14 moves no persisted number, no alpha and no verdict
-`0.8.0` already issues**: the read-time family is built from ROWS, so verdicting
+`0.8.0` already issues — with ONE deliberate exception, DEC-5's `_ab_aa_runs`
+power/achieved-MDE for multi-arm experiments, which were measuring a design
+nobody runs**: the read-time family is built from ROWS, so verdicting
 a treatment pair that is already in it cannot move a threshold, and a two-arm
 experiment renders an identical DOM on every surface (the BAKED FILE is not
 byte-identical — the payload gains keys and the report's stylesheet grows). M15–M17 are still contours,

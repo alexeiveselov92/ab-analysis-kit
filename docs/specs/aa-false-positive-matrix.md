@@ -13,10 +13,17 @@
 Out-of-band (not in the `run` hot path). Reuses the ported autotune scaffolding
 (load → resolve → resample → score → persist → emit + lock/finalize):
 
-1. Take real data for the unit population. **As built (D1):** the source is the
-   experiment's **own pooled cohort** rendered over the real cadence grid (reusing
-   `RecomputeBackend.load_cutoff` + the metric loaders), *not* a separate historical
-   window. Pooling the per-variant arrays and permuting the unit→arm labels destroys
+1. Take real data for the unit population. **As built (D1, amended by m14
+   DEC-5):** the source is the experiment's own cohort rendered over the real
+   cadence grid (reusing `RecomputeBackend.load_cutoff` + the metric loaders),
+   *not* a separate historical window — and since `0.9.0` it is the **calibrated
+   contrast's two arms only** (`ExperimentConfig.control` vs the first declared
+   treatment), not every arm pooled. Pooling every arm calibrated a design nobody
+   runs: at three even arms the placebo split 1/3 vs 2/3 over three arms' units
+   while the live comparison is 1/2 vs 1/2 over two arms', which leaves the FPR
+   column intact and the achieved MDE optimistic by 15%. At two arms the two
+   readings coincide, so no `0.8.0` number moved there.
+   Pooling those arrays and permuting the unit→arm labels destroys
    any true treatment effect and yields an exact null by construction (the standard
    permutation-A/A) while exercising the real grid, cadence, cohort, and metric SQL —
    no exposure-free loader, no torn `_ab_exposures` write (shuffling is in-memory
@@ -103,7 +110,12 @@ Analysts pick the highest-power row and ignore an inflated FPR. So the matrix is
    among methods with FPR within budget").
 3. **A plain-language per-method verdict** — e.g. *"z-test on this metric:
    well-calibrated, FPR 5.1%"* / *"naive t-test on this ratio metric: FPR inflated
-   to 11%, do not use."*
+   to 11%, do not use."* At 3+ arms it also names the calibrated contrast
+   (*"; calibrated on control vs treatment"*, m14 DEC-5): one pair answers for
+   the family — the D3 chip is arm-pair-independent by design (D4) — but the
+   power and achieved-MDE columns are THAT pair's, so the row has to say which.
+   Disclosed in the verdict rather than only in `decision_log`, which no CLI
+   user ever sees (the M7 WP6 lesson).
 4. **`abk validate --report`** is the canonical artifact; **explore links to it**
    and shows the live calibration chip.
 

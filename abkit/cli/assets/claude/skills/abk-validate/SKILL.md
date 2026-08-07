@@ -16,7 +16,8 @@ description: >-
 
 `abk validate` answers one question: **is this method actually calibrated on
 *this* data, or does it lie about its α?** It draws **placebo A/A splits** on the
-experiment's own pooled cohort (unit→arm labels permuted → an exact null by
+calibrated contrast's two arms — the declared control vs the first declared
+treatment; at two arms, the whole cohort — (unit→arm labels permuted → an exact null by
 construction), runs the candidate method(s) over the real cadence grid, and
 reports the empirical **false-positive rate**, **power**, **achieved MDE**, and
 **CI coverage**. A well-calibrated method gives FPR ≈ α; an inflated one is the

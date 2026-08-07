@@ -450,27 +450,25 @@ control-vs-treatment ones under `vs_control` (declarative-config §2). A 3+-arm
 experiment runs end to end: the pipeline computes every pair, the readout
 verdicts each one, and the HTML report shows a card per pair plus a **cross-arm
 overview** naming the leader and whether it separated from the other treatments
-— see [Multi-arm: who won?](reading-a-readout.md#multi-arm-who-won). A few
-adjacent surfaces are honestly not (yet) k-arm-aware, though:
+— see [Multi-arm: who won?](reading-a-readout.md#multi-arm-who-won).
 
-- **`abk validate` and `abk plan` are not yet arm-aware** — see the two bullets
-  below. Every *presentation* surface reads the whole decision layer: the
-  report, the dashboard row, [`abk explore`](explore.md)'s Review mode,
-  notifications and the `abk run --report` line.
-- **`abk plan` sizes off one contrast only** — the control against the FIRST
-  declared treatment. (Deliberately not `contrast_pairs()[0]`: with a control
-  declared late in `variants` that entry is a treatment-vs-treatment pair, which
-  carries no baseline moments.) Required-N / achievable
-  MDE / achieved power is computed for that pair; every other
-  pair rides the same alpha and sample size rather than being sized
-  independently. The plan output says so in an explicit warning line (see
-  [Plan](plan.md#multi-arm-experiments)).
-- **`abk validate`'s placebo split is two-arm.** The A/A engine pools the
-  experiment's whole cohort and splits it into exactly two placebo shares —
-  control's expected share vs. every other variant pooled together — never a
-  k-way split that mirrors each declared arm individually. For a 3+-arm
-  experiment the measured FPR is a control-vs-rest number, not a
-  per-treatment-arm one. See [Validate](validate.md).
+Since `0.9.0` every surface reads that decision layer — the report, the
+dashboard row, [`abk explore`](explore.md)'s Review mode, notifications, the
+`abk run --report` line — and both supporting instruments are arm-aware too.
+What is left is narrower, and worth knowing:
 
-None of this is new behavior — it is what has always run. This section just
-names it plainly so a 3+-arm user knows what is and isn't covered today.
+- **One calibrated pair answers for the whole family in `abk validate`.** The
+  A/A matrix calibrates the control against the first declared treatment and
+  says so in each verdict; the calibration chip is keyed by
+  (metric, method, alpha) and is arm-pair-independent by design. Under an uneven
+  split a treatment-vs-treatment pair can need a materially larger effect than
+  the calibrated one and still show a green chip — see
+  [Validate](validate.md#which-contrast-is-calibrated).
+- **`abk plan` does not size treatment-vs-treatment pairs.** Under the default
+  `contrasts: all_pairs` they are in the family and share the alpha, but sizing
+  needs the baseline arm's moments and a pre-launch plan has them for the
+  control only. The plan says so; see
+  [Plan](plan.md#multi-arm-experiments).
+- **The `abk dashboard` row does not name the SRM culprit arm.** The red gate
+  chip is there, but the row reads `_ab_results`, which carries no cohort
+  counts — the report, `abk explore` and `abk run`'s red line all name the arm.

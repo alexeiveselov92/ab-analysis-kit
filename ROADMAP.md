@@ -463,9 +463,9 @@ forward — they touch only `abkit/planning/` + `abkit/cli/commands/plan.py`.
 Two neighbouring gaps stay where they are, on purpose: a **power formula for
 ratio metrics / bootstrap methods** is a statistical addition under full change
 control (M13 design session, or M15 with the new methods — `abk plan` refuses
-them today rather than inventing math, D10), and **multi-arm sizing** (the
-planner sizes one contrast only — since M14 DEC-1 the control against the first
-declared treatment) belongs to M14's decision layer (DEC-5).
+them today rather than inventing math, D10), and **multi-arm sizing** ✅ shipped in
+M14 DEC-5(b): every declared vs-control contrast is sized at its own allocation
+ratio, and the arm-vs-arm pairs are disclosed as unsized.
 
 ### Interstitial — the cockpit's next gaps + the incremental default ✅ SHIPPED (`0.6.4`) → `0.6.x`
 Added 2026-08-02 (maintainer request, in conversation). Like the PLAN
@@ -1017,7 +1017,12 @@ gains a rollup line, `arm vs arm` tags and per-metric pair memory (audit gap
 (audit gap 7); and notifications stay control-anchored by decision (D7) while
 their dedup signature gains the rollup identity, so a leader flip with no
 verdict word moving is no longer silent. A two-arm experiment is unchanged on
-every one of them. ⬜ DEC-5 next (`validate` · `plan` · SRM). As-built deltas: a third resolver
+every one of them. ✅ **DEC-5** — the supporting instruments: `abk validate`'s placebo is the
+CALIBRATED CONTRAST rather than every arm pooled (multi-arm power/achieved-MDE
+move — the milestone's one persisted-number exception, an instrument reading
+rather than a method's math), `abk plan` sizes every declared vs-control
+contrast with its own powered flag, and the SRM gate names the culprit arm on
+the CLI, the report and explore. ⬜ DEC-6 next (the exit gate + `0.9.0`). As-built deltas: a third resolver
 member (`control_reorients_pairs`), one shared `UNDECLARED_PAIR_CAUSES` string
 replacing four surface-local copies of the cause list, a `control` key in the
 report payload so the report/explore headers stop claiming "first = control",
@@ -1075,8 +1080,9 @@ A/A revalidation).
 - **Now / 0.1.0 (MVP, no numbers move):**
   - Fix `abk explore` Review mode showing only the **first** arm's verdict per metric
     (`.find` → map) — the one near-decision multi-arm bug (`web/src/explore/explore.ts:1516`).
-  - **Document** the known multi-arm limitations honestly (control-vs-each readout, no
-    experiment-level winner, `abk plan` first-pair sizing, `abk validate` two-arm placebo).
+  - **Document** the known multi-arm limitations honestly ✅ — and M14 then closed
+    all four (the readout's rollup, `abk plan`'s per-contrast sizing, `abk validate`'s
+    calibrated contrast, the SRM culprit).
 - **0.1.x safe wins (byte-identical, no version bump — opportunistic):**
   - Stats hot path: `ndtri/ndtr` swap (~60×) + lazy `statsmodels` import + lazy never-read
     `effect_distribution` (~250× on the `validate`/`explore` path); parametric `_finalize`

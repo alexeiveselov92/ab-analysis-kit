@@ -22,7 +22,7 @@ The as-built condensation for contributors/assistants (detectkit-style):
 Design contracts for what is being *built next* stay in [docs/specs/](docs/specs/)
 (canonical for M2+ work — table below). Keep rules ↔ docs in sync per milestone.
 
-## Status: M1–M13 shipped; latest on PyPI: `0.8.0` (M13 = versioned statistics, all opt-in); BOTH `0.6.x` interstitials closed (PLAN-1/PLAN-2 in `0.6.1`/`0.6.2`, UI-1 + UI-2 + PERF-1 in `0.6.4`); polish track continues with M14–M17 (**M14 IN PROGRESS — DEC-1…DEC-4 merged; DEC-5 and the DEC-6 exit gate remain**)
+## Status: M1–M13 shipped; latest on PyPI: `0.8.0` (M13 = versioned statistics, all opt-in); BOTH `0.6.x` interstitials closed (PLAN-1/PLAN-2 in `0.6.1`/`0.6.2`, UI-1 + UI-2 + PERF-1 in `0.6.4`); polish track continues with M14–M17 (**M14 IN PROGRESS — DEC-1…DEC-5 merged; only the DEC-6 exit gate remains**)
 
 **Done — M1, the pure statistical core** (`abkit.stats`, importable standalone;
 see [ROADMAP.md](ROADMAP.md) for the deferred-cleanup list): data model with the
@@ -364,7 +364,7 @@ spec before writing code:
 | The A/A FPR matrix (`abk validate`) | [docs/specs/aa-false-positive-matrix.md](docs/specs/aa-false-positive-matrix.md) |
 | CLI, explore cockpit, init-claude, Prefect, docs | [docs/specs/cli-and-dx.md](docs/specs/cli-and-dx.md) |
 | `abk dashboard` — the launcher discipline, the row shape, the job routes | [docs/specs/m11-implementation-plan.md](docs/specs/m11-implementation-plan.md) |
-| **The multi-arm decision layer being built now** (✅ `control:`, ✅ the verdicts + the rollup, ✅ the report, ✅ the other surfaces; next: DEC-5 validate·plan·SRM) | [docs/specs/m14-implementation-plan.md](docs/specs/m14-implementation-plan.md) |
+| **The multi-arm decision layer being built now** (✅ `control:`, ✅ the verdicts + the rollup, ✅ the report, ✅ the other surfaces, ✅ validate·plan·SRM; next: DEC-6, the exit gate) | [docs/specs/m14-implementation-plan.md](docs/specs/m14-implementation-plan.md) |
 | **What must be true before/after each milestone** | [docs/specs/quorum-review.md](docs/specs/quorum-review.md) (the must-fix gate) |
 
 The master plan in Russian: [docs/ru/project-initiation-spec.md](docs/ru/project-initiation-spec.md).

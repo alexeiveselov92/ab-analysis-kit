@@ -56,7 +56,9 @@ readout marks:
   minimum counts, so it reports counts only. This reads the persisted
   `insufficient_data` flag of that look, not a re-derived guess.
 - **SRM** — the red gate: the observed arm split does not match the expected
-  one. Fix the assignment before trusting any effect on that row.
+  one. Fix the assignment before trusting any effect on that row. At 3+ arms the
+  row does **not** name the culprit arm — it reads `_ab_results`, which carries
+  no cohort counts; the HTML report, `abk explore` and `abk run`'s red line do.
 - **→ arm** — the **leader chip** at 3+ arms: the arm this metric says to ship.
   Hover for the readout's own sentence. Absent when no arm beat the control.
 - **leaders split** — two main metrics name different arms. abkit reports the

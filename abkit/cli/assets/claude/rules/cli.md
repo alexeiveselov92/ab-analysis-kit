@@ -440,7 +440,10 @@ abk unlock --select example_signup_test
 - **"Failed to acquire lock"** — a crashed run left a lock; `abk unlock --select <exp>`.
 - **`SRM FAILED` (red)** — the observed arm split ≠ the expected split; the
   randomization or the cohort query is broken. Fix the assignment before trusting
-  any effect.
+  any effect. At 3+ arms the line also names WHICH arm contributes most to the
+  mismatch and whether it has too few or too many units — chi-square gate only,
+  since the sub-day anytime-valid gate's flag is a running max over earlier looks
+  and the current counts may have rebalanced.
 - **No verdict before the horizon** — expected: fixed-horizon CIs are not
   peeking-valid, so the readout withholds WIN/LOSE early. Enable
   `sequential: {enabled: true}` on a sequential-eligible method for always-valid CIs.
