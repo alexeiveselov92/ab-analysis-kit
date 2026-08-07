@@ -1,6 +1,6 @@
 # Multi-arm (>2 group) experiments: end-to-end support review
 
-> **STATUS: HISTORICAL (audited 2026-07-07 against `main @ 700e749`); FOURTEEN
+> **STATUS: HISTORICAL (audited 2026-07-07 against `main @ 700e749`); THIRTEEN
 > OF ITS FIFTEEN GAPS ARE CLOSED as of `0.9.0`.** This file is the source
 > inventory M13 and M14 worked from, and its "verdict up front" below describes
 > the code as it was in July 2026 — read it as the problem statement, not as a
@@ -11,13 +11,15 @@
 > Item-by-item status lives in
 > [m14-implementation-plan.md §0.1](../../specs/m14-implementation-plan.md) — in
 > short: gaps 1/4/8 shipped in M7 WP0 and M13 (STAT-1, STAT-1b), and gaps
-> 2/3/5/6/7/10/11/13/14 shipped across M14 DEC-1…DEC-5 (`assignment.control`,
-> a verdict for every declared pair with a `role`, the per-metric rollup, the
-> report's cross-arm overview and pair selector, the dashboard headline, the
-> `abk validate` placebo, `abk plan`'s per-contrast sizing, and the SRM
-> culprit). **Gap 15 (the flat metric picker) is the one still live**, in the
-> cosmetic tier. Two limitations M14 recorded rather than fixed are named in
-> DEC-6's as-built notes.
+> 2/3/5/6/7/10/11/12/13/14 shipped across M14 DEC-1…DEC-5
+> (`assignment.control`, a verdict for every declared pair with a `role`, the
+> per-metric rollup and its `leaders_agree` summary, the report's cross-arm
+> overview and pair selector, the dashboard headline, the `abk validate`
+> placebo, `abk plan`'s per-contrast sizing, and the SRM culprit).
+> **Two are still live**, both below the decision layer: gap 9 (explore's Apply
+> is per-metric, so there is no per-arm-pair method tuning) and gap 15 (the flat
+> pair picker), the second in the cosmetic tier. Limitations M14 recorded rather
+> than fixed are named in DEC-6's as-built notes.
 
 **Verdict up front (July 2026).** Multi-arm experiments are **statistically and structurally
 supported end-to-end** — config, SRM, pairwise enumeration, corrections, and per-pair

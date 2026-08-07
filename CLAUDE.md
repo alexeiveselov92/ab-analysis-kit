@@ -342,7 +342,8 @@ nobody runs), `abk plan` sizes every declared vs-control contrast with its own
 powered flag, and the SRM gate names the culprit arm. **✅ DEC-6** turned the
 posture from a claim into a measurement:
 [tests/e2e/test_multi_arm_decisions.py](tests/e2e/test_multi_arm_decisions.py)
-reproduces seven two-arm surfaces from a real `v0.8.0` checkout field for field
+reproduces two persisted tables and seven read surfaces from a real `v0.8.0`
+checkout field for field
 against an *enumerated* 17-key addition set, holds every four-arm row, alpha and
 control-anchored verdict identical, and asserts the two deliberate moves WITH
 their direction so neither can be mistaken for a regression**; M15–M17 (new
@@ -355,7 +356,8 @@ track section in [ROADMAP.md](ROADMAP.md) is the map;
 [m10](docs/specs/m10-implementation-plan.md),
 [m11](docs/specs/m11-implementation-plan.md),
 [m12](docs/specs/m12-implementation-plan.md) and
-[m13](docs/specs/m13-implementation-plan.md) are all implementation records now.
+[m13](docs/specs/m13-implementation-plan.md) and
+[m14](docs/specs/m14-implementation-plan.md) are all implementation records now.
 Discipline: one WP = one session = one PR; **M7–M12
 moved no statistical number** (parity gates) and **M13 moved no DEFAULT** (the
 new estimators and schemes are opt-in; the byte-compatibility gate is

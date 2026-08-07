@@ -1131,7 +1131,9 @@ two-process lock race) is deferred to a Docker-equipped environment.
   HEAD (the STAT-6/M10 discipline). It uses only entry points whose signatures
   are identical at both ends (`run_experiment`, `build_report_payload`,
   `build_experiment_row`, `dispatch_experiment_signals`, `run_validation`,
-  `evaluate`), reads no field M14 added, and seeds its own per-arm lifts rather
+  `evaluate`, plus the session/factory helpers `load_session`,
+  `build_explore_payload`, `aa_run_records` and `ChannelFactory` — checked, not
+  assumed: none of them moved a `def` line), reads no field M14 added, and seeds its own per-arm lifts rather
   than calling `synthetic_ab.seed_all_events` (which lifts only the arm literally
   named `treatment`). **Regenerate the golden ONLY from a released checkout.**
 - **"Byte-identical" is the WRONG claim for a rendering surface, and the gate says
@@ -1140,14 +1142,56 @@ two-process lock race) is deferred to a Docker-equipped environment.
   (`ADDED_TWO_ARM`, normalised so `verdicts[3].role` and `verdicts[0].role` are
   one entry). A second test asserts every declared addition is actually PRODUCED —
   otherwise the set is a wish list, the DEC-3 dead-hold failure one level up.
-- **An ADDED key is exempt from value comparison**, so the comparator
-  structurally cannot see a two-arm message gaining prose. `rollup_display` /
-  `rollup_line` therefore have their own "empty at two arms" assertion. Any future
+- **An ADDED key is exempt from value comparison, so every added path must DECLARE
+  its expected value** (`ADDED_VALUES`, with a roster test that fails on any path
+  declaring neither a value nor a structured assertion). Three paths were free
+  before that: `_ab_experiments.control` could name the LAST arm to BI,
+  `report.control` could print `control: treatment` above pair blocks reading
+  "treatment vs control" (the DEC-1 header lie, restored), and
+  `report.srm.culprit` could name a nonexistent arm on a GREEN gate. Any future
   key added to a rendered surface owes the same.
-- **The gate pins the notification COUNT, because nothing else did.** Deleting
-  DEC-2's `role == "vs_control"` filter from `dispatch` — the entire content of D7
-  — left all 27 tests green: 12 messages instead of 6, and every rollup assertion
-  passes on the doubled list. A per-item assertion cannot see a doubled list.
+- **The gate pins every LIST's length, because a per-item assertion cannot see a
+  doubled or filtered list.** Deleting DEC-2's `role == "vs_control"` filter from
+  `dispatch` — the entire content of D7 — left all 27 tests green (12 messages
+  instead of 6); so did `treatment_pairs + treatment_pairs` (18 verdicts instead
+  of 12). The four-arm verdict lists are compared as a PREFIX, which is also the
+  only thing anywhere that pins DEC-2's ordering rule.
+- **The cockpit is a RELATION to the report payload, not a document.**
+  `build_explore_payload` returns `dict(report_payload)` plus one `explore` key,
+  so capturing `explore["explore"]` captures the one subtree M14 never touches —
+  and a `ship_decisions` filter re-added in `tuning/payload.py`, which the rules
+  above forbid in italics, passed the whole gate while every arm-vs-arm card
+  vanished from Review mode. The capture records the PASS-THROUGH (which report
+  keys arrived intact) and the cockpit's own verdict list. Third instance of the
+  DEC-4 lesson: explore is the surface whose behaviour deletions survive.
+- **A capture is only coverage if something READS it.** The four-arm half captured
+  seven surfaces and compared three; `report`/`notify`/`explore`/`_ab_experiments`
+  were dead weight in a 1 MB fixture, hiding α = 0.5 on every four-arm
+  notification and a reverted `guardrail_regressed` scope. A test now asserts the
+  capture's key set equals the compared set.
+- **A gate must run the CONFIGURATION its claim is about.** §0.2 point 1 is stated
+  about `benjamini_hochberg`/`holm`, and the fixtures took the default
+  `bonferroni` — where the family is resolved at COMPUTE time and no read-time
+  family exists at all, so the claim was measured exactly where it is trivially
+  true (and both read-time caveats were unreachable, which is why every golden
+  verdict carries `caveats: []`). There is a `four_arm_bh` capture now.
+- **"Both inside the budget" is not "the column did not move."** At 300 A/A
+  iterations the two arm counts' FPRs differed by 2.4 σ on nothing but the draw
+  and crossed the budget, so the gate reported an inflated instrument for a
+  correct engine. The assertion is `|Δ| < 3σ_diff` with `σ_diff = √2·√(α(1−α)/N)`
+  — two different placebo pools carry two variances — at N = 1000.
+- **A one-character arm name makes every substring assertion a tautology.**
+  `"c" in text` is true of `"conversion"` and of `"control"`, so a message reading
+  "Leader on arpu: control" passed; and `context["metric"] in
+  context["rollup_display"]` is satisfied by the formatter that interpolates it.
+  Whole rendered STRINGS are compared now, and the fixture gives the two main
+  metrics DIFFERENT leaders so a first-rollup implementation cannot look correct.
+- **An exit-gate golden needs an explicit pre-commit exemption.**
+  `check-added-large-files --maxkb=500` bites only at commit time (CI runs no
+  pre-commit), so it would have ambushed whoever next REGENERATED the fixture,
+  long after the PR that added it. The hook excludes
+  `tests/e2e/fixtures/*.json`; the golden is also kept small on its own terms (SQL
+  columns compared as digests, seven looks at four arms).
 - **The four-arm fixture's leader is deliberately NOT the first declared
   treatment.** With them coincident, `0.8.0`'s dashboard headline and HEAD's
   leader agree by accident and DEC-4's fix becomes invisible to the gate.
@@ -1178,7 +1222,8 @@ two-process lock race) is deferred to a Docker-equipped environment.
   meaning "written before `0.9.0`, warn rather than trust", which is a new
   persisted column plus a new gate rule in the WP whose posture is that nothing
   moves. The dashboard's missing SRM culprit stays a STRUCTURAL exception (its row
-  has no cohort counts, and `get_exposure_counts()` exists only in copy mode).
+  has no cohort counts, and the `_ab_exposures` table `get_exposure_counts()`
+  reads is only maintained in copy mode).
 
 ### M7 vectorization facts an assistant must know
 
@@ -2056,7 +2101,8 @@ a treatment pair that is already in it cannot move a threshold, and a two-arm
 experiment renders an identical DOM on every surface (the BAKED FILE is not
 byte-identical — the payload gains keys and the report's stylesheet grows).
 **That posture is now MEASURED, not argued** — `tests/e2e/
-test_multi_arm_decisions.py` reproduces seven two-arm surfaces from a real
+test_multi_arm_decisions.py` reproduces two persisted tables and seven read
+two-arm surfaces from a real
 `v0.8.0` checkout field for field against an enumerated 17-key addition set, and
 asserts the two deliberate moves with their direction (DEC-6 facts above).
 M15–M17 are still contours,
@@ -2104,7 +2150,10 @@ Read before coding:
   [m8](../../docs/specs/m8-implementation-plan.md),
   [m9](../../docs/specs/m9-implementation-plan.md),
   [m10](../../docs/specs/m10-implementation-plan.md),
-  [m11](../../docs/specs/m11-implementation-plan.md)
+  [m11](../../docs/specs/m11-implementation-plan.md),
+  [m12](../../docs/specs/m12-implementation-plan.md),
+  [m13](../../docs/specs/m13-implementation-plan.md),
+  [m14](../../docs/specs/m14-implementation-plan.md)
 
 ## Invariants (do not violate)
 

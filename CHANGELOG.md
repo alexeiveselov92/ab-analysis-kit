@@ -16,26 +16,30 @@ number change).
 ### Added
 - **DEC-6 — the M14 exit gate** (`tests/e2e/test_multi_arm_decisions.py`, with
   the capture in `tests/e2e/_m14_baseline.py`). The milestone's №1 assertion is
-  measured against the **released** code rather than against itself: seven
-  two-arm surfaces captured from a real `v0.8.0` checkout — the persisted rows,
-  the catalog row, the readout, the report payload, the dashboard row, the
-  notification contexts, the explore payload, the real `abk run --report` line
-  and the `_ab_aa_runs` row — reproduce here **field for field**, and the only
-  difference anywhere is an *enumerated* set of 17 added keys, each of which the
-  gate also proves is actually produced. At four arms all 252 persisted rows,
-  every per-pair alpha and all six control-anchored verdicts (`rationale` and
-  `caveats` strings included) are identical, with the six treatment pairs
-  appearing beside them labelled `treatment_pair`. The gate additionally pins
-  the rollup's four separation states on constructed data, that five surfaces
-  plus the CLI line name the SAME leader over one set of rows, that a
-  three-arm experiment still sends **six** messages rather than twelve (D7),
-  and that `contrasts: vs_control` reports `separation: untested` *naming the
-  knob* as the reason.
+  measured against the **released** code rather than against itself: **two
+  persisted tables and seven read surfaces** captured from a real `v0.8.0`
+  checkout — `_ab_results`, the catalog row, the readout, the report payload, the
+  dashboard row, the notification contexts, the explore payload, the real
+  `abk run --report` line and the `_ab_aa_runs` row — reproduce here **field for
+  field**, and the only difference anywhere is an *enumerated* set of 17 added
+  keys, **each with a declared value** and each proved to be actually produced.
+  At four arms every persisted row, every per-pair alpha at every look, and all
+  six control-anchored verdicts (`rationale` and `caveats` strings included) are
+  identical, with the six treatment pairs appearing beside them labelled
+  `treatment_pair` — under the default `bonferroni` **and** under the read-time
+  `benjamini_hochberg`, which is the scheme the no-threshold-moved argument is
+  actually about. The gate additionally pins the rollup's four separation states
+  on constructed data (including a leader that LOSES on the second main metric),
+  that five surfaces plus the CLI line name the SAME leader over one set of rows,
+  that a four-arm experiment still sends **six** messages rather than twelve
+  (D7), and that `contrasts: vs_control` reports `separation: untested` *naming
+  the knob* as the reason.
   The two deliberate moves are asserted **with their direction**, so neither can
   be mistaken for a regression: the dashboard headline follows the rollup leader
   rather than the first declared treatment (whose own `0.8.0` number is still on
-  the page), and the multi-arm A/A achieved MDE grows by 1.20× against the
-  predicted `√1.5` while both FPR readings stay inside the same budget.
+  the page), and the multi-arm A/A achieved MDE grows by ≈1.2× against the
+  predicted `√1.5` with power falling, while the FPR column — the one DEC-5 did
+  not move — stays within sampling noise of `0.8.0`'s reading.
 - **`abk plan` sizes every declared contrast** (M14 DEC-5(b)). Through `0.8.0`
   a 3+-arm plan printed one contrast's numbers and a warning naming the
   omission. Every declared **vs-control** contrast is now sized at its own
@@ -165,7 +169,9 @@ number change).
   name different leaders.
   A treatment-pair block also gains the min-effect reference line it never had,
   because `verdictFor` now finds its verdict.
-  **A two-arm report is byte-identical to `0.8.0`**: there is no treatment pair
+  **A two-arm report renders `0.8.0`'s DOM character for character** (the baked
+  FILE is not byte-identical — the payload gains keys and the injected
+  stylesheet grows): there is no treatment pair
   to label, and every affordance above is suppressed below three arms —
   including the leaders chip, which would otherwise fire on the tautology that
   two main metrics of a two-arm experiment can only name the same treatment.
@@ -195,10 +201,10 @@ number change).
   pair's shares ARE the whole split; both e2e matrix gates are unmoved), and
   **no `ALGORITHM_VERSION` was bumped** — the A/A matrix is the *instrument*,
   not the captured baseline, and `abkit.stats` is untouched by this change.
-  **Upgrade note:** `cell_hash` is `(metric, method_config_id, mode, alpha)` and
-  did not change, so a green `_ab_aa_runs` row written by `0.8.0` for a
-  multi-arm experiment still satisfies `find_calibration` and still lights the
-  explore calibration chip — on numbers measured for a design the engine no
+  **Upgrade note:** the calibration chip's lookup is `(metric,
+  method_config_id, alpha)` and knows nothing about WHICH pair was calibrated,
+  so a green `_ab_aa_runs` row written by `0.8.0` for a multi-arm experiment
+  still satisfies `find_calibration` and still lights the explore chip — on numbers measured for a design the engine no
   longer runs. **Re-run `abk validate` on multi-arm experiments after
   upgrading.**
 - **The dashboard row's `guardrail_regressed` flag is ORed over the SHIP

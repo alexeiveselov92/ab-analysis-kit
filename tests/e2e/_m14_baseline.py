@@ -13,11 +13,15 @@ shipped, so the same file runs unmodified in both checkouts:
 * ``tests/_helpers/`` is byte-identical between ``v0.8.0`` and HEAD
   (``git diff v0.8.0 HEAD -- tests/_helpers/`` is empty), so ``synthetic_ab``
   and ``fake_db`` mean the same thing in both trees;
-* the only entry points used — ``run_experiment``, ``build_report_payload``,
-  ``build_experiment_row``, ``dispatch_experiment_signals``,
-  ``run_validation``, ``evaluate`` — have identical signatures at both ends
-  (``git diff v0.8.0 HEAD`` over their modules touches no ``def`` line of
-  theirs);
+* every entry point it uses has an identical signature at both ends — the six
+  surface producers (``run_experiment``, ``build_report_payload``,
+  ``build_experiment_row``, ``dispatch_experiment_signals``, ``run_validation``,
+  ``evaluate``) and the helpers that reach them (``load_session``,
+  ``backend_cutoff_loader``, ``RecomputeEngine``, ``RecomputeBackend``,
+  ``build_explore_payload``, ``aa_run_records``, ``ValidateSettings``,
+  ``ChannelFactory``, ``NotificationChannelConfig``, ``BaseChannel``,
+  ``InternalTablesManager``). Checked against ``git diff v0.8.0 HEAD``, not
+  assumed;
 * nothing here reads a field M14 added. The capture dumps whatever
   ``to_dict()`` / ``build_context()`` gives, and the *comparison* — which knows
   about ``role``, ``rollups`` and the rest — lives in the gate.
@@ -47,15 +51,20 @@ committed surface unreproducible, and the failure reads as a moved number rather
 than an edited fixture — regenerate from the released checkout, or add a new
 payload beside it.
 
-Four surfaces, because "every surface" is the claim:
+Five captures, because "every surface" is the claim:
 
 * ``two_arm`` — two arms, two main metrics and a guardrail: the persisted rows,
-  the report payload, the dashboard row, the notification contexts and the
-  explore payload. This is the leg that must match field for field.
-* ``four_arm`` — the SAME comparisons over four arms with per-arm lifts, so
-  ``0.8.0``'s three control-anchored verdicts are non-trivial (two winners of
-  different sizes and one quiet arm) and HEAD must reproduce them exactly while
-  adding the three treatment pairs.
+  the catalog row, the readout, the report payload, the dashboard row, the
+  notification contexts and the explore payload. This is the leg where every
+  field has to match.
+* ``four_arm`` — the SAME comparisons over four arms with per-arm, per-metric
+  lifts, so ``0.8.0``'s three control-anchored verdicts are non-trivial (two
+  winners of different sizes and one quiet arm) and HEAD must reproduce them
+  exactly while adding the three treatment pairs.
+* ``four_arm_bh`` — the four-arm experiment again under ``benjamini_hochberg``.
+  A READ-TIME scheme is the only configuration where "adding a verdict cannot
+  move a threshold" is a non-trivial claim, and the default ``bonferroni``
+  resolves its family at compute time.
 * ``scaffold`` — ``abk init`` + ``abk run --report`` through the real CLI, which
   is the only way to capture the ``Report →`` line's verdict note.
 * ``aa`` — ``run_validation`` at two arms (must match) and at four (DEC-5's
@@ -66,6 +75,7 @@ Four surfaces, because "every surface" is the claim:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
@@ -80,10 +90,17 @@ from click.testing import CliRunner
 #: cutoff due. Same value the M2 first-run gate and the M13 baseline use.
 SCAFFOLD_NOW = datetime(2024, 8, 1)
 
-#: The synthetic window: 14 daily cutoffs, all complete at ``NOW``.
+#: The synthetic window: daily cutoffs, all complete at ``NOW``.
 START = datetime(2024, 7, 1)
 NOW = datetime(2024, 7, 20)
-DAYS = 14
+#: Fourteen looks at two arms — a realistic stabilization series, and the leg
+#: whose every field has to reproduce. SEVEN at four arms, because that fixture
+#: exists to vary the ARM COUNT and its rows grow as ``C(g,2) × metrics × looks``:
+#: at 14 looks the committed golden crossed this repo's own 500 kB
+#: ``check-added-large-files`` limit. Seven still exceeds ``MIN_STABLE_CUTOFFS``
+#: and still spans a full trailing-7-day window.
+TWO_ARM_DAYS = 14
+FOUR_ARM_DAYS = 7
 UNITS_PER_ARM = 120
 
 TWO_ARMS = ("control", "treatment")
@@ -94,17 +111,28 @@ TWO_ARMS = ("control", "treatment")
 #: ``tests/config/test_declared_control.py`` and the AST gate instead.
 FOUR_ARMS = ("control", "b", "c", "d")
 
-#: Per-arm multiplicative lift on every metric. ``b`` and ``c`` both beat the
+#: Per-arm multiplicative lift, **per metric**. ``b`` and ``c`` both beat the
 #: control decisively and by DIFFERENT margins (so a leader exists and is not a
 #: tie), ``d`` is a null arm (so "not every treatment wins" is exercised).
 #:
-#: **The leader is deliberately NOT the first declared treatment.** ``c`` has
-#: the bigger lift while ``b`` is declared first, which is precisely the
-#: configuration where the M11 dashboard presented an arbitrary arm as the
-#: experiment's result — so the golden captures ``0.8.0`` reading ``b``'s cells
-#: and the gate asserts HEAD reads ``c``'s. Reverse the two lifts and the one
-#: four-arm surface M14 changes on purpose becomes invisible.
-LIFTS = {"control": 1.0, "treatment": 1.25, "b": 1.22, "c": 1.30, "d": 1.0}
+#: Two properties are deliberate, and each makes a defect visible that a simpler
+#: fixture hides:
+#:
+#: * **The leader is not the first declared treatment.** On ``arpu`` — the first
+#:   declared MAIN metric, i.e. the dashboard's headline — ``c`` leads while ``b``
+#:   is declared first. That is exactly the configuration where the M11 dashboard
+#:   presented an arbitrary arm as the experiment's result, so the golden captures
+#:   ``0.8.0`` reading ``b``'s cells and the gate asserts HEAD reads ``c``'s.
+#: * **The two main metrics have DIFFERENT leaders** (``c`` on ``arpu``, ``b`` on
+#:   ``conversion``). With one leader everywhere, a message carrying the *first*
+#:   rollup instead of its own metric's is indistinguishable from a correct one —
+#:   a mutation that did exactly that survived the whole gate — and
+#:   ``leaders_agree: False`` is never reached on a real pipeline surface.
+LIFTS = {
+    "user_revenue": {"control": 1.0, "treatment": 1.25, "b": 1.22, "c": 1.30, "d": 1.0},
+    "user_conversions": {"control": 1.0, "treatment": 1.25, "b": 1.70, "c": 1.40, "d": 1.0},
+    "user_engagement": {"control": 1.0, "treatment": 1.25, "b": 1.22, "c": 1.30, "d": 1.0},
+}
 
 #: ``method_config_id`` is identity-bearing, so the methods here are pinned:
 #: two MAIN metrics (the ``leaders_agree`` machinery needs two rollups) and a
@@ -124,12 +152,18 @@ COMPARISONS = [
 ]
 
 
+def looks_for(arms: tuple[str, ...]) -> int:
+    """How many daily cutoffs this arm count's window holds (see the constants)."""
+    return TWO_ARM_DAYS if len(arms) == 2 else FOUR_ARM_DAYS
+
+
 def experiment_payload(arms: tuple[str, ...], **overrides: Any) -> dict[str, Any]:
+    horizon = (START + timedelta(days=looks_for(arms))).date().isoformat()
     payload: dict[str, Any] = {
         "name": f"m14_{len(arms)}arm",
         "description": "M14 exit gate",
         "start_ts": "2024-07-01",
-        "horizon_ts": "2024-07-15",
+        "horizon_ts": horizon,
         "unit_key": "user_id",
         "timezone": "UTC",
         "alpha": 0.05,
@@ -150,6 +184,16 @@ def experiment_payload(arms: tuple[str, ...], **overrides: Any) -> dict[str, Any
 #: not.
 VOLATILE_COLUMNS = frozenset({"created_at", "updated_at", "path", "run_id"})
 
+#: Compared as a sha256 prefix rather than verbatim. Both are long SQL strings —
+#: ``metric_query`` is a per-metric constant and ``metric_rendered_query`` differs
+#: only in its window bounds — so storing them in full put 300 kB of near-duplicate
+#: text into the golden and pushed it past this repo's 500 kB
+#: ``check-added-large-files`` limit. A digest comparison is still EXACT: any
+#: change to either string changes the hash. The cost is that a failure reports
+#: "the rendered SQL changed" rather than showing the diff, which is the right
+#: trade for a column no statistic reads.
+HASHED_COLUMNS = ("metric_query", "metric_rendered_query")
+
 #: The identity columns rows are ordered by. DISCRETE on purpose: sorting by
 #: whole-row content would let a last-ULP float difference REORDER the list, and
 #: a comparison that tolerates rel-1e-9 on continuous columns (byte
@@ -168,8 +212,14 @@ ROW_ORDER = (
 
 
 def canonical(rows) -> list[dict]:
-    """Strip the volatile columns and put the rows in a stable, discrete order."""
-    stripped = [{k: v for k, v in dict(row).items() if k not in VOLATILE_COLUMNS} for row in rows]
+    """Strip the volatile columns, digest the SQL ones, and order the rows."""
+    stripped = []
+    for row in rows:
+        clean = {k: v for k, v in dict(row).items() if k not in VOLATILE_COLUMNS}
+        for column in HASHED_COLUMNS:
+            if isinstance(clean.get(column), str):
+                clean[column] = hashlib.sha256(clean[column].encode("utf-8")).hexdigest()[:16]
+        stripped.append(clean)
     return sorted(
         (json.loads(json.dumps(row, sort_keys=True, default=str)) for row in stripped),
         key=lambda row: tuple(str(row.get(column, "")) for column in ROW_ORDER),
@@ -186,7 +236,7 @@ def jsonable(value: Any) -> Any:
 
 
 def build_context(arms: tuple[str, ...]):
-    """A seeded warehouse + its tables manager, with a per-arm lift.
+    """A seeded warehouse + its tables manager, with a per-arm, per-metric lift.
 
     ``synthetic_ab.seed_all_events`` lifts the arm literally named
     ``"treatment"`` and nothing else, so a four-arm fixture needs its own
@@ -202,13 +252,13 @@ def build_context(arms: tuple[str, ...]):
         for index in range(UNITS_PER_ARM):
             unit = f"{arm_index}{index:04d}"
             warehouse.cohort.append((unit, arm, START + timedelta(hours=1)))
-    _seed_events(warehouse)
+    _seed_events(warehouse, TWO_ARM_DAYS if len(arms) == 2 else FOUR_ARM_DAYS)
     tables = InternalTablesManager(warehouse)
     tables.ensure_tables()
     return warehouse, tables
 
 
-def _seed_events(warehouse) -> None:
+def _seed_events(warehouse, days: int) -> None:
     """Deterministic per-unit daily values, scaled by the arm's lift.
 
     Shaped like ``synthetic_ab.seed_all_events`` (same three tables, same
@@ -217,21 +267,20 @@ def _seed_events(warehouse) -> None:
     """
     for unit, arm, _ in warehouse.cohort:
         index = int(unit)
-        lift = LIFTS[arm]
         base = 1.0 + (index % 7) * 0.5
-        for day in range(DAYS):
+        for day in range(days):
             ts = START + timedelta(days=day, hours=12)
             wiggle = ((index * 7 + day) % 5) * 0.3
             warehouse.events["user_revenue"].append(
-                (unit, arm, ts, {"gross_usd": (base + wiggle) * lift})
+                (unit, arm, ts, {"gross_usd": (base + wiggle) * LIFTS["user_revenue"][arm]})
             )
             trials = 2.0 + (index + day) % 3
-            converted = float((index + day) % 2) * lift
+            converted = float((index + day) % 2) * LIFTS["user_conversions"][arm]
             warehouse.events["user_conversions"].append(
                 (unit, arm, ts, {"conversions": min(trials, converted), "trials": trials})
             )
             views = 5.0 + (index + day) % 4
-            clicks = (1.0 + (index * 3 + day) % 4) * lift
+            clicks = (1.0 + (index * 3 + day) % 4) * LIFTS["user_engagement"][arm]
             warehouse.events["user_engagement"].append(
                 (unit, arm, ts, {"clicks": clicks, "views": views})
             )
@@ -348,7 +397,75 @@ def capture_pipeline_surface(arms: tuple[str, ...], **overrides: Any) -> dict[st
         "report": jsonable(report),
         "dashboard_row": jsonable(row),
         "notify": jsonable(notify),
-        "explore": jsonable(explore["explore"]),
+        "explore": _explore_surface(explore, report),
+    }
+
+
+def _explore_surface(explore: dict[str, Any], report: dict[str, Any]) -> dict[str, Any]:
+    """The cockpit's surface, as three things — NOT just its ``explore`` block.
+
+    ``build_explore_payload`` returns ``dict(report_payload)`` plus one
+    ``explore`` key, so capturing ``explore["explore"]`` alone captures the ONE
+    subtree M14 never touches. The first draft did exactly that, and a
+    ``ship_decisions`` filter re-added inside ``tuning/payload.py`` — the thing
+    the architecture rules forbid in italics — passed the whole gate while every
+    treatment-vs-treatment card vanished from Review mode.
+
+    So: the knob ``block``, the ``verdicts`` the cockpit actually renders, and
+    ``passthrough`` — which report-payload keys arrived with their value intact.
+    ``passthrough`` is the pass-through property itself, recorded as data rather
+    than asserted here, and it is M14-blind: it names keys, and at ``0.8.0`` it
+    names ``0.8.0``'s. The full payload is deliberately not stored twice; the
+    report half is already in the golden under ``report``.
+    """
+    return {
+        "block": jsonable(explore["explore"]),
+        "verdicts": jsonable(explore.get("verdicts")),
+        "rollups": jsonable(explore.get("rollups")),
+        "passthrough": sorted(
+            key for key in report if key != "explore" and explore.get(key) == report[key]
+        ),
+    }
+
+
+def capture_read_time_family(arms: tuple[str, ...]) -> dict[str, Any]:
+    """The same experiment under a READ-TIME correction scheme.
+
+    §0.2 point 1 — the structural reason M14 cannot move a threshold — is stated
+    *specifically* about ``benjamini_hochberg``/``holm``: the family is built from
+    ROWS, so verdicting a treatment-pair row that is already in it changes
+    nothing. Under the default ``bonferroni`` no read-time family is built at
+    all, so a gate that only ran the default measured that claim exactly where it
+    is trivially true. This capture is small on purpose (the verdicts and the
+    per-row alphas, not another whole report payload): the claim is about
+    thresholds and verdict words.
+
+    Not captured here, and stated rather than implied: the two read-time CAVEATS
+    (Fork B's divergence note and FLAT's optimism note) need a pair sitting on a
+    knife edge between its own interval and the family threshold. Tuning a
+    fixture onto that edge would make the golden fragile; they are pinned
+    directly in ``tests/pipeline/test_readout.py``.
+    """
+    from synthetic_ab import METRICS, PROJECT
+
+    from abkit.config import ExperimentConfig
+    from abkit.pipeline import run_experiment
+    from abkit.pipeline.readout import evaluate
+
+    warehouse, tables = build_context(arms)
+    experiment = ExperimentConfig.model_validate(
+        experiment_payload(arms, correction="benjamini_hochberg")
+    )
+    outcome = run_experiment(experiment, METRICS, PROJECT, warehouse, tables, now_utc=NOW)
+    assert outcome.status == "completed", outcome.error
+    rows = tables.load_results(experiment.name)
+    readout = evaluate(experiment, rows, project=PROJECT)
+    return {
+        "readout": jsonable(readout.to_dict()),
+        "alphas": {
+            f"{r['metric']}|{r['name_1']}|{r['name_2']}|{r['end_ts']}": r["alpha"]
+            for r in canonical(rows)
+        },
     }
 
 
@@ -405,9 +522,13 @@ def capture_scaffold_surface() -> dict[str, Any]:
     }
 
 
-#: Small on purpose: this leg is about WHICH cohort the placebo is drawn from,
-#: not about resolving an FPR to three digits (the A/A matrix gate owns that).
-AA_ITERATIONS = 300
+#: A thousand placebo splits: enough that the FPR column — the one DEC-5 did NOT
+#: move — is resolved to σ ≈ 0.007 and the gate can assert "no systematic move"
+#: rather than "inside a budget". At 300 the two arm counts' readings differed by
+#: 2.4 σ on nothing but the draw, which a budget-band assertion reported as an
+#: inflated instrument. Costs ~1 s for both captures; the A/A matrix gate still
+#: owns resolving an FPR precisely.
+AA_ITERATIONS = 1000
 AA_INJECT = 0.15
 
 
@@ -435,6 +556,14 @@ def capture_aa_surface(arms: tuple[str, ...]) -> list[dict]:
     # noise in the one column DEC-5 did not move.
     payload = experiment_payload(arms, correction="none")
     payload["comparisons"] = [json.loads(json.dumps(COMPARISONS[0]))]
+    # The split stays EVEN here on purpose. DEC-5's law for the achieved-MDE move
+    # — `√(2(G−1)/G)`, i.e. √1.5 at four arms — is derived for an even split, and
+    # the gate asserts that ratio as its direction claim; an uneven fixture would
+    # replace a textbook number with one that has to be re-derived from the shares
+    # (measured 1.38 at 40/30/20/10) and would blur the band that separates the
+    # real move from a half-revert. `_share_a`'s reading of the DECLARED shares —
+    # the half an even split cannot test, since the pair's share is 0.5 whatever
+    # the arm count — has its own assertion in the gate instead.
     experiment = ExperimentConfig.model_validate(payload)
     backend = RecomputeBackend(warehouse, experiment)
     result = run_validation(
@@ -457,6 +586,7 @@ def capture_all() -> dict:
         "abkit_version": abkit.__version__,
         "two_arm": capture_pipeline_surface(TWO_ARMS),
         "four_arm": capture_pipeline_surface(FOUR_ARMS),
+        "four_arm_bh": capture_read_time_family(FOUR_ARMS),
         "scaffold": capture_scaffold_surface(),
         "aa": {
             "two_arm": capture_aa_surface(TWO_ARMS),

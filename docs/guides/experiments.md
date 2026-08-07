@@ -481,7 +481,7 @@ And the residue that is genuinely narrower:
 - **One calibrated pair answers for the whole family in `abk validate`.** The
   A/A matrix calibrates the control against the first declared treatment and
   says so in each verdict; the calibration chip is keyed by
-  (metric, method, alpha) and is arm-pair-independent by design. Under an uneven
+  (metric, method_config_id, alpha) and is arm-pair-independent by design. Under an uneven
   split a treatment-vs-treatment pair can need a materially larger effect than
   the calibrated one and still show a green chip — see
   [Validate](validate.md#which-contrast-is-calibrated).
